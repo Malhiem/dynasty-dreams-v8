@@ -1,0 +1,120 @@
+{
+  "project_name": "Dynasty Dreams",
+  "domain": "Fantasy Sports SaaS",
+  "theme_and_archetype": {
+    "theme": "DARK",
+    "archetype_number": 2,
+    "archetype_name": "The Performance Pro (Elite Athleticism & Precision)",
+    "reasoning": "High energy, command-center feel tailored for an athletic and data-heavy NHL fantasy sports platform. Uses tactical minimalism and high-contrast numerical displays."
+  },
+  "typography": {
+    "headings": {
+      "family": "Barlow Condensed, sans-serif",
+      "weights": ["700", "900"],
+      "usage_rules": "Must use tight letter spacing (tracking-tight or tracking-tighter). Used for massive metrics and section titles. Projects a 'heavy-weight' athletic feel.",
+      "scales": {
+        "h1": "text-4xl sm:text-5xl lg:text-6xl",
+        "h2": "text-2xl sm:text-3xl lg:text-4xl",
+        "h3": "text-xl sm:text-2xl",
+        "h4": "text-lg sm:text-xl"
+      }
+    },
+    "body": {
+      "family": "Manrope, sans-serif",
+      "weights": ["400", "500", "600"],
+      "usage_rules": "Clean numerical reading. Used for tables, standard text, and data points.",
+      "scales": {
+        "body": "text-base md:text-sm",
+        "small": "text-sm",
+        "micro": "text-xs"
+      }
+    },
+    "labels": {
+      "usage_rules": "Overlines/Labels MUST be Uppercase + Tiny + Wide Spacing (tracking-[0.2em])."
+    },
+    "anti_patterns": ["Do NOT use Inter, Roboto, or Open Sans for headings. No soft, rounded fonts."]
+  },
+  "colors": {
+    "background": {
+      "base": "#0A0A0A",
+      "surface": "#141414",
+      "surface_elevated": "#1A1A1A"
+    },
+    "text": {
+      "primary": "#FFFFFF",
+      "secondary": "#A1A1AA",
+      "disabled": "#52525B"
+    },
+    "brand": {
+      "primary": "#00D2FF",
+      "primary_hover": "#33DBFF",
+      "accent": "#FF3B30",
+      "accent_hover": "#FF6159"
+    },
+    "status": {
+      "success": "#34C759",
+      "warning": "#FF9F0A",
+      "danger": "#FF3B30",
+      "info": "#00D2FF"
+    },
+    "border": {
+      "default": "rgba(255, 255, 255, 0.1)",
+      "focus": "#00D2FF"
+    },
+    "usage_rules": "Deep Obsidian (#0A0A0A) anchors the UI. Pure white for text ensures data clarity. Electric Ice Blue and Alert Red are kinetic triggers for actions. Never use pure #000000, always tint slightly."
+  },
+  "layout_and_spacing": {
+    "grid_strategy": "MODE B: THE CONTROL ROOM GRID",
+    "base_grid": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4",
+    "gap": "gap-4 md:gap-6",
+    "spacing_scale": "p-4, p-6, p-8. Containers with borders MUST have internal padding (p-6) to prevent text collision.",
+    "alignment": "Strict grid hierarchy. Left-align dense content and tables. No jagged bottoms; use h-full on children.",
+    "mobile_rules": "Mobile-first responsive grids. Always start with grid-cols-1."
+  },
+  "components_and_surfaces": {
+    "cards": "Flat solid surfaces. 1px solid borders (border-white/10), NO soft shadows. Radius max 4px to 8px for sharp, tactical aesthetics.",
+    "headers": "Solid background with a harsh bottom border (border-b border-white/10). No muddy glassmorphism for data-heavy apps to ensure clarity.",
+    "buttons": "High-saturation accent blocks. Sharp corners or subtle 4px radius. MUST have explicit hover state text color.",
+    "inputs": "Shadcn based. Flat styling. Focus states must have 2px inner ring using the brand primary color.",
+    "tables": "Shadcn table component. Dense spacing, left-aligned columns, distinct border-b on header rows.",
+    "charts": "Shadcn/Recharts. Use color-blind friendly palettes or brand accent colors. Tooltips must have dark opaque backgrounds.",
+    "navigation": "Visible navigation bar on desktop. Include Logo, 3-5 key links, CTA.",
+    "libraries": {
+      "icons": "@phosphor-icons/react (Duotone or Regular)",
+      "charts": "recharts",
+      "ui": "shadcn/ui"
+    },
+    "anti_patterns": ["NO neomorphism. NO soft fuzzy shadows. NO full-screen gradients."]
+  },
+  "motion_and_interactions": {
+    "hover_states": "Crisp and instant. Background lightness increases or explicit border color change.",
+    "transitions": "Use specific properties: transition: transform 0.2s ease, opacity 0.2s ease. NO 'transition: all'.",
+    "accessibility": "Respect prefers-reduced-motion. Focus rings must be highly visible.",
+    "data_loading": "Minimalist pulse or sharp skeletal loading screens, not soft fading."
+  },
+  "media_and_assets": {
+    "hero_overlay": "Gradient overlay for contrast (e.g., bg-gradient-to-t from-[#0A0A0A] via-[#0A0A0A]/80 to-transparent).",
+    "image_urls": {
+      "hero_background": {
+        "url": "https://images.unsplash.com/photo-1765302966993-0633da24b61d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1ODF8MHwxfHNlYXJjaHwxfHxpY2UlMjBob2NrZXklMjBwbGF5ZXIlMjBhY3Rpb24lMjBkYXJrfGVufDB8fHx8MTc3NjA1MDkyOHww&ixlib=rb-4.1.0&q=85",
+        "description": "A hockey goalie stands near the net on ice. Use as login/hero background overlay."
+      },
+      "stadium_ambience": {
+        "url": "https://images.unsplash.com/photo-1609935061446-c0b5236fee71?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHwzfHxob2NrZXklMjBzdGFkaXVtJTIwbGlnaHRzJTIwbmlnaHR8ZW58MHx8fHwxNzc2MDUwOTI4fDA&ixlib=rb-4.1.0&q=85",
+        "description": "People playing ice hockey on stadium. Use for feature section backgrounds or promotional areas."
+      }
+    }
+  },
+  "testing": {
+    "attributes": "All interactive and key informational elements MUST include 'data-testid' attribute (kebab-case, role-based)."
+  },
+  "instructions_to_main_agent": [
+    "Install and setup @phosphor-icons/react for icons.",
+    "Implement Shadcn/UI for foundational components (Tabs, Tables, Dialogs, Select) but override soft styles with sharp, tactical 1px borders.",
+    "Apply Archetype 2: The Performance Pro theme globally.",
+    "Do NOT guess image URLs. Use the provided ones strictly.",
+    "Enforce 'data-testid' on all actionable items.",
+    "Implement a dashboard 'Control Room' feel using the CSS grid specifications.",
+    "Ensure high contrast on all numerical data (pure white text on dark background)."
+  ]
+}
