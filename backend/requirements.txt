@@ -62,6 +62,7 @@ motor==3.3.1
 multidict==6.7.1
 mypy==1.20.0
 mypy_extensions==1.1.0
+nhl-api-py==3.2.3
 nhlpy==0.3.0
 numpy==2.4.4
 oauthlib==3.3.1

@@ -6,7 +6,7 @@ import Navbar from '@/components/layout/Navbar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DataTable } from '@/components/ui/data-table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Trophy, Users, Calendar, Gear, ArrowLeft, Plus, Copy, Check } from '@phosphor-icons/react';
 
 export default function LeagueDetailPage() {
@@ -243,6 +243,7 @@ export default function LeagueDetailPage() {
         <DialogContent className="bg-[#141414] border-white/10">
           <DialogHeader>
             <DialogTitle className="text-white">Join {league.name}</DialogTitle>
+            <DialogDescription className="text-[#A1A1AA]">Enter a team name to join this league</DialogDescription>
           </DialogHeader>
           <div className="py-4">
             {error && (
