@@ -1,80 +1,72 @@
 # Dynasty Dreams - PRD
 
 ## Original Problem Statement
-Build Dynasty Dreams, a robust NHL fantasy sports platform. Features include: multiple league formats (Redraft, Keeper, Dynasty, Best Ball), scoring formats (H2H, Total Points, Rotisserie, Guillotine, All-Play), salary cap/contract management, rookie drafts with custom admin-created drafts, real-time updates via websockets, payment processing (league fees + premium subscriptions), and push notifications. Responsive web design. Mobile app to follow.
+Build Dynasty Dreams, a robust NHL fantasy sports platform with multiple league formats, scoring types, salary cap, drafts, trades, waivers, payments, real-time updates, and responsive design.
 
 ## Architecture
 - **Frontend**: React 19, Tailwind CSS, Radix UI (shadcn), Phosphor Icons, Socket.IO client
-- **Backend**: FastAPI, Motor (async MongoDB), python-socketio, nhlpy (NHL API), Stripe (emergentintegrations)
-- **Database**: MongoDB
-- **NHL Data**: nhlpy library pulling from official NHL Stats API
-- **User's Lovable Frontend**: Vite+React+TypeScript app at github.com/Malhiem/dynasty-dreams (private repo)
-
-## User Personas
-1. **Fantasy Manager** - Creates teams, drafts players, manages rosters
-2. **League Commissioner** - Creates/configures leagues, manages drafts, sets rules
-3. **Admin** - Platform management, user oversight
-
-## Core Requirements (Static)
-- JWT authentication with httpOnly cookies
-- League CRUD with multiple formats and scoring
-- Team management within leagues
-- NHL player database with real stats
-- Draft system (snake, linear, auction, custom)
-- Salary cap/contract management
-- Stripe payments (subscriptions + league fees)
-- WebSocket real-time updates
-- Responsive design
+- **Backend**: FastAPI, Motor (async MongoDB), python-socketio, nhlpy, Stripe (emergentintegrations)
+- **Database**: MongoDB (collections: users, leagues, teams, players, drafts, trades, trade_block, waiver_claims, waiver_budgets, payment_transactions)
+- **User's Lovable Frontend**: Vite+React+TypeScript at github.com/Malhiem/dynasty-dreams
 
 ## What's Been Implemented (April 2026)
 
-### Phase 1: Core Platform
-- User auth (register, login, logout, refresh, forgot/reset password, brute force protection)
-- Admin seeding with configurable credentials
-- League creation with all 5 formats and 5 scoring types
-- Team creation/joining within leagues
-- **NHL Player Data**: 1,038 real players (940 skaters + 98 goalies) from all 32 NHL teams
-- Players page with search, position filter, pagination
-- Standings system
-- Stripe checkout integration (subscriptions + league fees)
-- WebSocket infrastructure (rooms, join/leave, broadcast)
-- Full responsive UI: Landing, Login, Register, Dashboard, Leagues, Create League, League Detail, Players, Drafts
+### Phase 1: Core Platform (Complete)
+- JWT auth with httpOnly cookies, brute force protection, admin seeding
+- League CRUD (5 formats, 5 scoring types), Team management, Standings
+- NHL Player Data: 1,038 real players from all 32 teams (2025-2026 season via nhlpy)
+- Stripe payments (subscriptions + league fees)
+- WebSocket infrastructure
+- Responsive UI: Landing, Login, Register, Dashboard, Leagues, Players, Drafts
 
-### Phase 2: Draft Engine Backend (NEW)
-- **Draft CRUD**: Create drafts with full config (type, rounds, timer, snake, criteria)
-- **Draft Lifecycle**: scheduled → active → paused → completed
-- **Draft Board**: 2D grid generation respecting snake draft ordering
-- **Pick Engine**: Validates turn order, prevents duplicate picks, auto-advances
-- **Eligible Players**: Filters out already-drafted players, search/position filter
-- **Draft Chat**: Real-time chat with system messages for picks
-- **Timer Control**: Pause/resume with commissioner-only access
-- **Config Updates**: Live config changes broadcast via WebSocket
-- **WebSocket Events**: draft_started, draft_pick, draft_chat, draft_timer_toggle, draft_config_updated, draft_completed
-- **Commissioner Controls**: Only commissioner can start/pause/configure drafts
-- **Testing**: 65/66 tests passed (98.5%)
+### Phase 2: Draft Engine (Complete)
+- 11 API endpoints: create, list, get, start, board, eligible-players, pick, pause, chat, chat-history, config
+- Snake draft ordering, turn validation, duplicate pick prevention
+- Real-time WebSocket broadcasting for all draft events
+- Testing: 65/66 passed
 
-### Draft API Endpoints
-- `POST /api/drafts` - Create draft
-- `GET /api/drafts` - List drafts (filter by league_id)
-- `GET /api/drafts/{id}` - Get draft details
-- `POST /api/drafts/{id}/start` - Start draft (early_start param)
-- `GET /api/drafts/{id}/board` - Get draft board grid
-- `GET /api/drafts/{id}/eligible-players` - Available players with search/filter
-- `POST /api/drafts/{id}/pick` - Make a pick
-- `POST /api/drafts/{id}/pause` - Toggle timer
-- `POST /api/drafts/{id}/chat` - Send chat
-- `GET /api/drafts/{id}/chat` - Get chat history
-- `PUT /api/drafts/{id}/config` - Update settings
+### Phase 3: Trade Center (Complete - NEW)
+**Trade Block:**
+- POST /api/trade-block - Add player/pick to trade block
+- GET /api/trade-block - List all trade block items
+- DELETE /api/trade-block/{id} - Remove item (validates ownership)
+- Duplicate prevention
+
+**Trade Proposals:**
+- POST /api/trades - Create proposal with assets offered/requested
+- GET /api/trades - List trades (filter: league_id, status, my_trades)
+- GET /api/trades/{id} - Trade details with full asset info
+- POST /api/trades/{id}/accept - Target team accepts
+- POST /api/trades/{id}/reject - Target team rejects
+- POST /api/trades/{id}/withdraw - Proposer withdraws
+- POST /api/trades/{id}/vote - League members vote (approve/veto, duplicate prevention)
+- 72-hour review period, veto threshold at >50% of league
+- WebSocket: trade_proposed, trade_accepted, trade_vetoed
+
+### Phase 4: Waiver Wire (Complete - NEW)
+**FAAB Bidding:**
+- GET /api/waivers/available - Available players with search/position filter
+- POST /api/waivers/claim - Place FAAB bid (validates budget, prevents duplicates)
+- GET /api/waivers/claims - List claims (filter: league_id, my_claims, status)
+- DELETE /api/waivers/claims/{id} - Cancel pending claim
+- GET /api/waivers/budget - FAAB budget tracking ($100 default, auto-init)
+- GET /api/waivers/order - Waiver priority (inverse standings)
+- GET /api/waivers/history - Processed claim history
+- POST /api/waivers/process - Commissioner processes (highest bid wins, FAAB deducted)
+- WebSocket: waivers_processed
+
+### Testing Summary
+- Phase 1: 27/27 (100%)
+- Phase 2: 38/38 + 27 existing = 65/66 (98.5%)
+- Phase 3+4: 56/56 + 65 existing = 121/122 (99.2%)
 
 ## Prioritized Backlog
 
-### P0 (Critical - Next)
-- Port DraftRoom.tsx from Lovable frontend to CRA frontend (connect to real APIs)
-- Trade center (propose, accept, reject, veto)
-- Waiver wire system
+### P0 (Next)
+- Port Lovable frontend components to CRA (DraftRoom, TradeBlock, Waivers, Transactions)
+- Roster management UI (set lineup, drop players)
 
 ### P1 (High)
-- Roster management UI (set lineup, drop players)
 - Weekly matchup/scoring engine
 - Commissioner tools panel
 - Player detail page with full stats
@@ -82,19 +74,10 @@ Build Dynasty Dreams, a robust NHL fantasy sports platform. Features include: mu
 ### P2 (Medium)
 - Salary cap management UI
 - Auction draft UI
-- Season schedule generation
-- Draft Board page (pick ownership tracking)
+- Draft Board page (pick ownership)
 - Draft Lottery page
 
-### P3 (Low/Future)
-- Multi-sport expansion (NBA, MLB, NFL)
+### P3 (Future)
+- Multi-sport expansion
 - Mobile app (React Native)
-- Social features (chat, forums)
-- Keeper/Dynasty keeper selection UI
-- League history/archives
-
-## Next Tasks
-1. Port DraftRoom.tsx to CRA and wire to backend APIs + WebSocket
-2. Create trade center with proposal/acceptance flow
-3. Add waiver wire system
-4. Build roster management with lineup setting
+- Social features
