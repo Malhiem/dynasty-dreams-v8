@@ -1,9 +1,9 @@
 # Dynasty Dreams - PRD
 
 ## Platform Summary
-NHL Dynasty Fantasy Sports Platform — 9 phases, 65+ API endpoints, 20 web pages, 15 mobile screens, 1,038 real NHL players.
+Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnostic models ready). Web + React Native mobile, real-time draft room, trade center, waiver wire, matchup simulation, salary cap, commissioner tools, shareable invites (link + QR + SendGrid email).
 
-## Implementation (9 Phases, April 2026)
+## Implementation Phases (Apr 2026)
 
 | Phase | Features | Tests |
 |-------|----------|-------|
@@ -16,18 +16,55 @@ NHL Dynasty Fantasy Sports Platform — 9 phases, 65+ API endpoints, 20 web page
 | 7 | Push Notifications, Auction Draft with live bidding | 20/20 |
 | 8 | Dynasty Salary Cap (contracts/AAV/NTC/NMC), Activity Feed, RN scaffold | 22/22 |
 | 9 | League Invite (links+QR+email), Sport-Agnostic Model, 15 RN screens with API | 18/18 |
+| 10 | 5 Demo Leagues Seed + SendGrid Integration (graceful mock fallback) + RN bundle verify | 13/13 |
 
 ## Key Stats
 - **65+ REST API endpoints**
 - **20 web pages** (React/CRA + sidebar layout)
-- **15 mobile screens** (React Native + Expo, all with real API calls)
+- **15 mobile screens** (React Native + Expo, 878 modules bundled successfully)
 - **17 MongoDB collections**
-- **4 sports configured** (NHL active, NFL/NBA/MLB ready)
-- **League invite system** with shareable links, QR codes, email invites
+- **4 sports configured** (NHL active; NFL/NBA/MLB ready)
+- **5 demo leagues seeded** across every fantasy format (H2H, Roto, Dynasty, Keeper, Best Ball)
+- **League invite system**: shareable link + QR code + SendGrid email (falls back to mock when key missing)
 
-## MOCKED: Email invite sending (records stored, actual emails not sent — needs SendGrid/SES)
+## Demo Leagues (Apr 19, 2026)
+| Name | Format | Scoring | Teams | Fee |
+|------|--------|---------|-------|-----|
+| Ice Kings Head-to-Head | redraft | head_to_head | 0/12 | $50 |
+| Stat Chasers Roto | redraft | rotisserie | 0/14 | $25 |
+| Frozen Dynasty | dynasty | head_to_head | 0/16 | $100 |
+| Perennial Keepers | keeper | head_to_head | 0/12 | $75 |
+| Set-and-Forget Best Ball | best_ball | total_points | 0/32 | $20 |
+
+## Current Integrations
+- **NHL API** (`nhlpy`) — active, 1,038 players
+- **SendGrid** — installed; configured with `SENDGRID_API_KEY` + `SENDER_EMAIL` env vars. **Mock fallback** triggers automatically when key is empty/missing
+- **Stripe** — `emergentintegrations` SDK; test key `sk_test_emergent` configured
+
+## MOCKED (Still)
+- **SendGrid email dispatch** → mock path (status="mocked") when `SENDGRID_API_KEY` is empty. Add the key to `/app/backend/.env` to enable real delivery.
 
 ## Backlog
-- P0: NFL player data seeding (data source needed)
-- P1: Trade value analyzer, Player projections
-- P2: EAS Build for iOS/Android distribution
+- **P0**: NFL player data ingestion script (sport-agnostic model ready)
+- **P1**: Stripe full checkout flow for league entry fees (basic shells exist)
+- **P1**: Trade value analyzer, player projections
+- **P1**: Add real SendGrid key + verify sender domain for delivery
+- **P2**: Refactor `server.py` (3180 lines) → modular FastAPI routers (auth, leagues, drafts, trades, players, payments)
+- **P2**: Compound unique index on `league_invites(league_id, email)`
+- **P2**: Switch `EmailInviteRequest.emails` to `list[EmailStr]`
+- **P2**: EAS Build for iOS/Android distribution
+
+## Architecture
+```
+/app/
+├── backend/
+│   ├── server.py              # FastAPI + WebSocket hub (3180 lines — refactor pending)
+│   ├── draft_engine.py        # Snake + Auction draft
+│   ├── trade_waiver_engine.py # Trades, waivers, FAAB
+│   ├── seed_nhl_data.py       # NHL player ingestion
+│   ├── seed_demo_leagues.py   # NEW: 5-format demo league seeder
+│   └── tests/                 # pytest regression suite
+├── frontend/                  # React (CRA) + Tailwind + shadcn/ui
+├── mobile/                    # React Native + Expo (app.json, jsEngine=jsc for bundling)
+└── memory/                    # PRD, test_credentials
+```
