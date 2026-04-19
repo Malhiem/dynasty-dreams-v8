@@ -1,0 +1,110 @@
+{
+  "timestamp": "2026-04-13T03:44:22.640967",
+  "total_tests": 17,
+  "passed_tests": 16,
+  "success_rate": 0.9411764705882353,
+  "results": [
+    {
+      "test": "GET /api/",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "GET /api/health",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "POST /api/auth/register",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "Registration returns user data",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "POST /api/auth/login (admin)",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "Login returns user data",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "GET /api/auth/me (without auth)",
+      "success": false,
+      "details": "Expected 401, got: {'id': '69dc63e232b1b7aac227c0a3', 'email': 'admin@dynastydreams.com', 'name': 'Admin', 'role': 'admin', 'created_at': '2026-04-13T03:32:50.023000'}",
+      "response_data": null
+    },
+    {
+      "test": "POST /api/auth/logout",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "POST /api/auth/forgot-password",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "GET /api/leagues",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "POST /api/leagues (without real auth)",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "GET /api/teams",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "GET /api/players",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "GET /api/players?search=test",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "GET /api/players?page=1&limit=10",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "POST /api/drafts (without real auth)",
+      "success": true,
+      "details": "",
+      "response_data": null
+    },
+    {
+      "test": "POST /api/payments/checkout (without real auth)",
+      "success": true,
+      "details": "",
+      "response_data": null
+    }
+  ]
+}
