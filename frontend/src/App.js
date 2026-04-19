@@ -27,6 +27,8 @@ import PlayerDetailPage from "@/pages/PlayerDetailPage";
 import SalaryCapPage from "@/pages/SalaryCapPage";
 import ActivityFeedPage from "@/pages/ActivityFeedPage";
 import JoinLeaguePage from "@/pages/JoinLeaguePage";
+import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
+import PaymentCancelPage from "@/pages/PaymentCancelPage";
 
 function App() {
   return (
@@ -61,6 +63,8 @@ function App() {
           <Route path="/standings" element={<ProtectedRoute><StandingsPage /></ProtectedRoute>} />
           <Route path="/analytics" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/draft-board" element={<ProtectedRoute><DraftsPage /></ProtectedRoute>} />
+          <Route path="/payment/success" element={<ProtectedRoute><PaymentSuccessPage /></ProtectedRoute>} />
+          <Route path="/payment/cancel" element={<ProtectedRoute><PaymentCancelPage /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

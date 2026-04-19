@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Settings, Shield, Users, Calendar, DollarSign, Gavel, Play, Trash2, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
+import { Settings, Shield, Users, Calendar, DollarSign, Gavel, Play, Trash2, AlertTriangle, CheckCircle2, Clock, Sparkles, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -27,6 +27,8 @@ export default function CommissionerPage() {
   const [generating, setGenerating] = useState(false);
   const [simulating, setSimulating] = useState(false);
   const [confirmAction, setConfirmAction] = useState(null);
+  const [premium, setPremium] = useState(null);
+  const [upgrading, setUpgrading] = useState(false);
 
   useEffect(() => {
     const init = async () => {
@@ -47,20 +49,38 @@ export default function CommissionerPage() {
     if (!selectedLeague) return;
     const fetch = async () => {
       try {
-        const [teamsRes, claimsRes, tradesRes, weekRes] = await Promise.all([
+        const [teamsRes, claimsRes, tradesRes, weekRes, premiumRes] = await Promise.all([
           api.get(`/teams?league_id=${selectedLeague.id}`),
           api.get(`/waivers/claims?league_id=${selectedLeague.id}&status=pending`),
           api.get(`/trades?league_id=${selectedLeague.id}&status=pending`),
           api.get(`/matchups/${selectedLeague.id}/current-week`).catch(() => ({ data: { week: 1, matchups: [] } })),
+          api.get(`/leagues/${selectedLeague.id}/premium`).catch(() => ({ data: null })),
         ]);
         setTeams(teamsRes.data);
         setPendingClaims(claimsRes.data);
         setPendingTrades(tradesRes.data);
         setMatchupInfo(weekRes.data);
+        setPremium(premiumRes.data);
       } catch (e) { console.error(e); }
     };
     fetch();
   }, [selectedLeague]);
+
+  const handleUpgradePremium = async () => {
+    if (!selectedLeague) return;
+    setUpgrading(true);
+    try {
+      const { data } = await api.post(`/payments/create`, {
+        package_type: "league_premium",
+        league_id: selectedLeague.id,
+        origin_url: window.location.origin,
+      });
+      if (data?.url) window.location.href = data.url;
+    } catch (e) {
+      alert(formatApiError(e));
+      setUpgrading(false);
+    }
+  };
 
   const handleProcessWaivers = async () => {
     if (!selectedLeague) return;
@@ -201,6 +221,7 @@ export default function CommissionerPage() {
             <TabsTrigger value="waivers">Waivers ({pendingClaims.length})</TabsTrigger>
             <TabsTrigger value="trades">Trades ({pendingTrades.length})</TabsTrigger>
             <TabsTrigger value="teams">Teams ({teams.length})</TabsTrigger>
+            <TabsTrigger value="premium" data-testid="premium-tab-trigger">Premium</TabsTrigger>
           </TabsList>
 
           {/* Season Management */}
@@ -365,6 +386,90 @@ export default function CommissionerPage() {
                     ))}
                   </TableBody>
                 </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="premium" className="space-y-4 mt-4">
+            <Card data-testid="premium-tab-card">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-[#00D2FF]" />
+                  League Premium
+                  {premium?.premium && (
+                    <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/40 ml-2">
+                      ACTIVE
+                    </Badge>
+                  )}
+                </CardTitle>
+                <CardDescription>
+                  Unlock advanced commissioner tools for this league with a one-time payment.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                {!premium ? (
+                  <div className="text-sm text-[#A1A1AA]">Loading premium status…</div>
+                ) : (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {(premium.features || []).map((f) => {
+                        const unlocked = (premium.unlocked_features || []).includes(f.id);
+                        return (
+                          <div
+                            key={f.id}
+                            data-testid={`premium-feature-${f.id}`}
+                            className={cn(
+                              "p-3 rounded-lg border flex items-start gap-3",
+                              unlocked
+                                ? "border-emerald-500/40 bg-emerald-500/5"
+                                : "border-white/10 bg-white/5"
+                            )}
+                          >
+                            <CheckCircle2
+                              size={18}
+                              className={unlocked ? "text-emerald-400 mt-0.5" : "text-[#52525B] mt-0.5"}
+                            />
+                            <div>
+                              <div className="text-white text-sm font-semibold">{f.name}</div>
+                              <div className="text-[#A1A1AA] text-xs">{f.description}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {premium.premium ? (
+                      <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-sm text-emerald-300">
+                        Premium active for <strong>{selectedLeague?.name}</strong>. All features
+                        unlocked.
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-4 flex-wrap pt-2 border-t border-white/5">
+                        <div>
+                          <div className="text-2xl font-bold text-white">
+                            ${premium.price_usd?.toFixed(2)}
+                            <span className="text-[#A1A1AA] text-sm font-normal"> one-time</span>
+                          </div>
+                          <div className="text-[#A1A1AA] text-xs">
+                            Unlocks every premium feature for {selectedLeague?.name}
+                          </div>
+                        </div>
+                        <Button
+                          data-testid="upgrade-premium-btn"
+                          onClick={handleUpgradePremium}
+                          disabled={upgrading}
+                          className="bg-[#00D2FF] text-black hover:bg-[#33DBFF]"
+                        >
+                          {upgrading ? (
+                            <><Loader2 size={16} className="mr-2 animate-spin" /> Redirecting…</>
+                          ) : (
+                            <>Upgrade to Premium</>
+                          )}
+                        </Button>
+                      </div>
+                    )}
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

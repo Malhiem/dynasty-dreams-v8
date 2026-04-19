@@ -6,6 +6,7 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { StatCard } from '@/components/ui/stat-card';
 import { DataTable } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
+import RecommendedForYou from '@/components/RecommendedForYou';
 import { Trophy, Users, Calendar, Rocket, Plus, ArrowRight } from '@phosphor-icons/react';
 
 export default function DashboardPage() {
@@ -82,6 +83,9 @@ export default function DashboardPage() {
             </Button>
           </Link>
         </div>
+
+        {/* Personalized Recommendation Card */}
+        <RecommendedForYou />
 
         {/* My Leagues Table */}
         <div className="mb-8">

@@ -245,8 +245,19 @@ class PaymentCreate(BaseModel):
 PAYMENT_PACKAGES = {
     "premium_monthly": {"amount": 9.99, "name": "Premium Monthly"},
     "premium_yearly": {"amount": 79.99, "name": "Premium Yearly"},
-    "league_fee": {"amount": 0.0, "name": "League Entry Fee"}  # Dynamic based on league
+    "league_fee": {"amount": 0.0, "name": "League Entry Fee"},  # Dynamic based on league
+    "league_premium": {"amount": 29.99, "name": "League Premium Unlock"}  # One-time per league
 }
+
+# Premium features unlocked by league_premium package
+LEAGUE_PREMIUM_FEATURES = [
+    {"id": "salary_cap", "name": "Dynasty Salary Cap", "description": "Full AAV contracts, NTC/NMC clauses, cap tracking"},
+    {"id": "contracts", "name": "Multi-Year Contracts", "description": "Issue 1–8 year deals with escalators and bonuses"},
+    {"id": "draft_scheduling", "name": "Advanced Draft Scheduling", "description": "Auto-schedule snake/auction/rookie drafts with reminders"},
+    {"id": "minor_leagues", "name": "Minor League / Farm System", "description": "Taxi squad + prospect development slots"},
+    {"id": "custom_scoring", "name": "Custom Scoring Profiles", "description": "Build your own point values per stat"},
+    {"id": "activity_webhooks", "name": "Activity Webhooks", "description": "Push every trade/waiver to Discord, Slack, or a custom URL"},
+]
 
 # Create FastAPI app
 fastapi_app = FastAPI(title="Dynasty Dreams API", version="1.0.0")
@@ -746,6 +757,130 @@ async def send_email_invites(league_id: str, input: EmailInviteRequest, request:
         "mocked": mocked_count,
         "errors": error_count,
         "results": results,
+    }
+
+
+# ─── League Premium (Stripe) ─────────────────────────────────
+
+@api_router.get("/leagues/{league_id}/premium")
+async def get_league_premium(league_id: str, request: Request):
+    """Return premium status + feature list for a league."""
+    await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    return {
+        "league_id": league_id,
+        "premium": bool(league.get("premium", False)),
+        "activated_at": league.get("premium_activated_at").isoformat() if league.get("premium_activated_at") else None,
+        "price_usd": PAYMENT_PACKAGES["league_premium"]["amount"],
+        "features": LEAGUE_PREMIUM_FEATURES,
+        "unlocked_features": league.get("premium_features", []),
+    }
+
+
+# ─── Personalized League Recommendations ─────────────────────
+
+@api_router.get("/recommendations/leagues")
+async def recommend_leagues(
+    request: Request,
+    commitment: str = Query("any", description="casual | serious | hardcore | any"),
+    scoring: str = Query("any", description="head_to_head | rotisserie | total_points | any"),
+    draft_style: str = Query("any", description="snake | auction | any"),
+    limit: int = Query(5, ge=1, le=20),
+):
+    """Personalized league recommendations based on user state + preferences.
+    Returns a ranked list — user's own in-progress leagues first, then open public
+    leagues scored against the three preference dimensions."""
+    user = await get_current_user(request)
+
+    # 1) User's own leagues (continue where you left off)
+    own_team_docs = await db.teams.find({"owner_id": user["_id"]}).to_list(200)
+    own_league_ids = list({t["league_id"] for t in own_team_docs})
+    own_leagues = []
+    if own_league_ids:
+        cursor = db.leagues.find({"_id": {"$in": [ObjectId(lid) for lid in own_league_ids]}})
+        own_leagues = await cursor.to_list(50)
+
+    # 2) Candidate open leagues (not private, room available)
+    cursor = db.leagues.find({
+        "is_private": {"$ne": True},
+        "$expr": {"$lt": ["$current_teams", "$max_teams"]},
+        "_id": {"$nin": [l["_id"] for l in own_leagues]},
+    })
+    candidates = await cursor.to_list(200)
+
+    # Commitment buckets (map to format)
+    commitment_format_map = {
+        "casual":   ["redraft", "best_ball"],
+        "serious":  ["keeper"],
+        "hardcore": ["dynasty"],
+    }
+
+    def score(lg: dict) -> int:
+        s = 0
+        fmt = lg.get("format", "")
+        sc = lg.get("scoring_format", "")
+        dr = lg.get("draft_type", "")
+
+        if commitment in commitment_format_map and fmt in commitment_format_map[commitment]:
+            s += 40
+        elif commitment == "any":
+            s += 10
+
+        if scoring != "any" and sc == scoring:
+            s += 30
+        elif scoring == "any":
+            s += 10
+
+        if draft_style != "any" and dr == draft_style:
+            s += 20
+        elif draft_style == "any":
+            s += 5
+
+        # Bonus: room to join
+        fill = (lg.get("current_teams", 0) / max(1, lg.get("max_teams", 1)))
+        if fill < 0.75:
+            s += 10
+        return s
+
+    ranked = sorted(candidates, key=score, reverse=True)[:limit]
+
+    def _format(lg: dict, reason: str, is_own: bool) -> dict:
+        return {
+            "id": str(lg["_id"]),
+            "name": lg["name"],
+            "format": lg.get("format", ""),
+            "scoring_format": lg.get("scoring_format", ""),
+            "draft_type": lg.get("draft_type", ""),
+            "current_teams": lg.get("current_teams", 0),
+            "max_teams": lg.get("max_teams", 0),
+            "entry_fee": lg.get("entry_fee"),
+            "invite_code": lg.get("invite_code"),
+            "premium": bool(lg.get("premium", False)),
+            "is_own": is_own,
+            "match_score": score(lg) if not is_own else 100,
+            "match_reason": reason,
+        }
+
+    results = []
+    for lg in own_leagues[:3]:
+        results.append(_format(lg, "Continue where you left off", is_own=True))
+    for lg in ranked:
+        reason_parts = []
+        if commitment != "any" and lg.get("format") in commitment_format_map.get(commitment, []):
+            reason_parts.append(f"matches your {commitment} commitment")
+        if scoring != "any" and lg.get("scoring_format") == scoring:
+            reason_parts.append(f"{scoring.replace('_',' ')} scoring")
+        if draft_style != "any" and lg.get("draft_type") == draft_style:
+            reason_parts.append(f"{draft_style} draft")
+        reason = ", ".join(reason_parts) or "Great open league with room to join"
+        results.append(_format(lg, reason, is_own=False))
+
+    return {
+        "has_active_leagues": len(own_leagues) > 0,
+        "preferences": {"commitment": commitment, "scoring": scoring, "draft_style": draft_style},
+        "recommendations": results[:limit + 3],
     }
 
 
@@ -2722,6 +2857,7 @@ async def calculate_roto_standings(league_id: str):
     return {"categories": categories, "standings": team_stats}
 
 
+@api_router.post("/payments/create")
 async def create_checkout(input: PaymentCreate, request: Request):
     user = await get_current_user(request)
     
@@ -2737,6 +2873,18 @@ async def create_checkout(input: PaymentCreate, request: Request):
         if not league or not league.get("entry_fee"):
             raise HTTPException(status_code=400, detail="League has no entry fee")
         amount = float(league["entry_fee"])
+
+    # For league premium, require league_id and commissioner ownership
+    if input.package_type == "league_premium":
+        if not input.league_id:
+            raise HTTPException(status_code=400, detail="league_id is required for league_premium")
+        league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+        if not league:
+            raise HTTPException(status_code=404, detail="League not found")
+        if league["commissioner_id"] != user["_id"]:
+            raise HTTPException(status_code=403, detail="Only the commissioner can upgrade this league")
+        if league.get("premium"):
+            raise HTTPException(status_code=400, detail="League is already premium")
     
     api_key = os.environ.get("STRIPE_API_KEY")
     webhook_url = f"{str(request.base_url).rstrip('/')}/api/webhook/stripe"
@@ -2805,6 +2953,22 @@ async def get_payment_status(session_id: str, request: Request):
                 await db.users.update_one(
                     {"_id": ObjectId(transaction["user_id"])},
                     {"$set": {"subscription": transaction["package_type"], "subscription_updated_at": datetime.now(timezone.utc)}}
+                )
+            elif transaction["package_type"] == "league_premium" and transaction.get("league_id"):
+                # Unlock premium features for the league
+                await db.leagues.update_one(
+                    {"_id": ObjectId(transaction["league_id"])},
+                    {"$set": {
+                        "premium": True,
+                        "premium_activated_at": datetime.now(timezone.utc),
+                        "premium_features": [f["id"] for f in LEAGUE_PREMIUM_FEATURES],
+                    }}
+                )
+                await log_activity(
+                    transaction["league_id"],
+                    "league_premium_unlocked",
+                    f"Premium features unlocked for this league",
+                    transaction["user_id"],
                 )
     
     return {
