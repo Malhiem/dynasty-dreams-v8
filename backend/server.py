@@ -151,6 +151,7 @@ class ResetPassword(BaseModel):
 
 class LeagueCreate(BaseModel):
     name: str
+    sport: str = "nhl"
     format: LeagueFormat
     scoring_format: ScoringFormat
     max_teams: int = Field(default=12, ge=4, le=32)
@@ -165,6 +166,7 @@ class LeagueCreate(BaseModel):
 class LeagueResponse(BaseModel):
     id: str
     name: str
+    sport: str = "nhl"
     format: str
     scoring_format: str
     max_teams: int
@@ -179,6 +181,7 @@ class LeagueResponse(BaseModel):
     entry_fee: Optional[float]
     is_private: bool
     status: str
+    invite_code: Optional[str] = None
     created_at: datetime
 
 class TeamCreate(BaseModel):
@@ -415,6 +418,7 @@ async def create_league(input: LeagueCreate, request: Request):
     
     league_doc = {
         "name": input.name,
+        "sport": input.sport,
         "format": input.format.value,
         "scoring_format": input.scoring_format.value,
         "max_teams": input.max_teams,
@@ -428,7 +432,7 @@ async def create_league(input: LeagueCreate, request: Request):
         "keepers_allowed": input.keepers_allowed,
         "entry_fee": input.entry_fee,
         "is_private": input.is_private,
-        "invite_code": secrets.token_urlsafe(8) if input.is_private else None,
+        "invite_code": secrets.token_urlsafe(8),
         "status": "setup",
         "created_at": datetime.now(timezone.utc)
     }
@@ -442,6 +446,7 @@ async def create_league(input: LeagueCreate, request: Request):
     return LeagueResponse(
         id=league_id,
         name=league_doc["name"],
+        sport=league_doc.get("sport", "nhl"),
         format=league_doc["format"],
         scoring_format=league_doc["scoring_format"],
         max_teams=league_doc["max_teams"],
@@ -456,6 +461,7 @@ async def create_league(input: LeagueCreate, request: Request):
         entry_fee=league_doc["entry_fee"],
         is_private=league_doc["is_private"],
         status=league_doc["status"],
+        invite_code=league_doc.get("invite_code"),
         created_at=league_doc["created_at"]
     )
 
@@ -481,6 +487,7 @@ async def get_leagues(request: Request, my_leagues: bool = False):
         LeagueResponse(
             id=str(league["_id"]),
             name=league["name"],
+            sport=league.get("sport", "nhl"),
             format=league["format"],
             scoring_format=league["scoring_format"],
             max_teams=league["max_teams"],
@@ -495,6 +502,7 @@ async def get_leagues(request: Request, my_leagues: bool = False):
             entry_fee=league.get("entry_fee"),
             is_private=league["is_private"],
             status=league["status"],
+            invite_code=league.get("invite_code"),
             created_at=league["created_at"]
         )
         for league in leagues
@@ -509,6 +517,7 @@ async def get_league(league_id: str):
     return LeagueResponse(
         id=str(league["_id"]),
         name=league["name"],
+        sport=league.get("sport", "nhl"),
         format=league["format"],
         scoring_format=league["scoring_format"],
         max_teams=league["max_teams"],
@@ -523,8 +532,167 @@ async def get_league(league_id: str):
         entry_fee=league.get("entry_fee"),
         is_private=league["is_private"],
         status=league["status"],
+        invite_code=league.get("invite_code"),
         created_at=league["created_at"]
     )
+
+# ─── League Invite System ─────────────────────────────────────
+import qrcode
+import io
+import base64
+from fastapi.responses import StreamingResponse
+
+
+class LeagueInviteResponse(BaseModel):
+    invite_code: str
+    invite_url: str
+    qr_code_base64: str
+
+
+class JoinByInviteRequest(BaseModel):
+    invite_code: str
+    team_name: str
+
+
+class EmailInviteRequest(BaseModel):
+    league_id: str
+    emails: list[str]
+
+
+@api_router.get("/leagues/{league_id}/invite")
+async def get_league_invite(league_id: str, request: Request):
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    # Generate invite code if missing
+    invite_code = league.get("invite_code")
+    if not invite_code:
+        invite_code = secrets.token_urlsafe(8)
+        await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$set": {"invite_code": invite_code}})
+
+    frontend_url = os.environ.get("FRONTEND_URL", "https://dynasty-preview.preview.emergentagent.com")
+    invite_url = f"{frontend_url}/join/{invite_code}"
+
+    # Generate QR code
+    qr = qrcode.QRCode(version=1, box_size=8, border=2)
+    qr.add_data(invite_url)
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="#00D2FF", back_color="#0A0A0A")
+    buffer = io.BytesIO()
+    qr_img.save(buffer, format="PNG")
+    qr_base64 = base64.b64encode(buffer.getvalue()).decode()
+
+    return LeagueInviteResponse(
+        invite_code=invite_code,
+        invite_url=invite_url,
+        qr_code_base64=qr_base64
+    )
+
+
+@api_router.get("/leagues/{league_id}/invite/qr")
+async def get_invite_qr_image(league_id: str):
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    invite_code = league.get("invite_code", "")
+    frontend_url = os.environ.get("FRONTEND_URL", "https://dynasty-preview.preview.emergentagent.com")
+    invite_url = f"{frontend_url}/join/{invite_code}"
+
+    qr = qrcode.QRCode(version=1, box_size=10, border=3)
+    qr.add_data(invite_url)
+    qr.make(fit=True)
+    qr_img = qr.make_image(fill_color="#00D2FF", back_color="#0A0A0A")
+    buffer = io.BytesIO()
+    qr_img.save(buffer, format="PNG")
+    buffer.seek(0)
+
+    return StreamingResponse(buffer, media_type="image/png")
+
+
+@api_router.post("/leagues/join-by-invite")
+async def join_league_by_invite(input: JoinByInviteRequest, request: Request):
+    user = await get_current_user(request)
+
+    league = await db.leagues.find_one({"invite_code": input.invite_code})
+    if not league:
+        raise HTTPException(status_code=404, detail="Invalid invite code")
+
+    league_id = str(league["_id"])
+
+    if league.get("current_teams", 0) >= league["max_teams"]:
+        raise HTTPException(status_code=400, detail="League is full")
+
+    existing = await db.teams.find_one({"league_id": league_id, "owner_id": user["_id"]})
+    if existing:
+        raise HTTPException(status_code=400, detail="You already have a team in this league")
+
+    team_doc = {
+        "name": input.team_name,
+        "league_id": league_id,
+        "owner_id": user["_id"],
+        "owner_name": user["name"],
+        "roster": [],
+        "salary_used": 0.0,
+        "wins": 0, "losses": 0, "ties": 0,
+        "points_for": 0.0, "points_against": 0.0,
+        "created_at": datetime.now(timezone.utc)
+    }
+    result = await db.teams.insert_one(team_doc)
+    await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$inc": {"current_teams": 1}})
+
+    await log_activity(league_id, "team_joined", f"{user['name']} joined with team '{input.team_name}'", user["_id"])
+
+    return {"message": f"Joined {league['name']}!", "team_id": str(result.inserted_id), "league_id": league_id, "league_name": league["name"]}
+
+
+@api_router.post("/leagues/{league_id}/invite/email")
+async def send_email_invites(league_id: str, input: EmailInviteRequest, request: Request):
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can send invites")
+
+    invite_code = league.get("invite_code", "")
+    frontend_url = os.environ.get("FRONTEND_URL", "https://dynasty-preview.preview.emergentagent.com")
+    invite_url = f"{frontend_url}/join/{invite_code}"
+
+    # Store invite records (email sending would use SendGrid/SES in production)
+    for email in input.emails:
+        await db.league_invites.update_one(
+            {"league_id": league_id, "email": email.lower()},
+            {"$set": {
+                "league_id": league_id,
+                "league_name": league["name"],
+                "email": email.lower(),
+                "invite_code": invite_code,
+                "invite_url": invite_url,
+                "invited_by": user["_id"],
+                "status": "sent",
+                "sent_at": datetime.now(timezone.utc).isoformat()
+            }},
+            upsert=True
+        )
+
+    logger.info(f"Email invites queued for {len(input.emails)} recipients to {league['name']}")
+    return {"message": f"Invites sent to {len(input.emails)} email(s)", "invite_url": invite_url}
+
+
+# ─── Sport-Agnostic Player Fetch ──────────────────────────────
+
+@api_router.get("/sports")
+async def get_supported_sports():
+    return [
+        {"id": "nhl", "name": "NHL", "full_name": "National Hockey League", "positions": ["C", "LW", "RW", "D", "G"], "active": True, "player_count": await db.players.count_documents({"season": "2025-2026"})},
+        {"id": "nfl", "name": "NFL", "full_name": "National Football League", "positions": ["QB", "RB", "WR", "TE", "K", "DEF"], "active": False, "player_count": 0},
+        {"id": "nba", "name": "NBA", "full_name": "National Basketball Association", "positions": ["PG", "SG", "SF", "PF", "C"], "active": False, "player_count": 0},
+        {"id": "mlb", "name": "MLB", "full_name": "Major League Baseball", "positions": ["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"], "active": False, "player_count": 0}
+    ]
+
 
 # Team Endpoints
 @api_router.post("/teams", response_model=TeamResponse)

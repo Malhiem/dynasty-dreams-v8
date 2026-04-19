@@ -26,6 +26,7 @@ import CommissionerPage from "@/pages/CommissionerPage";
 import PlayerDetailPage from "@/pages/PlayerDetailPage";
 import SalaryCapPage from "@/pages/SalaryCapPage";
 import ActivityFeedPage from "@/pages/ActivityFeedPage";
+import JoinLeaguePage from "@/pages/JoinLeaguePage";
 
 function App() {
   return (
@@ -36,6 +37,7 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/join/:code" element={<JoinLeaguePage />} />
 
           {/* Protected Routes */}
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
