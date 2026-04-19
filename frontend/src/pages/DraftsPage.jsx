@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '@/lib/api';
-import Navbar from '@/components/layout/Navbar';
+import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/ui/data-table';
 import { Calendar, Plus, Clock, Users, Play } from '@phosphor-icons/react';
@@ -36,9 +36,9 @@ export default function DraftsPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A]" data-testid="drafts-page">
-      <Navbar />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <AppLayout>
+    <div data-testid="drafts-page">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div>
@@ -107,7 +107,8 @@ export default function DraftsPage() {
             testId="drafts-table"
           />
         )}
-      </main>
+      </div>
     </div>
+    </AppLayout>
   );
 }

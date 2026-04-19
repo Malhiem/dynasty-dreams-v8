@@ -1972,6 +1972,245 @@ async def stripe_webhook(request: Request):
         logger.error(f"Webhook error: {e}")
         return {"status": "error"}
 
+# ═══════════════════════════════════════════════════════════════
+# Weekly Matchup Simulation Engine
+# ═══════════════════════════════════════════════════════════════
+import random as _random
+import itertools
+
+
+def generate_round_robin(team_ids):
+    """Generate a full round-robin schedule. Returns list of rounds, each a list of (home, away) tuples."""
+    teams = list(team_ids)
+    if len(teams) % 2 == 1:
+        teams.append(None)  # bye
+    n = len(teams)
+    schedule = []
+    for r in range(n - 1):
+        round_matchups = []
+        for i in range(n // 2):
+            home = teams[i]
+            away = teams[n - 1 - i]
+            if home is not None and away is not None:
+                round_matchups.append((home, away))
+        schedule.append(round_matchups)
+        teams.insert(1, teams.pop())
+    return schedule
+
+
+class GenerateScheduleRequest(BaseModel):
+    league_id: str
+    num_weeks: int = Field(default=18, ge=1, le=52)
+
+
+class SimulateWeekRequest(BaseModel):
+    league_id: str
+    week: int
+
+
+@api_router.post("/matchups/generate-schedule")
+async def generate_schedule(input: GenerateScheduleRequest, request: Request):
+    """Commissioner generates the full season schedule."""
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can generate schedule")
+
+    teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
+    if len(teams) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 teams")
+
+    team_ids = [str(t["_id"]) for t in teams]
+    team_map = {str(t["_id"]): t["name"] for t in teams}
+
+    scoring_format = league.get("scoring_format", "head_to_head")
+
+    # Generate round-robin and repeat to fill weeks
+    base_schedule = generate_round_robin(team_ids)
+    full_schedule = []
+    week = 1
+    cycle = itertools.cycle(base_schedule)
+    while week <= input.num_weeks:
+        round_matchups = next(cycle)
+        _random.shuffle(round_matchups)
+        matchups = []
+        for home_id, away_id in round_matchups:
+            matchups.append({
+                "week": week,
+                "home_team_id": home_id,
+                "home_team_name": team_map.get(home_id, ""),
+                "away_team_id": away_id,
+                "away_team_name": team_map.get(away_id, ""),
+                "home_score": 0,
+                "away_score": 0,
+                "status": "scheduled",
+                "winner": None
+            })
+        full_schedule.extend(matchups)
+        week += 1
+
+    # Clear existing and save
+    await db.matchups.delete_many({"league_id": input.league_id})
+    if full_schedule:
+        for m in full_schedule:
+            m["league_id"] = input.league_id
+            m["scoring_format"] = scoring_format
+        await db.matchups.insert_many(full_schedule)
+
+    return {"message": f"Generated {len(full_schedule)} matchups for {input.num_weeks} weeks", "weeks": input.num_weeks}
+
+
+@api_router.get("/matchups/{league_id}")
+async def get_matchups(league_id: str, week: Optional[int] = None):
+    query = {"league_id": league_id}
+    if week:
+        query["week"] = week
+    matchups = await db.matchups.find(query).sort("week", 1).to_list(1000)
+    for m in matchups:
+        m["_id"] = str(m["_id"])
+    return matchups
+
+
+@api_router.get("/matchups/{league_id}/current-week")
+async def get_current_week(league_id: str):
+    # Find the latest unplayed week
+    pipeline = [
+        {"$match": {"league_id": league_id, "status": "scheduled"}},
+        {"$group": {"_id": None, "min_week": {"$min": "$week"}}},
+    ]
+    result = await db.matchups.aggregate(pipeline).to_list(1)
+    current = result[0]["min_week"] if result else 1
+    matchups = await db.matchups.find({"league_id": league_id, "week": current}).to_list(100)
+    for m in matchups:
+        m["_id"] = str(m["_id"])
+    return {"week": current, "matchups": matchups}
+
+
+@api_router.post("/matchups/simulate-week")
+async def simulate_week(input: SimulateWeekRequest, request: Request):
+    """Simulate a week's matchups using roster fantasy points."""
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can simulate")
+
+    matchups = await db.matchups.find({
+        "league_id": input.league_id,
+        "week": input.week,
+        "status": "scheduled"
+    }).to_list(100)
+
+    if not matchups:
+        raise HTTPException(status_code=400, detail="No scheduled matchups for this week")
+
+    config = await db.scoring_configs.find_one({"league_id": input.league_id})
+    scoring_format = league.get("scoring_format", "head_to_head")
+
+    # Calculate each team's score from their roster
+    async def calc_team_score(team_id):
+        team = await db.teams.find_one({"_id": ObjectId(team_id)})
+        if not team:
+            return 0.0
+        roster = team.get("roster", [])
+        total = 0.0
+        for pid in roster:
+            player = await db.players.find_one({"_id": ObjectId(pid)})
+            if player:
+                total += calculate_fantasy_points(player, config)
+        return round(total, 1)
+
+    results = []
+    for m in matchups:
+        home_score = await calc_team_score(m["home_team_id"])
+        away_score = await calc_team_score(m["away_team_id"])
+
+        winner = None
+        if home_score > away_score:
+            winner = m["home_team_id"]
+        elif away_score > home_score:
+            winner = m["away_team_id"]
+
+        await db.matchups.update_one(
+            {"_id": m["_id"]},
+            {"$set": {
+                "home_score": home_score,
+                "away_score": away_score,
+                "winner": winner,
+                "status": "completed",
+                "simulated_at": datetime.now(timezone.utc).isoformat()
+            }}
+        )
+
+        # Update team records
+        if winner == m["home_team_id"]:
+            await db.teams.update_one({"_id": ObjectId(m["home_team_id"])}, {"$inc": {"wins": 1, "points_for": home_score, "points_against": away_score}})
+            await db.teams.update_one({"_id": ObjectId(m["away_team_id"])}, {"$inc": {"losses": 1, "points_for": away_score, "points_against": home_score}})
+        elif winner == m["away_team_id"]:
+            await db.teams.update_one({"_id": ObjectId(m["away_team_id"])}, {"$inc": {"wins": 1, "points_for": away_score, "points_against": home_score}})
+            await db.teams.update_one({"_id": ObjectId(m["home_team_id"])}, {"$inc": {"losses": 1, "points_for": home_score, "points_against": away_score}})
+        else:
+            # Tie
+            await db.teams.update_one({"_id": ObjectId(m["home_team_id"])}, {"$inc": {"ties": 1, "points_for": home_score, "points_against": away_score}})
+            await db.teams.update_one({"_id": ObjectId(m["away_team_id"])}, {"$inc": {"ties": 1, "points_for": away_score, "points_against": home_score}})
+
+        results.append({
+            "home": m["home_team_name"],
+            "away": m["away_team_name"],
+            "home_score": home_score,
+            "away_score": away_score,
+            "winner": m["home_team_name"] if winner == m["home_team_id"] else m["away_team_name"] if winner else "Tie"
+        })
+
+    # For All-Play: every team plays every other team (calculated separately)
+    if scoring_format == "all_play":
+        all_teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
+        scores = {}
+        for t in all_teams:
+            scores[str(t["_id"])] = await calc_team_score(str(t["_id"]))
+
+        for team_id, score in scores.items():
+            ap_wins = sum(1 for oid, oscore in scores.items() if oid != team_id and score > oscore)
+            ap_losses = sum(1 for oid, oscore in scores.items() if oid != team_id and score < oscore)
+            await db.teams.update_one(
+                {"_id": ObjectId(team_id)},
+                {"$inc": {"wins": ap_wins, "losses": ap_losses}}
+            )
+
+    # For Guillotine: find lowest scorer and mark eliminated
+    if scoring_format == "guillotine":
+        all_teams = await db.teams.find({"league_id": input.league_id, "eliminated": {"$ne": True}}).to_list(100)
+        scores = []
+        for t in all_teams:
+            s = await calc_team_score(str(t["_id"]))
+            scores.append((str(t["_id"]), t["name"], s))
+        if scores:
+            scores.sort(key=lambda x: x[2])
+            eliminated = scores[0]
+            await db.teams.update_one({"_id": ObjectId(eliminated[0])}, {"$set": {"eliminated": True}})
+            results.append({"eliminated": eliminated[1], "score": eliminated[2]})
+
+    await broadcast_to_room(f"league_{input.league_id}", "week_simulated", {
+        "week": input.week,
+        "results": results
+    })
+
+    return {"week": input.week, "results": results, "matchups_simulated": len(matchups)}
+
+
+@api_router.get("/matchups/{league_id}/results")
+async def get_week_results(league_id: str, week: int):
+    matchups = await db.matchups.find({
+        "league_id": league_id,
+        "week": week
+    }).to_list(100)
+    for m in matchups:
+        m["_id"] = str(m["_id"])
+    return matchups
+
 # Standings
 @api_router.get("/leagues/{league_id}/standings")
 async def get_standings(league_id: str):

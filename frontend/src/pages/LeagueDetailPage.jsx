@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import api, { formatApiError } from '@/lib/api';
-import Navbar from '@/components/layout/Navbar';
+import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { DataTable } from '@/components/ui/data-table';
@@ -87,32 +87,30 @@ export default function LeagueDetailPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0A0A0A]">
-        <Navbar />
+      <AppLayout>
         <div className="flex items-center justify-center h-[60vh]">
           <div className="text-[#A1A1AA]">Loading league...</div>
         </div>
-      </div>
+      </AppLayout>
     );
   }
 
   if (!league) {
     return (
-      <div className="min-h-screen bg-[#0A0A0A]">
-        <Navbar />
+      <AppLayout>
         <div className="flex flex-col items-center justify-center h-[60vh]">
           <Trophy size={64} className="text-[#52525B] mb-4" />
           <h2 className="text-xl text-white mb-2">League not found</h2>
           <Link to="/leagues" className="text-[#00D2FF] hover:underline">Back to leagues</Link>
         </div>
-      </div>
+      </AppLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A]" data-testid="league-detail-page">
-      <Navbar />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <AppLayout>
+    <div data-testid="league-detail-page">
+      <div className="max-w-7xl mx-auto">
         <button
           onClick={() => navigate('/leagues')}
           className="flex items-center gap-2 text-[#A1A1AA] hover:text-white mb-6"
@@ -236,7 +234,7 @@ export default function LeagueDetailPage() {
             </Link>
           </div>
         )}
-      </main>
+      </div>
 
       {/* Join League Modal */}
       <Dialog open={joinModalOpen} onOpenChange={setJoinModalOpen}>
@@ -276,5 +274,6 @@ export default function LeagueDetailPage() {
         </DialogContent>
       </Dialog>
     </div>
+    </AppLayout>
   );
 }

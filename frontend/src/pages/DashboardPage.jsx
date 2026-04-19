@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import api from '@/lib/api';
-import Navbar from '@/components/layout/Navbar';
+import { AppLayout } from '@/components/layout/AppLayout';
 import { StatCard } from '@/components/ui/stat-card';
 import { DataTable } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
@@ -48,9 +48,9 @@ export default function DashboardPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A]" data-testid="dashboard-page">
-      <Navbar />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <AppLayout>
+    <div data-testid="dashboard-page">
+      <div className="max-w-7xl mx-auto">
         {/* Welcome Section */}
         <div className="mb-8">
           <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight text-white mb-2">
@@ -110,7 +110,8 @@ export default function DashboardPage() {
             />
           )}
         </div>
-      </main>
+      </div>
     </div>
+    </AppLayout>
   );
 }

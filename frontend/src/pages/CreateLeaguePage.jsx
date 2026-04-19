@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api, { formatApiError } from '@/lib/api';
-import Navbar from '@/components/layout/Navbar';
+import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -73,9 +73,9 @@ export default function CreateLeaguePage() {
   };
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A]" data-testid="create-league-page">
-      <Navbar />
-      <main className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <AppLayout>
+    <div data-testid="create-league-page">
+      <div className="max-w-3xl mx-auto">
         <button
           onClick={() => navigate(-1)}
           className="flex items-center gap-2 text-[#A1A1AA] hover:text-white mb-6"
@@ -295,7 +295,8 @@ export default function CreateLeaguePage() {
             {loading ? 'Creating League...' : 'Create League'}
           </Button>
         </form>
-      </main>
+      </div>
     </div>
+    </AppLayout>
   );
 }

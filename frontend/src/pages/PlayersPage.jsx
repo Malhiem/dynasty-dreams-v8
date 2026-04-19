@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '@/lib/api';
-import Navbar from '@/components/layout/Navbar';
+import { AppLayout } from '@/components/layout/AppLayout';
 import { DataTable } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,9 +67,9 @@ export default function PlayersPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A]" data-testid="players-page">
-      <Navbar />
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <AppLayout>
+    <div data-testid="players-page">
+      <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
           <h1 className="font-heading text-4xl font-bold tracking-tight text-white">NHL PLAYERS</h1>
@@ -151,7 +151,8 @@ export default function PlayersPage() {
             </div>
           </>
         )}
-      </main>
+      </div>
     </div>
+    </AppLayout>
   );
 }
