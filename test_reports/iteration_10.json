@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 10 backend-only testing: validated SendGrid mock fallback, 5 seeded demo leagues, max_teams=32 upper bound, commissioner-only invite authorization, and smoke regressions (auth/players/sports/drafts/trades). 13/13 tests passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/leagues/{league_id}/invite/email", "issue": "Body still requires league_id even though it's in the URL path — redundant. Recommend deprecating body.league_id or validating that body.league_id == path league_id."},
+      {"endpoint": "POST /api/auth/register", "issue": "Pydantic EmailStr rejects .test TLD (RFC reserved). Not a bug, but test data must use real-looking domains (example.com). Worth documenting."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration10_invites_seed.py",
+    "/app/test_reports/pytest/iteration10_results.xml"
+  ],
+  "action_items": [
+    "Optional: add server-side guard in send_email_invites to reject when body.league_id != path league_id (currently silently uses path).",
+    "Optional: document that when SENDGRID_API_KEY is configured, a re-test is needed to verify the 'sent' branch (not covered here — by design per mock fallback)."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 3180 lines — should be split into modular routers (auth, leagues, drafts, trades, players, payments) for maintainability.",
+    "send_email_invites writes provider_response dict directly to Mongo — fine, but error branch stores full exception string which may leak sensitive info if key had partial exposure; consider truncating.",
+    "league_invites collection has no unique index on (league_id, email) — upsert works correctly only because query filter matches; recommend adding a compound unique index to prevent races.",
+    "EmailInviteRequest.emails is list[str] not list[EmailStr] — invalid emails will be silently accepted and stored lowercased; add EmailStr validation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration10_invites_seed.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "skipped"},
+  "test_credentials": "admin@dynastydreams.com / Admin123! (verified working; access_token httpOnly cookie set on login)",
+  "seed_data_creation": "Created ephemeral TEST_-prefixed leagues and invites during runs. league_invites test rows are cleaned up after test. TEST_ leagues remain in DB (not deleted) — safe to leave, they're prefixed for identification.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "5 demo leagues confirmed present with formats: redraft/head_to_head, redraft/rotisserie, dynasty/head_to_head, keeper/head_to_head, best_ball/total_points. One has max_teams=32. Invite endpoint returns {sent, mocked, errors, results[], invite_url, message}; in mock mode all results have status='mocked' and DB docs in league_invites have status='mocked'. Non-commissioner correctly gets 403. NHL has 1038 players. /api/sports returns 4 sports, nhl.active=true. TEST_ leagues accumulate in DB — consider cleanup script.",
+  "rca_of_the_issue": "N/A — all requested features working as designed."
+}

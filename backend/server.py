@@ -25,6 +25,40 @@ from emergentintegrations.payments.stripe.checkout import (
     StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
 )
 
+# SendGrid Integration (graceful fallback if key missing)
+try:
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail as SendGridMail
+    _SENDGRID_AVAILABLE = True
+except Exception:
+    _SENDGRID_AVAILABLE = False
+
+
+def send_sendgrid_email(to_email: str, subject: str, html_content: str) -> dict:
+    """Send an email via SendGrid. Returns dict with status.
+    Gracefully degrades to mock-logged response when SENDGRID_API_KEY is missing
+    or SDK import failed."""
+    api_key = os.environ.get("SENDGRID_API_KEY", "").strip()
+    sender = os.environ.get("SENDER_EMAIL", "no-reply@dynastydreams.app").strip()
+
+    if not api_key or not _SENDGRID_AVAILABLE:
+        return {"status": "mocked", "to": to_email, "reason": "SENDGRID_API_KEY not configured"}
+
+    try:
+        message = SendGridMail(
+            from_email=sender,
+            to_emails=to_email,
+            subject=subject,
+            html_content=html_content,
+        )
+        sg = SendGridAPIClient(api_key)
+        resp = sg.send(message)
+        return {"status": "sent", "to": to_email, "code": resp.status_code}
+    except Exception as e:
+        # Log and degrade gracefully so invite flow never breaks
+        logger.warning(f"SendGrid send failed for {to_email}: {e}")
+        return {"status": "error", "to": to_email, "error": str(e)}
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -661,8 +695,26 @@ async def send_email_invites(league_id: str, input: EmailInviteRequest, request:
     frontend_url = os.environ.get("FRONTEND_URL", "https://dynasty-preview.preview.emergentagent.com")
     invite_url = f"{frontend_url}/join/{invite_code}"
 
-    # Store invite records (email sending would use SendGrid/SES in production)
+    # Build HTML email body
+    subject = f"You're invited to join '{league['name']}' on Dynasty Dreams"
+    html_template = f"""
+    <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 560px; margin: auto; padding: 24px; background: #0b1020; color: #e6edf7; border-radius: 12px;">
+      <h1 style="margin:0 0 8px; font-size: 22px; color:#7cf9d0;">Dynasty Dreams</h1>
+      <p style="margin:0 0 16px; color:#9aa6c2;">Fantasy sports, re-imagined.</p>
+      <h2 style="font-size:18px; margin:12px 0;">{user['name']} invited you to <span style="color:#7cf9d0;">{league['name']}</span></h2>
+      <p style="color:#c9d3ea; line-height:1.5;">Click the button below to accept your invite, create your team, and join the league.</p>
+      <p style="text-align:center; margin: 24px 0;">
+        <a href="{invite_url}" style="background:#7cf9d0; color:#0b1020; padding: 12px 24px; border-radius: 999px; text-decoration:none; font-weight:700;">Join League</a>
+      </p>
+      <p style="color:#7a88a8; font-size:12px;">Or paste this link into your browser:<br/><a href="{invite_url}" style="color:#7cf9d0;">{invite_url}</a></p>
+      <p style="color:#7a88a8; font-size:12px;">Invite code: <code>{invite_code}</code></p>
+    </div>
+    """
+
+    # Store invite records + dispatch via SendGrid (graceful fallback when key missing)
+    results = []
     for email in input.emails:
+        send_result = send_sendgrid_email(email, subject, html_template)
         await db.league_invites.update_one(
             {"league_id": league_id, "email": email.lower()},
             {"$set": {
@@ -672,14 +724,29 @@ async def send_email_invites(league_id: str, input: EmailInviteRequest, request:
                 "invite_code": invite_code,
                 "invite_url": invite_url,
                 "invited_by": user["_id"],
-                "status": "sent",
+                "status": send_result.get("status", "sent"),
+                "provider_response": {k: v for k, v in send_result.items() if k != "to"},
                 "sent_at": datetime.now(timezone.utc).isoformat()
             }},
             upsert=True
         )
+        results.append(send_result)
 
-    logger.info(f"Email invites queued for {len(input.emails)} recipients to {league['name']}")
-    return {"message": f"Invites sent to {len(input.emails)} email(s)", "invite_url": invite_url}
+    sent_count = sum(1 for r in results if r.get("status") == "sent")
+    mocked_count = sum(1 for r in results if r.get("status") == "mocked")
+    error_count = sum(1 for r in results if r.get("status") == "error")
+
+    logger.info(
+        f"Invites for '{league['name']}': sent={sent_count}, mocked={mocked_count}, errors={error_count}"
+    )
+    return {
+        "message": f"Invites processed for {len(input.emails)} email(s)",
+        "invite_url": invite_url,
+        "sent": sent_count,
+        "mocked": mocked_count,
+        "errors": error_count,
+        "results": results,
+    }
 
 
 # ─── Sport-Agnostic Player Fetch ──────────────────────────────
