@@ -1,46 +1,29 @@
 # Dynasty Dreams - PRD
 
-## Original Problem Statement
-Build Dynasty Dreams, a robust NHL fantasy sports platform.
+## Platform Summary
+NHL Dynasty Fantasy Sports Platform - 8 development phases, 60+ API endpoints, 19 web pages, 15 mobile screens.
 
-## Architecture
-- Frontend: React 19 (CRA), Tailwind CSS, Radix UI (shadcn), Socket.IO client
-- Backend: FastAPI, Motor (async MongoDB), python-socketio, nhlpy, Stripe
-- Database: MongoDB (15 collections)
-
-## Implementation Summary (7 Phases, April 2026)
+## Implementation Timeline (April 2026)
 
 | Phase | Features | Tests |
 |-------|----------|-------|
-| 1 | Auth, Leagues, Teams, 1038 NHL Players, Stripe, WebSocket | 27/27 |
-| 2 | Draft Engine (11 endpoints), snake draft, real-time | 65/66 |
-| 3 | Trade Center + Waiver Wire (19 endpoints), FAAB | 121/122 |
-| 4 | Sidebar Layout, DraftRoom/TradeBlock/Waivers/Transactions port, Roster, Scoring | 24/24 |
+| 1 | Auth, Leagues, Teams, 1,038 NHL Players, Stripe, WebSocket | 27/27 |
+| 2 | Draft Engine (snake), 11 endpoints, real-time | 65/66 |
+| 3 | Trade Center + FAAB Waiver Wire, 19 endpoints | 121/122 |
+| 4 | Sidebar Layout Port, DraftRoom/TradeBlock/Waivers/Transactions, Roster, Scoring | 24/24 |
 | 5 | Matchup Simulation Engine, Sidebar Migration | 14/14 |
 | 6 | WebSocket hooks, Commissioner Tools, Player Detail | 26/26 |
 | 7 | Push Notifications, Auction Draft with live bidding | 20/20 |
+| 8 | Dynasty Salary Cap (contracts/AAV/NTC/NMC/RFA/UFA), Activity Feed, React Native scaffold | 22/22 |
 
-## Total: 55+ API Endpoints, 17 Pages, 15 MongoDB Collections
-
-## Key Features Built
-- JWT auth with brute force protection
-- 5 league formats, 5 scoring types
-- 1,038 real NHL players (32 teams, 2025-2026)
-- Snake + Auction draft with real-time WebSocket
-- Trade block, proposals, voting/veto
-- FAAB waiver wire with commissioner processing
-- Roster management (add/drop)
-- Configurable scoring engine (points + rotisserie)
-- Round-robin matchup simulation (H2H, All-Play, Guillotine)
-- Push notifications (trades, waivers, drafts)
-- Commissioner tools panel
-- Player detail pages with full stat breakdowns
-- Stripe payments (subscriptions + league fees)
+## Total Stats
+- **60+ API endpoints**
+- **19 web pages** (CRA + sidebar layout)
+- **15 mobile screens** (React Native + Expo scaffold)
+- **16 MongoDB collections**
+- **1,038 real NHL players** (32 teams, 2025-2026)
 
 ## Backlog
-- Salary cap management UI
-- League chat/activity feed
-- Mobile app (React Native)
-- Multi-sport expansion (NBA, MLB, NFL)
-- Trade value analyzer
-- Player projections engine
+- P0: League invite system (shareable links + QR codes)
+- P1: Multi-sport expansion (NBA, MLB, NFL)
+- P2: Trade value analyzer, Player projections
