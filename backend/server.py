@@ -1027,7 +1027,574 @@ async def update_draft_config(draft_id: str, input: UpdateDraftConfigRequest, re
 
     return {"updated": list(updates.keys())}
 
-# Payment Endpoints
+# ═══════════════════════════════════════════════════════════════
+# Trade Center Endpoints
+# ═══════════════════════════════════════════════════════════════
+from trade_waiver_engine import (
+    TradeBlockItemCreate, TradeBlockItemRemove, TradeProposalCreate,
+    TradeVote, TradeAsset as TradeAssetModel,
+    WaiverClaimCreate, WaiverClaimCancel
+)
+
+# ─── Trade Block ──────────────────────────────────────────────
+
+@api_router.post("/trade-block")
+async def add_to_trade_block(input: TradeBlockItemCreate, request: Request):
+    user = await get_current_user(request)
+
+    item_doc = {
+        "item_type": input.item_type,
+        "looking_for": input.looking_for,
+        "owner_id": user["_id"],
+        "owner_name": user["name"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    if input.item_type == "player" and input.player_id:
+        player = await db.players.find_one({"_id": ObjectId(input.player_id)})
+        if not player:
+            raise HTTPException(status_code=404, detail="Player not found")
+        item_doc["player_id"] = input.player_id
+        item_doc["name"] = player["name"]
+        item_doc["position"] = player["position"]
+        item_doc["nhl_team"] = player.get("team", "")
+        item_doc["goals"] = player.get("goals", 0)
+        item_doc["assists"] = player.get("assists", 0)
+        item_doc["points"] = player.get("points", 0)
+        item_doc["games_played"] = player.get("games_played", 0)
+        item_doc["plus_minus"] = player.get("plus_minus", 0)
+    elif input.item_type == "pick":
+        item_doc["name"] = f"{input.pick_year} {input.pick_round} Round"
+        item_doc["position"] = "Pick"
+        item_doc["pick_year"] = input.pick_year
+        item_doc["pick_round"] = input.pick_round
+
+    # Prevent duplicates
+    existing = await db.trade_block.find_one({
+        "owner_id": user["_id"],
+        "player_id": input.player_id if input.player_id else None,
+        "item_type": input.item_type
+    })
+    if existing:
+        raise HTTPException(status_code=400, detail="Already on trade block")
+
+    result = await db.trade_block.insert_one(item_doc)
+    item_doc["_id"] = str(result.inserted_id)
+    return item_doc
+
+@api_router.get("/trade-block")
+async def get_trade_block(league_id: Optional[str] = None):
+    query = {}
+    items = await db.trade_block.find(query).sort("created_at", -1).to_list(200)
+    for item in items:
+        item["_id"] = str(item["_id"])
+    return items
+
+@api_router.delete("/trade-block/{item_id}")
+async def remove_from_trade_block(item_id: str, request: Request):
+    user = await get_current_user(request)
+    item = await db.trade_block.find_one({"_id": ObjectId(item_id)})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    if item["owner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Not your item")
+    await db.trade_block.delete_one({"_id": ObjectId(item_id)})
+    return {"message": "Removed from trade block"}
+
+# ─── Trade Proposals ──────────────────────────────────────────
+
+@api_router.post("/trades")
+async def create_trade_proposal(input: TradeProposalCreate, request: Request):
+    user = await get_current_user(request)
+
+    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    # Get proposer's team
+    proposer_team = await db.teams.find_one({"league_id": input.league_id, "owner_id": user["_id"]})
+    if not proposer_team:
+        raise HTTPException(status_code=403, detail="You don't have a team in this league")
+
+    target_team = await db.teams.find_one({"_id": ObjectId(input.target_team_id)})
+    if not target_team:
+        raise HTTPException(status_code=404, detail="Target team not found")
+
+    # Build asset details
+    offered_details = []
+    for asset in input.assets_offered:
+        detail = asset.dict()
+        if asset.player_id:
+            player = await db.players.find_one({"_id": ObjectId(asset.player_id)})
+            if player:
+                detail["player_name"] = player["name"]
+                detail["position"] = player["position"]
+                detail["nhl_team"] = player.get("team", "")
+                detail["points"] = player.get("points", 0)
+                detail["goals"] = player.get("goals", 0)
+                detail["assists"] = player.get("assists", 0)
+        offered_details.append(detail)
+
+    requested_details = []
+    for asset in input.assets_requested:
+        detail = asset.dict()
+        if asset.player_id:
+            player = await db.players.find_one({"_id": ObjectId(asset.player_id)})
+            if player:
+                detail["player_name"] = player["name"]
+                detail["position"] = player["position"]
+                detail["nhl_team"] = player.get("team", "")
+                detail["points"] = player.get("points", 0)
+                detail["goals"] = player.get("goals", 0)
+                detail["assists"] = player.get("assists", 0)
+        requested_details.append(detail)
+
+    review_period_hours = 72
+    trade_doc = {
+        "league_id": input.league_id,
+        "proposer_team_id": str(proposer_team["_id"]),
+        "proposer_team_name": proposer_team["name"],
+        "proposer_id": user["_id"],
+        "target_team_id": input.target_team_id,
+        "target_team_name": target_team["name"],
+        "target_owner_id": target_team["owner_id"],
+        "assets_offered": offered_details,
+        "assets_requested": requested_details,
+        "message": input.message,
+        "status": "pending",
+        "votes": {"approve": 0, "veto": 0, "voters": []},
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "processes_at": (datetime.now(timezone.utc) + timedelta(hours=review_period_hours)).isoformat(),
+        "responded_at": None,
+        "processed_at": None
+    }
+
+    result = await db.trades.insert_one(trade_doc)
+    trade_doc["_id"] = str(result.inserted_id)
+
+    # WebSocket notification
+    await broadcast_to_room(f"league_{input.league_id}", "trade_proposed", {
+        "trade_id": str(result.inserted_id),
+        "proposer": proposer_team["name"],
+        "target": target_team["name"]
+    })
+
+    return trade_doc
+
+@api_router.get("/trades")
+async def get_trades(
+    league_id: Optional[str] = None,
+    status: Optional[str] = None,
+    my_trades: bool = False,
+    request: Request = None
+):
+    query = {}
+    if league_id:
+        query["league_id"] = league_id
+    if status:
+        query["status"] = status
+
+    if my_trades:
+        try:
+            user = await get_current_user(request)
+            query["$or"] = [
+                {"proposer_id": user["_id"]},
+                {"target_owner_id": user["_id"]}
+            ]
+        except:
+            pass
+
+    trades = await db.trades.find(query).sort("submitted_at", -1).to_list(200)
+    for t in trades:
+        t["_id"] = str(t["_id"])
+    return trades
+
+@api_router.get("/trades/{trade_id}")
+async def get_trade(trade_id: str):
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    trade["_id"] = str(trade["_id"])
+    return trade
+
+@api_router.post("/trades/{trade_id}/accept")
+async def accept_trade(trade_id: str, request: Request):
+    user = await get_current_user(request)
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if trade["target_owner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only the target team can accept")
+    if trade["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Trade is not pending")
+
+    await db.trades.update_one(
+        {"_id": ObjectId(trade_id)},
+        {"$set": {"status": "accepted", "responded_at": datetime.now(timezone.utc).isoformat()}}
+    )
+
+    await broadcast_to_room(f"league_{trade['league_id']}", "trade_accepted", {
+        "trade_id": trade_id,
+        "proposer": trade["proposer_team_name"],
+        "target": trade["target_team_name"]
+    })
+
+    return {"message": "Trade accepted", "status": "accepted"}
+
+@api_router.post("/trades/{trade_id}/reject")
+async def reject_trade(trade_id: str, request: Request):
+    user = await get_current_user(request)
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if trade["target_owner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only the target team can reject")
+    if trade["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Trade is not pending")
+
+    await db.trades.update_one(
+        {"_id": ObjectId(trade_id)},
+        {"$set": {"status": "rejected", "responded_at": datetime.now(timezone.utc).isoformat()}}
+    )
+
+    return {"message": "Trade rejected", "status": "rejected"}
+
+@api_router.post("/trades/{trade_id}/withdraw")
+async def withdraw_trade(trade_id: str, request: Request):
+    user = await get_current_user(request)
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if trade["proposer_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only the proposer can withdraw")
+    if trade["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Trade is not pending")
+
+    await db.trades.update_one(
+        {"_id": ObjectId(trade_id)},
+        {"$set": {"status": "withdrawn", "responded_at": datetime.now(timezone.utc).isoformat()}}
+    )
+
+    return {"message": "Trade withdrawn", "status": "withdrawn"}
+
+@api_router.post("/trades/{trade_id}/vote")
+async def vote_on_trade(trade_id: str, input: TradeVote, request: Request):
+    user = await get_current_user(request)
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if trade["status"] not in ["pending", "accepted"]:
+        raise HTTPException(status_code=400, detail="Trade is not open for voting")
+
+    # Check if already voted
+    voters = trade.get("votes", {}).get("voters", [])
+    if user["_id"] in voters:
+        raise HTTPException(status_code=400, detail="Already voted on this trade")
+
+    vote_field = "votes.approve" if input.vote == "approve" else "votes.veto"
+    await db.trades.update_one(
+        {"_id": ObjectId(trade_id)},
+        {
+            "$inc": {vote_field: 1},
+            "$push": {"votes.voters": user["_id"]}
+        }
+    )
+
+    # Check veto threshold (>50% of league managers)
+    league = await db.leagues.find_one({"_id": ObjectId(trade["league_id"])})
+    total_teams = league.get("current_teams", 0)
+    veto_threshold = total_teams // 2
+
+    updated_trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if updated_trade["votes"]["veto"] > veto_threshold:
+        await db.trades.update_one(
+            {"_id": ObjectId(trade_id)},
+            {"$set": {"status": "vetoed", "processed_at": datetime.now(timezone.utc).isoformat()}}
+        )
+        await broadcast_to_room(f"league_{trade['league_id']}", "trade_vetoed", {"trade_id": trade_id})
+        return {"message": "Trade vetoed by league vote", "status": "vetoed"}
+
+    return {"message": f"Vote recorded: {input.vote}", "votes": updated_trade["votes"]}
+
+# ═══════════════════════════════════════════════════════════════
+# Waiver Wire Endpoints
+# ═══════════════════════════════════════════════════════════════
+
+@api_router.get("/waivers/available")
+async def get_waiver_players(
+    league_id: Optional[str] = None,
+    search: Optional[str] = None,
+    position: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50
+):
+    """Get players available on waivers (not on any team roster)."""
+    # For now, return players from the database sorted by points
+    query = {}
+    if search:
+        query["$or"] = [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"team": {"$regex": search, "$options": "i"}}
+        ]
+    if position and position != "all":
+        query["position"] = position
+
+    skip = (page - 1) * limit
+    players = await db.players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
+    total = await db.players.count_documents(query)
+
+    result = []
+    for p in players:
+        # Check for active waiver claims
+        active_claim = await db.waiver_claims.find_one({
+            "player_id": str(p["_id"]),
+            "status": "pending"
+        })
+        result.append({
+            "id": str(p["_id"]),
+            "name": p["name"],
+            "position": p["position"],
+            "team": p.get("team", ""),
+            "team_name": p.get("team_name", ""),
+            "points": p.get("points", 0),
+            "goals": p.get("goals", 0),
+            "assists": p.get("assists", 0),
+            "games_played": p.get("games_played", 0),
+            "has_active_claim": active_claim is not None
+        })
+
+    return {"players": result, "total": total, "page": page, "pages": (total + limit - 1) // limit}
+
+@api_router.post("/waivers/claim")
+async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
+    user = await get_current_user(request)
+
+    # Get user's team in this league
+    team = await db.teams.find_one({"league_id": input.league_id, "owner_id": user["_id"]})
+    if not team:
+        raise HTTPException(status_code=403, detail="You don't have a team in this league")
+
+    # Validate player exists
+    player = await db.players.find_one({"_id": ObjectId(input.player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    # Check FAAB budget
+    team_budget = await db.waiver_budgets.find_one({
+        "team_id": str(team["_id"]),
+        "league_id": input.league_id
+    })
+    if not team_budget:
+        # Initialize budget ($100 default)
+        team_budget = {
+            "team_id": str(team["_id"]),
+            "league_id": input.league_id,
+            "total_budget": 100.0,
+            "spent": 0.0,
+            "remaining": 100.0
+        }
+        await db.waiver_budgets.insert_one(team_budget)
+
+    if input.bid_amount > team_budget["remaining"]:
+        raise HTTPException(status_code=400, detail=f"Insufficient FAAB budget. Remaining: ${team_budget['remaining']}")
+
+    # Check for duplicate claim
+    existing = await db.waiver_claims.find_one({
+        "team_id": str(team["_id"]),
+        "player_id": input.player_id,
+        "status": "pending"
+    })
+    if existing:
+        raise HTTPException(status_code=400, detail="You already have a pending claim for this player")
+
+    claim_doc = {
+        "league_id": input.league_id,
+        "team_id": str(team["_id"]),
+        "team_name": team["name"],
+        "owner_id": user["_id"],
+        "player_id": input.player_id,
+        "player_name": player["name"],
+        "player_position": player["position"],
+        "player_team": player.get("team", ""),
+        "bid_amount": input.bid_amount,
+        "drop_player_id": input.drop_player_id,
+        "drop_player_name": None,
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "processes_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    }
+
+    if input.drop_player_id:
+        drop_player = await db.players.find_one({"_id": ObjectId(input.drop_player_id)})
+        if drop_player:
+            claim_doc["drop_player_name"] = drop_player["name"]
+
+    result = await db.waiver_claims.insert_one(claim_doc)
+    claim_doc["_id"] = str(result.inserted_id)
+    return claim_doc
+
+@api_router.get("/waivers/claims")
+async def get_waiver_claims(
+    league_id: Optional[str] = None,
+    my_claims: bool = False,
+    status: Optional[str] = None,
+    request: Request = None
+):
+    query = {}
+    if league_id:
+        query["league_id"] = league_id
+    if status:
+        query["status"] = status
+
+    if my_claims:
+        try:
+            user = await get_current_user(request)
+            query["owner_id"] = user["_id"]
+        except:
+            pass
+
+    claims = await db.waiver_claims.find(query).sort("created_at", -1).to_list(200)
+    for c in claims:
+        c["_id"] = str(c["_id"])
+    return claims
+
+@api_router.delete("/waivers/claims/{claim_id}")
+async def cancel_waiver_claim(claim_id: str, request: Request):
+    user = await get_current_user(request)
+    claim = await db.waiver_claims.find_one({"_id": ObjectId(claim_id)})
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    if claim["owner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Not your claim")
+    if claim["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Claim is not pending")
+
+    await db.waiver_claims.update_one(
+        {"_id": ObjectId(claim_id)},
+        {"$set": {"status": "cancelled"}}
+    )
+    return {"message": "Claim cancelled"}
+
+@api_router.get("/waivers/budget")
+async def get_waiver_budget(league_id: str, request: Request = None):
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"league_id": league_id, "owner_id": user["_id"]})
+    if not team:
+        raise HTTPException(status_code=403, detail="No team in this league")
+
+    budget = await db.waiver_budgets.find_one({
+        "team_id": str(team["_id"]),
+        "league_id": league_id
+    })
+    if not budget:
+        budget = {
+            "team_id": str(team["_id"]),
+            "league_id": league_id,
+            "total_budget": 100.0,
+            "spent": 0.0,
+            "remaining": 100.0
+        }
+        await db.waiver_budgets.insert_one(budget)
+
+    budget["_id"] = str(budget["_id"]) if "_id" in budget else None
+    return budget
+
+@api_router.get("/waivers/order")
+async def get_waiver_order(league_id: str):
+    """Get waiver priority order (inverse of standings)."""
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+    # Sort by worst record first (inverse standings = waiver priority)
+    teams.sort(key=lambda t: (t.get("wins", 0), t.get("points_for", 0)))
+
+    order = []
+    for i, team in enumerate(teams):
+        order.append({
+            "rank": i + 1,
+            "team_id": str(team["_id"]),
+            "team_name": team["name"],
+            "owner_name": team["owner_name"],
+            "wins": team.get("wins", 0),
+            "losses": team.get("losses", 0)
+        })
+    return order
+
+@api_router.get("/waivers/history")
+async def get_waiver_history(league_id: Optional[str] = None, limit: int = 50):
+    query = {"status": {"$in": ["won", "lost", "processed"]}}
+    if league_id:
+        query["league_id"] = league_id
+    claims = await db.waiver_claims.find(query).sort("created_at", -1).to_list(limit)
+    for c in claims:
+        c["_id"] = str(c["_id"])
+    return claims
+
+@api_router.post("/waivers/process")
+async def process_waivers(league_id: str, request: Request):
+    """Commissioner-only: process all pending waiver claims for a league."""
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can process waivers")
+
+    # Get all pending claims grouped by player
+    pending = await db.waiver_claims.find({
+        "league_id": league_id,
+        "status": "pending"
+    }).to_list(1000)
+
+    if not pending:
+        return {"message": "No pending claims to process", "processed": 0}
+
+    # Group by player
+    player_claims = {}
+    for claim in pending:
+        pid = claim["player_id"]
+        if pid not in player_claims:
+            player_claims[pid] = []
+        player_claims[pid].append(claim)
+
+    processed_count = 0
+    results = []
+
+    for player_id, claims in player_claims.items():
+        # Sort by bid amount (highest wins), then by claim time (earlier wins ties)
+        claims.sort(key=lambda c: (-c["bid_amount"], c["created_at"]))
+
+        winner = claims[0]
+        losers = claims[1:]
+
+        # Mark winner
+        await db.waiver_claims.update_one(
+            {"_id": winner["_id"]},
+            {"$set": {"status": "won", "processed_at": datetime.now(timezone.utc).isoformat()}}
+        )
+
+        # Deduct FAAB from winner
+        await db.waiver_budgets.update_one(
+            {"team_id": winner["team_id"], "league_id": league_id},
+            {"$inc": {"spent": winner["bid_amount"], "remaining": -winner["bid_amount"]}}
+        )
+
+        # Mark losers
+        for loser in losers:
+            await db.waiver_claims.update_one(
+                {"_id": loser["_id"]},
+                {"$set": {"status": "lost", "processed_at": datetime.now(timezone.utc).isoformat()}}
+            )
+
+        results.append({
+            "player": winner["player_name"],
+            "winner": winner["team_name"],
+            "bid": winner["bid_amount"]
+        })
+        processed_count += 1
+
+    await broadcast_to_room(f"league_{league_id}", "waivers_processed", {"results": results})
+
+    return {"message": f"Processed {processed_count} waiver claims", "processed": processed_count, "results": results}
+
 @api_router.post("/payments/checkout")
 async def create_checkout(input: PaymentCreate, request: Request):
     user = await get_current_user(request)
