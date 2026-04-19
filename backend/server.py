@@ -1397,6 +1397,245 @@ async def init_auction_budgets(draft_id: str, request: Request):
     return {"message": f"Initialized {len(budgets)} budgets at ${cap}", "budgets": budgets}
 
 
+# ═══════════════════════════════════════════════════════════════
+# Salary Cap & Contracts Engine
+# ═══════════════════════════════════════════════════════════════
+
+class ContractStatus(str, Enum):
+    ACTIVE = "active"
+    INJURED_RESERVE = "ir"
+    BUYOUT = "buyout"
+    EXPIRED = "expired"
+
+
+class PlayerStatus(str, Enum):
+    RFA = "rfa"
+    UFA = "ufa"
+    SIGNED = "signed"
+    ENTRY_LEVEL = "entry_level"
+
+
+class ContractCreate(BaseModel):
+    league_id: str
+    team_id: str
+    player_id: str
+    aav: float = Field(ge=0, description="Average Annual Value")
+    total_value: float = Field(ge=0)
+    signing_bonus: float = Field(default=0, ge=0)
+    years: int = Field(ge=1, le=8)
+    start_year: int = Field(default=2025)
+    no_trade_clause: bool = False
+    no_move_clause: bool = False
+    player_status: str = "signed"
+
+
+class ContractUpdate(BaseModel):
+    aav: Optional[float] = None
+    status: Optional[str] = None
+    no_trade_clause: Optional[bool] = None
+    no_move_clause: Optional[bool] = None
+
+
+@api_router.post("/contracts")
+async def create_contract(input: ContractCreate, request: Request):
+    user = await get_current_user(request)
+
+    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    team = await db.teams.find_one({"_id": ObjectId(input.team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    # Only team owner or commissioner can add contracts
+    is_commissioner = league["commissioner_id"] == user["_id"]
+    if team["owner_id"] != user["_id"] and not is_commissioner:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    player = await db.players.find_one({"_id": ObjectId(input.player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    # Check cap space
+    if league.get("salary_cap_enabled"):
+        cap = league.get("salary_cap", 82500000)
+        current_used = await get_team_cap_used(input.team_id, input.league_id)
+        if current_used + input.aav > cap:
+            raise HTTPException(status_code=400, detail=f"Exceeds salary cap. Used: ${current_used:,.0f}, Cap: ${cap:,.0f}, Contract: ${input.aav:,.0f}")
+
+    contract_doc = {
+        "league_id": input.league_id,
+        "team_id": input.team_id,
+        "team_name": team["name"],
+        "player_id": input.player_id,
+        "player_name": player["name"],
+        "player_position": player["position"],
+        "player_nhl_team": player.get("team", ""),
+        "aav": input.aav,
+        "total_value": input.total_value,
+        "signing_bonus": input.signing_bonus,
+        "years": input.years,
+        "start_year": input.start_year,
+        "end_year": input.start_year + input.years - 1,
+        "free_agency_year": input.start_year + input.years,
+        "no_trade_clause": input.no_trade_clause,
+        "no_move_clause": input.no_move_clause,
+        "player_status": input.player_status,
+        "status": ContractStatus.ACTIVE.value,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    result = await db.contracts.insert_one(contract_doc)
+    contract_doc["_id"] = str(result.inserted_id)
+
+    await log_activity(input.league_id, "contract_signed", f"{team['name']} signs {player['name']} to {input.years}-year, ${input.aav:,.0f} AAV contract", user["_id"])
+
+    return contract_doc
+
+
+async def get_team_cap_used(team_id: str, league_id: str):
+    pipeline = [
+        {"$match": {"team_id": team_id, "league_id": league_id, "status": "active"}},
+        {"$group": {"_id": None, "total": {"$sum": "$aav"}}}
+    ]
+    result = await db.contracts.aggregate(pipeline).to_list(1)
+    return result[0]["total"] if result else 0.0
+
+
+@api_router.get("/contracts")
+async def get_contracts(league_id: str, team_id: Optional[str] = None, status: Optional[str] = None):
+    query = {"league_id": league_id}
+    if team_id:
+        query["team_id"] = team_id
+    if status:
+        query["status"] = status
+    contracts = await db.contracts.find(query).sort("aav", -1).to_list(500)
+    for c in contracts:
+        c["_id"] = str(c["_id"])
+    return contracts
+
+
+@api_router.get("/contracts/{contract_id}")
+async def get_contract(contract_id: str):
+    contract = await db.contracts.find_one({"_id": ObjectId(contract_id)})
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+    contract["_id"] = str(contract["_id"])
+    return contract
+
+
+@api_router.put("/contracts/{contract_id}")
+async def update_contract(contract_id: str, input: ContractUpdate, request: Request):
+    user = await get_current_user(request)
+    contract = await db.contracts.find_one({"_id": ObjectId(contract_id)})
+    if not contract:
+        raise HTTPException(status_code=404, detail="Contract not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(contract["league_id"])})
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can edit contracts")
+
+    updates = {}
+    if input.aav is not None: updates["aav"] = input.aav
+    if input.status is not None: updates["status"] = input.status
+    if input.no_trade_clause is not None: updates["no_trade_clause"] = input.no_trade_clause
+    if input.no_move_clause is not None: updates["no_move_clause"] = input.no_move_clause
+
+    if updates:
+        await db.contracts.update_one({"_id": ObjectId(contract_id)}, {"$set": updates})
+    return {"updated": list(updates.keys())}
+
+
+@api_router.get("/salary-cap/{league_id}")
+async def get_salary_cap_overview(league_id: str):
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    cap = league.get("salary_cap") or 82500000
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+
+    team_caps = []
+    for team in teams:
+        tid = str(team["_id"])
+        used = await get_team_cap_used(tid, league_id)
+        contracts = await db.contracts.count_documents({"team_id": tid, "league_id": league_id, "status": "active"})
+
+        # Count by status
+        rfa = await db.contracts.count_documents({"team_id": tid, "league_id": league_id, "player_status": "rfa"})
+        ufa = await db.contracts.count_documents({"team_id": tid, "league_id": league_id, "player_status": "ufa"})
+
+        team_caps.append({
+            "team_id": tid,
+            "team_name": team["name"],
+            "owner_name": team["owner_name"],
+            "cap_used": round(used, 2),
+            "cap_remaining": round(cap - used, 2),
+            "cap_pct": round((used / cap) * 100, 1) if cap > 0 else 0,
+            "active_contracts": contracts,
+            "rfa_count": rfa,
+            "ufa_count": ufa
+        })
+
+    team_caps.sort(key=lambda t: -t["cap_used"])
+    return {"salary_cap": cap, "teams": team_caps}
+
+
+@api_router.get("/salary-cap/{league_id}/expiring")
+async def get_expiring_contracts(league_id: str, year: int = 2026):
+    contracts = await db.contracts.find({
+        "league_id": league_id,
+        "free_agency_year": year,
+        "status": "active"
+    }).sort("aav", -1).to_list(200)
+    for c in contracts:
+        c["_id"] = str(c["_id"])
+    return contracts
+
+
+# ═══════════════════════════════════════════════════════════════
+# League Activity Feed
+# ═══════════════════════════════════════════════════════════════
+
+async def log_activity(league_id: str, event_type: str, message: str, user_id: str = None, metadata: dict = None):
+    doc = {
+        "league_id": league_id,
+        "event_type": event_type,
+        "message": message,
+        "user_id": user_id,
+        "metadata": metadata or {},
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.activity_feed.insert_one(doc)
+    # Broadcast to league room
+    doc.pop("_id", None)
+    await broadcast_to_room(f"league_{league_id}", "activity_feed", doc)
+
+
+@api_router.get("/activity/{league_id}")
+async def get_activity_feed(league_id: str, event_type: Optional[str] = None, limit: int = 50, page: int = 1):
+    query = {"league_id": league_id}
+    if event_type:
+        query["event_type"] = event_type
+    skip = (page - 1) * limit
+    items = await db.activity_feed.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    total = await db.activity_feed.count_documents(query)
+    for item in items:
+        item["_id"] = str(item["_id"])
+    return {"items": items, "total": total, "page": page, "pages": (total + limit - 1) // limit}
+
+
+@api_router.post("/activity/{league_id}/chat")
+async def post_league_chat(league_id: str, input: DraftChatRequest, request: Request):
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"league_id": league_id, "owner_id": user["_id"]})
+    sender = team["name"] if team else user["name"]
+
+    await log_activity(league_id, "chat", input.text, user["_id"], {"sender": sender})
+    return {"message": "Chat posted"}
+
+
 from trade_waiver_engine import (
     TradeBlockItemCreate, TradeBlockItemRemove, TradeProposalCreate,
     TradeVote, TradeAsset as TradeAssetModel,
@@ -1627,6 +1866,7 @@ async def accept_trade(trade_id: str, request: Request):
     )
 
     return {"message": "Trade accepted", "status": "accepted"}
+    # Note: activity logged via broadcast
 
 @api_router.post("/trades/{trade_id}/reject")
 async def reject_trade(trade_id: str, request: Request):
@@ -2059,6 +2299,8 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
         {"$push": {"roster": input.player_id}}
     )
 
+    await log_activity(team["league_id"], "roster_add", f"{team['name']} adds {player['name']} ({player['position']})", user["_id"])
+
     return {"message": f"Added {player['name']} to roster"}
 
 
@@ -2082,6 +2324,7 @@ async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
 
     player = await db.players.find_one({"_id": ObjectId(input.player_id)})
     name = player["name"] if player else "Unknown"
+    await log_activity(team["league_id"], "roster_drop", f"{team['name']} drops {name}", user["_id"])
     return {"message": f"Dropped {name} from roster"}
 
 

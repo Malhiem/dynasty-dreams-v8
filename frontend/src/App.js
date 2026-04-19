@@ -24,6 +24,8 @@ import RosterPage from "@/pages/RosterPage";
 import StandingsPage from "@/pages/StandingsPage";
 import CommissionerPage from "@/pages/CommissionerPage";
 import PlayerDetailPage from "@/pages/PlayerDetailPage";
+import SalaryCapPage from "@/pages/SalaryCapPage";
+import ActivityFeedPage from "@/pages/ActivityFeedPage";
 
 function App() {
   return (
@@ -52,6 +54,8 @@ function App() {
           <Route path="/scoring" element={<ProtectedRoute><ScoringPage /></ProtectedRoute>} />
           <Route path="/commissioner" element={<ProtectedRoute><CommissionerPage /></ProtectedRoute>} />
           <Route path="/players/:id" element={<ProtectedRoute><PlayerDetailPage /></ProtectedRoute>} />
+          <Route path="/salary-cap" element={<ProtectedRoute><SalaryCapPage /></ProtectedRoute>} />
+          <Route path="/activity" element={<ProtectedRoute><ActivityFeedPage /></ProtectedRoute>} />
           <Route path="/standings" element={<ProtectedRoute><StandingsPage /></ProtectedRoute>} />
           <Route path="/analytics" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/draft-board" element={<ProtectedRoute><DraftsPage /></ProtectedRoute>} />

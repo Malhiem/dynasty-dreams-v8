@@ -26,6 +26,7 @@ const socialItems = [
 
 const managementItems = [
   { title: "Scoring", url: "/scoring", icon: Trophy },
+  { title: "Salary Cap", url: "/salary-cap", icon: DollarSign },
   { title: "Waivers", url: "/waivers", icon: Clock },
   { title: "Commissioner", url: "/commissioner", icon: Shield },
 ];
