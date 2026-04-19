@@ -21,6 +21,8 @@ import TransactionsPage from "@/pages/TransactionsPage";
 import WaiversPage from "@/pages/WaiversPage";
 import RosterPage from "@/pages/RosterPage";
 import StandingsPage from "@/pages/StandingsPage";
+import CommissionerPage from "@/pages/CommissionerPage";
+import PlayerDetailPage from "@/pages/PlayerDetailPage";
 
 function App() {
   return (
@@ -46,6 +48,8 @@ function App() {
           <Route path="/waivers" element={<ProtectedRoute><WaiversPage /></ProtectedRoute>} />
           <Route path="/roster" element={<ProtectedRoute><RosterPage /></ProtectedRoute>} />
           <Route path="/scoring" element={<ProtectedRoute><ScoringPage /></ProtectedRoute>} />
+          <Route path="/commissioner" element={<ProtectedRoute><CommissionerPage /></ProtectedRoute>} />
+          <Route path="/players/:id" element={<ProtectedRoute><PlayerDetailPage /></ProtectedRoute>} />
           <Route path="/standings" element={<ProtectedRoute><StandingsPage /></ProtectedRoute>} />
           <Route path="/analytics" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/draft-board" element={<ProtectedRoute><DraftsPage /></ProtectedRoute>} />

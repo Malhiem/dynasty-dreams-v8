@@ -1,0 +1,375 @@
+import { useState, useEffect } from "react";
+import { AppLayout } from "@/components/layout/AppLayout";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Settings, Shield, Users, Calendar, DollarSign, Gavel, Play, Trash2, AlertTriangle, CheckCircle2, Clock } from "lucide-react";
+import { cn } from "@/lib/utils";
+import api, { formatApiError } from "@/lib/api";
+import { useAuth } from "@/contexts/AuthContext";
+
+export default function CommissionerPage() {
+  const { user } = useAuth();
+  const [leagues, setLeagues] = useState([]);
+  const [selectedLeague, setSelectedLeague] = useState(null);
+  const [teams, setTeams] = useState([]);
+  const [pendingClaims, setPendingClaims] = useState([]);
+  const [pendingTrades, setPendingTrades] = useState([]);
+  const [matchupInfo, setMatchupInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [simulating, setSimulating] = useState(false);
+  const [confirmAction, setConfirmAction] = useState(null);
+
+  useEffect(() => {
+    const init = async () => {
+      try {
+        const { data } = await api.get("/leagues?my_leagues=true");
+        const commissionerLeagues = data.filter(l => l.commissioner_id === user?.id);
+        setLeagues(commissionerLeagues);
+        if (commissionerLeagues.length > 0) {
+          setSelectedLeague(commissionerLeagues[0]);
+        }
+      } catch (e) { console.error(e); }
+      setLoading(false);
+    };
+    init();
+  }, [user]);
+
+  useEffect(() => {
+    if (!selectedLeague) return;
+    const fetch = async () => {
+      try {
+        const [teamsRes, claimsRes, tradesRes, weekRes] = await Promise.all([
+          api.get(`/teams?league_id=${selectedLeague.id}`),
+          api.get(`/waivers/claims?league_id=${selectedLeague.id}&status=pending`),
+          api.get(`/trades?league_id=${selectedLeague.id}&status=pending`),
+          api.get(`/matchups/${selectedLeague.id}/current-week`).catch(() => ({ data: { week: 1, matchups: [] } })),
+        ]);
+        setTeams(teamsRes.data);
+        setPendingClaims(claimsRes.data);
+        setPendingTrades(tradesRes.data);
+        setMatchupInfo(weekRes.data);
+      } catch (e) { console.error(e); }
+    };
+    fetch();
+  }, [selectedLeague]);
+
+  const handleProcessWaivers = async () => {
+    if (!selectedLeague) return;
+    setProcessing(true);
+    try {
+      const { data } = await api.post(`/waivers/process?league_id=${selectedLeague.id}`);
+      alert(`Processed ${data.processed} claims!\n${data.results?.map(r => `${r.player}: Won by ${r.winner} ($${r.bid})`).join("\n") || ""}`);
+      const claimsRes = await api.get(`/waivers/claims?league_id=${selectedLeague.id}&status=pending`);
+      setPendingClaims(claimsRes.data);
+    } catch (e) { alert(formatApiError(e)); }
+    setProcessing(false);
+  };
+
+  const handleGenerateSchedule = async () => {
+    if (!selectedLeague) return;
+    setGenerating(true);
+    try {
+      const { data } = await api.post("/matchups/generate-schedule", { league_id: selectedLeague.id, num_weeks: 18 });
+      alert(data.message);
+      const weekRes = await api.get(`/matchups/${selectedLeague.id}/current-week`);
+      setMatchupInfo(weekRes.data);
+    } catch (e) { alert(formatApiError(e)); }
+    setGenerating(false);
+  };
+
+  const handleSimulateWeek = async () => {
+    if (!selectedLeague || !matchupInfo) return;
+    setSimulating(true);
+    try {
+      const { data } = await api.post("/matchups/simulate-week", { league_id: selectedLeague.id, week: matchupInfo.week });
+      alert(`Week ${matchupInfo.week} simulated!\n${data.results?.map(r => `${r.home} ${r.home_score} - ${r.away_score} ${r.away}`).join("\n") || ""}`);
+      const [teamsRes, weekRes] = await Promise.all([
+        api.get(`/teams?league_id=${selectedLeague.id}`),
+        api.get(`/matchups/${selectedLeague.id}/current-week`),
+      ]);
+      setTeams(teamsRes.data);
+      setMatchupInfo(weekRes.data);
+    } catch (e) { alert(formatApiError(e)); }
+    setSimulating(false);
+  };
+
+  const handleVetoTrade = async (tradeId) => {
+    try {
+      await api.post(`/trades/${tradeId}/vote`, { vote: "veto" });
+      const tradesRes = await api.get(`/trades?league_id=${selectedLeague.id}&status=pending`);
+      setPendingTrades(tradesRes.data);
+    } catch (e) { alert(formatApiError(e)); }
+  };
+
+  if (loading) {
+    return <AppLayout><div className="flex items-center justify-center h-[60vh] text-[#A1A1AA]">Loading...</div></AppLayout>;
+  }
+
+  if (leagues.length === 0) {
+    return (
+      <AppLayout>
+        <div className="text-center py-20">
+          <Shield className="h-16 w-16 text-[#52525B] mx-auto mb-4" />
+          <h2 className="text-xl text-white mb-2">No Commissioner Access</h2>
+          <p className="text-[#A1A1AA]">You are not a commissioner of any league</p>
+        </div>
+      </AppLayout>
+    );
+  }
+
+  return (
+    <AppLayout>
+      <div className="space-y-6" data-testid="commissioner-page">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+              <Shield className="h-6 w-6 text-[#00D2FF]" />
+              Commissioner Tools
+            </h1>
+            <p className="text-[#A1A1AA]">Manage your league settings, matchups, waivers, and trades</p>
+          </div>
+          {leagues.length > 1 && (
+            <Select value={selectedLeague?.id} onValueChange={(v) => setSelectedLeague(leagues.find(l => l.id === v))}>
+              <SelectTrigger className="w-48 bg-[#141414] border-white/10 text-white"><SelectValue /></SelectTrigger>
+              <SelectContent className="bg-[#141414] border-white/10">
+                {leagues.map(l => <SelectItem key={l.id} value={l.id} className="text-white">{l.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {/* Overview Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Card className="border-white/10">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-[#00D2FF]/20 flex items-center justify-center"><Users className="h-5 w-5 text-[#00D2FF]" /></div>
+                <div>
+                  <p className="text-sm text-[#A1A1AA]">Teams</p>
+                  <p className="text-xl font-bold text-white" data-testid="teams-count">{teams.length}/{selectedLeague?.max_teams}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-white/10">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-[#FF9F0A]/20 flex items-center justify-center"><Clock className="h-5 w-5 text-[#FF9F0A]" /></div>
+                <div>
+                  <p className="text-sm text-[#A1A1AA]">Pending Claims</p>
+                  <p className="text-xl font-bold text-white" data-testid="claims-count">{pendingClaims.length}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-white/10">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-[#FF3B30]/20 flex items-center justify-center"><Gavel className="h-5 w-5 text-[#FF3B30]" /></div>
+                <div>
+                  <p className="text-sm text-[#A1A1AA]">Pending Trades</p>
+                  <p className="text-xl font-bold text-white" data-testid="trades-count">{pendingTrades.length}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="border-white/10">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-[#34C759]/20 flex items-center justify-center"><Calendar className="h-5 w-5 text-[#34C759]" /></div>
+                <div>
+                  <p className="text-sm text-[#A1A1AA]">Current Week</p>
+                  <p className="text-xl font-bold text-white">{matchupInfo?.week || "—"}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Tabs defaultValue="season">
+          <TabsList>
+            <TabsTrigger value="season">Season Management</TabsTrigger>
+            <TabsTrigger value="waivers">Waivers ({pendingClaims.length})</TabsTrigger>
+            <TabsTrigger value="trades">Trades ({pendingTrades.length})</TabsTrigger>
+            <TabsTrigger value="teams">Teams ({teams.length})</TabsTrigger>
+          </TabsList>
+
+          {/* Season Management */}
+          <TabsContent value="season" className="space-y-4 mt-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Card className="border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center gap-2"><Calendar className="h-5 w-5 text-[#00D2FF]" />Schedule</CardTitle>
+                  <CardDescription className="text-[#A1A1AA]">Generate or manage the season schedule</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Button className="w-full bg-[#00D2FF] text-black hover:bg-[#33DBFF]" onClick={handleGenerateSchedule} disabled={generating} data-testid="generate-schedule-btn">
+                    <Calendar className="h-4 w-4 mr-2" />{generating ? "Generating..." : "Generate 18-Week Schedule"}
+                  </Button>
+                  <p className="text-xs text-[#A1A1AA]">Creates round-robin matchups for all teams. Warning: replaces existing schedule.</p>
+                </CardContent>
+              </Card>
+
+              <Card className="border-white/10">
+                <CardHeader>
+                  <CardTitle className="text-white flex items-center gap-2"><Play className="h-5 w-5 text-[#34C759]" />Simulation</CardTitle>
+                  <CardDescription className="text-[#A1A1AA]">Simulate the current week's matchups</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Button className="w-full bg-[#34C759] text-black hover:bg-[#34C759]/80" onClick={handleSimulateWeek} disabled={simulating} data-testid="simulate-week-btn">
+                    <Play className="h-4 w-4 mr-2" />{simulating ? "Simulating..." : `Simulate Week ${matchupInfo?.week || 1}`}
+                  </Button>
+                  <p className="text-xs text-[#A1A1AA]">Calculates fantasy points from rosters and determines W/L results.</p>
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* League Info */}
+            <Card className="border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white">League Settings</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div><Label className="text-[#A1A1AA] text-xs">Format</Label><p className="text-white font-medium capitalize">{selectedLeague?.format?.replace('_', ' ')}</p></div>
+                  <div><Label className="text-[#A1A1AA] text-xs">Scoring</Label><p className="text-white font-medium capitalize">{selectedLeague?.scoring_format?.replace('_', ' ')}</p></div>
+                  <div><Label className="text-[#A1A1AA] text-xs">Draft Type</Label><p className="text-white font-medium capitalize">{selectedLeague?.draft_type}</p></div>
+                  <div><Label className="text-[#A1A1AA] text-xs">Roster Spots</Label><p className="text-white font-medium">{selectedLeague?.roster_spots}</p></div>
+                  <div><Label className="text-[#A1A1AA] text-xs">Entry Fee</Label><p className="text-white font-medium">{selectedLeague?.entry_fee ? `$${selectedLeague.entry_fee}` : "Free"}</p></div>
+                  <div><Label className="text-[#A1A1AA] text-xs">Salary Cap</Label><p className="text-white font-medium">{selectedLeague?.salary_cap ? `$${selectedLeague.salary_cap}` : "Disabled"}</p></div>
+                  <div><Label className="text-[#A1A1AA] text-xs">Privacy</Label><p className="text-white font-medium">{selectedLeague?.is_private ? "Private" : "Public"}</p></div>
+                  <div><Label className="text-[#A1A1AA] text-xs">Status</Label><Badge className="mt-1">{selectedLeague?.status}</Badge></div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Waivers */}
+          <TabsContent value="waivers" className="space-y-4 mt-4">
+            <Card className="border-white/10">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-white">Pending Waiver Claims</CardTitle>
+                  {pendingClaims.length > 0 && (
+                    <Button className="bg-[#00D2FF] text-black hover:bg-[#33DBFF]" onClick={handleProcessWaivers} disabled={processing} data-testid="process-waivers-btn">
+                      <Gavel className="h-4 w-4 mr-2" />{processing ? "Processing..." : "Process All Claims"}
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {pendingClaims.length === 0 ? (
+                  <p className="text-[#A1A1AA] text-center py-8">No pending claims</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-white/10">
+                        <TableHead className="text-[#A1A1AA]">Team</TableHead>
+                        <TableHead className="text-[#A1A1AA]">Player</TableHead>
+                        <TableHead className="text-right text-[#A1A1AA]">Bid</TableHead>
+                        <TableHead className="text-[#A1A1AA]">Drop</TableHead>
+                        <TableHead className="text-[#A1A1AA]">Submitted</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pendingClaims.map(claim => (
+                        <TableRow key={claim._id} className="border-white/10">
+                          <TableCell className="text-white font-medium">{claim.team_name}</TableCell>
+                          <TableCell><span className="text-white">{claim.player_name}</span> <Badge variant="outline" className="ml-1 text-xs">{claim.player_position}</Badge></TableCell>
+                          <TableCell className="text-right font-semibold text-[#00D2FF]">${claim.bid_amount}</TableCell>
+                          <TableCell className="text-[#A1A1AA]">{claim.drop_player_name || "—"}</TableCell>
+                          <TableCell className="text-[#A1A1AA] text-sm">{new Date(claim.created_at).toLocaleDateString()}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Trades */}
+          <TabsContent value="trades" className="space-y-4 mt-4">
+            <Card className="border-white/10">
+              <CardHeader><CardTitle className="text-white">Pending Trades</CardTitle></CardHeader>
+              <CardContent>
+                {pendingTrades.length === 0 ? (
+                  <p className="text-[#A1A1AA] text-center py-8">No pending trades</p>
+                ) : pendingTrades.map(trade => (
+                  <div key={trade._id} className="p-4 rounded-lg bg-[#1A1A1A]/30 mb-3">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-[#FF9F0A] border-[#FF9F0A]/30"><Clock className="h-3 w-3 mr-1" />Pending</Badge>
+                        <span className="text-white font-medium">{trade.proposer_team_name} ↔ {trade.target_team_name}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" className="text-[#FF3B30] border-[#FF3B30]/30" onClick={() => handleVetoTrade(trade._id)} data-testid={`veto-${trade._id}`}>
+                          <AlertTriangle className="h-3.5 w-3.5 mr-1" />Veto
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <p className="text-[#A1A1AA] mb-1">{trade.proposer_team_name} sends:</p>
+                        {(trade.assets_offered || []).map((a, i) => <p key={i} className="text-white">{a.player_name || `${a.pick_year} ${a.pick_round}`}</p>)}
+                      </div>
+                      <div>
+                        <p className="text-[#A1A1AA] mb-1">{trade.target_team_name} sends:</p>
+                        {(trade.assets_requested || []).map((a, i) => <p key={i} className="text-white">{a.player_name || `${a.pick_year} ${a.pick_round}`}</p>)}
+                      </div>
+                    </div>
+                    <p className="text-xs text-[#A1A1AA] mt-2">Votes: {trade.votes?.approve || 0} approve / {trade.votes?.veto || 0} veto</p>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Teams */}
+          <TabsContent value="teams" className="mt-4">
+            <Card className="border-white/10">
+              <CardHeader><CardTitle className="text-white">League Teams</CardTitle></CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-white/10">
+                      <TableHead className="text-[#A1A1AA]">Team</TableHead>
+                      <TableHead className="text-[#A1A1AA]">Owner</TableHead>
+                      <TableHead className="text-center text-[#A1A1AA]">W</TableHead>
+                      <TableHead className="text-center text-[#A1A1AA]">L</TableHead>
+                      <TableHead className="text-center text-[#A1A1AA]">T</TableHead>
+                      <TableHead className="text-right text-[#A1A1AA]">PF</TableHead>
+                      <TableHead className="text-right text-[#A1A1AA]">PA</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {teams.map(team => (
+                      <TableRow key={team.id} className="border-white/10">
+                        <TableCell className="text-white font-medium">{team.name}</TableCell>
+                        <TableCell className="text-[#A1A1AA]">{team.owner_name}</TableCell>
+                        <TableCell className="text-center text-white">{team.wins}</TableCell>
+                        <TableCell className="text-center text-white">{team.losses}</TableCell>
+                        <TableCell className="text-center text-white">{team.ties}</TableCell>
+                        <TableCell className="text-right text-white">{team.points_for?.toFixed(1) || 0}</TableCell>
+                        <TableCell className="text-right text-white">{team.points_against?.toFixed(1) || 0}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
+    </AppLayout>
+  );
+}

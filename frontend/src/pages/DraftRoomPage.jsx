@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useParams } from "react-router-dom";
+import { useDraftSocket } from "@/hooks/use-socket";
 
 const positionColors = {
   C: "bg-blue-600/80 text-blue-100 border-blue-500/50",
@@ -107,9 +108,28 @@ export default function DraftRoomPage() {
     const interval = setInterval(async () => {
       await fetchDraft();
       await fetchPlayers();
-    }, 5000);
+    }, 30000); // Fallback polling every 30s (WebSocket handles real-time)
     return () => clearInterval(interval);
   }, [draftId, fetchDraft, fetchPlayers]);
+
+  // WebSocket: real-time draft events
+  const { connected: wsConnected } = useDraftSocket(draftId, {
+    userId: user?.id,
+    onDraftStarted: () => { fetchDraft(); },
+    onDraftPick: (pick) => {
+      fetchDraft();
+      fetchPlayers();
+      setPickTimeLeft(draft?.time_per_pick || 120);
+    },
+    onChatMessage: (msg) => {
+      setChatMessages(prev => [...prev, msg]);
+    },
+    onTimerToggle: (data) => {
+      setTimerPaused(data.paused);
+    },
+    onConfigUpdated: () => { fetchDraft(); },
+    onDraftCompleted: () => { fetchDraft(); },
+  });
 
   // Actions
   const handleStartDraft = async (earlyStart) => {

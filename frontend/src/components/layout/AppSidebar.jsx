@@ -1,7 +1,7 @@
 import {
   Home, Users, MessageSquare, Newspaper, ArrowRightLeft, Trophy, DollarSign,
   Star, Clock, Settings, BarChart3, CreditCard, History, Medal, UserSearch,
-  Layers, LayoutGrid, ClipboardList, Dices, LogOut
+  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -27,7 +27,7 @@ const socialItems = [
 const managementItems = [
   { title: "Scoring", url: "/scoring", icon: Trophy },
   { title: "Waivers", url: "/waivers", icon: Clock },
-  { title: "Analytics", url: "/analytics", icon: BarChart3 },
+  { title: "Commissioner", url: "/commissioner", icon: Shield },
 ];
 
 const draftItems = [
