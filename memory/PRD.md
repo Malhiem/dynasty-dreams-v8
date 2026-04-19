@@ -17,6 +17,7 @@ Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnos
 | 8 | Dynasty Salary Cap (contracts/AAV/NTC/NMC), Activity Feed, RN scaffold | 22/22 |
 | 9 | League Invite (links+QR+email), Sport-Agnostic Model, 15 RN screens with API | 18/18 |
 | 10 | 5 Demo Leagues Seed + SendGrid Integration (graceful mock fallback) + RN bundle verify | 13/13 |
+| 11 | League Premium Stripe Unlock + Personalized Recommendations + Payment pages | 16/16 |
 
 ## Key Stats
 - **65+ REST API endpoints**
@@ -46,10 +47,10 @@ Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnos
 
 ## Backlog
 - **P0**: NFL player data ingestion script (sport-agnostic model ready)
-- **P1**: Stripe full checkout flow for league entry fees (basic shells exist)
+- **P1**: Gate premium-only commissioner actions (draft scheduling, multi-year contracts, taxi squad, custom scoring, webhooks) server-side once league.premium=true
+- **P1**: Real SendGrid key + sender domain verification to flip mock → real delivery
 - **P1**: Trade value analyzer, player projections
-- **P1**: Add real SendGrid key + verify sender domain for delivery
-- **P2**: Refactor `server.py` (3180 lines) → modular FastAPI routers (auth, leagues, drafts, trades, players, payments)
+- **P2**: Refactor `server.py` (3350+ lines) → modular FastAPI routers (auth, leagues, drafts, trades, players, payments, recommendations)
 - **P2**: Compound unique index on `league_invites(league_id, email)`
 - **P2**: Switch `EmailInviteRequest.emails` to `list[EmailStr]`
 - **P2**: EAS Build for iOS/Android distribution

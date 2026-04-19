@@ -766,7 +766,7 @@ async def send_email_invites(league_id: str, input: EmailInviteRequest, request:
 async def get_league_premium(league_id: str, request: Request):
     """Return premium status + feature list for a league."""
     await get_current_user(request)
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
     return {
@@ -844,9 +844,12 @@ async def recommend_leagues(
             s += 10
         return s
 
-    ranked = sorted(candidates, key=score, reverse=True)[:limit]
+    # Score each candidate once and keep alongside the doc for reuse
+    scored = [(score(lg), lg) for lg in candidates]
+    scored.sort(key=lambda t: t[0], reverse=True)
+    ranked = scored[:limit]
 
-    def _format(lg: dict, reason: str, is_own: bool) -> dict:
+    def _format(lg: dict, reason: str, is_own: bool, s: int) -> dict:
         return {
             "id": str(lg["_id"]),
             "name": lg["name"],
@@ -859,14 +862,14 @@ async def recommend_leagues(
             "invite_code": lg.get("invite_code"),
             "premium": bool(lg.get("premium", False)),
             "is_own": is_own,
-            "match_score": score(lg) if not is_own else 100,
+            "match_score": s,
             "match_reason": reason,
         }
 
     results = []
     for lg in own_leagues[:3]:
-        results.append(_format(lg, "Continue where you left off", is_own=True))
-    for lg in ranked:
+        results.append(_format(lg, "Continue where you left off", is_own=True, s=100))
+    for s, lg in ranked:
         reason_parts = []
         if commitment != "any" and lg.get("format") in commitment_format_map.get(commitment, []):
             reason_parts.append(f"matches your {commitment} commitment")
@@ -875,7 +878,7 @@ async def recommend_leagues(
         if draft_style != "any" and lg.get("draft_type") == draft_style:
             reason_parts.append(f"{draft_style} draft")
         reason = ", ".join(reason_parts) or "Great open league with room to join"
-        results.append(_format(lg, reason, is_own=False))
+        results.append(_format(lg, reason, is_own=False, s=s))
 
     return {
         "has_active_leagues": len(own_leagues) > 0,
@@ -2857,6 +2860,14 @@ async def calculate_roto_standings(league_id: str):
     return {"categories": categories, "standings": team_stats}
 
 
+def _safe_object_id(value: str, label: str = "id") -> ObjectId:
+    """Convert a string to ObjectId, raising HTTP 400 on malformed input."""
+    try:
+        return ObjectId(value)
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid {label}: {value}")
+
+
 @api_router.post("/payments/create")
 async def create_checkout(input: PaymentCreate, request: Request):
     user = await get_current_user(request)
@@ -2869,7 +2880,7 @@ async def create_checkout(input: PaymentCreate, request: Request):
     
     # For league fees, get amount from league
     if input.package_type == "league_fee" and input.league_id:
-        league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+        league = await db.leagues.find_one({"_id": _safe_object_id(input.league_id, "league_id")})
         if not league or not league.get("entry_fee"):
             raise HTTPException(status_code=400, detail="League has no entry fee")
         amount = float(league["entry_fee"])
@@ -2878,7 +2889,7 @@ async def create_checkout(input: PaymentCreate, request: Request):
     if input.package_type == "league_premium":
         if not input.league_id:
             raise HTTPException(status_code=400, detail="league_id is required for league_premium")
-        league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+        league = await db.leagues.find_one({"_id": _safe_object_id(input.league_id, "league_id")})
         if not league:
             raise HTTPException(status_code=404, detail="League not found")
         if league["commissioner_id"] != user["_id"]:
@@ -2933,12 +2944,21 @@ async def get_payment_status(session_id: str, request: Request):
     if transaction["user_id"] != user["_id"]:
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    # Check with Stripe
+    # Check with Stripe (gracefully handle upstream errors so clients can keep polling)
     api_key = os.environ.get("STRIPE_API_KEY")
     webhook_url = f"{str(request.base_url).rstrip('/')}/api/webhook/stripe"
     stripe_checkout = StripeCheckout(api_key=api_key, webhook_url=webhook_url)
-    
-    status = await stripe_checkout.get_checkout_status(session_id)
+
+    try:
+        status = await stripe_checkout.get_checkout_status(session_id)
+    except Exception as e:
+        logger.warning(f"Stripe status lookup failed for {session_id}: {e}")
+        return {
+            "status": "unknown",
+            "payment_status": transaction.get("payment_status", "pending"),
+            "amount": float(transaction.get("amount", 0.0)),
+            "currency": transaction.get("currency", "usd"),
+        }
     
     # Update transaction if status changed
     if status.payment_status != transaction["payment_status"]:
