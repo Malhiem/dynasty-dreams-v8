@@ -15,6 +15,7 @@ import LeagueDetailPage from "@/pages/LeagueDetailPage";
 import PlayersPage from "@/pages/PlayersPage";
 import DraftsPage from "@/pages/DraftsPage";
 import DraftRoomPage from "@/pages/DraftRoomPage";
+import AuctionDraftPage from "@/pages/AuctionDraftPage";
 import ScoringPage from "@/pages/ScoringPage";
 import TradeBlockPage from "@/pages/TradeBlockPage";
 import TransactionsPage from "@/pages/TransactionsPage";
@@ -43,6 +44,7 @@ function App() {
           <Route path="/drafts" element={<ProtectedRoute><DraftsPage /></ProtectedRoute>} />
           <Route path="/draft-room" element={<ProtectedRoute><DraftRoomPage /></ProtectedRoute>} />
           <Route path="/draft-room/:id" element={<ProtectedRoute><DraftRoomPage /></ProtectedRoute>} />
+          <Route path="/auction-draft/:id" element={<ProtectedRoute><AuctionDraftPage /></ProtectedRoute>} />
           <Route path="/trade-block" element={<ProtectedRoute><TradeBlockPage /></ProtectedRoute>} />
           <Route path="/transactions" element={<ProtectedRoute><TransactionsPage /></ProtectedRoute>} />
           <Route path="/waivers" element={<ProtectedRoute><WaiversPage /></ProtectedRoute>} />

@@ -242,6 +242,9 @@ async def join_room(sid, data):
         logger.warning(f"join_room called without room_id for {sid}")
         return
     await sio.enter_room(sid, room_id)
+    # Also join personal notification room
+    if user_id:
+        await sio.enter_room(sid, f"user_{user_id}")
     connected_users[sid] = {"room_id": room_id, "user_id": user_id}
     logger.info(f"Client {sid} joined room {room_id}")
     await sio.emit('user_joined', {"user_id": user_id, "room_id": room_id}, room=room_id)
@@ -1028,8 +1031,372 @@ async def update_draft_config(draft_id: str, input: UpdateDraftConfigRequest, re
     return {"updated": list(updates.keys())}
 
 # ═══════════════════════════════════════════════════════════════
-# Trade Center Endpoints
+# Notifications Engine
 # ═══════════════════════════════════════════════════════════════
+
+class NotificationType(str, Enum):
+    TRADE_PROPOSED = "trade_proposed"
+    TRADE_ACCEPTED = "trade_accepted"
+    TRADE_REJECTED = "trade_rejected"
+    TRADE_VETOED = "trade_vetoed"
+    WAIVER_WON = "waiver_won"
+    WAIVER_LOST = "waiver_lost"
+    WAIVERS_PROCESSED = "waivers_processed"
+    DRAFT_STARTED = "draft_started"
+    DRAFT_PICK = "draft_pick"
+    DRAFT_YOUR_TURN = "draft_your_turn"
+    DRAFT_COMPLETED = "draft_completed"
+    WEEK_SIMULATED = "week_simulated"
+    TEAM_JOINED = "team_joined"
+
+
+async def create_notification(user_id: str, notif_type: str, title: str, message: str, league_id: str = None, link: str = None):
+    """Create a notification and broadcast it via WebSocket."""
+    doc = {
+        "user_id": user_id,
+        "type": notif_type,
+        "title": title,
+        "message": message,
+        "league_id": league_id,
+        "link": link,
+        "read": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    result = await db.notifications.insert_one(doc)
+    doc["_id"] = str(result.inserted_id)
+    # Broadcast to user's personal room
+    await sio.emit("notification", doc, room=f"user_{user_id}")
+    return doc
+
+
+async def notify_league(league_id: str, notif_type: str, title: str, message: str, link: str = None, exclude_user: str = None):
+    """Send notification to all team owners in a league."""
+    teams = await db.teams.find({"league_id": league_id}, {"owner_id": 1}).to_list(100)
+    for team in teams:
+        if team["owner_id"] != exclude_user:
+            await create_notification(team["owner_id"], notif_type, title, message, league_id, link)
+
+
+@api_router.get("/notifications")
+async def get_notifications(request: Request, unread_only: bool = False, limit: int = 50):
+    user = await get_current_user(request)
+    query = {"user_id": user["_id"]}
+    if unread_only:
+        query["read"] = False
+    notifs = await db.notifications.find(query).sort("created_at", -1).limit(limit).to_list(limit)
+    for n in notifs:
+        n["_id"] = str(n["_id"])
+    return notifs
+
+
+@api_router.get("/notifications/count")
+async def get_unread_count(request: Request):
+    user = await get_current_user(request)
+    count = await db.notifications.count_documents({"user_id": user["_id"], "read": False})
+    return {"count": count}
+
+
+@api_router.post("/notifications/{notif_id}/read")
+async def mark_notification_read(notif_id: str, request: Request):
+    user = await get_current_user(request)
+    await db.notifications.update_one(
+        {"_id": ObjectId(notif_id), "user_id": user["_id"]},
+        {"$set": {"read": True}}
+    )
+    return {"message": "Marked as read"}
+
+
+@api_router.post("/notifications/read-all")
+async def mark_all_read(request: Request):
+    user = await get_current_user(request)
+    result = await db.notifications.update_many(
+        {"user_id": user["_id"], "read": False},
+        {"$set": {"read": True}}
+    )
+    return {"message": f"Marked {result.modified_count} notifications as read"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Auction Draft Engine
+# ═══════════════════════════════════════════════════════════════
+
+class AuctionNominateRequest(BaseModel):
+    player_id: str
+    opening_bid: float = Field(ge=1)
+
+
+class AuctionBidRequest(BaseModel):
+    amount: float = Field(ge=1)
+
+
+@api_router.post("/drafts/{draft_id}/auction/nominate")
+async def auction_nominate(draft_id: str, input: AuctionNominateRequest, request: Request):
+    """Nominate a player for auction bidding."""
+    user = await get_current_user(request)
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft["status"] != "active":
+        raise HTTPException(status_code=400, detail="Draft is not active")
+    if draft.get("draft_type") != "auction":
+        raise HTTPException(status_code=400, detail="This is not an auction draft")
+
+    # Check no active auction
+    if draft.get("active_auction"):
+        raise HTTPException(status_code=400, detail="An auction is already in progress")
+
+    team = await db.teams.find_one({"league_id": draft["league_id"], "owner_id": user["_id"]})
+    if not team:
+        raise HTTPException(status_code=403, detail="No team in this league")
+
+    # Check budget
+    team_budget = draft.get("auction_budgets", {}).get(str(team["_id"]), draft.get("salary_cap", 200))
+    if input.opening_bid > team_budget:
+        raise HTTPException(status_code=400, detail=f"Insufficient budget (${team_budget} remaining)")
+
+    player = await db.players.find_one({"_id": ObjectId(input.player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    # Check player not already drafted
+    drafted_ids = [p.get("player_id") for p in draft.get("picks", [])]
+    if input.player_id in drafted_ids:
+        raise HTTPException(status_code=400, detail="Player already drafted")
+
+    auction = {
+        "player_id": input.player_id,
+        "player_name": player["name"],
+        "player_position": player["position"],
+        "player_team": player.get("team", ""),
+        "nominator_team_id": str(team["_id"]),
+        "nominator_team_name": team["name"],
+        "current_bid": input.opening_bid,
+        "current_bidder_team_id": str(team["_id"]),
+        "current_bidder_team_name": team["name"],
+        "bid_history": [{
+            "team_id": str(team["_id"]),
+            "team_name": team["name"],
+            "amount": input.opening_bid,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }],
+        "timer_seconds": 15,
+        "started_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    await db.drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {"$set": {"active_auction": auction}}
+    )
+
+    await broadcast_to_room(f"draft_{draft_id}", "auction_nomination", auction)
+
+    # System chat
+    msg = {
+        "id": f"auction-{datetime.now(timezone.utc).timestamp()}",
+        "type": "pick",
+        "sender": "System",
+        "text": f"{team['name']} nominates {player['name']} ({player['position']}) - Opening bid: ${input.opening_bid}",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    await db.drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})
+    await broadcast_to_room(f"draft_{draft_id}", "draft_chat", msg)
+
+    return auction
+
+
+@api_router.post("/drafts/{draft_id}/auction/bid")
+async def auction_bid(draft_id: str, input: AuctionBidRequest, request: Request):
+    """Place a bid on the current auction."""
+    user = await get_current_user(request)
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    auction = draft.get("active_auction")
+    if not auction:
+        raise HTTPException(status_code=400, detail="No active auction")
+
+    team = await db.teams.find_one({"league_id": draft["league_id"], "owner_id": user["_id"]})
+    if not team:
+        raise HTTPException(status_code=403, detail="No team in this league")
+
+    if input.amount <= auction["current_bid"]:
+        raise HTTPException(status_code=400, detail=f"Bid must be higher than ${auction['current_bid']}")
+
+    # Check budget
+    team_id_str = str(team["_id"])
+    team_budget = draft.get("auction_budgets", {}).get(team_id_str, draft.get("salary_cap", 200))
+    if input.amount > team_budget:
+        raise HTTPException(status_code=400, detail=f"Insufficient budget (${team_budget} remaining)")
+
+    bid_entry = {
+        "team_id": team_id_str,
+        "team_name": team["name"],
+        "amount": input.amount,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+    await db.drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {
+            "$set": {
+                "active_auction.current_bid": input.amount,
+                "active_auction.current_bidder_team_id": team_id_str,
+                "active_auction.current_bidder_team_name": team["name"],
+                "active_auction.timer_seconds": 15,
+            },
+            "$push": {"active_auction.bid_history": bid_entry}
+        }
+    )
+
+    bid_data = {
+        "team_id": team_id_str,
+        "team_name": team["name"],
+        "amount": input.amount,
+        "player_name": auction["player_name"],
+        "timer_reset": 15
+    }
+    await broadcast_to_room(f"draft_{draft_id}", "auction_bid", bid_data)
+
+    return bid_data
+
+
+@api_router.post("/drafts/{draft_id}/auction/resolve")
+async def auction_resolve(draft_id: str, request: Request):
+    """Resolve current auction - timer expired, winner gets player."""
+    user = await get_current_user(request)
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can resolve auctions")
+
+    auction = draft.get("active_auction")
+    if not auction:
+        raise HTTPException(status_code=400, detail="No active auction")
+
+    winner_team_id = auction["current_bidder_team_id"]
+    winning_bid = auction["current_bid"]
+    player_id = auction["player_id"]
+
+    # Create the pick
+    pick_doc = {
+        "round": 0,
+        "pick_in_round": len(draft.get("picks", [])) + 1,
+        "overall": len(draft.get("picks", [])) + 1,
+        "team": auction["current_bidder_team_name"],
+        "player_id": player_id,
+        "player": {
+            "name": auction["player_name"],
+            "position": auction["player_position"],
+            "nhlTeam": auction["player_team"],
+        },
+        "auction_price": winning_bid,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+    # Deduct budget
+    budget_key = f"auction_budgets.{winner_team_id}"
+    current_budget = draft.get("auction_budgets", {}).get(winner_team_id, draft.get("salary_cap", 200))
+    new_budget = current_budget - winning_bid
+
+    await db.drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {
+            "$push": {"picks": pick_doc},
+            "$set": {
+                "active_auction": None,
+                budget_key: new_budget
+            }
+        }
+    )
+
+    result = {
+        **pick_doc,
+        "winning_bid": winning_bid,
+        "winner_team": auction["current_bidder_team_name"],
+        "remaining_budget": new_budget
+    }
+    await broadcast_to_room(f"draft_{draft_id}", "auction_resolved", result)
+
+    # System chat
+    msg = {
+        "id": f"resolved-{datetime.now(timezone.utc).timestamp()}",
+        "type": "pick",
+        "sender": "System",
+        "text": f"SOLD! {auction['player_name']} goes to {auction['current_bidder_team_name']} for ${winning_bid}",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    await db.drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})
+    await broadcast_to_room(f"draft_{draft_id}", "draft_chat", msg)
+
+    # Notify all league members
+    await notify_league(
+        draft["league_id"],
+        NotificationType.DRAFT_PICK.value,
+        "Auction Pick",
+        f"{auction['current_bidder_team_name']} wins {auction['player_name']} for ${winning_bid}",
+        link=f"/draft-room/{draft_id}"
+    )
+
+    return result
+
+
+@api_router.get("/drafts/{draft_id}/auction/state")
+async def get_auction_state(draft_id: str):
+    """Get current auction state including active auction and budgets."""
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    teams = await db.teams.find({"league_id": draft["league_id"]}).to_list(100)
+    budgets = []
+    for t in teams:
+        tid = str(t["_id"])
+        budget = draft.get("auction_budgets", {}).get(tid, draft.get("salary_cap", 200))
+        picks_count = sum(1 for p in draft.get("picks", []) if p.get("team") == t["name"])
+        budgets.append({
+            "team_id": tid,
+            "team_name": t["name"],
+            "budget_remaining": budget,
+            "players_won": picks_count
+        })
+
+    return {
+        "active_auction": draft.get("active_auction"),
+        "budgets": budgets,
+        "total_picks": len(draft.get("picks", [])),
+        "draft_type": draft.get("draft_type"),
+        "salary_cap": draft.get("salary_cap", 200)
+    }
+
+
+@api_router.post("/drafts/{draft_id}/auction/init-budgets")
+async def init_auction_budgets(draft_id: str, request: Request):
+    """Initialize auction budgets for all teams (commissioner only)."""
+    user = await get_current_user(request)
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner")
+
+    cap = league.get("salary_cap") or 200
+    teams = await db.teams.find({"league_id": draft["league_id"]}).to_list(100)
+    budgets = {str(t["_id"]): cap for t in teams}
+
+    await db.drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {"$set": {"auction_budgets": budgets, "salary_cap": cap}}
+    )
+
+    return {"message": f"Initialized {len(budgets)} budgets at ${cap}", "budgets": budgets}
+
+
 from trade_waiver_engine import (
     TradeBlockItemCreate, TradeBlockItemRemove, TradeProposalCreate,
     TradeVote, TradeAsset as TradeAssetModel,
@@ -1179,6 +1546,16 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
         "target": target_team["name"]
     })
 
+    # Notify target team owner
+    await create_notification(
+        target_team["owner_id"],
+        NotificationType.TRADE_PROPOSED.value,
+        "New Trade Proposal",
+        f"{proposer_team['name']} wants to trade with you",
+        input.league_id,
+        f"/transactions"
+    )
+
     return trade_doc
 
 @api_router.get("/trades")
@@ -1238,6 +1615,16 @@ async def accept_trade(trade_id: str, request: Request):
         "proposer": trade["proposer_team_name"],
         "target": trade["target_team_name"]
     })
+
+    # Notify proposer
+    await create_notification(
+        trade["proposer_id"],
+        NotificationType.TRADE_ACCEPTED.value,
+        "Trade Accepted!",
+        f"{trade['target_team_name']} accepted your trade proposal",
+        trade["league_id"],
+        f"/transactions"
+    )
 
     return {"message": "Trade accepted", "status": "accepted"}
 

@@ -1,9 +1,10 @@
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
-import { Search, Bell } from "lucide-react";
+import { Search } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NotificationsPanel } from "@/components/NotificationsPanel";
 
 export function AppLayout({ children }) {
   const { user } = useAuth();
@@ -26,10 +27,7 @@ export function AppLayout({ children }) {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Button variant="ghost" size="icon" className="relative text-[#A1A1AA] hover:text-white" data-testid="notifications-btn">
-                <Bell className="h-5 w-5" />
-                <span className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-[#00D2FF] animate-pulse" />
-              </Button>
+              <NotificationsPanel />
               {user && (
                 <div className="flex items-center gap-3 pl-3 border-l border-white/10">
                   <div className="text-right hidden sm:block">
