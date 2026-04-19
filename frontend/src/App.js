@@ -14,6 +14,12 @@ import CreateLeaguePage from "@/pages/CreateLeaguePage";
 import LeagueDetailPage from "@/pages/LeagueDetailPage";
 import PlayersPage from "@/pages/PlayersPage";
 import DraftsPage from "@/pages/DraftsPage";
+import DraftRoomPage from "@/pages/DraftRoomPage";
+import TradeBlockPage from "@/pages/TradeBlockPage";
+import TransactionsPage from "@/pages/TransactionsPage";
+import WaiversPage from "@/pages/WaiversPage";
+import RosterPage from "@/pages/RosterPage";
+import ScoringPage from "@/pages/ScoringPage";
 
 function App() {
   return (
@@ -24,38 +30,24 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
-          
+
           {/* Protected Routes */}
-          <Route path="/dashboard" element={
-            <ProtectedRoute>
-              <DashboardPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/leagues" element={
-            <ProtectedRoute>
-              <LeaguesPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/leagues/create" element={
-            <ProtectedRoute>
-              <CreateLeaguePage />
-            </ProtectedRoute>
-          } />
-          <Route path="/leagues/:id" element={
-            <ProtectedRoute>
-              <LeagueDetailPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/players" element={
-            <ProtectedRoute>
-              <PlayersPage />
-            </ProtectedRoute>
-          } />
-          <Route path="/drafts" element={
-            <ProtectedRoute>
-              <DraftsPage />
-            </ProtectedRoute>
-          } />
+          <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/leagues" element={<ProtectedRoute><LeaguesPage /></ProtectedRoute>} />
+          <Route path="/leagues/create" element={<ProtectedRoute><CreateLeaguePage /></ProtectedRoute>} />
+          <Route path="/leagues/:id" element={<ProtectedRoute><LeagueDetailPage /></ProtectedRoute>} />
+          <Route path="/players" element={<ProtectedRoute><PlayersPage /></ProtectedRoute>} />
+          <Route path="/drafts" element={<ProtectedRoute><DraftsPage /></ProtectedRoute>} />
+          <Route path="/draft-room" element={<ProtectedRoute><DraftRoomPage /></ProtectedRoute>} />
+          <Route path="/draft-room/:id" element={<ProtectedRoute><DraftRoomPage /></ProtectedRoute>} />
+          <Route path="/trade-block" element={<ProtectedRoute><TradeBlockPage /></ProtectedRoute>} />
+          <Route path="/transactions" element={<ProtectedRoute><TransactionsPage /></ProtectedRoute>} />
+          <Route path="/waivers" element={<ProtectedRoute><WaiversPage /></ProtectedRoute>} />
+          <Route path="/roster" element={<ProtectedRoute><RosterPage /></ProtectedRoute>} />
+          <Route path="/scoring" element={<ProtectedRoute><ScoringPage /></ProtectedRoute>} />
+          <Route path="/standings" element={<ProtectedRoute><LeaguesPage /></ProtectedRoute>} />
+          <Route path="/analytics" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="/draft-board" element={<ProtectedRoute><DraftsPage /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

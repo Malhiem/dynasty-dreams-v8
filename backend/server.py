@@ -1595,7 +1595,268 @@ async def process_waivers(league_id: str, request: Request):
 
     return {"message": f"Processed {processed_count} waiver claims", "processed": processed_count, "results": results}
 
-@api_router.post("/payments/checkout")
+# ═══════════════════════════════════════════════════════════════
+# Roster Management Endpoints
+# ═══════════════════════════════════════════════════════════════
+
+@api_router.get("/roster/{team_id}")
+async def get_roster(team_id: str):
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    roster_players = team.get("roster", [])
+    players = []
+    for pid in roster_players:
+        player = await db.players.find_one({"_id": ObjectId(pid)})
+        if player:
+            # Calculate fantasy points
+            config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
+            fpts = calculate_fantasy_points(player, config)
+            players.append({
+                "player_id": str(player["_id"]),
+                "name": player["name"],
+                "position": player["position"],
+                "nhl_team": player.get("team", ""),
+                "team_name": player.get("team_name", ""),
+                "games_played": player.get("games_played", 0),
+                "goals": player.get("goals", 0),
+                "assists": player.get("assists", 0),
+                "points": player.get("points", 0),
+                "plus_minus": player.get("plus_minus", 0),
+                "penalty_minutes": player.get("penalty_minutes", 0),
+                "power_play_goals": player.get("power_play_goals", 0),
+                "power_play_points": player.get("power_play_points", 0),
+                "shots": player.get("shots", 0),
+                "wins": player.get("wins", 0),
+                "save_pct": player.get("save_pct", 0),
+                "goals_against_avg": player.get("goals_against_avg", 0),
+                "shutouts": player.get("shutouts", 0),
+                "fantasy_points": fpts
+            })
+
+    players.sort(key=lambda p: -(p.get("fantasy_points") or 0))
+    return {"team_id": team_id, "team_name": team["name"], "players": players}
+
+
+class RosterAction(BaseModel):
+    player_id: str
+
+
+@api_router.post("/roster/{team_id}/add")
+async def add_to_roster(team_id: str, input: RosterAction, request: Request):
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if team["owner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Not your team")
+
+    # Check roster limit
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    max_roster = league.get("roster_spots", 20)
+    current_roster = team.get("roster", [])
+    if len(current_roster) >= max_roster:
+        raise HTTPException(status_code=400, detail=f"Roster full ({max_roster} players max)")
+
+    # Validate player
+    player = await db.players.find_one({"_id": ObjectId(input.player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if input.player_id in current_roster:
+        raise HTTPException(status_code=400, detail="Player already on roster")
+
+    await db.teams.update_one(
+        {"_id": ObjectId(team_id)},
+        {"$push": {"roster": input.player_id}}
+    )
+
+    return {"message": f"Added {player['name']} to roster"}
+
+
+@api_router.post("/roster/{team_id}/drop")
+async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if team["owner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Not your team")
+
+    current_roster = team.get("roster", [])
+    if input.player_id not in current_roster:
+        raise HTTPException(status_code=400, detail="Player not on roster")
+
+    await db.teams.update_one(
+        {"_id": ObjectId(team_id)},
+        {"$pull": {"roster": input.player_id}}
+    )
+
+    player = await db.players.find_one({"_id": ObjectId(input.player_id)})
+    name = player["name"] if player else "Unknown"
+    return {"message": f"Dropped {name} from roster"}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Scoring Engine Endpoints
+# ═══════════════════════════════════════════════════════════════
+
+DEFAULT_SKATER_SCORING = {
+    "goals": 3, "assists": 2, "plus_minus": 1, "penalty_minutes": -0.5,
+    "power_play_goals": 1, "power_play_points": 0.5,
+    "short_handed_goals": 2, "short_handed_points": 1,
+    "game_winning_goals": 1, "shots": 0.5,
+}
+
+DEFAULT_GOALIE_SCORING = {
+    "wins": 5, "losses": -2, "saves": 0.2, "goals_against": -1,
+    "shutouts": 3, "overtime_losses": 0,
+}
+
+
+def calculate_fantasy_points(player, config=None):
+    """Calculate fantasy points for a player based on scoring config."""
+    if not config:
+        skater = DEFAULT_SKATER_SCORING
+        goalie = DEFAULT_GOALIE_SCORING
+    else:
+        skater = config.get("skater_scoring", DEFAULT_SKATER_SCORING)
+        goalie = config.get("goalie_scoring", DEFAULT_GOALIE_SCORING)
+
+    fpts = 0.0
+    if player.get("player_type") == "goalie" or player.get("position") == "G":
+        for stat, weight in goalie.items():
+            fpts += player.get(stat, 0) * weight
+    else:
+        for stat, weight in skater.items():
+            fpts += player.get(stat, 0) * weight
+
+    return round(fpts, 1)
+
+
+class ScoringConfigCreate(BaseModel):
+    league_id: str
+    skater_scoring: dict
+    goalie_scoring: dict
+    roto_categories: list = []
+
+
+@api_router.post("/scoring/config")
+async def save_scoring_config(input: ScoringConfigCreate, request: Request):
+    user = await get_current_user(request)
+
+    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can update scoring")
+
+    config_doc = {
+        "league_id": input.league_id,
+        "skater_scoring": input.skater_scoring,
+        "goalie_scoring": input.goalie_scoring,
+        "roto_categories": input.roto_categories,
+        "updated_by": user["_id"],
+        "updated_at": datetime.now(timezone.utc).isoformat()
+    }
+
+    await db.scoring_configs.update_one(
+        {"league_id": input.league_id},
+        {"$set": config_doc},
+        upsert=True
+    )
+
+    return {"message": "Scoring config saved"}
+
+
+@api_router.get("/scoring/config")
+async def get_scoring_config(league_id: str):
+    config = await db.scoring_configs.find_one({"league_id": league_id})
+    if not config:
+        return {
+            "league_id": league_id,
+            "skater_scoring": DEFAULT_SKATER_SCORING,
+            "goalie_scoring": DEFAULT_GOALIE_SCORING,
+            "roto_categories": ["goals", "assists", "plus_minus", "power_play_points", "shots", "penalty_minutes", "wins", "save_pct", "goals_against_avg", "shutouts"]
+        }
+    config["_id"] = str(config["_id"])
+    return config
+
+
+@api_router.get("/scoring/calculate/{league_id}")
+async def calculate_league_scoring(league_id: str):
+    """Calculate fantasy points for all teams in a league."""
+    config = await db.scoring_configs.find_one({"league_id": league_id})
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+
+    results = []
+    for team in teams:
+        total_fpts = 0.0
+        roster = team.get("roster", [])
+        for pid in roster:
+            player = await db.players.find_one({"_id": ObjectId(pid)})
+            if player:
+                total_fpts += calculate_fantasy_points(player, config)
+
+        results.append({
+            "team_id": str(team["_id"]),
+            "team_name": team["name"],
+            "owner_name": team["owner_name"],
+            "roster_size": len(roster),
+            "total_fantasy_points": round(total_fpts, 1)
+        })
+
+    results.sort(key=lambda t: -t["total_fantasy_points"])
+
+    return results
+
+
+@api_router.get("/scoring/roto/{league_id}")
+async def calculate_roto_standings(league_id: str):
+    """Calculate rotisserie standings across selected categories."""
+    config = await db.scoring_configs.find_one({"league_id": league_id})
+    categories = (config or {}).get("roto_categories", [
+        "goals", "assists", "plus_minus", "power_play_points",
+        "shots", "penalty_minutes", "wins", "save_pct", "goals_against_avg", "shutouts"
+    ])
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+
+    # Calculate category totals per team
+    team_stats = []
+    for team in teams:
+        stats = {cat: 0 for cat in categories}
+        roster = team.get("roster", [])
+        for pid in roster:
+            player = await db.players.find_one({"_id": ObjectId(pid)})
+            if player:
+                for cat in categories:
+                    stats[cat] += player.get(cat, 0)
+
+        team_stats.append({
+            "team_id": str(team["_id"]),
+            "team_name": team["name"],
+            "owner_name": team["owner_name"],
+            "stats": stats,
+            "roto_points": 0
+        })
+
+    # Rank teams in each category
+    num_teams = len(team_stats)
+    for cat in categories:
+        # Higher is better for most, lower is better for GAA/PIM
+        reverse = cat not in ["goals_against_avg", "penalty_minutes"]
+        sorted_teams = sorted(team_stats, key=lambda t: t["stats"][cat], reverse=reverse)
+        for rank, ts in enumerate(sorted_teams):
+            ts["roto_points"] += num_teams - rank  # Top gets num_teams points
+
+    # Sort by total roto points
+    team_stats.sort(key=lambda t: -t["roto_points"])
+
+    return {"categories": categories, "standings": team_stats}
+
+
 async def create_checkout(input: PaymentCreate, request: Request):
     user = await get_current_user(request)
     
