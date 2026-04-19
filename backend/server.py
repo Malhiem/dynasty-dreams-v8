@@ -199,17 +199,6 @@ class TeamResponse(BaseModel):
     points_against: float
     created_at: datetime
 
-class DraftCreate(BaseModel):
-    league_id: str
-    draft_type: DraftType
-    scheduled_time: datetime
-    rounds: int = Field(default=15, ge=1, le=30)
-    time_per_pick: int = Field(default=60, ge=30, le=300)
-
-class DraftPickCreate(BaseModel):
-    draft_id: str
-    player_id: str
-
 class PaymentCreate(BaseModel):
     package_type: str  # "premium_monthly", "premium_yearly", "league_fee"
     league_id: Optional[str] = None
@@ -673,34 +662,68 @@ async def get_player(player_id: str):
     player["_id"] = str(player["_id"])
     return player
 
-# Draft Endpoints
+# Draft Endpoints - Full Draft Engine
+from draft_engine import (
+    CreateDraftRequest, MakeDraftPickRequest, DraftChatRequest,
+    UpdateDraftConfigRequest, get_team_for_pick, get_draft_order, build_draft_board
+)
+
 @api_router.post("/drafts")
-async def create_draft(input: DraftCreate, request: Request):
+async def create_draft(input: CreateDraftRequest, request: Request):
     user = await get_current_user(request)
-    
+
     league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
-    
+
     if league["commissioner_id"] != user["_id"]:
         raise HTTPException(status_code=403, detail="Only commissioner can create drafts")
-    
+
+    # Get league teams for draft order
+    teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
+    team_abbrs = [t["name"][:4].upper() for t in teams]
+    team_map = {t["name"][:4].upper(): {"id": str(t["_id"]), "name": t["name"], "owner_id": t["owner_id"]} for t in teams}
+
+    scheduled = None
+    if input.scheduled_time:
+        scheduled = input.scheduled_time
+
     draft_doc = {
         "league_id": input.league_id,
-        "draft_type": input.draft_type.value,
-        "scheduled_time": input.scheduled_time,
-        "rounds": input.rounds,
+        "league_name": league["name"],
+        "draft_type": input.draft_type,
+        "scheduled_time": scheduled,
+        "total_rounds": input.total_rounds,
         "time_per_pick": input.time_per_pick,
-        "current_round": 0,
-        "current_pick": 0,
+        "snake_draft": input.snake_draft,
+        "player_criteria": input.player_criteria,
+        "missed_pick_action": input.missed_pick_action,
+        "current_pick": 1,
         "status": "scheduled",
-        "draft_order": [],
+        "draft_started": False,
+        "early_start": False,
+        "timer_paused": False,
+        "team_abbrs": team_abbrs,
+        "team_map": team_map,
         "picks": [],
-        "created_at": datetime.now(timezone.utc)
+        "chat_messages": [],
+        "created_by": user["_id"],
+        "created_at": datetime.now(timezone.utc).isoformat()
     }
     result = await db.drafts.insert_one(draft_doc)
     draft_doc["_id"] = str(result.inserted_id)
+    draft_doc.pop("team_map", None)
     return draft_doc
+
+@api_router.get("/drafts")
+async def get_drafts(league_id: Optional[str] = None, request: Request = None):
+    query = {}
+    if league_id:
+        query["league_id"] = league_id
+    drafts = await db.drafts.find(query, {"team_map": 0}).sort("created_at", -1).to_list(100)
+    for d in drafts:
+        d["_id"] = str(d["_id"])
+    return drafts
 
 @api_router.get("/drafts/{draft_id}")
 async def get_draft(draft_id: str):
@@ -710,75 +733,299 @@ async def get_draft(draft_id: str):
     draft["_id"] = str(draft["_id"])
     return draft
 
-@api_router.post("/drafts/{draft_id}/pick")
-async def make_draft_pick(draft_id: str, input: DraftPickCreate, request: Request):
-    user = await get_current_user(request)
-    
+@api_router.get("/drafts/{draft_id}/board")
+async def get_draft_board(draft_id: str):
     draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    
+
+    board = build_draft_board(
+        draft["team_abbrs"],
+        draft["total_rounds"],
+        draft["snake_draft"],
+        draft["picks"]
+    )
+    return {
+        "board": board,
+        "current_pick": draft["current_pick"],
+        "status": draft["status"],
+        "team_abbrs": draft["team_abbrs"],
+        "total_rounds": draft["total_rounds"],
+        "snake_draft": draft["snake_draft"],
+        "on_the_clock": get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"]) if draft["team_abbrs"] else None
+    }
+
+@api_router.get("/drafts/{draft_id}/eligible-players")
+async def get_draft_eligible_players(
+    draft_id: str,
+    search: Optional[str] = None,
+    position: Optional[str] = None,
+    page: int = 1,
+    limit: int = 50
+):
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    # Get already-drafted player IDs
+    drafted_ids = [p["player_id"] for p in draft.get("picks", []) if p.get("player_id")]
+
+    query = {}
+    if drafted_ids:
+        query["_id"] = {"$nin": [ObjectId(pid) for pid in drafted_ids]}
+
+    if search:
+        query["$or"] = [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"team": {"$regex": search, "$options": "i"}}
+        ]
+    if position and position != "all":
+        query["position"] = position
+
+    skip = (page - 1) * limit
+    players = await db.players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
+    total = await db.players.count_documents(query)
+
+    result = []
+    for i, p in enumerate(players):
+        result.append({
+            "id": str(p["_id"]),
+            "name": p["name"],
+            "position": p["position"],
+            "nhlTeam": p.get("team", ""),
+            "team_name": p.get("team_name", ""),
+            "age": 0,
+            "league": "NHL",
+            "gp": p.get("games_played", 0),
+            "g": p.get("goals", 0),
+            "a": p.get("assists", 0),
+            "pts": p.get("points", 0),
+            "plus_minus": p.get("plus_minus", 0),
+            "ranking": skip + i + 1,
+            "drafted": False
+        })
+
+    return {"players": result, "total": total, "page": page, "pages": (total + limit - 1) // limit}
+
+@api_router.post("/drafts/{draft_id}/start")
+async def start_draft(draft_id: str, request: Request, early_start: bool = False):
+    user = await get_current_user(request)
+
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can start draft")
+
+    if draft["status"] == "active":
+        raise HTTPException(status_code=400, detail="Draft already active")
+
+    update = {
+        "$set": {
+            "status": "active",
+            "draft_started": True,
+            "early_start": early_start,
+            "current_pick": 1,
+            "started_at": datetime.now(timezone.utc).isoformat()
+        }
+    }
+    await db.drafts.update_one({"_id": ObjectId(draft_id)}, update)
+
+    # Broadcast draft start
+    await broadcast_to_room(f"draft_{draft_id}", "draft_started", {
+        "draft_id": draft_id,
+        "early_start": early_start,
+        "team_abbrs": draft["team_abbrs"],
+        "on_the_clock": draft["team_abbrs"][0] if draft["team_abbrs"] else None
+    })
+
+    # Add system chat message
+    system_msg = {
+        "id": f"sys-{datetime.now(timezone.utc).timestamp()}",
+        "type": "pick",
+        "sender": "System",
+        "text": f"Draft has started! {'(No Clock)' if early_start else 'Timer is running.'}",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    await db.drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": system_msg}})
+    await broadcast_to_room(f"draft_{draft_id}", "draft_chat", system_msg)
+
+    return {"message": "Draft started", "early_start": early_start}
+
+@api_router.post("/drafts/{draft_id}/pick")
+async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: Request):
+    user = await get_current_user(request)
+
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
     if draft["status"] != "active":
         raise HTTPException(status_code=400, detail="Draft is not active")
-    
+
+    # Validate it's the user's turn
     team = await db.teams.find_one({"league_id": draft["league_id"], "owner_id": user["_id"]})
     if not team:
         raise HTTPException(status_code=403, detail="You don't have a team in this league")
-    
+
+    team_abbr = team["name"][:4].upper()
+    on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"])
+
+    # Commissioner can pick for any team, or it must be the user's turn
+    league = await db.leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    is_commissioner = league["commissioner_id"] == user["_id"]
+
+    if team_abbr != on_clock and not is_commissioner:
+        raise HTTPException(status_code=403, detail=f"Not your turn. {on_clock} is on the clock.")
+
+    # Validate player exists and not already drafted
     player = await db.players.find_one({"_id": ObjectId(input.player_id)})
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
-    
+
+    already_picked = any(p.get("player_id") == input.player_id for p in draft.get("picks", []))
+    if already_picked:
+        raise HTTPException(status_code=400, detail="Player already drafted")
+
+    total_teams = len(draft["team_abbrs"])
+    current_pick = draft["current_pick"]
+    round_num = ((current_pick - 1) // total_teams) + 1
+    pick_in_round = ((current_pick - 1) % total_teams) + 1
+
     pick_doc = {
-        "round": draft["current_round"],
-        "pick": draft["current_pick"],
-        "team_id": str(team["_id"]),
-        "team_name": team["name"],
-        "player_id": input.player_id,
-        "player_name": player["name"],
+        "round": round_num,
+        "pick_in_round": pick_in_round,
+        "overall": current_pick,
+        "team": on_clock,
+        "player_id": str(player["_id"]),
+        "player": {
+            "name": player["name"],
+            "position": player["position"],
+            "nhlTeam": player.get("team", ""),
+            "pts": player.get("points", 0)
+        },
+        "picked_by": user["_id"],
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
-    
+
+    next_pick = current_pick + 1
+    total_picks = draft["total_rounds"] * total_teams
+    new_status = "completed" if next_pick > total_picks else "active"
+
     await db.drafts.update_one(
         {"_id": ObjectId(draft_id)},
         {
             "$push": {"picks": pick_doc},
-            "$inc": {"current_pick": 1}
+            "$set": {"current_pick": next_pick, "status": new_status}
         }
     )
-    
-    # Broadcast pick to all users in draft room
-    await broadcast_to_room(f"draft_{draft_id}", "draft_pick", pick_doc)
-    
+
+    # Broadcast pick
+    await broadcast_to_room(f"draft_{draft_id}", "draft_pick", {
+        **pick_doc,
+        "next_pick": next_pick,
+        "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"]) if new_status == "active" else None,
+        "draft_complete": new_status == "completed"
+    })
+
+    # System chat for the pick
+    pick_msg = {
+        "id": f"pick-{current_pick}",
+        "type": "pick",
+        "sender": "System",
+        "text": f"Pick #{current_pick} (Rd {round_num}, Pick {pick_in_round}): {on_clock} selects {player['name']} ({player['position']})",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    await db.drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": pick_msg}})
+    await broadcast_to_room(f"draft_{draft_id}", "draft_chat", pick_msg)
+
+    if new_status == "completed":
+        complete_msg = {
+            "id": f"sys-complete",
+            "type": "pick",
+            "sender": "System",
+            "text": "Draft is complete! All picks have been made.",
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        await db.drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": complete_msg}})
+        await broadcast_to_room(f"draft_{draft_id}", "draft_chat", complete_msg)
+        await broadcast_to_room(f"draft_{draft_id}", "draft_completed", {"draft_id": draft_id})
+
     return pick_doc
 
-@api_router.post("/drafts/{draft_id}/start")
-async def start_draft(draft_id: str, request: Request):
+@api_router.post("/drafts/{draft_id}/pause")
+async def pause_draft(draft_id: str, request: Request):
     user = await get_current_user(request)
-    
     draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
-    
+
     league = await db.leagues.find_one({"_id": ObjectId(draft["league_id"])})
     if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can start draft")
-    
-    # Get teams and create draft order
-    teams = await db.teams.find({"league_id": draft["league_id"]}).to_list(100)
-    import random
-    random.shuffle(teams)
-    draft_order = [str(t["_id"]) for t in teams]
-    
-    await db.drafts.update_one(
-        {"_id": ObjectId(draft_id)},
-        {"$set": {"status": "active", "draft_order": draft_order, "current_round": 1, "current_pick": 1}}
-    )
-    
-    # Broadcast draft start
-    await broadcast_to_room(f"draft_{draft_id}", "draft_started", {"draft_id": draft_id, "draft_order": draft_order})
-    
-    return {"message": "Draft started", "draft_order": draft_order}
+        raise HTTPException(status_code=403, detail="Only commissioner can pause draft")
+
+    paused = not draft.get("timer_paused", False)
+    await db.drafts.update_one({"_id": ObjectId(draft_id)}, {"$set": {"timer_paused": paused}})
+
+    await broadcast_to_room(f"draft_{draft_id}", "draft_timer_toggle", {"paused": paused})
+    return {"paused": paused}
+
+@api_router.post("/drafts/{draft_id}/chat")
+async def send_draft_chat(draft_id: str, input: DraftChatRequest, request: Request):
+    user = await get_current_user(request)
+
+    team = await db.teams.find_one({"league_id": (await db.drafts.find_one({"_id": ObjectId(draft_id)}))["league_id"], "owner_id": user["_id"]})
+    sender = team["name"] if team else user["name"]
+
+    msg = {
+        "id": f"chat-{datetime.now(timezone.utc).timestamp()}",
+        "type": "chat",
+        "sender": sender,
+        "text": input.text,
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+
+    await db.drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})
+    await broadcast_to_room(f"draft_{draft_id}", "draft_chat", msg)
+    return msg
+
+@api_router.get("/drafts/{draft_id}/chat")
+async def get_draft_chat(draft_id: str):
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)}, {"chat_messages": 1})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    return draft.get("chat_messages", [])
+
+@api_router.put("/drafts/{draft_id}/config")
+async def update_draft_config(draft_id: str, input: UpdateDraftConfigRequest, request: Request):
+    user = await get_current_user(request)
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can update draft config")
+
+    updates = {}
+    if input.time_per_pick is not None:
+        updates["time_per_pick"] = input.time_per_pick
+    if input.total_rounds is not None:
+        updates["total_rounds"] = input.total_rounds
+    if input.snake_draft is not None:
+        updates["snake_draft"] = input.snake_draft
+    if input.player_criteria is not None:
+        updates["player_criteria"] = input.player_criteria
+    if input.missed_pick_action is not None:
+        updates["missed_pick_action"] = input.missed_pick_action
+
+    if updates:
+        await db.drafts.update_one({"_id": ObjectId(draft_id)}, {"$set": updates})
+        await broadcast_to_room(f"draft_{draft_id}", "draft_config_updated", updates)
+
+    return {"updated": list(updates.keys())}
 
 # Payment Endpoints
 @api_router.post("/payments/checkout")
