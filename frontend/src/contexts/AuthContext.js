@@ -26,6 +26,16 @@ export function AuthProvider({ children }) {
     checkAuth();
   }, [checkAuth]);
 
+  // Listen for auth-expired events dispatched by the axios interceptor.
+  // This replaces the previous hard-redirect behaviour and prevents race
+  // conditions where concurrent 401s right after login would bounce the
+  // user back to /login.
+  useEffect(() => {
+    const onExpired = () => setUser(false);
+    window.addEventListener('auth-expired', onExpired);
+    return () => window.removeEventListener('auth-expired', onExpired);
+  }, []);
+
   const login = async (email, password) => {
     const { data } = await axios.post(`${BACKEND_URL}/api/auth/login`, 
       { email, password },
