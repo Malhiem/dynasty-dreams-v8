@@ -14,11 +14,11 @@ import { useGlobalSocketEvent } from '@/hooks/use-global-socket';
 
 const STATE_BADGE = {
   LIVE: { label: 'LIVE', className: 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse' },
-  CRIT: { label: 'LIVE · CRITICAL', className: 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse' },
-  OFF: { label: 'FINAL', className: 'bg-zinc-500/20 text-zinc-300 border-zinc-500/40' },
-  FINAL: { label: 'FINAL', className: 'bg-zinc-500/20 text-zinc-300 border-zinc-500/40' },
-  FUT: { label: 'UPCOMING', className: 'bg-blue-500/20 text-blue-400 border-blue-500/40' },
-  PRE: { label: 'PREGAME', className: 'bg-blue-500/20 text-blue-400 border-blue-500/40' },
+  CRIT: { label: 'LIVE · CRITICAL', className: 'bg-red-600/30 text-red-300 border-red-600/50 animate-pulse' },
+  OFF: { label: 'FINAL', className: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+  FINAL: { label: 'FINAL', className: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
+  FUT: { label: 'UPCOMING', className: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
+  PRE: { label: 'PREGAME', className: 'bg-blue-500/15 text-blue-400 border-blue-500/30' },
 };
 
 export default function LiveScoringPage() {

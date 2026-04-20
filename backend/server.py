@@ -902,8 +902,30 @@ async def get_live_scoring(request: Request):
 
 @api_router.post("/live-scoring/refresh")
 async def refresh_live_scoring(request: Request):
-    """Trigger an immediate live-scoring poll (manual refresh button)."""
-    await get_current_user(request)
+    """Trigger an immediate live-scoring poll (manual refresh button).
+    Rate-limited to 1 request per user per 20 seconds to avoid NHL API abuse."""
+    user = await get_current_user(request)
+    now = datetime.now(timezone.utc)
+
+    # Per-user 20s cooldown
+    last = await db.rate_limits.find_one({"_id": f"live_refresh:{user['_id']}"})
+    if last and last.get("at"):
+        last_at = last["at"]
+        if last_at.tzinfo is None:
+            last_at = last_at.replace(tzinfo=timezone.utc)
+        elapsed = (now - last_at).total_seconds()
+        if elapsed < 20:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Too many refreshes. Try again in {max(1, 20 - int(elapsed))}s.",
+            )
+
+    await db.rate_limits.update_one(
+        {"_id": f"live_refresh:{user['_id']}"},
+        {"$set": {"at": now}},
+        upsert=True,
+    )
+
     from live_scoring_worker import run_once
     summary = await run_once(db, sio)
     return summary

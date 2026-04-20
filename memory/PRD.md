@@ -18,6 +18,7 @@ Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnos
 | 9 | League Invite (links+QR+email), Sport-Agnostic Model, 15 RN screens with API | 18/18 |
 | 10 | 5 Demo Leagues Seed + SendGrid Integration (graceful mock fallback) + RN bundle verify | 13/13 |
 | 11 | League Premium Stripe Unlock + Personalized Recommendations + Payment pages | 16/16 |
+| 12 | Full-fill 86 teams + auto-draft + NHL live scoring worker + /live page & dashboard widget | 14/14 |
 
 ## Key Stats
 - **65+ REST API endpoints**
@@ -28,14 +29,24 @@ Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnos
 - **5 demo leagues seeded** across every fantasy format (H2H, Roto, Dynasty, Keeper, Best Ball)
 - **League invite system**: shareable link + QR code + SendGrid email (falls back to mock when key missing)
 
-## Demo Leagues (Apr 19, 2026)
+## Demo Leagues (Apr 19, 2026 — filled Apr 20)
 | Name | Format | Scoring | Teams | Fee |
 |------|--------|---------|-------|-----|
-| Ice Kings Head-to-Head | redraft | head_to_head | 0/12 | $50 |
-| Stat Chasers Roto | redraft | rotisserie | 0/14 | $25 |
-| Frozen Dynasty | dynasty | head_to_head | 0/16 | $100 |
-| Perennial Keepers | keeper | head_to_head | 0/12 | $75 |
-| Set-and-Forget Best Ball | best_ball | total_points | 0/32 | $20 |
+| Ice Kings Head-to-Head | redraft | head_to_head | 12/12 | $50 |
+| Stat Chasers Roto | redraft | rotisserie | 14/14 | $25 |
+| Frozen Dynasty | dynasty | head_to_head | 16/16 | $100 |
+| Perennial Keepers | keeper | head_to_head | 12/12 | $75 |
+| Set-and-Forget Best Ball | best_ball | total_points | 32/32 | $20 |
+
+All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Demo2026!`
+
+## Live NHL Scoring (Phase 12)
+- Backend polling worker `live_scoring_worker.py` — runs every 60s against `nhlpy` `daily_schedule()` + `boxscore()`; falls back to previous-day games on off-days
+- Per-player live_stats stored in `players.live_stats.{game_id}`; per-team totals at `teams.live_points`
+- Endpoints: `GET /api/live-scoring`, `POST /api/live-scoring/refresh` (20s user cooldown), `GET /api/live-scoring/team/{id}`, `GET /api/live-scoring/league/{id}`
+- Socket.IO `live_scoring_update` event broadcast after each poll → frontend auto-refreshes without reload
+- UI: `/live` page (NHL games grid + fantasy leaderboard + top-team roster tab) and Dashboard `<LiveScoringWidget />`
+- Playoff awareness: `is_playoff` flag set when `gameType == 3`; UI surfaces an amber "PLAYOFFS" badge + ON AIR pulse
 
 ## Current Integrations
 - **NHL API** (`nhlpy`) — active, 1,038 players
