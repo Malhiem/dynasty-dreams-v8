@@ -330,7 +330,7 @@ async def register(input: UserRegister, response: Response):
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
     
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=900, path="/")
+    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=43200, path="/")
     response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
     
     return UserResponse(
@@ -375,7 +375,7 @@ async def login(input: UserLogin, request: Request, response: Response):
     access_token = create_access_token(user_id, email)
     refresh_token = create_refresh_token(user_id)
     
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=900, path="/")
+    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=43200, path="/")
     response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=False, samesite="lax", max_age=604800, path="/")
     
     return UserResponse(
@@ -418,7 +418,7 @@ async def refresh_token(request: Request, response: Response):
         
         user_id = str(user["_id"])
         access_token = create_access_token(user_id, user["email"])
-        response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=900, path="/")
+        response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=43200, path="/")
         return {"message": "Token refreshed"}
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Refresh token expired")

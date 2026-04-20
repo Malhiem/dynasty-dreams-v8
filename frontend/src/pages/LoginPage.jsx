@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatApiError } from '@/lib/api';
+import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Trophy, Eye, EyeSlash } from '@phosphor-icons/react';
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -13,11 +16,37 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const [cleared, setCleared] = useState(false);
+  const { login, user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
   const from = location.state?.from?.pathname || '/dashboard';
+
+  // If the user already has a valid session, jump straight to the app.
+  useEffect(() => {
+    if (user) navigate(from, { replace: true });
+  }, [user, from, navigate]);
+
+  const handleClearSession = async () => {
+    try {
+      // Ask the server to clear the HttpOnly auth cookies.
+      await axios.post(`${BACKEND_URL}/api/auth/logout`, {}, { withCredentials: true });
+    } catch (e) {
+      // ignore — still try client-side wipe
+    }
+    // Wipe anything non-HttpOnly on the client side too.
+    document.cookie.split(';').forEach((c) => {
+      const name = c.split('=')[0].trim();
+      document.cookie = `${name}=; Max-Age=0; path=/`;
+    });
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch (e) { /* noop */ }
+    setCleared(true);
+    setError('');
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -132,6 +161,17 @@ export default function LoginPage() {
               Create one
             </Link>
           </p>
+
+          <div className="mt-6 text-center">
+            <button
+              type="button"
+              onClick={handleClearSession}
+              data-testid="login-clear-session-btn"
+              className="text-xs text-[#52525B] hover:text-[#A1A1AA] underline underline-offset-4"
+            >
+              {cleared ? 'Session cleared — try signing in again' : 'Having trouble signing in? Clear session'}
+            </button>
+          </div>
         </div>
       </div>
     </div>
