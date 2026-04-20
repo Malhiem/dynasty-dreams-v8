@@ -1,7 +1,7 @@
 import {
   Home, Users, MessageSquare, Newspaper, ArrowRightLeft, Trophy, DollarSign,
   Star, Clock, Settings, BarChart3, CreditCard, History, Medal, UserSearch,
-  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield
+  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation } from "react-router-dom";
@@ -15,6 +15,7 @@ import {
 const mainItems = [
   { title: "Dashboard", url: "/dashboard", icon: Home },
   { title: "Roster", url: "/roster", icon: Users },
+  { title: "Live Scoring", url: "/live", icon: Radio },
   { title: "Standings", url: "/standings", icon: Trophy },
   { title: "Transactions", url: "/transactions", icon: ArrowRightLeft },
 ];

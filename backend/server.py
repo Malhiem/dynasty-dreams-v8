@@ -15,6 +15,7 @@ import secrets
 import bcrypt
 import jwt
 import socketio
+import asyncio
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict, Any
@@ -885,6 +886,110 @@ async def recommend_leagues(
         "preferences": {"commitment": commitment, "scoring": scoring, "draft_style": draft_style},
         "recommendations": results[:limit + 3],
     }
+
+
+# ─── Live Scoring (NHL playoff/in-game data) ─────────────────
+
+@api_router.get("/live-scoring")
+async def get_live_scoring(request: Request):
+    """Return latest live-scoring summary (today's games + poll timestamp)."""
+    await get_current_user(request)
+    state = await db.system_state.find_one({"_id": "live_scoring"}, {"_id": 0})
+    if not state or not state.get("latest"):
+        return {"date": None, "games": [], "games_processed": 0, "playoff_games": 0, "players_updated": 0, "polled_at": None}
+    return state["latest"]
+
+
+@api_router.post("/live-scoring/refresh")
+async def refresh_live_scoring(request: Request):
+    """Trigger an immediate live-scoring poll (manual refresh button)."""
+    await get_current_user(request)
+    from live_scoring_worker import run_once
+    summary = await run_once(db, sio)
+    return summary
+
+
+@api_router.get("/live-scoring/team/{team_id}")
+async def get_team_live_scoring(team_id: str, request: Request):
+    """Per-team live fantasy points + per-player playoff stat lines."""
+    await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    roster_ids = team.get("roster", [])
+    if not roster_ids:
+        return {"team_id": team_id, "team_name": team["name"], "live_points": 0.0, "players": []}
+
+    players = await db.players.find(
+        {"_id": {"$in": [ObjectId(pid) for pid in roster_ids]}},
+        {"nhl_id": 1, "name": 1, "team": 1, "position": 1, "player_type": 1, "live_stats": 1},
+    ).to_list(100)
+
+    from live_scoring_worker import _fantasy_points_from_live
+
+    def aggregate(p):
+        is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
+        live = p.get("live_stats") or {}
+        agg = {"goals": 0, "assists": 0, "shots": 0, "points": 0,
+               "saves": 0, "goals_against": 0, "wins": 0, "games": 0,
+               "fpts": 0.0, "last_game_state": None}
+        for gid, ls in live.items():
+            agg["games"] += 1
+            agg["goals"] += ls.get("goals", 0) or 0
+            agg["assists"] += ls.get("assists", 0) or 0
+            agg["shots"] += ls.get("shots", 0) or 0
+            agg["saves"] += ls.get("saves", 0) or 0
+            agg["goals_against"] += ls.get("goals_against", 0) or 0
+            agg["wins"] += ls.get("wins", 0) or 0
+            agg["fpts"] += _fantasy_points_from_live(ls, is_g)
+            agg["last_game_state"] = ls.get("game_state")
+        agg["points"] = agg["goals"] + agg["assists"]
+        agg["fpts"] = round(agg["fpts"], 2)
+        return agg
+
+    player_rows = []
+    for p in players:
+        agg = aggregate(p)
+        player_rows.append({
+            "id": str(p["_id"]),
+            "nhl_id": p.get("nhl_id"),
+            "name": p.get("name"),
+            "team": p.get("team"),
+            "position": p.get("position"),
+            "is_goalie": p.get("player_type") == "goalie" or p.get("position") == "G",
+            **agg,
+        })
+    player_rows.sort(key=lambda r: r["fpts"], reverse=True)
+    total = round(sum(r["fpts"] for r in player_rows), 2)
+
+    return {
+        "team_id": team_id,
+        "team_name": team["name"],
+        "league_id": team.get("league_id"),
+        "live_points": total,
+        "players": player_rows,
+    }
+
+
+@api_router.get("/live-scoring/league/{league_id}")
+async def get_league_live_scoring(league_id: str, request: Request):
+    """League-wide leaderboard of team live points."""
+    await get_current_user(request)
+    _ = _safe_object_id(league_id, "league_id")
+    teams = await db.teams.find({"league_id": league_id}, {"_id": 1, "name": 1, "owner_name": 1, "live_points": 1, "roster": 1}).to_list(200)
+    rows = [
+        {
+            "team_id": str(t["_id"]),
+            "team_name": t["name"],
+            "owner_name": t.get("owner_name"),
+            "live_points": round(t.get("live_points", 0.0) or 0.0, 2),
+            "roster_count": len(t.get("roster", [])),
+        }
+        for t in teams
+    ]
+    rows.sort(key=lambda r: r["live_points"], reverse=True)
+    return {"league_id": league_id, "leaderboard": rows}
 
 
 # ─── Sport-Agnostic Player Fetch ──────────────────────────────
@@ -3317,6 +3422,10 @@ async def startup():
     await db.players.create_index("name")
     await db.players.create_index("team")
     await db.players.create_index("position")
+    try:
+        await db.players.create_index("nhl_id")
+    except Exception:
+        pass  # Existing unique index may conflict — ignore
     
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
@@ -3354,8 +3463,20 @@ async def startup():
         f.write("- POST /api/auth/forgot-password\n")
         f.write("- POST /api/auth/reset-password\n")
 
+    # Kick off background live-scoring worker (nhlpy polling).
+    try:
+        from live_scoring_worker import live_scoring_loop
+        loop = asyncio.get_event_loop()
+        fastapi_app.state.live_scoring_task = loop.create_task(live_scoring_loop(db, sio))
+        logger.info("Live scoring worker scheduled")
+    except Exception as e:
+        logger.warning(f"Could not start live scoring worker: {e}")
+
 @fastapi_app.on_event("shutdown")
 async def shutdown():
+    task = getattr(fastapi_app.state, "live_scoring_task", None)
+    if task:
+        task.cancel()
     client.close()
 
 # Wrap FastAPI with Socket.IO

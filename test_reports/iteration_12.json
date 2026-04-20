@@ -1,0 +1,46 @@
+{
+  "summary": "Phase 12 full-stack testing — Live NHL Scoring + 86-team demo seed. 14/14 backend pytest tests passed. Frontend: /live page renders with LIVE SCORING heading, 10 FINAL NHL games (DET/TBL, NYR/FLA, CAR/PHI, DAL/TOR, MIN/STL, SJS/NSH, BUF/CHI, COL/EDM, LAK/SEA, WPG/VGK) with real scores. Refresh Scores button fires /api/live-scoring/refresh and timestamp updates (3:27:25 AM -> 3:28:02 AM). League dropdown switch from Ice Kings -> Frozen Dynasty triggers /api/live-scoring/league/{id} (200). Top Team Roster tab shows Checkmate Chiefs (Frozen Dynasty's top team) with 69.50 total FPTS; Jack Eichel 15.00, Quinton Byfield 13.00, etc. Dashboard LiveScoringWidget shows '10 NHL games for 2026-04-13 · 400 players tracked'. Sidebar has 'Live Scoring' Radio link between Roster and Standings. All 5 demo leagues full at max capacity (12+14+16+12+32=86). 1038 players unchanged.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/live-scoring/league/{league_id}", "issue": "league_id is validated via _safe_object_id but teams are queried with the raw string league_id (teams.league_id is stored as string, not ObjectId). Works correctly today because seed stores strings, but the ObjectId validation is effectively only used for the 400-on-malformed check. Not a bug."},
+      {"endpoint": "GET /api/live-scoring/team/{team_id}", "issue": "Player aggregate aggregates 'wins' but not 'losses' or 'shutouts' into the top-level row; goalie W/L detail is dropped. If the leaderboard is later used for goalie decision scoring in the UI, UI would need that data. Not blocking this phase."},
+      {"endpoint": "POST /api/live-scoring/refresh", "issue": "Unauthenticated admin-only check is missing — any logged-in user can trigger a fresh NHL API poll. Could be abused as a rate-limit shield. Consider gating to commissioner/admin or adding a cooldown."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/live game cards", "issues": ["Cards all show 'FINAL' state badge but the badge styling is identical to a live 'LIVE' badge would be — consider colour-coding (green for FINAL, red pulse for LIVE/CRIT) to better convey real-time state at a glance."]},
+      {"screen": "/live Top Team Roster", "issues": ["Saves column shows '-' for skaters which is fine, but the 'GAMES' column always shows 1 in today's sample because only one date has data. Not a bug — cosmetic expectation."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12_live_scoring.py",
+    "/app/test_reports/pytest/iteration12_results.xml"
+  ],
+  "action_items": [
+    "Consider rate-limiting or admin-gating POST /api/live-scoring/refresh (currently any auth user can hammer the NHL API).",
+    "Continue the pending server.py router split recommended in iteration_11 — file is now at 3485 lines with the new live-scoring endpoints added inline.",
+    "Optional UX polish: colour-code the game-state pill (FINAL vs LIVE vs CRIT) on LiveScoringPage.jsx."
+  ],
+  "critical_code_review_comments": [
+    "live_scoring_worker._flatten_boxscore uses `side.replace('Team','Team')` which is a no-op — clearly a copy-paste typo; `team_abbrev` resolves correctly only because bx.get('homeTeam')/'awayTeam' keys match the loop key directly. Harmless but misleading — simplify to `bx.get(side, {}).get('abbrev')`.",
+    "_recompute_team_live_totals pulls ALL players with live_stats (up to 10,000) on every poll cycle (every 60s) and then walks every team. O(N*M) per tick. At current scale (1038 players, 86 teams) this is fine, but if the league count grows, aggregate this in MongoDB with an $lookup pipeline instead.",
+    "run_once does not bound the number of boxscore fetches — on a big NHL night (16 games) that's 16 sequential HTTP calls while holding the worker. Consider asyncio.gather over a thread pool since nhlpy is sync.",
+    "server.py is now 3485 lines — router split still deferred. Live-scoring block (lines 893-992) would cleanly move into /app/backend/routers/live_scoring.py.",
+    "POST /api/live-scoring/refresh has no auth role check — any authenticated user can force a poll. Low risk inside this app but surfaces NHL API quota to public users.",
+    "LiveScoringPage league dropdown currently hits the server on every change with no debounce; fine for click-driven changes but if switched to a multi-select it would need throttling."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration12_live_scoring.py"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% (all Phase 12 UI flows verified end-to-end)"},
+  "test_credentials": "admin@dynastydreams.com / Admin123! — verified working and used for all backend + frontend tests. Demo owner accounts (team{n}-{league-slug}@demo.dynastydreams.app / Demo2026!) exist but not exercised this iteration.",
+  "seed_data_creation": "None created. Test only reads existing seed data (5 demo leagues, 86 teams, 1038 players, live_stats on ~400 players from the Apr 13 2026 NHL slate).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 12 is green. Live-scoring worker is polling every 60s and has populated live_stats for 399 players. Confirmed via DB: 1038 players, 86 teams, 86 teams with live_points>0. 10 FINAL games for date 2026-04-13. /api/live-scoring/refresh responds in ~0.5-1s (fast). /live route: heading 'LIVE SCORING', refresh button `button:has-text('Refresh')`, league dropdown is a single `[role=combobox]` with current value 'Ice Kings Head-to-Head', tabs use `[role=tab]:has-text('Top Team')`. Top player row uses columns: PLAYER, POS, G, A, SOG, SAVES, GAMES, FPTS. Dashboard widget label is 'LIVE SCORING' with 'NHL games for <date>' and 'players tracked' counter plus an 'Open live scores' link to /live. Sidebar entry is <a> with text 'Live Scoring' under MAIN. WebSocket wss://.../api/socket.io initially reports 'closed before connection established' warning but reconnects cleanly; real-time updates worked during refresh test.",
+  "rca_of_the_issue": "N/A — no failing feature or bug observed."
+}
