@@ -45,9 +45,9 @@ export function AuthProvider({ children }) {
     return data;
   };
 
-  const register = async (email, password, name) => {
+  const register = async (email, password, username) => {
     const { data } = await axios.post(`${BACKEND_URL}/api/auth/register`,
-      { email, password, name },
+      { email, password, username },
       { withCredentials: true }
     );
     setUser(data);

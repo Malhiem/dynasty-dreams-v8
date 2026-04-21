@@ -25,7 +25,8 @@ DB_NAME = os.environ["DB_NAME"]
 
 EMAIL = "chriszarek@gmail.com"
 PASSWORD = "Chris2026!"
-DISPLAY_NAME = "Chris Zarek"
+USERNAME = "chriszarek"
+DISPLAY_NAME = "chriszarek"
 
 DEMO_LEAGUE_NAMES = [
     "Ice Kings Head-to-Head",
@@ -48,15 +49,20 @@ def hash_password(password: str) -> str:
 async def ensure_user(db) -> str:
     existing = await db.users.find_one({"email": EMAIL})
     if existing:
-        # Reset password in case user wants to log in right away
+        # Reset password, set username, refresh name to match
         await db.users.update_one(
             {"_id": existing["_id"]},
-            {"$set": {"password_hash": hash_password(PASSWORD), "name": DISPLAY_NAME}},
+            {"$set": {
+                "password_hash": hash_password(PASSWORD),
+                "username": USERNAME,
+                "name": DISPLAY_NAME,
+            }},
         )
         return str(existing["_id"])
     doc = {
         "email": EMAIL,
         "password_hash": hash_password(PASSWORD),
+        "username": USERNAME,
         "name": DISPLAY_NAME,
         "role": "user",
         "created_at": datetime.now(timezone.utc),

@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Trophy, Eye, EyeSlash, Check, X } from '@phosphor-icons/react';
 
 export default function RegisterPage() {
-  const [name, setName] = useState('');
+  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -18,7 +18,10 @@ export default function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
 
+  const usernameValid = /^[a-zA-Z0-9_-]{3,24}$/.test(username);
+
   const passwordChecks = [
+    { label: 'Username 3–24 chars (letters, numbers, _ or -)', valid: usernameValid },
     { label: 'At least 8 characters', valid: password.length >= 8 },
     { label: 'One uppercase letter', valid: /[A-Z]/.test(password) },
     { label: 'One number', valid: /\d/.test(password) },
@@ -30,13 +33,13 @@ export default function RegisterPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!allChecksPass) {
-      setError('Please meet all password requirements');
+      setError('Please meet all requirements');
       return;
     }
     setError('');
     setLoading(true);
     try {
-      await register(email, password, name);
+      await register(email, password, username);
       navigate('/dashboard');
     } catch (err) {
       setError(formatApiError(err));
@@ -82,17 +85,21 @@ export default function RegisterPage() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <Label htmlFor="name" className="text-[#A1A1AA]">Full Name</Label>
+              <Label htmlFor="username" className="text-[#A1A1AA]">Username</Label>
               <Input
-                id="name"
+                id="username"
                 type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Enter your name"
+                value={username}
+                onChange={(e) => setUsername(e.target.value.trim())}
+                placeholder="Pick a unique username"
                 required
-                data-testid="register-name"
+                minLength={3}
+                maxLength={24}
+                pattern="^[a-zA-Z0-9_-]+$"
+                data-testid="register-username"
                 className="mt-2 bg-[#141414] border-white/10 text-white placeholder:text-[#52525B]"
               />
+              <p className="text-xs text-[#52525B] mt-1">3–24 chars · letters, numbers, underscore or hyphen</p>
             </div>
 
             <div>

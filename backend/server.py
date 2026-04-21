@@ -168,7 +168,7 @@ class TransactionType(str, Enum):
 class UserRegister(BaseModel):
     email: EmailStr
     password: str
-    name: str
+    username: str = Field(..., min_length=3, max_length=24, pattern=r"^[a-zA-Z0-9_-]+$")
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -177,7 +177,8 @@ class UserLogin(BaseModel):
 class UserResponse(BaseModel):
     id: str
     email: str
-    name: str
+    username: str
+    name: str  # Retained for backward compat — mirrors username
     role: str
     created_at: datetime
 
@@ -316,14 +317,20 @@ async def broadcast_to_room(room: str, event: str, message: dict):
 @api_router.post("/auth/register", response_model=UserResponse)
 async def register(input: UserRegister, response: Response):
     email = input.email.lower()
+    username = input.username.strip()
+
     existing = await db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
-    
+
+    if await db.users.find_one({"username": username}):
+        raise HTTPException(status_code=400, detail="Username already taken")
+
     user_doc = {
         "email": email,
         "password_hash": hash_password(input.password),
-        "name": input.name,
+        "username": username,
+        "name": username,  # Keep `name` in sync for backward-compat
         "role": UserRole.USER.value,
         "subscription": None,
         "created_at": datetime.now(timezone.utc)
@@ -340,7 +347,8 @@ async def register(input: UserRegister, response: Response):
     return UserResponse(
         id=user_id,
         email=email,
-        name=input.name,
+        username=username,
+        name=username,
         role=UserRole.USER.value,
         created_at=user_doc["created_at"]
     )
@@ -385,7 +393,8 @@ async def login(input: UserLogin, request: Request, response: Response):
     return UserResponse(
         id=user_id,
         email=user["email"],
-        name=user["name"],
+        username=user.get("username") or user.get("name", ""),
+        name=user.get("username") or user.get("name", ""),
         role=user["role"],
         created_at=user["created_at"]
     )
@@ -402,7 +411,8 @@ async def get_me(request: Request):
     return UserResponse(
         id=user["_id"],
         email=user["email"],
-        name=user["name"],
+        username=user.get("username") or user.get("name", ""),
+        name=user.get("username") or user.get("name", ""),
         role=user["role"],
         created_at=user["created_at"]
     )
@@ -1082,10 +1092,14 @@ async def get_team_week_summary(team_id: str, request: Request):
                         "name": p.get("name"),
                         "team": p.get("team"),
                         "position": p.get("position"),
+                        "is_goalie": is_g,
                         "goals": ls.get("goals", 0) or 0,
                         "assists": ls.get("assists", 0) or 0,
                         "shots": ls.get("shots", 0) or 0,
                         "saves": ls.get("saves", 0) or 0,
+                        "goals_against": ls.get("goals_against", 0) or 0,
+                        "shutouts": ls.get("shutouts", 0) or 0,
+                        "decision": ls.get("decision"),
                         "fpts": round(fpts, 2),
                     }
 

@@ -136,8 +136,20 @@ export default function MyWeekAtAGlance() {
                       {s.top_performer.name}
                     </div>
                     <div className="text-[#A1A1AA] text-[11px]">
-                      {s.top_performer.team} · {s.top_performer.position} ·{' '}
-                      {s.top_performer.goals}G {s.top_performer.assists}A {s.top_performer.shots}SOG
+                      {s.top_performer.team} · {s.top_performer.position}
+                      {s.top_performer.is_goalie ? (
+                        <>
+                          {' · '}
+                          {s.top_performer.saves} SV / {s.top_performer.goals_against} GA
+                          {s.top_performer.shutouts > 0 && ' · SHO'}
+                          {s.top_performer.decision && ` · ${s.top_performer.decision}`}
+                        </>
+                      ) : (
+                        <>
+                          {' · '}
+                          {s.top_performer.goals}G {s.top_performer.assists}A {s.top_performer.shots}SOG
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="text-[#00D2FF] font-bold text-sm tabular-nums">

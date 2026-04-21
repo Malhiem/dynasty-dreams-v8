@@ -137,8 +137,20 @@ export default function TeamDetailPage() {
                     {weekData.top_performer.name}
                   </Link>
                   <div className="text-[#A1A1AA] text-xs">
-                    {weekData.top_performer.team} · {weekData.top_performer.position} ·{' '}
-                    {weekData.top_performer.goals}G {weekData.top_performer.assists}A {weekData.top_performer.shots}SOG
+                    {weekData.top_performer.team} · {weekData.top_performer.position}
+                    {weekData.top_performer.is_goalie ? (
+                      <>
+                        {' · '}
+                        {weekData.top_performer.saves} SV / {weekData.top_performer.goals_against} GA
+                        {weekData.top_performer.shutouts > 0 && ' · SHUTOUT'}
+                        {weekData.top_performer.decision && ` · ${weekData.top_performer.decision}`}
+                      </>
+                    ) : (
+                      <>
+                        {' · '}
+                        {weekData.top_performer.goals}G {weekData.top_performer.assists}A {weekData.top_performer.shots}SOG
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
