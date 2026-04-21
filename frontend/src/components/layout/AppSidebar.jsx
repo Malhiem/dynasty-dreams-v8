@@ -4,7 +4,7 @@ import {
   Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
-import { useLocation } from "react-router-dom";
+import { useLocation, Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent,
@@ -111,12 +111,23 @@ export function AppSidebar() {
           {user && (
             <SidebarMenuItem>
               <div className="flex items-center gap-3 px-3 py-2">
-                <div className="h-7 w-7 rounded-full bg-[#00D2FF]/20 flex items-center justify-center text-xs font-bold text-[#00D2FF]">
+                <Link
+                  to={`/u/${user.username || user.name}`}
+                  data-testid="sidebar-profile-link"
+                  className="h-7 w-7 rounded-full bg-[#00D2FF]/20 flex items-center justify-center text-xs font-bold text-[#00D2FF] hover:ring-2 hover:ring-[#00D2FF]/40 transition-all"
+                  title="View your public profile"
+                >
                   {user.name?.[0]?.toUpperCase() || "U"}
-                </div>
+                </Link>
                 {!collapsed && (
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-white truncate">{user.name}</p>
+                    <Link
+                      to={`/u/${user.username || user.name}`}
+                      data-testid="sidebar-username-link"
+                      className="text-sm font-medium text-white truncate hover:text-[#00D2FF] block"
+                    >
+                      {user.name}
+                    </Link>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <FantasyLevelBadge compact />
                       <p className="text-[10px] text-[#A1A1AA] truncate">{user.email}</p>

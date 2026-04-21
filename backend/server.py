@@ -16,6 +16,7 @@ import bcrypt
 import jwt
 import socketio
 import asyncio
+import re
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict, Any
@@ -1257,6 +1258,173 @@ async def get_my_level(request: Request):
             "waiver_claims": waiver_claims,
             "total_points_for": round(total_points_for + total_live_points, 2),
         },
+    }
+
+
+# ─── Public Profile ──────────────────────────────────────────
+
+@api_router.get("/u/{username}")
+async def get_public_profile(username: str):
+    """Shareable public profile snapshot for a username. No auth required."""
+    username = username.strip()
+    user = await db.users.find_one(
+        {"username": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
+        {"password_hash": 0},
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user_id = str(user["_id"])
+
+    # All teams + league info
+    teams = await db.teams.find({"owner_id": user_id}).to_list(100)
+    league_ids = list({t["league_id"] for t in teams})
+    leagues = await db.leagues.find(
+        {"_id": {"$in": [ObjectId(lid) for lid in league_ids]}}
+    ).to_list(100)
+    leagues_by_id = {str(l["_id"]): l for l in leagues}
+
+    team_cards = []
+    trophies = []  # current 1st place finishes — our "championships in progress"
+    total_wins = total_losses = total_ties = 0
+    total_points_for = 0.0
+
+    for t in teams:
+        lg = leagues_by_id.get(t["league_id"]) or {}
+        # Compute current league rank from points_for desc
+        league_teams = await db.teams.find(
+            {"league_id": t["league_id"]},
+            {"_id": 1, "points_for": 1, "live_points": 1},
+        ).to_list(100)
+        ranked = sorted(
+            league_teams,
+            key=lambda x: (x.get("points_for", 0.0) or 0.0) + (x.get("live_points", 0.0) or 0.0),
+            reverse=True,
+        )
+        rank = next((i + 1 for i, x in enumerate(ranked) if x["_id"] == t["_id"]), None)
+
+        total_wins += t.get("wins", 0) or 0
+        total_losses += t.get("losses", 0) or 0
+        total_ties += t.get("ties", 0) or 0
+        total_points_for += (t.get("points_for", 0.0) or 0.0) + (t.get("live_points", 0.0) or 0.0)
+
+        card = {
+            "team_id": str(t["_id"]),
+            "team_name": t["name"],
+            "league_id": t["league_id"],
+            "league_name": lg.get("name", "Unknown league"),
+            "league_format": lg.get("format"),
+            "league_sport": lg.get("sport", "nhl"),
+            "wins": t.get("wins", 0),
+            "losses": t.get("losses", 0),
+            "ties": t.get("ties", 0),
+            "points_for": round((t.get("points_for", 0.0) or 0.0) + (t.get("live_points", 0.0) or 0.0), 2),
+            "rank": rank,
+            "total_teams": len(league_teams),
+            "live_points": round(t.get("live_points", 0.0) or 0.0, 2),
+        }
+        team_cards.append(card)
+
+        if rank == 1:
+            trophies.append({
+                "league_id": t["league_id"],
+                "league_name": lg.get("name"),
+                "team_name": t["name"],
+                "label": "1st Place (current)",
+                "type": "lead",
+            })
+        elif rank and rank <= 3:
+            trophies.append({
+                "league_id": t["league_id"],
+                "league_name": lg.get("name"),
+                "team_name": t["name"],
+                "label": f"Top 3 (#{rank})",
+                "type": "top3",
+            })
+
+    # Lifetime top performer — highest single-game fpts across all rostered players
+    lifetime_best = None
+    if teams:
+        from live_scoring_worker import _fantasy_points_from_live
+        roster_ids = set()
+        for t in teams:
+            roster_ids.update(t.get("roster") or [])
+        if roster_ids:
+            players = await db.players.find(
+                {"_id": {"$in": [ObjectId(p) for p in list(roster_ids)[:500]]}},
+                {"name": 1, "team": 1, "position": 1, "player_type": 1, "live_stats": 1},
+            ).to_list(500)
+            for p in players:
+                is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
+                for _gid, ls in (p.get("live_stats") or {}).items():
+                    fpts = _fantasy_points_from_live(ls, is_g)
+                    if not lifetime_best or fpts > lifetime_best["fpts"]:
+                        lifetime_best = {
+                            "id": str(p["_id"]),
+                            "name": p.get("name"),
+                            "team": p.get("team"),
+                            "position": p.get("position"),
+                            "is_goalie": is_g,
+                            "goals": ls.get("goals", 0) or 0,
+                            "assists": ls.get("assists", 0) or 0,
+                            "shots": ls.get("shots", 0) or 0,
+                            "saves": ls.get("saves", 0) or 0,
+                            "goals_against": ls.get("goals_against", 0) or 0,
+                            "fpts": round(fpts, 2),
+                        }
+
+    # Level data (reuse the same formula used by /users/me/level so numbers match)
+    trades_executed = await db.trades.count_documents({
+        "$or": [{"proposer_id": user_id}, {"recipient_id": user_id}],
+        "status": "accepted",
+    })
+    drafts_completed = await db.drafts.count_documents({
+        "participants": {"$in": [str(t["_id"]) for t in teams]},
+        "status": "complete",
+    }) if teams else 0
+    waiver_claims = await db.waiver_claims.count_documents({
+        "team_id": {"$in": [str(t["_id"]) for t in teams]},
+    }) if teams else 0
+
+    xp = int(
+        len(teams) * 50
+        + total_wins * 20
+        + trades_executed * 25
+        + drafts_completed * 40
+        + waiver_claims * 5
+        + total_points_for / 5
+    )
+    level = 1
+    xp_rem = xp
+    while True:
+        cost = 100 + level * 50
+        if xp_rem < cost:
+            break
+        xp_rem -= cost
+        level += 1
+
+    return {
+        "username": user.get("username"),
+        "display_name": user.get("name") or user.get("username"),
+        "member_since": user.get("created_at"),
+        "level": level,
+        "title": _title_for_level(level),
+        "xp_in_level": xp_rem,
+        "xp_required_for_next": 100 + level * 50,
+        "progress_pct": round((xp_rem / (100 + level * 50)) * 100, 1),
+        "stats": {
+            "leagues_joined": len(teams),
+            "total_wins": total_wins,
+            "total_losses": total_losses,
+            "total_ties": total_ties,
+            "total_points": round(total_points_for, 2),
+            "trades_accepted": trades_executed,
+            "drafts_completed": drafts_completed,
+            "waiver_claims": waiver_claims,
+        },
+        "teams": team_cards,
+        "trophies": trophies,
+        "lifetime_top_performer": lifetime_best,
     }
 
 
