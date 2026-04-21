@@ -4,10 +4,16 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 
-// Pages
+// Landing / auth (keep existing)
 import LandingPage from "@/pages/LandingPage";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
+import JoinLeaguePage from "@/pages/JoinLeaguePage";
+import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
+import PaymentCancelPage from "@/pages/PaymentCancelPage";
+import ProfilePage from "@/pages/ProfilePage";
+
+// Backend-wired pages (our existing, data-driven)
 import DashboardPage from "@/pages/DashboardPage";
 import LeaguesPage from "@/pages/LeaguesPage";
 import CreateLeaguePage from "@/pages/CreateLeaguePage";
@@ -16,61 +22,94 @@ import PlayersPage from "@/pages/PlayersPage";
 import DraftsPage from "@/pages/DraftsPage";
 import DraftRoomPage from "@/pages/DraftRoomPage";
 import AuctionDraftPage from "@/pages/AuctionDraftPage";
-import ScoringPage from "@/pages/ScoringPage";
-import TradeBlockPage from "@/pages/TradeBlockPage";
-import TransactionsPage from "@/pages/TransactionsPage";
-import WaiversPage from "@/pages/WaiversPage";
-import RosterPage from "@/pages/RosterPage";
-import StandingsPage from "@/pages/StandingsPage";
 import CommissionerPage from "@/pages/CommissionerPage";
 import PlayerDetailPage from "@/pages/PlayerDetailPage";
-import SalaryCapPage from "@/pages/SalaryCapPage";
-import ActivityFeedPage from "@/pages/ActivityFeedPage";
-import JoinLeaguePage from "@/pages/JoinLeaguePage";
-import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
-import PaymentCancelPage from "@/pages/PaymentCancelPage";
 import LiveScoringPage from "@/pages/LiveScoringPage";
 import TeamDetailPage from "@/pages/TeamDetailPage";
-import ProfilePage from "@/pages/ProfilePage";
+
+// Lovable-ported pages (design migration)
+import LovableIndex from "@/lovable/pages/Index";
+import LovableTeam from "@/lovable/pages/Team";
+import LovableMatchup from "@/lovable/pages/Matchup";
+import LovableStandings from "@/lovable/pages/Standings";
+import LovableTransactions from "@/lovable/pages/Transactions";
+import LovableWaivers from "@/lovable/pages/Waivers";
+import LovableTradeBlock from "@/lovable/pages/TradeBlock";
+import LovableDepthChart from "@/lovable/pages/DepthChart";
+import LovableSalaryCap from "@/lovable/pages/SalaryCap";
+import LovableScoring from "@/lovable/pages/Scoring";
+import LovableDraftBoard from "@/lovable/pages/DraftBoard";
+import LovableDraftRoom from "@/lovable/pages/DraftRoom";
+import LovableDraftLottery from "@/lovable/pages/DraftLottery";
+import LovableLeagueHistory from "@/lovable/pages/LeagueHistory";
+import LovableFranchiseRecords from "@/lovable/pages/FranchiseRecords";
+import LovableAnalytics from "@/lovable/pages/Analytics";
+import LovableChat from "@/lovable/pages/Chat";
+import LovableCommissionerSettings from "@/lovable/pages/CommissionerSettings";
+import LovableLeaguePayments from "@/lovable/pages/LeaguePayments";
+import LovablePlayerNews from "@/lovable/pages/PlayerNews";
+import LovablePlayerPool from "@/lovable/pages/PlayerPool";
+import LovableProspects from "@/lovable/pages/Prospects";
+import LovableSiteAdmin from "@/lovable/pages/SiteAdmin";
+import LovableTeamsOwners from "@/lovable/pages/TeamsOwners";
+import LovableNotFound from "@/lovable/pages/NotFound";
 
 function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public Routes */}
+          {/* Public */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/join/:code" element={<JoinLeaguePage />} />
+          <Route path="/u/:username" element={<ProfilePage />} />
 
-          {/* Protected Routes */}
+          {/* Backend-wired (data-driven) */}
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/leagues" element={<ProtectedRoute><LeaguesPage /></ProtectedRoute>} />
           <Route path="/leagues/create" element={<ProtectedRoute><CreateLeaguePage /></ProtectedRoute>} />
           <Route path="/leagues/:id" element={<ProtectedRoute><LeagueDetailPage /></ProtectedRoute>} />
           <Route path="/players" element={<ProtectedRoute><PlayersPage /></ProtectedRoute>} />
+          <Route path="/players/:id" element={<ProtectedRoute><PlayerDetailPage /></ProtectedRoute>} />
           <Route path="/drafts" element={<ProtectedRoute><DraftsPage /></ProtectedRoute>} />
-          <Route path="/draft-room" element={<ProtectedRoute><DraftRoomPage /></ProtectedRoute>} />
           <Route path="/draft-room/:id" element={<ProtectedRoute><DraftRoomPage /></ProtectedRoute>} />
           <Route path="/auction-draft/:id" element={<ProtectedRoute><AuctionDraftPage /></ProtectedRoute>} />
-          <Route path="/trade-block" element={<ProtectedRoute><TradeBlockPage /></ProtectedRoute>} />
-          <Route path="/transactions" element={<ProtectedRoute><TransactionsPage /></ProtectedRoute>} />
-          <Route path="/waivers" element={<ProtectedRoute><WaiversPage /></ProtectedRoute>} />
-          <Route path="/roster" element={<ProtectedRoute><RosterPage /></ProtectedRoute>} />
-          <Route path="/scoring" element={<ProtectedRoute><ScoringPage /></ProtectedRoute>} />
           <Route path="/commissioner" element={<ProtectedRoute><CommissionerPage /></ProtectedRoute>} />
-          <Route path="/players/:id" element={<ProtectedRoute><PlayerDetailPage /></ProtectedRoute>} />
-          <Route path="/salary-cap" element={<ProtectedRoute><SalaryCapPage /></ProtectedRoute>} />
-          <Route path="/activity" element={<ProtectedRoute><ActivityFeedPage /></ProtectedRoute>} />
-          <Route path="/standings" element={<ProtectedRoute><StandingsPage /></ProtectedRoute>} />
-          <Route path="/analytics" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-          <Route path="/draft-board" element={<ProtectedRoute><DraftsPage /></ProtectedRoute>} />
-          <Route path="/payment/success" element={<ProtectedRoute><PaymentSuccessPage /></ProtectedRoute>} />
-          <Route path="/payment/cancel" element={<ProtectedRoute><PaymentCancelPage /></ProtectedRoute>} />
           <Route path="/live" element={<ProtectedRoute><LiveScoringPage /></ProtectedRoute>} />
           <Route path="/teams/:id" element={<ProtectedRoute><TeamDetailPage /></ProtectedRoute>} />
-          <Route path="/u/:username" element={<ProfilePage />} />
+          <Route path="/payment/success" element={<ProtectedRoute><PaymentSuccessPage /></ProtectedRoute>} />
+          <Route path="/payment/cancel" element={<ProtectedRoute><PaymentCancelPage /></ProtectedRoute>} />
+
+          {/* Lovable-ported design pages */}
+          <Route path="/league/:leagueId/home" element={<ProtectedRoute><LovableIndex /></ProtectedRoute>} />
+          <Route path="/roster" element={<ProtectedRoute><LovableTeam /></ProtectedRoute>} />
+          <Route path="/matchup" element={<ProtectedRoute><LovableMatchup /></ProtectedRoute>} />
+          <Route path="/standings" element={<ProtectedRoute><LovableStandings /></ProtectedRoute>} />
+          <Route path="/transactions" element={<ProtectedRoute><LovableTransactions /></ProtectedRoute>} />
+          <Route path="/waivers" element={<ProtectedRoute><LovableWaivers /></ProtectedRoute>} />
+          <Route path="/trade-block" element={<ProtectedRoute><LovableTradeBlock /></ProtectedRoute>} />
+          <Route path="/depth-chart" element={<ProtectedRoute><LovableDepthChart /></ProtectedRoute>} />
+          <Route path="/salary-cap" element={<ProtectedRoute><LovableSalaryCap /></ProtectedRoute>} />
+          <Route path="/scoring" element={<ProtectedRoute><LovableScoring /></ProtectedRoute>} />
+          <Route path="/draft-board" element={<ProtectedRoute><LovableDraftBoard /></ProtectedRoute>} />
+          <Route path="/draft-room" element={<ProtectedRoute><LovableDraftRoom /></ProtectedRoute>} />
+          <Route path="/draft-lottery" element={<ProtectedRoute><LovableDraftLottery /></ProtectedRoute>} />
+          <Route path="/league-history" element={<ProtectedRoute><LovableLeagueHistory /></ProtectedRoute>} />
+          <Route path="/franchise-records" element={<ProtectedRoute><LovableFranchiseRecords /></ProtectedRoute>} />
+          <Route path="/analytics" element={<ProtectedRoute><LovableAnalytics /></ProtectedRoute>} />
+          <Route path="/chat" element={<ProtectedRoute><LovableChat /></ProtectedRoute>} />
+          <Route path="/commissioner/settings" element={<ProtectedRoute><LovableCommissionerSettings /></ProtectedRoute>} />
+          <Route path="/league-payments" element={<ProtectedRoute><LovableLeaguePayments /></ProtectedRoute>} />
+          <Route path="/player-news" element={<ProtectedRoute><LovablePlayerNews /></ProtectedRoute>} />
+          <Route path="/player-pool" element={<ProtectedRoute><LovablePlayerPool /></ProtectedRoute>} />
+          <Route path="/prospects" element={<ProtectedRoute><LovableProspects /></ProtectedRoute>} />
+          <Route path="/site-admin" element={<ProtectedRoute><LovableSiteAdmin /></ProtectedRoute>} />
+          <Route path="/teams-owners" element={<ProtectedRoute><LovableTeamsOwners /></ProtectedRoute>} />
+
+          {/* 404 */}
+          <Route path="*" element={<LovableNotFound />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

@@ -44,6 +44,13 @@ module.exports = {
   				foreground: 'hsl(var(--destructive-foreground))'
   			},
   			border: 'hsl(var(--border))',
+  			ice: {
+  				DEFAULT: 'hsl(var(--ice-glow))',
+  				subtle: 'hsl(var(--ice-subtle))'
+  			},
+  			gold: 'hsl(var(--gold))',
+  			success: 'hsl(var(--success))',
+  			'surface-elevated': 'hsl(var(--surface-elevated))',
   			input: 'hsl(var(--input))',
   			ring: 'hsl(var(--ring))',
   			chart: {
