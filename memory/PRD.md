@@ -12,6 +12,7 @@ Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnos
 | 11 | League Premium Stripe Unlock + Personalized Recommendations + Payment pages | 16/16 |
 | 12 | Full-fill 86 teams + auto-draft + NHL live scoring worker + /live page & widget | 14/14 |
 | 13 | My Week at a Glance + Fantasy Level system + clickable leagues/teams + TeamDetailPage | 14/14 + 16/16 |
+| 14-16 | **Lovable UI wiring: Team/Roster + Matchup + Standings** bound to live APIs | 7/7 backend + 3/3 pages |
 
 ## Key Stats
 - **65+ REST API endpoints**
@@ -50,14 +51,20 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **SendGrid email dispatch** → mock path (status="mocked") when `SENDGRID_API_KEY` is empty. Add the key to `/app/backend/.env` to enable real delivery.
 
 ## Backlog
+- **P0**: **Phase 17 — Wire remaining Lovable pages** (SalaryCap, Transactions, TradeBlock, Waivers, DraftBoard, Analytics) to live APIs (`/api/contracts`, `/api/salary-cap/{league_id}`, `/api/activity/{league_id}`, `/api/trade-block`, `/api/waivers/*`, `/api/drafts/*`). Pattern: use `useActiveLeague` + `/api/roster/{id}/detail`.
 - **P0**: NFL player data ingestion script (sport-agnostic model ready)
 - **P1**: Gate premium-only commissioner actions (draft scheduling, multi-year contracts, taxi squad, custom scoring, webhooks) server-side once league.premium=true
 - **P1**: Real SendGrid key + sender domain verification to flip mock → real delivery
 - **P1**: Trade value analyzer, player projections
-- **P2**: Refactor `server.py` (3350+ lines) → modular FastAPI routers (auth, leagues, drafts, trades, players, payments, recommendations)
+- **P1**: Fix TypeScript errors in Lovable (`Waivers.tsx`, `Index.tsx`, `chart.tsx`) so `TSC_COMPILE_ON_ERROR=true` bypass can be removed
+- **P2**: Refactor `server.py` (~4100 lines) → modular FastAPI routers (auth, leagues, drafts, trades, players, payments, live_scoring, rosters)
+- **P2**: Extract shared hook `useLeagueContext(myTeam, opponentTeam)` from Matchup/Standings/Roster (code-review feedback iter 14)
+- **P2**: Add opt-in `?include=roster` query param to `GET /api/teams` to keep list lean when rosters not needed
+- **P2**: Delete dead mock-generator code in `PlayerRoster.tsx` (fallback path no longer reachable)
 - **P2**: Compound unique index on `league_invites(league_id, email)`
 - **P2**: Switch `EmailInviteRequest.emails` to `list[EmailStr]`
 - **P2**: EAS Build for iOS/Android distribution
+- **P2**: Mobile app API wiring for Lovable features (React Native in /app/mobile)
 
 ## Architecture
 ```
