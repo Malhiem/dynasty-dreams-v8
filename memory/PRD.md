@@ -13,6 +13,7 @@ Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnos
 | 12 | Full-fill 86 teams + auto-draft + NHL live scoring worker + /live page & widget | 14/14 |
 | 13 | My Week at a Glance + Fantasy Level system + clickable leagues/teams + TeamDetailPage | 14/14 + 16/16 |
 | 14-16 | **Lovable UI wiring: Team/Roster + Matchup + Standings** bound to live APIs | 7/7 backend + 3/3 pages |
+| 17 | **Lovable UI wiring: SalaryCap + Transactions + TradeBlock + Waivers + DraftBoard + Analytics** + TypeScript cleanup (removed TSC_COMPILE_ON_ERROR bypass, clean compile) | 14/14 backend + 6/6 pages |
 
 ## Key Stats
 - **65+ REST API endpoints**
@@ -51,16 +52,18 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **SendGrid email dispatch** → mock path (status="mocked") when `SENDGRID_API_KEY` is empty. Add the key to `/app/backend/.env` to enable real delivery.
 
 ## Backlog
-- **P0**: **Phase 17 — Wire remaining Lovable pages** (SalaryCap, Transactions, TradeBlock, Waivers, DraftBoard, Analytics) to live APIs (`/api/contracts`, `/api/salary-cap/{league_id}`, `/api/activity/{league_id}`, `/api/trade-block`, `/api/waivers/*`, `/api/drafts/*`). Pattern: use `useActiveLeague` + `/api/roster/{id}/detail`.
 - **P0**: NFL player data ingestion script (sport-agnostic model ready)
+- **P1**: Persist draft-pick ownership / pick trades in DB so DraftBoard.tsx pick matrix can show real team abbrs (currently uses seeded fallback with generic team names)
+- **P1**: Historical weekly analytics (PF/PA per week) — Analytics.tsx YoY charts currently use seeded data since no history exists; add a `week_summaries` rollup or weekly snapshots
 - **P1**: Gate premium-only commissioner actions (draft scheduling, multi-year contracts, taxi squad, custom scoring, webhooks) server-side once league.premium=true
 - **P1**: Real SendGrid key + sender domain verification to flip mock → real delivery
 - **P1**: Trade value analyzer, player projections
-- **P1**: Fix TypeScript errors in Lovable (`Waivers.tsx`, `Index.tsx`, `chart.tsx`) so `TSC_COMPILE_ON_ERROR=true` bypass can be removed
-- **P2**: Refactor `server.py` (~4100 lines) → modular FastAPI routers (auth, leagues, drafts, trades, players, payments, live_scoring, rosters)
-- **P2**: Extract shared hook `useLeagueContext(myTeam, opponentTeam)` from Matchup/Standings/Roster (code-review feedback iter 14)
+- **P2**: Wrap Analytics charts with explicit minWidth/minHeight to suppress recharts ResponsiveContainer width(-1)/height(-1) console warnings
+- **P2**: Standardize `/api/activity` response to flat list (currently returns paginated `{items, total, page, pages}` dict while other list endpoints like `/api/trades`, `/api/trade-block` return flat lists)
+- **P2**: Refactor `server.py` (~4100 lines) → modular FastAPI routers (auth, leagues, drafts, trades, players, payments, live_scoring, rosters, waivers, activity)
+- **P2**: Extract shared hook `useLeagueContext(myTeam, opponentTeam)` from Matchup/Standings/Roster
 - **P2**: Add opt-in `?include=roster` query param to `GET /api/teams` to keep list lean when rosters not needed
-- **P2**: Delete dead mock-generator code in `PlayerRoster.tsx` (fallback path no longer reachable)
+- **P2**: Delete dead mock-generator code in `PlayerRoster.tsx` (fallback path no longer reachable for real teamIds)
 - **P2**: Compound unique index on `league_invites(league_id, email)`
 - **P2**: Switch `EmailInviteRequest.emails` to `list[EmailStr]`
 - **P2**: EAS Build for iOS/Android distribution

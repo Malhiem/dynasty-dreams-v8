@@ -65,7 +65,7 @@ const SalaryCap = () => {
       yearsRemaining: p.contract?.yearsRemaining || 1,
       status: p.rosterSection === "ir"
         ? "ir"
-        : (p.contract?.yearsRemaining === 1 ? "expiring" : "active"),
+        : ((p.contract?.type === "UFA" || p.contract?.yearsRemaining === 1) ? "expiring" : "active"),
     }));
   }, [rosterDetail]);
 
