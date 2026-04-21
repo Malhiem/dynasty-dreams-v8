@@ -1,6 +1,8 @@
 // @ts-nocheck
 import { useState, useMemo } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -195,6 +197,7 @@ export default function DraftBoardPage() {
   const currentYear = new Date().getFullYear();
   const availableYears = Array.from({ length: maxTradeYears }, (_, i) => String(currentYear + i));
   const [selectedYear, setSelectedYear] = useState(availableYears[0]);
+  const { league, leagueTeams: liveLeagueTeams } = useActiveLeague();
 
   const yearData = allPickData[selectedYear] || {};
 
@@ -220,6 +223,13 @@ export default function DraftBoardPage() {
     <AppLayout>
       <TooltipProvider>
         <div className="space-y-6">
+          <LeagueContextBanner
+            title="Draft Board"
+            kpiLabel="Teams drafting"
+            kpiValue={liveLeagueTeams?.length || 0}
+            primaryHref="/drafts"
+            primaryLabel="Open Draft Room"
+          />
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>

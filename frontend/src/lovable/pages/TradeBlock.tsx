@@ -1,6 +1,8 @@
 // @ts-nocheck
 import { useState, useMemo } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -184,6 +186,12 @@ const positions = ["All", "C", "LW", "RW", "D", "G", "Prospect", "Pick"];
 const owners = ["All Teams", "Frozen Thunder", "Glacier Kings", "Puck Masters", "Ice Crushers", "Blizzard FC"];
 
 const TradeBlock = () => {
+  const { league, leagueTeams } = useActiveLeague();
+  const leagueTeamsCount = leagueTeams?.length || 0;
+  const totalFpts = Math.round((leagueTeams || []).reduce((a, t) => a + ((t.points_for || 0) + (t.live_points || 0)), 0));
+  const pendingTradesCount = 0; // wired in follow-up
+  const pendingClaimsCount = 0;
+
   const [positionFilter, setPositionFilter] = useState("All");
   const [ownerFilter, setOwnerFilter] = useState("All Teams");
   const [tradeModalOpen, setTradeModalOpen] = useState(false);
@@ -241,7 +249,8 @@ const TradeBlock = () => {
 
   return (
     <AppLayout>
-      <div className="container py-8 space-y-6">
+        <div className="container py-8 space-y-6">
+          <LeagueContextBanner title="Trade Block" kpiLabel="Teams on block" kpiValue={leagueTeamsCount} primaryHref="/transactions" primaryLabel="Full transactions log" />
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Trade Block</h1>

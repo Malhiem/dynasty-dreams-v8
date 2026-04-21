@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { AppLayout } from "@/components/layout/AppLayout";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -79,11 +81,18 @@ const waiverOrder = [
 ];
 
 const Waivers = () => {
+  const { league, leagueTeams } = useActiveLeague();
+  const leagueTeamsCount = leagueTeams?.length || 0;
+  const totalFpts = Math.round((leagueTeams || []).reduce((a, t) => a + ((t.points_for || 0) + (t.live_points || 0)), 0));
+  const pendingTradesCount = 0; // wired in follow-up
+  const pendingClaimsCount = 0;
+
   const [waiverOrderOpen, setWaiverOrderOpen] = useState(false);
 
   return (
     <AppLayout>
-      <div className="container py-8 space-y-6">
+        <div className="container py-8 space-y-6">
+          <LeagueContextBanner title="Waiver Wire" kpiLabel="Pending claims" kpiValue={pendingClaimsCount} primaryHref="/players" primaryLabel="Free agents" />
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Waiver Wire</h1>

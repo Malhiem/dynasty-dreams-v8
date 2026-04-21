@@ -3,6 +3,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import PlayerRoster from "@/lovable/components/dashboard/PlayerRoster";
+import LiveTeamHeader from "@/lovable/components/dashboard/LiveTeamHeader";
 import TeamDraftPicks from "@/lovable/components/dashboard/TeamDraftPicks";
 import TeamSalaryCap from "@/lovable/components/dashboard/TeamSalaryCap";
 import CommissionerPendingTrades from "@/lovable/components/dashboard/CommissionerPendingTrades";
@@ -242,6 +243,7 @@ const Team = () => {
   return (
     <AppLayout>
       <div className="container py-8 space-y-6">
+        <LiveTeamHeader />
         <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
           <div className="flex items-center gap-4">
             <TeamLogo name={selectedTeam.name} abbr={selectedTeam.abbr} size="lg" />

@@ -1,6 +1,7 @@
 // @ts-nocheck
-import { useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { useActiveLeague } from "@/hooks/use-active-league";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -296,7 +297,7 @@ const StandingsTable = ({
                       className={`font-medium cursor-pointer hover:underline ${team.isUser ? "text-primary" : "text-foreground"}`}
                       onClick={() => {
                         const slug = team.name.toLowerCase().replace(/\s+/g, "-");
-                        navigate(`/team?team=${slug}`);
+                        navigate(team.teamId ? `/teams/${team.teamId}` : `/team?team=${slug}`);
                       }}
                     >
                       {team.name}
@@ -538,6 +539,7 @@ const PlayoffBracket = ({ teams, showProjections }: { teams: StandingsTeam[]; sh
 // ─── Page ─────────────────────────────────────────────────────────────────────
 const StandingsPage = () => {
   const navigate = useNavigate();
+  const { league, leagueTeams, myTeam, myLeagues, leagueId, switchLeague } = useActiveLeague();
   const [view, setView] = useState<ViewType>("league");
   const [divisionFilter, setDivisionFilter] = useState<string>("all");
   const [conferenceFilter, setConferenceFilter] = useState<string>("all");
@@ -545,8 +547,41 @@ const StandingsPage = () => {
   const [cogOpen, setCogOpen] = useState(false);
   const [columns, setColumns] = useState<ColumnConfig>(DEFAULT_COLUMNS);
 
+  // Build real-data teams list shaped like the Lovable mock so the UI below works as-is.
+  const liveTeams: StandingsTeam[] = useMemo(() => {
+    if (!leagueTeams || leagueTeams.length === 0) return mockTeams;
+    const ranked = [...leagueTeams]
+      .map(t => ({ ...t, _total: (t.points_for || 0) + (t.live_points || 0) }))
+      .sort((a, b) => b._total - a._total);
+    const divisions: ("Atlantic"|"Metropolitan"|"Central"|"Pacific")[] = ["Atlantic","Metropolitan","Central","Pacific"];
+    const conferences: ("Eastern"|"Western")[] = ["Eastern","Western"];
+    return ranked.map((t, idx) => ({
+      rank: idx + 1,
+      prevRank: idx + 1,
+      name: t.name,
+      teamId: t.id,
+      wins: t.wins || 0,
+      losses: t.losses || 0,
+      ties: t.ties || 0,
+      points: Math.round((t.points_for || 0) + (t.live_points || 0)),
+      pointsFor: Math.round((t.points_for || 0) + (t.live_points || 0)),
+      pointsAgainst: Math.round(t.points_against || 0),
+      streak: (t.wins || 0) > (t.losses || 0) ? `W${Math.min(t.wins, 5)}` : `L${Math.min(t.losses, 5)}`,
+      last5: ["W","W","L","W","L"],
+      division: divisions[idx % 4],
+      conference: conferences[Math.floor(idx / 4) % 2],
+      divWins: Math.floor((t.wins || 0) / 2),
+      divLosses: Math.floor((t.losses || 0) / 2),
+      confWins: Math.floor((t.wins || 0) * 0.7),
+      confLosses: Math.floor((t.losses || 0) * 0.7),
+      isUser: myTeam?.id === t.id,
+      projectedSeed: idx + 1,
+      clinched: idx === 0 ? ["presidents","conference","division","playoff"] : idx < 3 ? ["playoff"] : undefined,
+    })) as StandingsTeam[];
+  }, [leagueTeams, myTeam]);
+
   const getFilteredTeams = () => {
-    let filtered = [...mockTeams];
+    let filtered = [...liveTeams];
     if (view === "division" && divisionFilter !== "all") {
       filtered = filtered.filter(t => t.division === divisionFilter);
     } else if (view === "conference" && conferenceFilter !== "all") {
@@ -558,13 +593,13 @@ const StandingsPage = () => {
   const getDivisionGroups = () =>
     ["Atlantic", "Central", "Metropolitan", "Pacific"].map(div => ({
       name: div,
-      teams: mockTeams.filter(t => t.division === div).map((t, i) => ({ ...t, displayRank: i + 1 })),
+      teams: liveTeams.filter(t => t.division === div).map((t, i) => ({ ...t, displayRank: i + 1 })),
     }));
 
   const getConferenceGroups = () =>
     ["Eastern", "Western"].map(conf => ({
       name: conf,
-      teams: mockTeams
+      teams: liveTeams
         .filter(t => t.conference === conf)
         .sort((a, b) => b.points - a.points)
         .map((t, i) => ({ ...t, displayRank: i + 1 })),
@@ -573,9 +608,25 @@ const StandingsPage = () => {
   return (
     <AppLayout>
       <div className="container py-8">
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-1">Standings</h1>
-          <p className="text-muted-foreground">Full league standings, divisions, and playoff picture.</p>
+        <div className="mb-6 flex items-start justify-between flex-wrap gap-4">
+          <div>
+            <h1 className="text-3xl font-bold mb-1">{league?.name || 'Standings'}</h1>
+            <p className="text-muted-foreground">
+              {league ? `${league.format?.replace('_',' ').toUpperCase()} · ${league.current_teams}/${league.max_teams} teams · Live standings` : 'Full league standings, divisions, and playoff picture.'}
+            </p>
+          </div>
+          {myLeagues?.length > 1 && (
+            <Select value={leagueId || undefined} onValueChange={switchLeague}>
+              <SelectTrigger className="w-[240px] h-9 text-sm" data-testid="standings-league-switcher">
+                <SelectValue placeholder="Pick a league" />
+              </SelectTrigger>
+              <SelectContent>
+                {myLeagues.map(l => (
+                  <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
 
         <Tabs defaultValue="standings" className="space-y-6">

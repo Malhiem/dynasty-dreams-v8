@@ -1,5 +1,7 @@
 // @ts-nocheck
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
+import api from "@/lib/api";
+import { useActiveLeague } from "@/hooks/use-active-league";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +39,7 @@ const makeDailyScores = (total: number, status: string): Record<string, number> 
   return scores;
 };
 
-const myPlayers: MatchupPlayer[] = [
+const DEFAULT_MY_PLAYERS: MatchupPlayer[] = [
   { id: 1, name: "Connor McDavid", position: "C", team: "EDM", projected: 8.5, actual: 12.2, status: "done", dailyScores: { "Mon 2/17": 4.2, "Tue 2/18": 0, "Wed 2/19": 3.8, "Thu 2/20": 4.2 } },
   { id: 2, name: "Nathan MacKinnon", position: "C", team: "COL", projected: 7.2, actual: 5.1, status: "playing", dailyScores: { "Mon 2/17": 2.1, "Tue 2/18": 1.5, "Wed 2/19": 1.5 } },
   { id: 3, name: "Cale Makar", position: "D", team: "COL", projected: 5.8, actual: 0, status: "upcoming", dailyScores: {} },
@@ -45,7 +47,7 @@ const myPlayers: MatchupPlayer[] = [
   { id: 5, name: "Igor Shesterkin", position: "G", team: "NYR", projected: 4.2, actual: 0, status: "upcoming", dailyScores: {} },
 ];
 
-const opponentPlayers: MatchupPlayer[] = [
+const DEFAULT_OPP_PLAYERS: MatchupPlayer[] = [
   { id: 1, name: "Leon Draisaitl", position: "C", team: "EDM", projected: 7.8, actual: 6.2, status: "done", dailyScores: { "Mon 2/17": 3.1, "Tue 2/18": 0, "Wed 2/19": 1.8, "Thu 2/20": 1.3 } },
   { id: 2, name: "David Pastrnak", position: "RW", team: "BOS", projected: 6.5, actual: 7.8, status: "playing", dailyScores: { "Mon 2/17": 0, "Tue 2/18": 4.6, "Wed 2/19": 3.2 } },
   { id: 3, name: "Quinn Hughes", position: "D", team: "VAN", projected: 5.2, actual: 0, status: "upcoming", dailyScores: {} },
@@ -58,6 +60,64 @@ type ViewMode = "totals" | "daily";
 const Matchup = () => {
   const [viewMode, setViewMode] = useState<ViewMode>("totals");
   const [selectedDayIndex, setSelectedDayIndex] = useState(3); // Thu 2/20 (today)
+
+  const { league, leagueTeams, myTeam } = useActiveLeague();
+  const [matchup, setMatchup] = useState(null);
+  const [myLive, setMyLive] = useState(null);
+  const [oppLive, setOppLive] = useState(null);
+
+  useEffect(() => {
+    if (!league?.id) return;
+    let cancelled = false;
+    api.get(`/matchups/${league.id}/current-week`).then(({data}) => !cancelled && setMatchup(data)).catch(() => {});
+    return () => { cancelled = true; };
+  }, [league]);
+
+  // Find my matchup (where my team is either team1 or team2)
+  const myMatchup = useMemo(() => {
+    if (!matchup?.matchups || !myTeam) return null;
+    return matchup.matchups.find(m => m.team1_id === myTeam.id || m.team2_id === myTeam.id);
+  }, [matchup, myTeam]);
+
+  const opponentTeam = useMemo(() => {
+    if (!myMatchup || !myTeam) return leagueTeams.find(t => t.id !== myTeam?.id) || null;
+    const oppId = myMatchup.team1_id === myTeam.id ? myMatchup.team2_id : myMatchup.team1_id;
+    return leagueTeams.find(t => t.id === oppId) || null;
+  }, [myMatchup, myTeam, leagueTeams]);
+
+  useEffect(() => {
+    if (!myTeam?.id) return;
+    api.get(`/live-scoring/team/${myTeam.id}`).then(({data}) => setMyLive(data)).catch(() => {});
+  }, [myTeam]);
+
+  useEffect(() => {
+    if (!opponentTeam?.id) return;
+    api.get(`/live-scoring/team/${opponentTeam.id}`).then(({data}) => setOppLive(data)).catch(() => {});
+  }, [opponentTeam]);
+
+  // Transform live players into MatchupPlayer shape
+  const makePlayers = (data) => {
+    if (!data?.players) return [];
+    return data.players.slice(0, 12).map((p, i) => ({
+      id: p.id || i,
+      name: p.name,
+      position: p.position,
+      team: p.team,
+      projected: +(p.fpts / Math.max(1, p.games) * 7).toFixed(1), // weekly projection
+      actual: p.fpts,
+      status: p.games > 0 ? "done" : "upcoming",
+      dailyScores: { [matchupDays[3]]: p.fpts },
+    }));
+  };
+
+  const myPlayers: MatchupPlayer[] = useMemo(() => {
+    const real = makePlayers(myLive);
+    return real.length > 0 ? real : DEFAULT_MY_PLAYERS;
+  }, [myLive]);
+  const opponentPlayers: MatchupPlayer[] = useMemo(() => {
+    const real = makePlayers(oppLive);
+    return real.length > 0 ? real : DEFAULT_OPP_PLAYERS;
+  }, [oppLive]);
 
   const selectedDay = matchupDays[selectedDayIndex];
 

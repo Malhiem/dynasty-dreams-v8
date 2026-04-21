@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { AppLayout } from "@/components/layout/AppLayout";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +67,12 @@ const DEAD_CAP_COLOR = "hsl(var(--accent))";
 const RETAINED_COLOR = "hsl(var(--destructive))";
 
 const SalaryCap = () => {
+  const { league, leagueTeams } = useActiveLeague();
+  const leagueTeamsCount = leagueTeams?.length || 0;
+  const totalFpts = Math.round((leagueTeams || []).reduce((a, t) => a + ((t.points_for || 0) + (t.live_points || 0)), 0));
+  const pendingTradesCount = 0; // wired in follow-up
+  const pendingClaimsCount = 0;
+
   const [chartFilter, setChartFilter] = useState<ChartFilter>("all");
   const capUsagePercent = ((currentSpending + deadCap + totalRetained) / capLimit) * 100;
 
@@ -125,7 +133,8 @@ const SalaryCap = () => {
   
   return (
     <AppLayout>
-      <div className="container py-8 space-y-6">
+        <div className="container py-8 space-y-6">
+          <LeagueContextBanner title="Salary Cap" kpiLabel="Teams on roster" kpiValue={leagueTeamsCount} primaryHref="/commissioner" primaryLabel="Manage in Commissioner" />
         <div>
           <h1 className="text-2xl font-bold">Salary Cap Management</h1>
           <p className="text-muted-foreground">Contracts, cap space, and roster management</p>

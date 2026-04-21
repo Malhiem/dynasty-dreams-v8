@@ -1,6 +1,8 @@
 // @ts-nocheck
 import { useState } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -221,6 +223,12 @@ function TradeCard({ trade }: { trade: PendingTrade }) {
 }
 
 const Transactions = () => {
+  const { league, leagueTeams } = useActiveLeague();
+  const leagueTeamsCount = leagueTeams?.length || 0;
+  const totalFpts = Math.round((leagueTeams || []).reduce((a, t) => a + ((t.points_for || 0) + (t.live_points || 0)), 0));
+  const pendingTradesCount = 0; // wired in follow-up
+  const pendingClaimsCount = 0;
+
   const [tab, setTab] = useState("pending");
 
   const pending = MOCK_TRADES.filter((t) => t.status === "pending");
@@ -229,7 +237,8 @@ const Transactions = () => {
 
   return (
     <AppLayout>
-      <div className="container py-8">
+        <div className="container py-8">
+          <LeagueContextBanner title="Transactions" kpiLabel="Active trades" kpiValue={pendingTradesCount} primaryHref="/trade-block" primaryLabel="Open Trade Block" />
         <div className="mb-6 animate-fade-in">
           <h1 className="text-3xl font-bold mb-2">Transactions</h1>
           <p className="text-muted-foreground">Review pending and accepted trades. Cast your vote to approve or veto.</p>
