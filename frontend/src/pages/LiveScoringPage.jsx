@@ -228,7 +228,15 @@ export default function LiveScoringPage() {
                       {leaderboard.map((r, idx) => (
                         <tr key={r.team_id} className={`border-t border-white/5 ${idx === 0 ? 'bg-[#00D2FF]/5' : ''}`}>
                           <td className="px-4 py-3 text-white font-semibold">{idx + 1}</td>
-                          <td className="px-4 py-3 text-white">{r.team_name}</td>
+                          <td className="px-4 py-3">
+                            <Link
+                              to={`/teams/${r.team_id}`}
+                              data-testid={`live-leaderboard-team-${r.team_id}`}
+                              className="text-white hover:text-[#00D2FF]"
+                            >
+                              {r.team_name}
+                            </Link>
+                          </td>
                           <td className="px-4 py-3 text-[#A1A1AA] text-sm">{r.owner_name}</td>
                           <td className="px-4 py-3 text-right text-white tabular-nums font-bold">
                             {r.live_points.toFixed(2)}

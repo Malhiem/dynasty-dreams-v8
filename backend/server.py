@@ -1018,6 +1018,234 @@ async def get_league_live_scoring(league_id: str, request: Request):
     return {"league_id": league_id, "leaderboard": rows}
 
 
+@api_router.get("/live-scoring/team/{team_id}/week")
+async def get_team_week_summary(team_id: str, request: Request):
+    """Return weekly/daily/top-performer/rank-delta summary for a team."""
+    await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])}, {"name": 1})
+
+    roster_ids = team.get("roster") or []
+    if not roster_ids:
+        return {
+            "team_id": team_id,
+            "team_name": team["name"],
+            "league_id": team["league_id"],
+            "league_name": league.get("name") if league else None,
+            "daily_fpts": 0.0,
+            "weekly_fpts": 0.0,
+            "top_performer": None,
+            "rank": None,
+            "rank_delta": 0,
+        }
+
+    from live_scoring_worker import _fantasy_points_from_live
+    players = await db.players.find(
+        {"_id": {"$in": [ObjectId(pid) for pid in roster_ids]}},
+        {"name": 1, "position": 1, "player_type": 1, "team": 1, "live_stats": 1},
+    ).to_list(100)
+
+    now = datetime.now(timezone.utc)
+    day_start = now - timedelta(hours=24)
+    week_start = now - timedelta(days=7)
+
+    daily_total = 0.0
+    weekly_total = 0.0
+    top_today = None
+
+    for p in players:
+        is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
+        for _gid, ls in (p.get("live_stats") or {}).items():
+            updated = ls.get("updated_at")
+            if not updated:
+                continue
+            if isinstance(updated, str):
+                try:
+                    updated = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                except Exception:
+                    continue
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+
+            fpts = _fantasy_points_from_live(ls, is_g)
+
+            if updated >= week_start:
+                weekly_total += fpts
+            if updated >= day_start:
+                daily_total += fpts
+                if not top_today or fpts > top_today["fpts"]:
+                    top_today = {
+                        "id": str(p["_id"]),
+                        "name": p.get("name"),
+                        "team": p.get("team"),
+                        "position": p.get("position"),
+                        "goals": ls.get("goals", 0) or 0,
+                        "assists": ls.get("assists", 0) or 0,
+                        "shots": ls.get("shots", 0) or 0,
+                        "saves": ls.get("saves", 0) or 0,
+                        "fpts": round(fpts, 2),
+                    }
+
+    # Rank & rank delta — compare current live_points leaderboard to yesterday's snapshot
+    all_teams = await db.teams.find(
+        {"league_id": team["league_id"]},
+        {"_id": 1, "live_points": 1},
+    ).to_list(100)
+    ranked = sorted(all_teams, key=lambda t: t.get("live_points", 0.0) or 0.0, reverse=True)
+    current_rank = next((i + 1 for i, t in enumerate(ranked) if str(t["_id"]) == team_id), None)
+
+    snapshot = await db.team_rank_snapshots.find_one({
+        "league_id": team["league_id"],
+        "team_id": team_id,
+    })
+    rank_delta = 0
+    if snapshot and current_rank:
+        prev_rank = snapshot.get("rank")
+        if prev_rank:
+            rank_delta = prev_rank - current_rank  # positive = moved up
+
+    # Opportunistically refresh the snapshot if older than 24h (lightweight)
+    needs_update = not snapshot
+    if snapshot and snapshot.get("updated_at"):
+        last = snapshot["updated_at"]
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        needs_update = (now - last).total_seconds() > 86400
+    if needs_update:
+        await db.team_rank_snapshots.update_one(
+            {"league_id": team["league_id"], "team_id": team_id},
+            {"$set": {
+                "league_id": team["league_id"],
+                "team_id": team_id,
+                "rank": current_rank,
+                "updated_at": now,
+            }},
+            upsert=True,
+        )
+
+    return {
+        "team_id": team_id,
+        "team_name": team["name"],
+        "league_id": team["league_id"],
+        "league_name": league.get("name") if league else None,
+        "daily_fpts": round(daily_total, 2),
+        "weekly_fpts": round(weekly_total, 2),
+        "top_performer": top_today,
+        "rank": current_rank,
+        "total_teams": len(ranked),
+        "rank_delta": rank_delta,
+    }
+
+
+@api_router.get("/users/me/week-at-a-glance")
+async def get_my_week_at_a_glance(request: Request):
+    """Return week-at-a-glance summary for every team owned by the current user."""
+    user = await get_current_user(request)
+    teams = await db.teams.find({"owner_id": user["_id"]}, {"_id": 1, "league_id": 1, "name": 1}).to_list(50)
+    if not teams:
+        return {"summaries": []}
+    summaries = []
+    for t in teams:
+        try:
+            # Reuse the single-team endpoint logic by simulating the request
+            res = await get_team_week_summary(str(t["_id"]), request)
+            summaries.append(res)
+        except HTTPException:
+            continue
+    return {"summaries": summaries}
+
+
+# ─── Fantasy Level / Gamification ────────────────────────────
+
+LEVEL_TITLES = [
+    (1, 5, "Bench Warmer"),
+    (6, 15, "Rink Regular"),
+    (16, 30, "Line Captain"),
+    (31, 50, "Hat Trick Hero"),
+    (51, 75, "Playoff Contender"),
+    (76, 999, "Stanley Cup Dynasty"),
+]
+
+
+def _title_for_level(level: int) -> str:
+    for lo, hi, title in LEVEL_TITLES:
+        if lo <= level <= hi:
+            return title
+    return "Rookie"
+
+
+@api_router.get("/users/me/level")
+async def get_my_level(request: Request):
+    """Yahoo-style fantasy level based on career activity:
+       trades executed, drafts completed, teams managed, accumulated live points."""
+    user = await get_current_user(request)
+    user_id = user["_id"]
+
+    teams = await db.teams.find({"owner_id": user_id}).to_list(100)
+    total_team_count = len(teams)
+    total_wins = sum(t.get("wins", 0) or 0 for t in teams)
+    total_points_for = sum(t.get("points_for", 0.0) or 0.0 for t in teams)
+    total_live_points = sum(t.get("live_points", 0.0) or 0.0 for t in teams)
+
+    # Trade + draft activity
+    trades_executed = await db.trades.count_documents({
+        "$or": [{"proposer_id": user_id}, {"recipient_id": user_id}],
+        "status": "accepted",
+    })
+    drafts_completed = await db.drafts.count_documents({
+        "participants": {"$in": [str(t["_id"]) for t in teams]},
+        "status": "complete",
+    }) if teams else 0
+    waiver_claims = await db.waiver_claims.count_documents({
+        "team_id": {"$in": [str(t["_id"]) for t in teams]},
+    }) if teams else 0
+
+    # XP formula — calibrated so an active user hits lvl 15-ish after a full season
+    xp = int(
+        total_team_count * 50
+        + total_wins * 20
+        + trades_executed * 25
+        + drafts_completed * 40
+        + waiver_claims * 5
+        + (total_points_for + total_live_points) / 5
+    )
+
+    # Level curve: each level requires 100 + level*50 XP cumulatively
+    level = 1
+    xp_remaining = xp
+    while True:
+        cost = 100 + level * 50
+        if xp_remaining < cost:
+            break
+        xp_remaining -= cost
+        level += 1
+    xp_to_next = (100 + level * 50) - xp_remaining
+
+    title = _title_for_level(level)
+
+    return {
+        "user_id": str(user_id),
+        "level": level,
+        "title": title,
+        "xp_total": xp,
+        "xp_in_level": xp_remaining,
+        "xp_to_next_level": xp_to_next,
+        "xp_required_for_next": 100 + level * 50,
+        "progress_pct": round((xp_remaining / (100 + level * 50)) * 100, 1),
+        "stats": {
+            "teams_managed": total_team_count,
+            "total_wins": total_wins,
+            "trades_accepted": trades_executed,
+            "drafts_completed": drafts_completed,
+            "waiver_claims": waiver_claims,
+            "total_points_for": round(total_points_for + total_live_points, 2),
+        },
+    }
+
+
 # ─── Sport-Agnostic Player Fetch ──────────────────────────────
 
 @api_router.get("/sports")

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -133,7 +134,13 @@ export default function StandingsPage() {
                             {team.rank}
                           </span>
                           <div className="flex-1">
-                            <p className="font-medium text-white">{team.team_name}</p>
+                            <Link
+                              to={`/teams/${team.team_id}`}
+                              data-testid={`standings-team-link-${team.team_id}`}
+                              className="font-medium text-white hover:text-[#00D2FF]"
+                            >
+                              {team.team_name}
+                            </Link>
                             <p className="text-xs text-[#A1A1AA]">{team.owner_name}</p>
                           </div>
                           <div className="text-right">

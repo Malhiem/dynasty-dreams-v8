@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Sparkles, ArrowRight, Loader2 } from 'lucide-react';
@@ -162,7 +162,13 @@ export default function RecommendedForYou() {
                       </Badge>
                     )}
                   </div>
-                  <div className="text-white font-bold text-lg">{topPick.name}</div>
+                  <Link
+                    to={topPick.is_own ? `/leagues/${topPick.id}` : `/join/${topPick.invite_code}`}
+                    data-testid={`recommended-top-link-${topPick.id}`}
+                    className="text-white font-bold text-lg hover:text-[#00D2FF]"
+                  >
+                    {topPick.name}
+                  </Link>
                   <div className="text-[#A1A1AA] text-sm mt-1">
                     {topPick.format?.replace('_', ' ').toUpperCase()} ·{' '}
                     {topPick.scoring_format?.replace('_', ' ').toUpperCase()} ·{' '}
@@ -198,7 +204,13 @@ export default function RecommendedForYou() {
               className="p-4 rounded-lg bg-white/5 border border-white/5 flex items-center justify-between gap-4 flex-wrap hover:bg-white/10 transition-colors"
             >
               <div className="flex-1 min-w-[200px]">
-                <div className="text-white font-semibold text-sm">{lg.name}</div>
+                <Link
+                  to={lg.is_own ? `/leagues/${lg.id}` : `/join/${lg.invite_code}`}
+                  data-testid={`recommended-item-link-${lg.id}`}
+                  className="text-white font-semibold text-sm hover:text-[#00D2FF]"
+                >
+                  {lg.name}
+                </Link>
                 <div className="text-[#A1A1AA] text-xs mt-0.5">
                   {lg.format?.replace('_', ' ').toUpperCase()} ·{' '}
                   {lg.scoring_format?.replace('_', ' ').toUpperCase()} ·{' '}

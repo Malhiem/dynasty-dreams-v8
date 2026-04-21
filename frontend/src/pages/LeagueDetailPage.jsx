@@ -77,7 +77,19 @@ export default function LeagueDetailPage() {
 
   const standingsColumns = [
     { key: 'rank', label: 'Rank', render: (v) => <span className="font-bold text-[#00D2FF]">{v}</span> },
-    { key: 'team_name', label: 'Team' },
+    {
+      key: 'team_name',
+      label: 'Team',
+      render: (v, row) => (
+        <Link
+          to={`/teams/${row.team_id}`}
+          data-testid={`league-detail-team-link-${row.team_id}`}
+          className="text-white hover:text-[#00D2FF]"
+        >
+          {v}
+        </Link>
+      ),
+    },
     { key: 'owner_name', label: 'Owner' },
     { key: 'wins', label: 'W' },
     { key: 'losses', label: 'L' },

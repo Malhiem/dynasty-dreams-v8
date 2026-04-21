@@ -1,0 +1,42 @@
+{
+  "summary": "Phase 13 full-stack — Week at a Glance, Fantasy Level, clickable leagues/teams. Backend 14/14 pytest passed (test_iteration13_week_level.py). Frontend 16/16 flows verified end-to-end as chriszarek@gmail.com: FantasyLevelBadge top-right shows 'LVL 2 / Bench Warmer / 167/200 XP', 'Recommended for You' section renders with Ice Kings TOP PICK clickable, 'My Week at a Glance' exactly 5 cards, Live Scoring widget, My Leagues table has 5 rows with clickable league names. Navigation verified: dashboard league link -> /leagues/{id}, week-glance team link -> /teams/{id} (TeamDetailPage shows Today 68.4, Week 68.4, Rank 2/12, top performer Rasmus Andersson +11.5, 20-player roster), Back link returns to league detail. /live page shows 12 clickable team links, /standings 12, League Detail Standings 12, Recommended TOP PICK 1. Sidebar footer shows compact 'LVL 2' badge next to chriszarek@g... email. Regression: admin login + /commissioner Premium tab + /live page all still work. WebSocket reconnect warnings present but non-blocking (same as iteration 12).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/teams/{team_id}", "issue": "Returns HTTP 500 instead of 400 for malformed team_id (missing _safe_object_id validation). Pre-existing bug — the new /live-scoring/team/{id}/week endpoint correctly returns 400 for malformed IDs using _safe_object_id. Low priority because the frontend never constructs malformed ids, but the review request explicitly asked for 400 on malformed."},
+      {"endpoint": "GET /api/users/me/week-at-a-glance", "issue": "Calls get_team_week_summary in a tight loop (5 calls for Chris). Each call re-runs the full leaderboard sort and snapshot-upsert. Acceptable today but O(teams) DB round-trips. Consider batching inside a single aggregation."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard FantasyLevelBadge", "issues": ["Large number '2' and 'FANTASY LEVEL' caption are visually dominant but 'Bench Warmer' title pill sits in top-right of the card and is easy to miss; consider moving the title below the level number for better hierarchy."]},
+      {"screen": "TeamDetailPage", "issues": ["'TOP PERFORMER TODAY' card uses an orange/red gradient which is fine, but the +11.5 value sits far right and the player stats '1G 1A 7SOG' are compact — consider slightly larger stat pills."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration13_week_level.py",
+    "/app/test_reports/pytest/iteration13_results.xml"
+  ],
+  "action_items": [
+    "Add _safe_object_id validation to GET /api/teams/{team_id} so malformed ids return 400 instead of 500 (one-line fix: replace ObjectId(team_id) with _safe_object_id(team_id, 'team_id')).",
+    "Consider batching week-at-a-glance summary queries into a single pipeline — currently N DB round-trips where N = number of teams owned."
+  ],
+  "critical_code_review_comments": [
+    "server.py get_team (line 1336) uses raw ObjectId(team_id) with no validation — malformed ids throw bson.errors.InvalidId -> 500. Every other new endpoint in this iteration correctly uses _safe_object_id. Inconsistency; easy fix.",
+    "get_my_week_at_a_glance calls get_team_week_summary in Python for-loop which re-opens a new request context per team. Each call also opportunistically upserts the rank snapshot — on a 5-team user that's up to 5 writes per page load. Add batching or pre-compute the league-wide ranked list once, then reuse.",
+    "LEVEL_TITLES uses hard-coded (1-5,6-15,16-30,31-50,51-75,76-999) bands — fine for now but the curve `100 + level*50` means Bench Warmer maxes at level 5 requires ~2,250 XP which for a seeded Chris (5 teams * 50 = 250 base) won't clear even the first title without trades/drafts. This was confirmed working: Chris currently sits at LVL 2 with 167/200 XP — title 'Bench Warmer' until level 6.",
+    "server.py now 3739 lines — still not split into routers (flagged in iteration 11 and 12). This iteration added ~210 lines of new endpoints inline."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration13_week_level.py"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% (all Phase 13 flows verified)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (5 seeded teams, LVL 2 Bench Warmer) and admin@dynastydreams.com / Admin123! both verified.",
+  "seed_data_creation": "None. Two transient users registered via /api/auth/register (test_level_XXX@example.com, test_empty_XXX@example.com) to verify level=1 Bench Warmer path and empty week-at-a-glance — fully isolated, no business-data mutation.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 13 green. Frontend selectors that worked: a[href^='/leagues/'] for league links, a[href^='/teams/'] for team links (TeamDetailPage, week-glance cards, /live leaderboard, /standings, /leagues/{id} standings tab all use this). FantasyLevelBadge full variant renders on /dashboard top-right with text 'FANTASY LEVEL', large level number, '167/200 XP' and title pill (Bench Warmer). Compact variant renders in sidebar footer as 'LVL X' pill next to email (truncated to 'chriszarek@g...'). TeamDetailPage has 'Back to {league name}' link at top and renders Today/Week/Rank tiles, Top Performer card, and a Roster table with PLAYER/POS/G/A/SOG/GAMES/FPTS columns. Chris's current live stats: Zarek's Frozen in Ice Kings H2H = 68.4 FPTS Rank 2/12, top performer Rasmus Andersson 1G/1A/7SOG. The /api/teams/{id} 500-on-malformed is the only remaining backend blemish — report only, not fixed by testing agent (would alter response contract).",
+  "rca_of_the_issue": "N/A — no failing feature. Single pre-existing 400-vs-500 contract mismatch on /api/teams/{id} noted as action item."
+}

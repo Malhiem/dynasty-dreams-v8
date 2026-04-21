@@ -11,6 +11,7 @@ import {
   SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem,
   SidebarHeader, SidebarFooter, useSidebar,
 } from "@/components/ui/sidebar";
+import FantasyLevelBadge from "@/components/FantasyLevelBadge";
 
 const mainItems = [
   { title: "Dashboard", url: "/dashboard", icon: Home },
@@ -116,7 +117,10 @@ export function AppSidebar() {
                 {!collapsed && (
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-white truncate">{user.name}</p>
-                    <p className="text-[10px] text-[#A1A1AA] truncate">{user.email}</p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <FantasyLevelBadge compact />
+                      <p className="text-[10px] text-[#A1A1AA] truncate">{user.email}</p>
+                    </div>
                   </div>
                 )}
                 {!collapsed && (

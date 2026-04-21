@@ -8,6 +8,8 @@ import { DataTable } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import RecommendedForYou from '@/components/RecommendedForYou';
 import LiveScoringWidget from '@/components/LiveScoringWidget';
+import MyWeekAtAGlance from '@/components/MyWeekAtAGlance';
+import FantasyLevelBadge from '@/components/FantasyLevelBadge';
 import { Trophy, Users, Calendar, Rocket, Plus, ArrowRight } from '@phosphor-icons/react';
 
 export default function DashboardPage() {
@@ -38,7 +40,19 @@ export default function DashboardPage() {
   }, []);
 
   const leagueColumns = [
-    { key: 'name', label: 'League Name' },
+    {
+      key: 'name',
+      label: 'League Name',
+      render: (v, row) => (
+        <Link
+          to={`/leagues/${row.id}`}
+          data-testid={`dashboard-league-link-${row.id}`}
+          className="text-white hover:text-[#00D2FF] font-semibold"
+        >
+          {v}
+        </Link>
+      ),
+    },
     { key: 'format', label: 'Format', render: (v) => v?.replace('_', ' ').toUpperCase() },
     { key: 'scoring_format', label: 'Scoring', render: (v) => v?.replace('_', ' ').toUpperCase() },
     { key: 'current_teams', label: 'Teams', render: (v, row) => `${v}/${row.max_teams}` },
@@ -54,11 +68,16 @@ export default function DashboardPage() {
     <div data-testid="dashboard-page">
       <div className="max-w-7xl mx-auto">
         {/* Welcome Section */}
-        <div className="mb-8">
-          <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight text-white mb-2">
-            WELCOME BACK, {user?.name?.toUpperCase()}
-          </h1>
-          <p className="text-[#A1A1AA]">Here's your dynasty at a glance</p>
+        <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight text-white mb-2">
+              WELCOME BACK, {user?.name?.toUpperCase()}
+            </h1>
+            <p className="text-[#A1A1AA]">Here's your dynasty at a glance</p>
+          </div>
+          <div className="w-full sm:w-80">
+            <FantasyLevelBadge />
+          </div>
         </div>
 
         {/* Stats Grid */}
@@ -87,6 +106,9 @@ export default function DashboardPage() {
 
         {/* Personalized Recommendation Card */}
         <RecommendedForYou />
+
+        {/* My Week at a Glance — per-league daily/weekly/top performer/rank */}
+        <MyWeekAtAGlance />
 
         {/* Live Scoring widget */}
         <LiveScoringWidget />

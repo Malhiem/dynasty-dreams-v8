@@ -30,6 +30,7 @@ import JoinLeaguePage from "@/pages/JoinLeaguePage";
 import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
 import PaymentCancelPage from "@/pages/PaymentCancelPage";
 import LiveScoringPage from "@/pages/LiveScoringPage";
+import TeamDetailPage from "@/pages/TeamDetailPage";
 
 function App() {
   return (
@@ -67,6 +68,7 @@ function App() {
           <Route path="/payment/success" element={<ProtectedRoute><PaymentSuccessPage /></ProtectedRoute>} />
           <Route path="/payment/cancel" element={<ProtectedRoute><PaymentCancelPage /></ProtectedRoute>} />
           <Route path="/live" element={<ProtectedRoute><LiveScoringPage /></ProtectedRoute>} />
+          <Route path="/teams/:id" element={<ProtectedRoute><TeamDetailPage /></ProtectedRoute>} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>
