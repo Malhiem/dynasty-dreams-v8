@@ -10,7 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Clock, DollarSign, Plus, History, TrendingUp, ChevronDown, ChevronUp } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
+import api from "@/lib/api";
 import TeamLink from "@/lovable/components/TeamLink";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 
@@ -46,53 +47,98 @@ interface ClaimHistory {
   processedAt: string;
 }
 
-const waiverPlayers: WaiverPlayer[] = [
-  { id: 1, name: "Jack Hughes", position: "C", team: "NJD", previousOwner: "Ice Crushers", clearTime: "2h 30m", weekPoints: 18.5, seasonPoints: 245, percentOwned: 78, trending: "up" },
-  { id: 2, name: "Trevor Zegras", position: "C", team: "ANA", clearTime: "2h 30m", weekPoints: 12.2, seasonPoints: 189, percentOwned: 45, trending: "stable" },
-  { id: 3, name: "Moritz Seider", position: "D", team: "DET", previousOwner: "Puck Masters", clearTime: "1d 2h", weekPoints: 8.4, seasonPoints: 156, percentOwned: 62, trending: "up" },
-  { id: 4, name: "Jake Oettinger", position: "G", team: "DAL", clearTime: "1d 2h", weekPoints: 14.0, seasonPoints: 142, percentOwned: 55, trending: "down" },
-];
-
-const myClaims: WaiverClaim[] = [
-  { id: 1, player: "Jack Hughes", team: "NJD", bidAmount: 25, dropPlayer: "Tage Thompson", status: "pending", processTime: "2h 30m" },
-  { id: 2, player: "Moritz Seider", team: "DET", bidAmount: 15, status: "pending", processTime: "1d 2h" },
-];
-
-const claimHistory: ClaimHistory[] = [
-  { id: 1, player: "Marco Rossi", team: "MIN", winner: "Glacier Kings", winningBid: 12, processedAt: "Yesterday" },
-  { id: 2, player: "Kevin Fiala", team: "LAK", winner: "Team Frostbite", winningBid: 18, processedAt: "2 days ago" },
-  { id: 3, player: "Luke Hughes", team: "NJD", winner: "Frozen Thunder", winningBid: 42, processedAt: "3 days ago" },
-];
-
-const faabBudget = 100;
-const faabSpent = 35;
-const faabRemaining = faabBudget - faabSpent;
-const waiverPriority = 3;
-
-const waiverOrder = [
-  { rank: 1, team: "Frozen Thunder", record: "4-6" },
-  { rank: 2, team: "Ice Crushers", record: "5-5" },
-  { rank: 3, team: "Glacier Kings", record: "5-5" },
-  { rank: 4, team: "Puck Masters", record: "6-4" },
-  { rank: 5, team: "Team Frostbite", record: "6-4" },
-  { rank: 6, team: "Blizzard Brigade", record: "7-3" },
-  { rank: 7, team: "Arctic Wolves", record: "7-3" },
-  { rank: 8, team: "Snow Storm", record: "8-2" },
-];
-
 const Waivers = () => {
-  const { league, leagueTeams } = useActiveLeague();
+  const { league, leagueTeams, myTeam } = useActiveLeague();
   const leagueTeamsCount = leagueTeams?.length || 0;
-  const totalFpts = Math.round((leagueTeams || []).reduce((a, t) => a + ((t.points_for || 0) + (t.live_points || 0)), 0));
-  const pendingTradesCount = 0; // wired in follow-up
-  const pendingClaimsCount = 0;
 
   const [waiverOrderOpen, setWaiverOrderOpen] = useState(false);
+  const [livePlayers, setLivePlayers] = useState<any[]>([]);
+  const [liveClaims, setLiveClaims] = useState<any[]>([]);
+  const [liveHistory, setLiveHistory] = useState<any[]>([]);
+  const [liveBudget, setLiveBudget] = useState<any>(null);
+  const [liveOrder, setLiveOrder] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!league?.id) return;
+    let cancelled = false;
+    Promise.all([
+      api.get(`/waivers/available?league_id=${league.id}&limit=20`).catch(() => ({ data: { players: [] } })),
+      api.get(`/waivers/claims?league_id=${league.id}`).catch(() => ({ data: { claims: [] } })),
+      api.get(`/waivers/history?league_id=${league.id}`).catch(() => ({ data: { history: [] } })),
+      myTeam?.id
+        ? api.get(`/waivers/budget?team_id=${myTeam.id}&league_id=${league.id}`).catch(() => ({ data: null }))
+        : Promise.resolve({ data: null }),
+      api.get(`/waivers/order?league_id=${league.id}`).catch(() => ({ data: { order: [] } })),
+    ]).then(([pRes, cRes, hRes, bRes, oRes]) => {
+      if (cancelled) return;
+      setLivePlayers(pRes.data?.players || []);
+      setLiveClaims(cRes.data?.claims || cRes.data || []);
+      setLiveHistory(hRes.data?.history || hRes.data || []);
+      setLiveBudget(bRes.data);
+      setLiveOrder(oRes.data?.order || oRes.data || []);
+    });
+    return () => { cancelled = true; };
+  }, [league?.id, myTeam?.id]);
+
+  const faabBudget = liveBudget?.total_budget ?? 100;
+  const faabSpent = liveBudget?.spent ?? 0;
+  const faabRemaining = liveBudget?.remaining ?? (faabBudget - faabSpent);
+
+  const waiverOrder = useMemo(() => {
+    if (liveOrder?.length) {
+      return liveOrder.map((o: any, i: number) => ({
+        rank: o.rank || i + 1,
+        team: o.team_name || o.name || "Team",
+        record: `${o.wins || 0}-${o.losses || 0}`,
+        teamId: o.team_id,
+      }));
+    }
+    return (leagueTeams || []).map((t: any, i: number) => ({
+      rank: i + 1,
+      team: t.name,
+      record: `${t.wins || 0}-${t.losses || 0}`,
+      teamId: t.id,
+    })).slice(0, 12);
+  }, [liveOrder, leagueTeams]);
+
+  const waiverPriority = Math.max(1, waiverOrder.findIndex((w: any) => w.teamId === myTeam?.id) + 1);
+
+  const waiverPlayers: WaiverPlayer[] = useMemo(() => (livePlayers || []).slice(0, 20).map((p: any, i: number) => ({
+    id: p.id || i,
+    name: p.name,
+    position: p.position,
+    team: p.team,
+    previousOwner: undefined,
+    clearTime: "24h",
+    weekPoints: 0,
+    seasonPoints: p.points || 0,
+    percentOwned: Math.min(99, Math.round(((p.games_played || 0) / 50) * 100)),
+    trending: (p.points > 30 ? "up" : "stable") as any,
+  })), [livePlayers]);
+
+  const myClaims: WaiverClaim[] = useMemo(() => (liveClaims || []).map((c: any, i: number) => ({
+    id: c._id || i,
+    player: c.player_name || "Unknown",
+    team: c.nhl_team || "",
+    bidAmount: c.bid_amount || 0,
+    dropPlayer: c.drop_player_name,
+    status: (c.status || "pending") as any,
+    processTime: c.process_time || "—",
+  })), [liveClaims]);
+
+  const claimHistory: ClaimHistory[] = useMemo(() => (liveHistory || []).map((h: any, i: number) => ({
+    id: h._id || i,
+    player: h.player_name || "Unknown",
+    team: h.nhl_team || "",
+    winner: h.winning_team_name || "—",
+    winningBid: h.winning_bid || 0,
+    processedAt: (h.processed_at || "").slice(0, 10),
+  })), [liveHistory]);
 
   return (
     <AppLayout>
         <div className="container py-8 space-y-6">
-          <LeagueContextBanner title="Waiver Wire" kpiLabel="Pending claims" kpiValue={pendingClaimsCount} primaryHref="/players" primaryLabel="Free agents" />
+          <LeagueContextBanner title="Waiver Wire" kpiLabel="Pending claims" kpiValue={myClaims.filter(c => c.status === "pending").length} primaryHref="/players" primaryLabel="Free agents" />
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Waiver Wire</h1>

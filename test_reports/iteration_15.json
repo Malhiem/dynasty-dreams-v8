@@ -1,0 +1,48 @@
+{
+  "summary": "Phase 17 batch wiring validation: 13/14 backend tests pass (93%), all 6 Lovable pages render with real data from APIs, TS compiles cleanly without TSC_COMPILE_ON_ERROR. Single critical bug: activity_feed collection is EMPTY in DB (0 docs) so Transactions > Activity tab is blank; review request claimed 45 events seeded but they never persisted.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "/api/activity/{league_id}", "issue": "Returns 0 events for ALL 5 leagues. Mongo activity_feed collection has 0 docs. Review request stated 45 events were seeded in-shell but they are missing from DB. Causes Transactions > Activity tab to be empty.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "/api/activity/{league_id}", "issue": "Returns paginated dict {items, page, pages, total} not a flat list. Frontend Transactions.tsx must handle this shape (it likely already does since Activity tab renders without errors)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SalaryCap contracts table", "issue": "McDavid status shows 'Expiring' (1 year left) instead of 'UFA' as expected by review request. Functionally equivalent but label differs.", "selector": "table > tbody > tr (McDavid row)", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Transactions > Activity tab", "issue": "Renders empty because /api/activity/{id} returns 0 items. Root cause is missing seed data, not frontend bug.", "affected_selectors": ["[role='tab'][value='activity']"]}
+    ],
+    "design_issues": [
+      {"screen": "Analytics page", "issues": ["Console warnings 'chart width(-1) and height(-1) should be greater than 0' from recharts ResponsiveContainer — charts still render but throw warnings on initial mount. Add minWidth/minHeight to container."]},
+      {"screen": "Global", "issues": ["socket.io WebSocket to wss://.../api/socket.io/ closes before connection established (warning only, doesn't block)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration15_phase17.py",
+    "/app/test_reports/pytest/iteration15_results.xml"
+  ],
+  "action_items": [
+    "Re-run the activity seed script (or write seed_activity.py) — Mongo activity_feed collection is currently empty across all 5 leagues. After fix, GET /api/activity/{league_id} should return >=9 items for Ice Kings.",
+    "Optional: Update SalaryCap.tsx contract status mapping to label 1-year-remaining contracts as 'UFA' instead of 'Expiring' if that wording is required.",
+    "Optional: Wrap recharts ResponsiveContainer on Analytics with explicit minWidth/minHeight to suppress width(-1)/height(-1) warnings."
+  ],
+  "critical_code_review_comments": [
+    "/api/activity/{league_id} response shape (paginated dict) differs from /api/trades (flat list) and /api/trade-block (flat list). Consider standardising list endpoints.",
+    "server.py is monolithic — at 3700+ lines should be split by domain (auth, leagues, teams, roster, waivers, trades, activity, drafts, scoring) into routers/.",
+    "salary synthesizer logic for /roster/{id}/detail is now correct (McDavid $13.5M verified) — good fix.",
+    "trade-block league_id filter works correctly (8 items for Ice Kings vs 40 global) — good fix."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration15_phase17.py (new)"
+  ],
+  "success_rate": {"backend": "93% (13/14 pass, 1 skipped)", "frontend": "95% (6/6 pages load with real data; Activity tab blank due to empty DB seed)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! — works",
+  "seed_data_creation": "None. Did NOT re-seed activity events; flagged for main agent.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 17: 6 new Lovable pages all wire to real backend data correctly. Only outstanding issue is empty activity_feed collection. Backend test file /app/backend/tests/test_iteration15_phase17.py covers salary-cap, roster detail (McDavid salary check), activity, trades, trade-block (league filter), all 5 waivers endpoints, draft board (skipped — no /api/drafts list endpoint), standings, and Phase 14-16 spot-checks. Re-run after seeding activity to verify all 14/14 pass. Note: /api/activity returns paginated {items,page,pages,total} dict, not list.",
+  "rca of the issue": "BUG: Empty activity feed. RCA: review request states '45 activity events seeded in-shell, no script file' — these in-shell inserts apparently never persisted (perhaps inserted into wrong DB or rolled back). Mongo db[$DB_NAME].activity_feed.count_documents({}) == 0 across all leagues. Mitigation: create /app/backend/seed_activity.py with at least 9 events per league (event_types: league_created, draft_scheduled, team_joined, contract_signed, roster_add, roster_drop, trade_proposed, trade_accepted, chat) tied to each league's _id (string-encoded as code does). Reproduction: pytest backend/tests/test_iteration15_phase17.py::TestTransactions::test_activity_endpoint -v"
+}

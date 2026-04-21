@@ -1,14 +1,15 @@
 // @ts-nocheck
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import api from "@/lib/api";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowRightLeft, ThumbsUp, ThumbsDown, Clock, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
+import { ArrowRightLeft, ThumbsUp, ThumbsDown, Clock, CheckCircle2, XCircle, AlertTriangle, Activity } from "lucide-react";
 import TeamLink from "@/lovable/components/TeamLink";
 
 interface TradeAsset {
@@ -225,40 +226,94 @@ function TradeCard({ trade }: { trade: PendingTrade }) {
 const Transactions = () => {
   const { league, leagueTeams } = useActiveLeague();
   const leagueTeamsCount = leagueTeams?.length || 0;
-  const totalFpts = Math.round((leagueTeams || []).reduce((a, t) => a + ((t.points_for || 0) + (t.live_points || 0)), 0));
-  const pendingTradesCount = 0; // wired in follow-up
-  const pendingClaimsCount = 0;
 
   const [tab, setTab] = useState("pending");
+  const [trades, setTrades] = useState<any[]>([]);
+  const [activity, setActivity] = useState<any[]>([]);
 
-  const pending = MOCK_TRADES.filter((t) => t.status === "pending");
-  const accepted = MOCK_TRADES.filter((t) => t.status === "accepted");
-  const all = MOCK_TRADES;
+  useEffect(() => {
+    if (!league?.id) return;
+    let cancelled = false;
+    api.get(`/trades?league_id=${league.id}`)
+      .then(({ data }) => { if (!cancelled) setTrades(Array.isArray(data) ? data : (data?.items || [])); })
+      .catch(() => {});
+    api.get(`/activity/${league.id}?limit=100`)
+      .then(({ data }) => { if (!cancelled) setActivity(data?.items || []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [league?.id]);
+
+  // Map backend trades to the TradeCard shape; falls back to MOCK_TRADES when none
+  const teamName = (tid: string) => (leagueTeams || []).find(t => t.id === tid)?.name || tid;
+  const allTrades: PendingTrade[] = useMemo(() => {
+    const mapped = (trades || []).map((t: any) => ({
+      id: t._id || t.id,
+      teamA: teamName(t.from_team_id || t.team_a_id),
+      teamB: teamName(t.to_team_id || t.team_b_id),
+      assetsFromA: (t.from_assets || t.team_a_assets || []).map((a: any) => ({
+        name: a.name || a.player_name || "Unknown",
+        position: a.position || "—",
+        age: a.age || 0,
+        capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
+        goals: a.goals || 0,
+        assists: a.assists || 0,
+        points: a.points || 0,
+        fantasyPts: a.fantasy_points || 0,
+        type: (a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
+      })),
+      assetsFromB: (t.to_assets || t.team_b_assets || []).map((a: any) => ({
+        name: a.name || a.player_name || "Unknown",
+        position: a.position || "—",
+        age: a.age || 0,
+        capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
+        goals: a.goals || 0,
+        assists: a.assists || 0,
+        points: a.points || 0,
+        fantasyPts: a.fantasy_points || 0,
+        type: (a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
+      })),
+      status: (t.status || "pending") as any,
+      submittedAt: (t.created_at || "").slice(0, 16).replace("T", " "),
+      processesAt: (t.expires_at || "").slice(0, 16).replace("T", " "),
+      votes: t.votes || { approve: 0, veto: 0, total: leagueTeamsCount },
+    }));
+    return mapped.length > 0 ? mapped : [];
+  }, [trades, leagueTeams, leagueTeamsCount]);
+
+  const pending = allTrades.filter((t) => t.status === "pending");
+  const accepted = allTrades.filter((t) => t.status === "accepted");
+  const all = allTrades;
 
   return (
     <AppLayout>
         <div className="container py-8">
-          <LeagueContextBanner title="Transactions" kpiLabel="Active trades" kpiValue={pendingTradesCount} primaryHref="/trade-block" primaryLabel="Open Trade Block" />
+          <LeagueContextBanner title="Transactions" kpiLabel="Trades this season" kpiValue={all.length} primaryHref="/trade-block" primaryLabel="Open Trade Block" />
         <div className="mb-6 animate-fade-in">
           <h1 className="text-3xl font-bold mb-2">Transactions</h1>
-          <p className="text-muted-foreground">Review pending and accepted trades. Cast your vote to approve or veto.</p>
+          <p className="text-muted-foreground">Review pending and accepted trades, plus league activity. Cast your vote to approve or veto.</p>
         </div>
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="mb-6">
-            <TabsTrigger value="pending">
+            <TabsTrigger value="pending" data-testid="transactions-tab-pending">
               Pending
               {pending.length > 0 && (
                 <Badge variant="secondary" className="ml-2 text-xs">{pending.length}</Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="accepted">
+            <TabsTrigger value="accepted" data-testid="transactions-tab-accepted">
               Accepted
               {accepted.length > 0 && (
                 <Badge variant="secondary" className="ml-2 text-xs">{accepted.length}</Badge>
               )}
             </TabsTrigger>
-            <TabsTrigger value="all">All</TabsTrigger>
+            <TabsTrigger value="all" data-testid="transactions-tab-all">All</TabsTrigger>
+            <TabsTrigger value="activity" data-testid="transactions-tab-activity">
+              Activity
+              {activity.length > 0 && (
+                <Badge variant="secondary" className="ml-2 text-xs">{activity.length}</Badge>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="pending" className="space-y-4">
@@ -274,7 +329,45 @@ const Transactions = () => {
           </TabsContent>
 
           <TabsContent value="all" className="space-y-4">
-            {all.map((t) => <TradeCard key={t.id} trade={t} />)}
+            {all.length === 0 ? (
+              <Card><CardContent className="py-8 text-center text-muted-foreground">No trades yet in this league. When managers propose trades they'll appear here.</CardContent></Card>
+            ) : all.map((t) => <TradeCard key={t.id} trade={t} />)}
+          </TabsContent>
+
+          <TabsContent value="activity" className="space-y-2">
+            {activity.length === 0 ? (
+              <Card><CardContent className="py-8 text-center text-muted-foreground">No recent activity.</CardContent></Card>
+            ) : (
+              <Card className="bg-card border-border">
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-32">Event</TableHead>
+                        <TableHead>Detail</TableHead>
+                        <TableHead className="w-48 text-right">When</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {activity.map((a: any) => (
+                        <TableRow key={a._id} data-testid={`activity-row-${a._id}`}>
+                          <TableCell>
+                            <Badge variant="outline" className="capitalize text-xs">
+                              <Activity className="h-3 w-3 mr-1" />
+                              {(a.event_type || "event").replace(/_/g, " ")}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm">{a.description || a.message || ""}</TableCell>
+                          <TableCell className="text-right text-xs text-muted-foreground">
+                            {(a.created_at || "").slice(0, 16).replace("T", " ")}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
         </Tabs>
       </div>

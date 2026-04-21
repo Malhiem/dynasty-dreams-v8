@@ -1,7 +1,8 @@
 // @ts-nocheck
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import api from "@/lib/api";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -186,20 +187,76 @@ const positions = ["All", "C", "LW", "RW", "D", "G", "Prospect", "Pick"];
 const owners = ["All Teams", "Frozen Thunder", "Glacier Kings", "Puck Masters", "Ice Crushers", "Blizzard FC"];
 
 const TradeBlock = () => {
-  const { league, leagueTeams } = useActiveLeague();
+  const { league, leagueTeams, myTeam } = useActiveLeague();
   const leagueTeamsCount = leagueTeams?.length || 0;
-  const totalFpts = Math.round((leagueTeams || []).reduce((a, t) => a + ((t.points_for || 0) + (t.live_points || 0)), 0));
-  const pendingTradesCount = 0; // wired in follow-up
-  const pendingClaimsCount = 0;
 
   const [positionFilter, setPositionFilter] = useState("All");
   const [ownerFilter, setOwnerFilter] = useState("All Teams");
   const [tradeModalOpen, setTradeModalOpen] = useState(false);
   const [selectedOwner, setSelectedOwner] = useState("");
   const [selectedOwnerPlayers, setSelectedOwnerPlayers] = useState<any[]>([]);
+  const [liveItems, setLiveItems] = useState<any[]>([]);
+  const [myRoster, setMyRoster] = useState<any[]>([]);
+
+  // Fetch real trade-block items
+  useEffect(() => {
+    if (!league?.id) return;
+    let cancelled = false;
+    api.get(`/trade-block?league_id=${league.id}`).then(({ data }) => {
+      if (cancelled) return;
+      setLiveItems(Array.isArray(data) ? data : []);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [league?.id]);
+
+  // My roster (for "My Players" tab)
+  useEffect(() => {
+    if (!myTeam?.id) return;
+    let cancelled = false;
+    api.get(`/roster/${myTeam.id}/detail`).then(({ data }) => {
+      if (!cancelled) setMyRoster(data?.players || []);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [myTeam?.id]);
+
+  // Map backend trade-block rows into the card shape expected by the UI
+  const ownerNameFor = (ownerId: string) => {
+    const t = (leagueTeams || []).find(tt => tt.owner_id === ownerId);
+    return t?.name || "Unknown";
+  };
+  const ownerAbbrFor = (ownerId: string) => {
+    const t = (leagueTeams || []).find(tt => tt.owner_id === ownerId);
+    return t?.logo_abbr || "TBD";
+  };
+  const realTradeItems: TradeBlockItem[] = useMemo(() => (liveItems || []).map((it: any, idx: number) => ({
+    id: it._id || idx,
+    name: it.name || "Unknown",
+    position: it.position || "—",
+    team: it.nhl_team || (it.item_type === "pick" ? "Own" : ""),
+    age: it.age || undefined,
+    dynastyValue: Math.round(((it.points || 0) * 80) + 1000),
+    owner: ownerNameFor(it.owner_id),
+    ownerAvatar: ownerAbbrFor(it.owner_id),
+    lookingFor: (it.looking_for || []).length ? it.looking_for : ["Best Offer"],
+    trend: "stable" as const,
+    weeklyPoints: 0,
+    type: (it.item_type || "player") as ItemType,
+    year: it.pick_year,
+    round: it.pick_round,
+    gp: it.games_played, g: it.goals, a: it.assists,
+    plusMinus: it.plus_minus,
+    sog: it.points, // placeholder; real sog not stored on trade-block row
+  })), [liveItems, leagueTeams]);
+
+  // Dynamic owner list from real leagueTeams
+  const realOwners = useMemo(
+    () => ["All Teams", ...((leagueTeams || []).map(t => t.name))],
+    [leagueTeams]
+  );
 
   const sortedAndFilteredItems = useMemo(() => {
-    let items = [...tradeBlockItems];
+    // Prefer live items; fall back to seeded mock when league has no trade-block entries
+    let items = realTradeItems.length > 0 ? [...realTradeItems] : [...tradeBlockItems];
 
     // Filter by position
     if (positionFilter !== "All") {
@@ -230,7 +287,7 @@ const TradeBlock = () => {
     });
 
     return items;
-  }, [positionFilter, ownerFilter]);
+  }, [positionFilter, ownerFilter, realTradeItems]);
 
   const handleProposeTrade = (owner: string) => {
     const ownerItems = tradeBlockItems
@@ -288,11 +345,11 @@ const TradeBlock = () => {
                 </SelectContent>
               </Select>
               <Select value={ownerFilter} onValueChange={setOwnerFilter}>
-                <SelectTrigger className="w-44 bg-secondary border-border">
+                <SelectTrigger className="w-44 bg-secondary border-border" data-testid="trade-block-owner-filter">
                   <SelectValue placeholder="Team" />
                 </SelectTrigger>
                 <SelectContent>
-                  {owners.map((owner) => (
+                  {realOwners.map((owner) => (
                     <SelectItem key={owner} value={owner}>
                       {owner}
                     </SelectItem>

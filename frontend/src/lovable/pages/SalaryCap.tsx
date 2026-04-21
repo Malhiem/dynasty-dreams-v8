@@ -2,6 +2,7 @@
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
+import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -9,10 +10,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { DollarSign, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 interface Contract {
-  id: number;
+  id: string;
   player: string;
   position: string;
   team: string;
@@ -20,34 +21,6 @@ interface Contract {
   yearsRemaining: number;
   status: "active" | "expiring" | "ir";
 }
-
-interface RetainedSalary {
-  id: number;
-  player: string;
-  tradedTo: string;
-  retainedAmount: number;
-  yearsRemaining: number;
-}
-
-const contracts: Contract[] = [
-  { id: 1, player: "Connor McDavid", position: "C", team: "EDM", salary: 12500000, yearsRemaining: 3, status: "active" },
-  { id: 2, player: "Nathan MacKinnon", position: "C", team: "COL", salary: 10600000, yearsRemaining: 4, status: "active" },
-  { id: 3, player: "Cale Makar", position: "D", team: "COL", salary: 9000000, yearsRemaining: 5, status: "active" },
-  { id: 4, player: "Nikita Kucherov", position: "RW", team: "TBL", salary: 8500000, yearsRemaining: 1, status: "expiring" },
-  { id: 5, player: "Auston Matthews", position: "C", team: "TOR", salary: 11640000, yearsRemaining: 2, status: "active" },
-  { id: 6, player: "Igor Shesterkin", position: "G", team: "NYR", salary: 5667000, yearsRemaining: 2, status: "ir" },
-];
-
-const retainedSalaries: RetainedSalary[] = [
-  { id: 1, player: "Tyler Seguin", tradedTo: "DAL", retainedAmount: 1500000, yearsRemaining: 2 },
-  { id: 2, player: "P.K. Subban", tradedTo: "NJD", retainedAmount: 1000000, yearsRemaining: 1 },
-];
-
-const capLimit = 82500000;
-const currentSpending = contracts.reduce((sum, c) => sum + c.salary, 0);
-const totalRetained = retainedSalaries.reduce((sum, r) => sum + r.retainedAmount, 0);
-const deadCap = 2500000;
-const capSpace = capLimit - currentSpending - deadCap - totalRetained;
 
 type ChartFilter = "all" | "players" | "position";
 
@@ -67,30 +40,56 @@ const DEAD_CAP_COLOR = "hsl(var(--accent))";
 const RETAINED_COLOR = "hsl(var(--destructive))";
 
 const SalaryCap = () => {
-  const { league, leagueTeams } = useActiveLeague();
+  const { league, leagueTeams, myTeam } = useActiveLeague();
   const leagueTeamsCount = leagueTeams?.length || 0;
-  const totalFpts = Math.round((leagueTeams || []).reduce((a, t) => a + ((t.points_for || 0) + (t.live_points || 0)), 0));
-  const pendingTradesCount = 0; // wired in follow-up
-  const pendingClaimsCount = 0;
-
   const [chartFilter, setChartFilter] = useState<ChartFilter>("all");
+  const [rosterDetail, setRosterDetail] = useState<any>(null);
+
+  useEffect(() => {
+    if (!myTeam?.id) return;
+    let cancelled = false;
+    api.get(`/roster/${myTeam.id}/detail`)
+      .then(({ data }) => { if (!cancelled) setRosterDetail(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [myTeam?.id]);
+
+  const contracts: Contract[] = useMemo(() => {
+    if (!rosterDetail?.players) return [];
+    return rosterDetail.players.map((p: any) => ({
+      id: p.id,
+      player: p.name,
+      position: p.position,
+      team: p.team,
+      salary: p.contract?.salary || 0,
+      yearsRemaining: p.contract?.yearsRemaining || 1,
+      status: p.rosterSection === "ir"
+        ? "ir"
+        : (p.contract?.yearsRemaining === 1 ? "expiring" : "active"),
+    }));
+  }, [rosterDetail]);
+
+  const capLimit = Math.max(
+    league?.salary_cap || 82_500_000,
+    // Auto-scale to accommodate synthesized seed contracts (typical dynasty demo)
+    Math.ceil(contracts.reduce((s, c) => s + c.salary, 0) / 5_000_000) * 5_000_000
+  );
+  const currentSpending = contracts.reduce((sum, c) => sum + c.salary, 0);
+  const deadCap = 0; // not yet modelled in DB
+  const totalRetained = 0;
+  const retainedSalaries: any[] = [];
+  const capSpace = capLimit - currentSpending - deadCap - totalRetained;
   const capUsagePercent = ((currentSpending + deadCap + totalRetained) / capLimit) * 100;
 
   const getChartData = () => {
     switch (chartFilter) {
       case "players":
-        const playerData = contracts.map((c, index) => ({
+        const playerData = contracts.slice(0, 12).map((c, index) => ({
           name: c.player,
           value: c.salary,
           color: CHART_COLORS[index % CHART_COLORS.length],
         }));
-        if (totalRetained > 0) {
-          playerData.push({ name: "Retained Salary", value: totalRetained, color: RETAINED_COLOR });
-        }
-        if (deadCap > 0) {
-          playerData.push({ name: "Dead Cap", value: deadCap, color: DEAD_CAP_COLOR });
-        }
-        playerData.push({ name: "Cap Space", value: capSpace, color: CAP_SPACE_COLOR });
+        if (capSpace > 0) playerData.push({ name: "Cap Space", value: capSpace, color: CAP_SPACE_COLOR });
         return playerData;
 
       case "position":
@@ -103,32 +102,19 @@ const SalaryCap = () => {
           value,
           color: CHART_COLORS[index % CHART_COLORS.length],
         }));
-        if (totalRetained > 0) {
-          posData.push({ name: "Retained Salary", value: totalRetained, color: RETAINED_COLOR });
-        }
-        if (deadCap > 0) {
-          posData.push({ name: "Dead Cap", value: deadCap, color: DEAD_CAP_COLOR });
-        }
-        posData.push({ name: "Cap Space", value: capSpace, color: CAP_SPACE_COLOR });
+        if (capSpace > 0) posData.push({ name: "Cap Space", value: capSpace, color: CAP_SPACE_COLOR });
         return posData;
 
       default:
-        const allData = [
+        const allData: any[] = [
           { name: "Player Salaries", value: currentSpending, color: "hsl(var(--primary))" },
         ];
-        if (totalRetained > 0) {
-          allData.push({ name: "Retained Salary", value: totalRetained, color: RETAINED_COLOR });
-        }
-        if (deadCap > 0) {
-          allData.push({ name: "Dead Cap", value: deadCap, color: DEAD_CAP_COLOR });
-        }
-        allData.push({ name: "Cap Space", value: capSpace, color: CAP_SPACE_COLOR });
+        if (capSpace > 0) allData.push({ name: "Cap Space", value: capSpace, color: CAP_SPACE_COLOR });
         return allData;
     }
   };
 
   const chartData = getChartData();
-
   const formatCurrency = (value: number) => `$${(value / 1000000).toFixed(2)}M`;
   
   return (

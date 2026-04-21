@@ -2603,7 +2603,9 @@ async def add_to_trade_block(input: TradeBlockItemCreate, request: Request):
 
 @api_router.get("/trade-block")
 async def get_trade_block(league_id: Optional[str] = None):
-    query = {}
+    query: dict = {}
+    if league_id:
+        query["league_id"] = league_id
     items = await db.trade_block.find(query).sort("created_at", -1).to_list(200)
     for item in items:
         item["_id"] = str(item["_id"])
@@ -3249,8 +3251,25 @@ async def get_roster_detail(team_id: str):
         # Synthesize eligible positions (primary + one secondary for forwards)
         eligible = [pos] if pos in ("C", "LW", "RW", "D", "G") else ["F"]
 
-        # Contract (synthesized from points/age ranges)
-        salary = max(950000, int(points * 120000 + 850000))
+        # Contract salary (synthesized realistic NHL tiers based on points G+A)
+        # Elite (>=100) → $11-13M, Star (60-99) → $6-10M, Mid (30-59) → $3-6M, Role (10-29) → $1.5-3M
+        if is_g:
+            # Goalies tiered by fantasy points
+            if fpts_season >= 300:   salary = 9_500_000
+            elif fpts_season >= 180: salary = 6_000_000
+            elif fpts_season >= 100: salary = 3_500_000
+            else:                     salary = 1_200_000
+        elif points >= 100:
+            salary = 11_000_000 + min(2_500_000, (points - 100) * 70_000)
+        elif points >= 60:
+            salary = 6_000_000 + (points - 60) * 100_000
+        elif points >= 30:
+            salary = 3_000_000 + (points - 30) * 90_000
+        elif points >= 10:
+            salary = 1_500_000 + (points - 10) * 75_000
+        else:
+            salary = 950_000 + points * 40_000
+        salary = int(min(13_500_000, max(775_000, salary)))
         years_remaining = 1 + (int(p.get("nhl_id", 0)) % 6)
         contract_type = "ELC" if age < 23 and salary < 1200000 else ("RFA" if years_remaining == 1 and age < 27 else ("UFA" if years_remaining == 1 else "Signed"))
 
