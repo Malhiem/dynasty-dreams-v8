@@ -1335,7 +1335,7 @@ async def get_teams(league_id: Optional[str] = None, request: Request = None):
 
 @api_router.get("/teams/{team_id}", response_model=TeamResponse)
 async def get_team(team_id: str):
-    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     

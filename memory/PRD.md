@@ -7,18 +7,11 @@ Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnos
 
 | Phase | Features | Tests |
 |-------|----------|-------|
-| 1 | Auth, Leagues, Teams, 1,038 NHL Players, Stripe, WebSocket | 27/27 |
-| 2 | Draft Engine (snake), 11 endpoints | 65/66 |
-| 3 | Trade Center + FAAB Waiver Wire, 19 endpoints | 121/122 |
-| 4 | Sidebar Layout Port, Roster, Configurable Scoring | 24/24 |
-| 5 | Matchup Simulation Engine, Sidebar Migration | 14/14 |
-| 6 | WebSocket hooks, Commissioner Tools, Player Detail | 26/26 |
-| 7 | Push Notifications, Auction Draft with live bidding | 20/20 |
-| 8 | Dynasty Salary Cap (contracts/AAV/NTC/NMC), Activity Feed, RN scaffold | 22/22 |
-| 9 | League Invite (links+QR+email), Sport-Agnostic Model, 15 RN screens with API | 18/18 |
-| 10 | 5 Demo Leagues Seed + SendGrid Integration (graceful mock fallback) + RN bundle verify | 13/13 |
+| 1-9 | Platform foundation (see CHANGELOG) | 100% |
+| 10 | 5 Demo Leagues Seed + SendGrid (mock fallback) + RN bundle verify | 13/13 |
 | 11 | League Premium Stripe Unlock + Personalized Recommendations + Payment pages | 16/16 |
-| 12 | Full-fill 86 teams + auto-draft + NHL live scoring worker + /live page & dashboard widget | 14/14 |
+| 12 | Full-fill 86 teams + auto-draft + NHL live scoring worker + /live page & widget | 14/14 |
+| 13 | My Week at a Glance + Fantasy Level system + clickable leagues/teams + TeamDetailPage | 14/14 + 16/16 |
 
 ## Key Stats
 - **65+ REST API endpoints**
