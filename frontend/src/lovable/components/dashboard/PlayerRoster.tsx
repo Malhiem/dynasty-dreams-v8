@@ -3,6 +3,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings } from "lucide-react";
 import { toast } from "sonner";
+import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -583,12 +584,60 @@ interface PlayerRosterProps {
 const PlayerRoster = ({ isOwnTeam = true, commissionerMode = false, onTradePlayer, isTradeBuilderOpen = false, currentTeamContext = "mine", teamId = "frostbite" }: PlayerRosterProps) => {
   const location = useLocation();
   const isTeamRosterPage = location.pathname.startsWith("/team");
+
+  // Detect MongoDB ObjectId (24 hex) — if so, load the real roster from the backend.
+  const isRealTeamId = useMemo(() => /^[a-f0-9]{24}$/i.test(teamId), [teamId]);
+  const [livePlayers, setLivePlayers] = useState<Player[] | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isRealTeamId) {
+      setLivePlayers(null);
+      return;
+    }
+    let cancelled = false;
+    setLiveLoading(true);
+    api.get(`/roster/${teamId}/detail`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const raw = data?.players || [];
+        const shaped: Player[] = raw.map((p: any, idx: number) => ({
+          id: p.id,
+          name: p.name,
+          position: p.position,
+          eligiblePositions: p.eligiblePositions || [p.position],
+          secondaryPositions: [],
+          team: p.team || "",
+          points: Math.round(p.fantasy_points || 0),
+          dynastyValue: p.dynastyValue || 1000,
+          trend: (p.trend || "stable") as "up" | "down" | "stable",
+          age: p.age || 27,
+          contract: {
+            salary: p.contract?.salary || 950000,
+            yearsRemaining: p.contract?.yearsRemaining || 1,
+            type: (p.contract?.type || "Signed") as any,
+          },
+          rosterSection: (p.rosterSection || "bench") as RosterSection,
+          rosterSlotId: p.rosterSlotId || undefined,
+          statsByPeriod: p.statsByPeriod || { season: 0, "1d": 0, "7d": 0, "14d": 0, "30d": 0, "60d": 0, "100d": 0 },
+          categoryBreakdown: p.categoryBreakdown || { G: 0, A: 0, PPP: 0, SHP: 0, SOG: 0, HIT: 0, BLK: 0, PIM: 0, "+/-": 0, FOW: 0, FOL: 0 },
+          matchupGames: p.matchupGames || 0,
+          schedule: generateSchedule(idx + 1),
+        }));
+        setLivePlayers(shaped);
+      })
+      .catch((e) => { console.error("roster detail load failed", e); setLivePlayers([]); })
+      .finally(() => { if (!cancelled) setLiveLoading(false); });
+    return () => { cancelled = true; };
+  }, [teamId, isRealTeamId]);
+
   const teamRoster = useMemo(() => {
-    // Use a numeric seed from teamId string
+    if (isRealTeamId && livePlayers) return livePlayers;
+    // Use a numeric seed from teamId string (mock fallback for non-DB ids)
     let seed = 0;
     for (let i = 0; i < teamId.length; i++) seed += teamId.charCodeAt(i) * (i + 1);
     return generateTeamRoster(teamId, seed);
-  }, [teamId]);
+  }, [teamId, isRealTeamId, livePlayers]);
 
   // Load saved roster from localStorage if available
   const loadSavedRoster = useCallback((tid: string, fallback: Player[]): Player[] => {

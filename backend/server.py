@@ -242,6 +242,9 @@ class TeamResponse(BaseModel):
     points_for: float
     points_against: float
     created_at: datetime
+    roster: List[str] = []
+    live_points: float = 0.0
+    logo_abbr: Optional[str] = None
 
 class PaymentCreate(BaseModel):
     package_type: str  # "premium_monthly", "premium_yearly", "league_fee"
@@ -1496,34 +1499,27 @@ async def get_teams(league_id: Optional[str] = None, request: Request = None):
     if league_id:
         query["league_id"] = league_id
     
-    teams = await db.teams.find(query).to_list(100)
-    return [
-        TeamResponse(
-            id=str(team["_id"]),
-            name=team["name"],
-            league_id=team["league_id"],
-            owner_id=team["owner_id"],
-            owner_name=team["owner_name"],
-            salary_used=team.get("salary_used", 0.0),
-            wins=team.get("wins", 0),
-            losses=team.get("losses", 0),
-            ties=team.get("ties", 0),
-            points_for=team.get("points_for", 0.0),
-            points_against=team.get("points_against", 0.0),
-            created_at=team["created_at"]
-        )
-        for team in teams
-    ]
+    teams = await db.teams.find(query).to_list(200)
+    return [_team_to_response(team) for team in teams]
 
 @api_router.get("/teams/{team_id}", response_model=TeamResponse)
 async def get_team(team_id: str):
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    
+    return _team_to_response(team)
+
+def _team_to_response(team: dict) -> TeamResponse:
+    name = team.get("name", "")
+    # Derive abbreviation from team name (first letters of each significant word)
+    words = [w for w in name.replace("-", " ").split() if w and w[0].isalnum()]
+    if len(words) >= 2:
+        abbr = (words[0][0] + words[1][0] + (words[2][0] if len(words) > 2 else "")).upper()[:3]
+    else:
+        abbr = name[:3].upper() if name else "TBD"
     return TeamResponse(
         id=str(team["_id"]),
-        name=team["name"],
+        name=name,
         league_id=team["league_id"],
         owner_id=team["owner_id"],
         owner_name=team["owner_name"],
@@ -1533,7 +1529,10 @@ async def get_team(team_id: str):
         ties=team.get("ties", 0),
         points_for=team.get("points_for", 0.0),
         points_against=team.get("points_against", 0.0),
-        created_at=team["created_at"]
+        created_at=team["created_at"],
+        roster=team.get("roster", []),
+        live_points=round(team.get("live_points", 0.0) or 0.0, 2),
+        logo_abbr=abbr,
     )
 
 # NHL Players Endpoints
@@ -3178,6 +3177,186 @@ async def get_roster(team_id: str):
 
     players.sort(key=lambda p: -(p.get("fantasy_points") or 0))
     return {"team_id": team_id, "team_name": team["name"], "players": players}
+
+
+@api_router.get("/roster/{team_id}/detail")
+async def get_roster_detail(team_id: str):
+    """Rich roster payload for the Lovable Team page. Includes per-player
+    season + live stats, category breakdown, synthesized contracts/eligibility
+    (fantasy metadata not yet modelled in DB), and roster section assignment."""
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
+
+    roster_ids = team.get("roster", []) or []
+    if not roster_ids:
+        return {"team_id": team_id, "team_name": team["name"], "league_id": team["league_id"],
+                "league_name": (league or {}).get("name"), "players": []}
+
+    players_raw = await db.players.find(
+        {"_id": {"$in": [ObjectId(pid) for pid in roster_ids]}},
+    ).to_list(100)
+
+    from live_scoring_worker import _fantasy_points_from_live
+
+    # Count forwards/defensemen/goalies for roster section bucketing
+    starting_slots = [
+        ("C1", "C", ["C"]), ("C2", "C", ["C"]),
+        ("LW1", "LW", ["LW"]), ("RW1", "RW", ["RW"]),
+        ("W1", "W", ["LW", "RW"]),
+        ("D1", "D", ["D"]), ("D2", "D", ["D"]),
+        ("UTIL1", "UTIL", ["C", "LW", "RW", "D"]),
+        ("G1", "G", ["G"]), ("G2", "G", ["G"]),
+    ]
+
+    # Map live stats
+    def live_agg(p):
+        is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
+        live = p.get("live_stats") or {}
+        goals = assists = shots = saves = ga = wins = 0
+        fpts_live = 0.0
+        for gid, ls in live.items():
+            goals += ls.get("goals", 0) or 0
+            assists += ls.get("assists", 0) or 0
+            shots += ls.get("shots", 0) or 0
+            saves += ls.get("saves", 0) or 0
+            ga += ls.get("goals_against", 0) or 0
+            wins += ls.get("wins", 0) or 0
+            fpts_live += _fantasy_points_from_live(ls, is_g)
+        return {
+            "goals": goals, "assists": assists, "shots": shots,
+            "saves": saves, "goals_against": ga, "wins": wins,
+            "fpts": round(fpts_live, 2),
+        }
+
+    # Build normalized players + assign roster slots (best players to starting slots)
+    enriched = []
+    for p in players_raw:
+        pos = p.get("position", "F")
+        is_g = p.get("player_type") == "goalie" or pos == "G"
+        live = live_agg(p)
+        fpts_season = calculate_fantasy_points(p, config)
+        games = p.get("games_played", 0) or 0
+        points = p.get("points", 0) or 0
+        # Synthesize dynasty value from points + age
+        age = 27  # age not in DB; default; could be enriched later
+        dyn_val = int(max(1000, points * 80 + (fpts_season * 10)))
+        trend = "up" if live["fpts"] > 0 else ("down" if games > 0 and points < 10 else "stable")
+
+        # Synthesize eligible positions (primary + one secondary for forwards)
+        eligible = [pos] if pos in ("C", "LW", "RW", "D", "G") else ["F"]
+
+        # Contract (synthesized from points/age ranges)
+        salary = max(950000, int(points * 120000 + 850000))
+        years_remaining = 1 + (int(p.get("nhl_id", 0)) % 6)
+        contract_type = "ELC" if age < 23 and salary < 1200000 else ("RFA" if years_remaining == 1 and age < 27 else ("UFA" if years_remaining == 1 else "Signed"))
+
+        stats_by_period = {
+            "season": round(fpts_season, 1),
+            "1d": round(live["fpts"], 1),
+            "7d": round(live["fpts"], 1),
+            "14d": round(live["fpts"] * 1.3, 1),
+            "30d": round(fpts_season * 0.3, 1),
+            "60d": round(fpts_season * 0.55, 1),
+            "100d": round(fpts_season * 0.85, 1),
+        }
+
+        category_breakdown = {
+            "G": p.get("goals", 0) or 0,
+            "A": p.get("assists", 0) or 0,
+            "PPP": p.get("power_play_points", 0) or 0,
+            "SHP": p.get("short_handed_points", 0) or 0,
+            "SOG": p.get("shots", 0) or 0,
+            "HIT": p.get("hits", 0) or 0,
+            "BLK": p.get("blocked_shots", 0) or 0,
+            "PIM": p.get("penalty_minutes", 0) or 0,
+            "+/-": p.get("plus_minus", 0) or 0,
+            "FOW": 0, "FOL": 0,
+        }
+
+        enriched.append({
+            "id": str(p["_id"]),
+            "player_id": str(p["_id"]),
+            "nhl_id": p.get("nhl_id"),
+            "name": p.get("name"),
+            "team": p.get("team"),
+            "position": pos,
+            "eligiblePositions": eligible,
+            "is_goalie": is_g,
+            "age": age,
+            "dynastyValue": dyn_val,
+            "trend": trend,
+            "contract": {
+                "salary": salary,
+                "yearsRemaining": years_remaining,
+                "type": contract_type,
+            },
+            "games_played": games,
+            "points": points,
+            "fantasy_points": round(fpts_season, 2),
+            "live": live,
+            "statsByPeriod": stats_by_period,
+            "categoryBreakdown": category_breakdown,
+            "matchupGames": live.get("games", 0) if isinstance(live.get("games"), int) else 0,
+        })
+
+    # Rank by season fantasy points; assign roster sections
+    enriched.sort(key=lambda x: -x["fantasy_points"])
+
+    def fill_slot(label, eligible_positions, pool, assigned):
+        for cand in pool:
+            if cand["id"] in assigned:
+                continue
+            if cand["position"] in eligible_positions or any(ep in eligible_positions for ep in cand.get("eligiblePositions", [])):
+                assigned.add(cand["id"])
+                cand["rosterSlotId"] = label[0]
+                cand["rosterSection"] = "starting"
+                return cand
+        return None
+
+    assigned_ids = set()
+    for slot_id, label, elig in starting_slots:
+        for cand in enriched:
+            if cand["id"] in assigned_ids:
+                continue
+            if cand["position"] in elig:
+                cand["rosterSlotId"] = slot_id
+                cand["rosterSection"] = "starting"
+                assigned_ids.add(cand["id"])
+                break
+
+    # Put remaining into bench / minors
+    for cand in enriched:
+        if cand["id"] in assigned_ids:
+            continue
+        cand["rosterSlotId"] = None
+        # Mark as bench; overflow goes to minors
+        bench_count = sum(1 for c in enriched if c.get("rosterSection") == "bench")
+        if bench_count < 6:
+            cand["rosterSection"] = "bench"
+        else:
+            cand["rosterSection"] = "minors"
+        assigned_ids.add(cand["id"])
+
+    total_fpts = round(sum(p["fantasy_points"] for p in enriched), 2)
+    total_live = round(sum(p["live"]["fpts"] for p in enriched), 2)
+    return {
+        "team_id": team_id,
+        "team_name": team["name"],
+        "owner_name": team.get("owner_name"),
+        "league_id": team["league_id"],
+        "league_name": (league or {}).get("name"),
+        "wins": team.get("wins", 0),
+        "losses": team.get("losses", 0),
+        "ties": team.get("ties", 0),
+        "salary_used": team.get("salary_used", 0.0),
+        "season_fpts": total_fpts,
+        "live_fpts": total_live,
+        "players": enriched,
+    }
 
 
 class RosterAction(BaseModel):

@@ -339,10 +339,35 @@ const StandingsTable = ({
 };
 
 // ─── Race Chart ───────────────────────────────────────────────────────────────
-const RaceChart = () => {
-  const teamNames = mockTeams.map(t => t.name);
+const RaceChart = ({ teams }: { teams: StandingsTeam[] }) => {
+  const palette = [
+    "hsl(192 82% 55%)", "hsl(45 93% 58%)", "hsl(262 80% 65%)", "hsl(142 71% 45%)",
+    "hsl(0 72% 51%)", "hsl(30 90% 55%)", "hsl(200 80% 55%)", "hsl(300 65% 60%)",
+    "hsl(165 65% 45%)", "hsl(350 75% 55%)", "hsl(220 70% 60%)", "hsl(80 65% 50%)",
+  ];
+  const teamNames = teams.map(t => t.name);
+  const colorFor = useMemo(() => {
+    const m: Record<string, string> = {};
+    teamNames.forEach((n, i) => { m[n] = palette[i % palette.length]; });
+    return m;
+  }, [teamNames.join(",")]);
+  // Synthesize weekly rank movement from current rank +/- small wiggle.
+  const raceData = useMemo(() => {
+    return Array.from({ length: 16 }, (_, w) => {
+      const row: Record<string, number | string> = { week: `Wk ${w + 1}` };
+      teams.forEach((t, idx) => {
+        const wiggle = ((w + idx) % 3) - 1;
+        row[t.name] = Math.max(1, Math.min(teams.length, (t.rank || idx + 1) + wiggle));
+      });
+      return row;
+    });
+  }, [teams]);
   const [visibleTeams, setVisibleTeams] = useState<Set<string>>(new Set(teamNames));
   const [hoveredTeam, setHoveredTeam] = useState<string | null>(null);
+
+  useEffect(() => {
+    setVisibleTeams(new Set(teamNames));
+  }, [teamNames.join(",")]);
 
   const toggleTeam = useCallback((name: string) => {
     setVisibleTeams(prev => {
@@ -390,7 +415,7 @@ const RaceChart = () => {
                   ? "border-transparent text-background font-medium"
                   : "border-border text-muted-foreground bg-transparent"
               }`}
-              style={active ? { background: TEAM_COLORS[name] } : {}}
+              style={active ? { background: colorFor[name] } : {}}
             >
               {name}
             </button>
@@ -427,13 +452,13 @@ const RaceChart = () => {
                 key={name}
                 type="monotone"
                 dataKey={name}
-                stroke={TEAM_COLORS[name]}
+                stroke={colorFor[name]}
                 strokeWidth={strokeWidth}
                 strokeOpacity={opacity}
                 dot={false}
                 activeDot={{
                   r: 5,
-                  fill: TEAM_COLORS[name],
+                  fill: colorFor[name],
                   stroke: "hsl(var(--background))",
                   strokeWidth: 2,
                 }}
@@ -453,7 +478,7 @@ const RaceChart = () => {
             onMouseEnter={() => setHoveredTeam(name)}
             onMouseLeave={() => setHoveredTeam(null)}
           >
-            <span className="w-3 h-0.5 rounded-full flex-shrink-0" style={{ background: TEAM_COLORS[name] }} />
+            <span className="w-3 h-0.5 rounded-full flex-shrink-0" style={{ background: colorFor[name] }} />
             <span className={`text-xs transition-colors ${hoveredTeam === name ? "text-foreground font-medium" : "text-muted-foreground"}`}>
               {name}
             </span>
@@ -719,7 +744,7 @@ const StandingsPage = () => {
 
           {/* ── Race Chart Tab ── */}
           <TabsContent value="race">
-            <RaceChart />
+            <RaceChart teams={liveTeams} />
           </TabsContent>
 
           {/* ── Playoffs Tab ── */}
@@ -728,7 +753,7 @@ const StandingsPage = () => {
               <Switch id="projections" checked={showProjections} onCheckedChange={setShowProjections} />
               <Label htmlFor="projections" className="text-sm cursor-pointer">Show projected playoffs based on current performance</Label>
             </div>
-            <PlayoffBracket teams={mockTeams} showProjections={showProjections} />
+            <PlayoffBracket teams={liveTeams} showProjections={showProjections} />
           </TabsContent>
         </Tabs>
       </div>

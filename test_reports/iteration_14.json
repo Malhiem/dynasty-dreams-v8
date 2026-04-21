@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 14 — Phase 14-16 wiring (Roster/Matchup/Standings) verified end-to-end. Backend 7/7 pytest passed (test_iteration14_wiring.py): /api/auth/me, /api/leagues?my_leagues=true (5 leagues), /api/teams?league_id includes new fields roster[], live_points, logo_abbr (all 5 leagues, all teams have roster len >=15), NEW /api/roster/{team_id}/detail returns rich payload with 20 players for Zarek's Frozen, McDavid in starting/C1, all 10 starters carry rosterSlotId; invalid team_id returns 400/404; /api/matchups/{league}/current-week now uses home_team_id/away_team_id keys (no team1_id/team2_id legacy); /api/live-scoring/team returns non-zero points. Frontend verified as chriszarek@gmail.com: (a) /roster shows real 'Zarek's Frozen' header (no 'Frostbite' mock), Rank #2 of 12, Total Points 69, Roster Size 20, team switcher with real teams, Starting roster 2836.7 pts with McDavid 520 FPTS $17.4M, Aho 307 FPTS $10.4M, Bench/Minors/IR sections; Top Performer card Rasmus Andersson +11.5; (b) /matchup left=Zarek's Frozen 0-0-0, right=Checkmate Chiefs (NOT mock 'Ice Crushers'), 'Week 1' label, 71.0 vs 77.0 totals, real lineup with Eichel 15.0/McDavid 5.5/etc.; (c) /standings header 'Ice Kings Head-to-Head', exactly 12 table rows, Zarek's Frozen has 'You' badge, Race Chart tab renders SVG with all 12 real team legends across Wk 1-16, Playoffs tab renders 'standings have not been finalized' (graceful empty state — correct given 0-0-0 records). No console errors on any page (only WebSocket reconnect warnings, pre-existing).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/teams/{team_id}", "issue": "Pre-existing from iteration 13 — still returns 500 for malformed ids (no _safe_object_id). Not retested this iteration; not regressed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/roster Top Performer card", "issues": ["Top Performer card and Live header card render on top of each other above the team-info row; visually the Live banner duplicates Rank #2/12 already shown in the League Rank tile below — slight redundancy."]},
+      {"screen": "/matchup Daily Scores tab", "issues": ["'Losing' pill sits between the two team headers in red — readable but at quick glance looks like a third team label; consider moving below the score row."]},
+      {"screen": "/standings Playoffs tab", "issues": ["Empty state text is muted-foreground on dark — fine, but a small icon/illustration would help confirm intentional empty state vs broken render."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration14_wiring.py",
+    "/app/test_reports/pytest/iteration14_results.xml"
+  ],
+  "action_items": [
+    "Phase 14-16 wiring is GREEN — main agent can proceed to Phase 17 (SalaryCap, Transactions, TradeBlock, Waivers, DraftBoard, Analytics).",
+    "(Carryover, low priority) Add _safe_object_id validation to GET /api/teams/{team_id} so malformed ids return 400 instead of 500."
+  ],
+  "critical_code_review_comments": [
+    "/api/roster/{team_id}/detail correctly returns flat starter slot ids (C1, C2, LW1, RW1, W1, D1, D2, UTIL1, G1, G2) and rosterSection enum (starting/bench/minors/ir) — matches Lovable PlayerRoster expectations exactly. Verified McDavid lands in C1.",
+    "TeamResponse now embeds full roster[] (player ObjectIds) — convenient for the new wiring but increases payload size for league-level GET /api/teams (12 teams * ~25 ids each). Consider an opt-in ?include=roster query param to keep the list endpoint lean for screens that don't need it (e.g. Standings already gets 12-team data with rosters even though it only renders names + record).",
+    "PlayerRoster.tsx detects ObjectId format to switch between live API and mock generator — robust dual-path. However the fallback mock path is no longer reachable from any wired page; consider deleting dead mock-generator code in a follow-up to reduce surface area.",
+    "server.py is now ~3940+ lines. Iteration 11-13 already flagged this. Splitting into routers/{auth,leagues,teams,rosters,matchups,live_scoring}.py is overdue.",
+    "Matchup.tsx now correctly reads home_team_id/away_team_id, but consider extracting the team-resolution logic (lookup myTeam vs opponentTeam by id) into a small hook — currently duplicated across Matchup/Standings/Roster."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration14_wiring.py"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (all 3 wired pages verified)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! verified. League 69e46af167999bfb85c39628 (Ice Kings H2H), Team 69e59b30cbd3fea02a914c61 (Zarek's Frozen).",
+  "seed_data_creation": "Re-ran cd /app/backend && python3 seed_matchups.py — idempotent, all 5 leagues already have matchups (108/126/144/108/288 = 774 total).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 14-16 wiring fully validated. Selectors that worked: a[href^='/teams/'], page.get_by_role('tab', name='Race Chart'), page.get_by_role('tab', name='Playoffs'). Roster page lives at /roster (uses useActiveLeague hook to seed default team = Zarek's Frozen for Chris in Ice Kings H2H). PlayerRoster at line ~588 of PlayerRoster.tsx switches data sources by ObjectId regex on teamId. Matchup uses home_team_id/away_team_id (legacy team1_id removed). Race Chart uses recharts SVG, currently synthesized — no backend rank-history endpoint yet. Live points for Zarek = 24.6 today / 69.0 week / 69.0 season (will drift as real games come in via worker). For next iteration on Salary Cap / Transactions / Trade Block / Waivers / Draft Board / Analytics — backend endpoints likely already exist (check /api/transactions, /api/waivers, /api/draft, /api/cap) but Lovable pages probably still on mocks; same wiring pattern (real ObjectId detection -> live API call) should apply.",
+  "rca_of_the_issue": "N/A — no failing flow."
+}

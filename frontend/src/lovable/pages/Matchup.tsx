@@ -73,15 +73,15 @@ const Matchup = () => {
     return () => { cancelled = true; };
   }, [league]);
 
-  // Find my matchup (where my team is either team1 or team2)
+  // Find my matchup (where my team is either home or away)
   const myMatchup = useMemo(() => {
     if (!matchup?.matchups || !myTeam) return null;
-    return matchup.matchups.find(m => m.team1_id === myTeam.id || m.team2_id === myTeam.id);
+    return matchup.matchups.find(m => m.home_team_id === myTeam.id || m.away_team_id === myTeam.id);
   }, [matchup, myTeam]);
 
   const opponentTeam = useMemo(() => {
     if (!myMatchup || !myTeam) return leagueTeams.find(t => t.id !== myTeam?.id) || null;
-    const oppId = myMatchup.team1_id === myTeam.id ? myMatchup.team2_id : myMatchup.team1_id;
+    const oppId = myMatchup.home_team_id === myTeam.id ? myMatchup.away_team_id : myMatchup.home_team_id;
     return leagueTeams.find(t => t.id === oppId) || null;
   }, [myMatchup, myTeam, leagueTeams]);
 
@@ -180,9 +180,12 @@ const Matchup = () => {
         <div className="stat-card p-8">
           <div className="flex items-center justify-between">
             <div className="text-center flex-1">
-              <TeamLogo name="Team Frostbite" abbr="TF" size="lg" className="mx-auto mb-3 rounded-full" />
-              <h2 className="text-xl font-bold"><TeamLink name="Team Frostbite" /></h2>
-              <p className="text-muted-foreground text-sm">8-2-0 • 2nd Place</p>
+              <TeamLogo name={myTeam?.name || "—"} abbr={myTeam?.logo_abbr || "—"} size="lg" className="mx-auto mb-3 rounded-full" />
+              <h2 className="text-xl font-bold"><TeamLink name={myTeam?.name || "—"} id={myTeam?.id} /></h2>
+              <p className="text-muted-foreground text-sm">
+                {myTeam ? `${myTeam.wins || 0}-${myTeam.losses || 0}-${myTeam.ties || 0}` : ''}
+                {league?.name ? ` • ${league.name}` : ''}
+              </p>
             </div>
             
             <div className="text-center px-8">
@@ -211,12 +214,18 @@ const Matchup = () => {
                 {myTotal >= oppTotal ? <Flame className="h-3 w-3 mr-1" /> : <TrendingDown className="h-3 w-3 mr-1" />}
                 {myTotal >= oppTotal ? "Winning" : "Losing"}
               </Badge>
+              {matchup?.week && (
+                <p className="text-xs text-muted-foreground mt-2">Week {matchup.week}</p>
+              )}
             </div>
 
             <div className="text-center flex-1">
-              <TeamLogo name="Ice Crushers" abbr="IC" size="lg" className="mx-auto mb-3 rounded-full" />
-              <h2 className="text-xl font-bold"><TeamLink name="Ice Crushers" /></h2>
-              <p className="text-muted-foreground text-sm">6-4-0 • 5th Place</p>
+              <TeamLogo name={opponentTeam?.name || "—"} abbr={opponentTeam?.logo_abbr || "—"} size="lg" className="mx-auto mb-3 rounded-full" />
+              <h2 className="text-xl font-bold"><TeamLink name={opponentTeam?.name || "—"} id={opponentTeam?.id} /></h2>
+              <p className="text-muted-foreground text-sm">
+                {opponentTeam ? `${opponentTeam.wins || 0}-${opponentTeam.losses || 0}-${opponentTeam.ties || 0}` : ''}
+                {opponentTeam?.owner_name ? ` • ${opponentTeam.owner_name}` : ''}
+              </p>
             </div>
           </div>
 
@@ -262,28 +271,34 @@ const Matchup = () => {
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <div className="h-6 w-6 rounded bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">TF</div>
-                My Lineup
+                <div className="h-6 w-6 rounded bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">{myTeam?.logo_abbr || 'ME'}</div>
+                {myTeam?.name || 'My Lineup'}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {myPlayers.map((player) => (
                 <PlayerRow key={player.id} player={player} displayScore={getDisplayScore(player)} viewMode={viewMode} isMyTeam />
               ))}
+              {myPlayers.length === 0 && (
+                <p className="text-sm text-muted-foreground py-6 text-center">No roster data available yet.</p>
+              )}
             </CardContent>
           </Card>
 
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <div className="h-6 w-6 rounded bg-secondary flex items-center justify-center text-xs font-bold text-muted-foreground">IC</div>
-                Opponent Lineup
+                <div className="h-6 w-6 rounded bg-secondary flex items-center justify-center text-xs font-bold text-muted-foreground">{opponentTeam?.logo_abbr || 'OPP'}</div>
+                {opponentTeam?.name || 'Opponent Lineup'}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {opponentPlayers.map((player) => (
                 <PlayerRow key={player.id} player={player} displayScore={getDisplayScore(player)} viewMode={viewMode} />
               ))}
+              {opponentPlayers.length === 0 && (
+                <p className="text-sm text-muted-foreground py-6 text-center">No opponent roster loaded.</p>
+              )}
             </CardContent>
           </Card>
         </div>
