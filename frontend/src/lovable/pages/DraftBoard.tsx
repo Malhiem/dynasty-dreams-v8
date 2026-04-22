@@ -302,7 +302,7 @@ export default function DraftBoardPage() {
               const count = pickCounts[team.abbr] || 0;
               const diff = count - totalRounds;
               return (
-                <Tooltip key={team.abbr}>
+                <Tooltip key={(team as any).id || `${team.abbr}-summary`}>
                   <TooltipTrigger asChild>
                     <div
                       className={cn(
@@ -364,7 +364,7 @@ export default function DraftBoardPage() {
                     <TableBody>
                       {teams.map((team, teamIdx) => (
                         <TableRow
-                          key={team.abbr}
+                          key={(team as any).id || `${team.abbr}-${teamIdx}`}
                           className={cn(
                             "border-border/50 transition-colors",
                             teamIdx % 2 === 0 ? "bg-card/30" : "bg-card/10"

@@ -15,6 +15,7 @@ Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnos
 | 14-16 | **Lovable UI wiring: Team/Roster + Matchup + Standings** bound to live APIs | 7/7 backend + 3/3 pages |
 | 17 | **Lovable UI wiring: SalaryCap + Transactions + TradeBlock + Waivers + DraftBoard + Analytics** + TypeScript cleanup (removed TSC_COMPILE_ON_ERROR bypass, clean compile) | 14/14 backend + 6/6 pages |
 | 18 | **Sidebar restructure** (User / League Hub / Social / Management / Draft groups) + Renamed Scoring→**League Information**, Commissioner→**League Administration**. Added **League Constitution tab** (5000-char editor, commissioner + co-commissioner permissions, audit log entry on save). **Grey Last-5 dots** for 0-game teams. New **My Matchup H2H card** on /live page | 14/14 backend + full frontend regression, 0 issues |
+| 19 | **Audit log wired** to `/api/leagues/{id}/audit-log` in CommissionerSettings. **Draft-pick ownership persisted** (db.draft_picks, 1290 seeded across 5 leagues, `/api/drafts/{id}/picks` endpoint) + DraftBoard rendering live ownership with real team abbrs. **League Home sidebar link**. **Full trade execution** (players, picks, salary retention) + **conditional trades** (fantasy_points, nhl_points, nhl_goals/assists/wins, games_played, live_fantasy_points with gte/lte/eq operators). New `TradeConditionsEditor` UI in TradeBuilder. test_trade_flow.py: all assertions PASSED | 5/5 backend pytest + frontend regression, 2 minor UX notes fixed |
 
 ## Key Stats
 - **65+ REST API endpoints**
