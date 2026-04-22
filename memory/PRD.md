@@ -14,6 +14,7 @@ Multi-sport dynasty fantasy sports platform (NHL active; NFL/NBA/MLB sport-agnos
 | 13 | My Week at a Glance + Fantasy Level system + clickable leagues/teams + TeamDetailPage | 14/14 + 16/16 |
 | 14-16 | **Lovable UI wiring: Team/Roster + Matchup + Standings** bound to live APIs | 7/7 backend + 3/3 pages |
 | 17 | **Lovable UI wiring: SalaryCap + Transactions + TradeBlock + Waivers + DraftBoard + Analytics** + TypeScript cleanup (removed TSC_COMPILE_ON_ERROR bypass, clean compile) | 14/14 backend + 6/6 pages |
+| 18 | **Sidebar restructure** (User / League Hub / Social / Management / Draft groups) + Renamed Scoring→**League Information**, Commissioner→**League Administration**. Added **League Constitution tab** (5000-char editor, commissioner + co-commissioner permissions, audit log entry on save). **Grey Last-5 dots** for 0-game teams. New **My Matchup H2H card** on /live page | 14/14 backend + full frontend regression, 0 issues |
 
 ## Key Stats
 - **65+ REST API endpoints**
