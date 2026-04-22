@@ -589,18 +589,29 @@ export const TradeBuilder = ({
           <div className="px-4 py-3 border-t border-border bg-secondary/10">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-xs font-semibold text-foreground">Conditional Triggers</h4>
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-[11px] h-7"
-                onClick={() => (window as any).__addTradeCondition?.()}
-                data-testid="add-trade-condition-btn"
-              >
-                + Add condition
-              </Button>
+              <div className="flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[11px] h-7"
+                  onClick={() => (window as any).__addTradeCondition?.("player")}
+                  data-testid="add-trade-condition-btn"
+                >
+                  + Player stat
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[11px] h-7"
+                  onClick={() => (window as any).__addTradeCondition?.("team")}
+                  data-testid="add-team-condition-btn"
+                >
+                  + Team result
+                </Button>
+              </div>
             </div>
             <p className="text-[11px] text-muted-foreground mb-2">
-              Trade executes only when all conditions are satisfied (e.g. "Only if McDavid scores 100+ NHL points").
+              Trade executes only when all conditions are satisfied (e.g. "Only if my team wins the championship, partner gets a higher draft pick").
             </p>
             <TradeConditionsEditor />
           </div>

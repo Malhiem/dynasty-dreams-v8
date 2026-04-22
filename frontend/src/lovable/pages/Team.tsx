@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
+import api from "@/lib/api";
 import PlayerRoster from "@/lovable/components/dashboard/PlayerRoster";
 import LiveTeamHeader from "@/lovable/components/dashboard/LiveTeamHeader";
 import TeamDraftPicks from "@/lovable/components/dashboard/TeamDraftPicks";
@@ -40,7 +41,7 @@ interface TradeAssetState {
 
 const Team = () => {
   const [searchParams] = useSearchParams();
-  const { leagueTeams, myTeam } = useActiveLeague();
+  const { league, leagueTeams, myTeam } = useActiveLeague();
 
   // Shape real teams into the { id, name, abbr, owner } format the Lovable UI expects
   const allTeams = useMemo(() => {
@@ -162,10 +163,81 @@ const Team = () => {
     setTradePartner("");
   }, []);
 
-  const handleSendProposal = useCallback(() => {
-    toast.success("Trade proposal sent!", { description: `Proposal sent to ${tradePartner}` });
-    handleCloseTrade();
-  }, [tradePartner, handleCloseTrade]);
+  const handleSendProposal = useCallback(async () => {
+    // Target team = the currently selected team (opponent view)
+    const targetTeamId = !isOwnTeam ? selectedTeamId : null;
+    if (!targetTeamId || !myTeam?.id) {
+      toast.error("Select a partner team before sending a trade.");
+      return;
+    }
+    // Build assets_offered (my assets leaving) + assets_requested (their assets coming to me)
+    const offered: any[] = [];
+    const requested: any[] = [];
+
+    tradeAssets.forEach((a) => {
+      const asset = {
+        asset_type: "player" as const,
+        player_id: String(a.player.id),
+        player_name: a.player.name,
+        position: a.player.position,
+        nhl_team: a.player.team,
+        salary_retained_pct: a.retainSalary ? (a.retainedPercentage || 0) : 0,
+      };
+      // Ownership ambiguous from current state — assume assets on MY side if partner is targetTeam
+      // The TradeBuilder only supports proposer-side for now; partner-side swaps are the requested side.
+      // Determining side: if the TradeBuilder stored it under partner team, it's requested.
+      // Our Team.tsx wires both sides via handleAddPlayerToTrade → tradeAssets.
+      // Heuristic: if player.ownerTeamId === myTeam.id → offered, else requested.
+      const ownerId = (a.player as any).ownerTeamId;
+      if (ownerId && ownerId !== myTeam.id) requested.push(asset);
+      else offered.push(asset);
+    });
+
+    tradePicks.forEach((p) => {
+      const yearNum = Number(String(p.year || p.id || "").match(/\d{4}/)?.[0]) || undefined;
+      const roundNum = Number(String(p.round || p.id || "").match(/R?(\d+)/i)?.[1]) || undefined;
+      const asset = {
+        asset_type: "pick" as const,
+        pick_id: (p as any).pickId || undefined,
+        pick_year: yearNum,
+        pick_round: roundNum ? String(roundNum) : undefined,
+      };
+      const ownerId = (p as any).ownerTeamId;
+      if (ownerId && ownerId !== myTeam.id) requested.push(asset);
+      else offered.push(asset);
+    });
+
+    // Pull conditions from the shared editor state
+    const rawConditions = (typeof window !== "undefined" && (window as any).__getTradeConditions?.()) || [];
+    const conditions = rawConditions.map((c: any) => ({
+      subject_type: c.subject_type || "player",
+      subject: c.subject || "offered",
+      player_id: c.player_id || undefined,
+      team_id: c.team_id || undefined,
+      metric: c.metric,
+      operator: c.operator || "gte",
+      threshold: Number(c.threshold || 0),
+      description: c.description,
+    }));
+
+    try {
+      const { data } = await api.post(`/trades`, {
+        league_id: league?.id || myTeam.league_id,
+        target_team_id: targetTeamId,
+        assets_offered: offered,
+        assets_requested: requested,
+        conditions,
+        message: tradePartner ? `Proposal to ${tradePartner}` : undefined,
+      });
+      const label = conditions.length > 0 ? "Conditional trade proposal sent" : "Trade proposal sent";
+      toast.success(label, {
+        description: `Proposal sent to ${tradePartner || "partner"}${conditions.length ? ` with ${conditions.length} condition(s)` : ""}`,
+      });
+      handleCloseTrade();
+    } catch (e: any) {
+      toast.error("Trade proposal failed", { description: e?.response?.data?.detail || e?.message || "Unknown error" });
+    }
+  }, [tradePartner, handleCloseTrade, tradeAssets, tradePicks, selectedTeamId, isOwnTeam, myTeam, league]);
 
   const handleTradeFromOtherTeam = useCallback((player: TradePlayer) => {
     if (selectedTeam && !isOwnTeam) {

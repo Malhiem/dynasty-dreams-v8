@@ -2966,40 +2966,76 @@ def _metric_value_for_player(player: dict, metric: str) -> float:
 async def _evaluate_conditions(trade: dict) -> dict:
     results = []
     all_met = True
+    league_id = trade.get("league_id")
     for cond in (trade.get("conditions") or []):
+        subject_type = cond.get("subject_type", "player")
         subject = cond.get("subject", "offered")
         side_assets = trade.get(f"assets_{subject}", []) or []
-        specific_pid = cond.get("player_id")
         metric = cond.get("metric")
         operator = (cond.get("operator") or "gte").lower()
         threshold = float(cond.get("threshold", 0) or 0)
-        candidate_pids = []
-        for a in side_assets:
-            if a.get("asset_type") != "player":
-                continue
-            if specific_pid and a.get("player_id") != specific_pid:
-                continue
-            if a.get("player_id"):
-                candidate_pids.append(a["player_id"])
-        best = 0.0
-        for pid in candidate_pids:
+        actual = 0.0
+
+        if subject_type == "team":
+            # Resolve team: explicit team_id OR the team on the 'subject' side of the trade
+            team_id = cond.get("team_id")
+            if not team_id:
+                team_id = trade["proposer_team_id"] if subject == "offered" else trade["target_team_id"]
             try:
-                player = await db.players.find_one({"_id": ObjectId(pid)})
-                if player:
-                    val = _metric_value_for_player(player, metric)
-                    if val > best:
-                        best = val
+                team = await db.teams.find_one({"_id": ObjectId(team_id)})
             except Exception:
-                pass
+                team = None
+            if team:
+                if metric == "team_wins":
+                    actual = float(team.get("wins", 0) or 0)
+                elif metric == "team_losses":
+                    actual = float(team.get("losses", 0) or 0)
+                elif metric == "team_points_for":
+                    actual = float(team.get("points_for", 0) or 0)
+                elif metric == "team_rank":
+                    # Lower = better; compute by points_for in league
+                    peers = await db.teams.find({"league_id": league_id}).to_list(100)
+                    peers.sort(key=lambda t: -(t.get("points_for", 0) or 0))
+                    rank = next((i + 1 for i, t in enumerate(peers) if str(t["_id"]) == team_id), None)
+                    actual = float(rank) if rank else 999.0
+                elif metric == "made_playoffs":
+                    actual = 1.0 if team.get("playoffs_reached_at") else 0.0
+                elif metric == "won_division":
+                    actual = 1.0 if team.get("division_winner_at") else 0.0
+                elif metric == "won_championship":
+                    actual = 1.0 if team.get("championship_won_at") else 0.0
+        else:
+            # Player-level
+            specific_pid = cond.get("player_id")
+            candidate_pids = []
+            for a in side_assets:
+                if a.get("asset_type") != "player":
+                    continue
+                if specific_pid and a.get("player_id") != specific_pid:
+                    continue
+                if a.get("player_id"):
+                    candidate_pids.append(a["player_id"])
+            best = 0.0
+            for pid in candidate_pids:
+                try:
+                    player = await db.players.find_one({"_id": ObjectId(pid)})
+                    if player:
+                        val = _metric_value_for_player(player, metric)
+                        if val > best:
+                            best = val
+                except Exception:
+                    pass
+            actual = best
+
         if operator == "gte":
-            met = best >= threshold
+            met = actual >= threshold
         elif operator == "lte":
-            met = best <= threshold
+            met = actual <= threshold
         elif operator == "eq":
-            met = abs(best - threshold) < 1e-6
+            met = abs(actual - threshold) < 1e-6
         else:
             met = False
-        results.append({"condition": cond, "actual_value": best, "met": met})
+        results.append({"condition": cond, "actual_value": actual, "met": met})
         if not met:
             all_met = False
     return {"all_met": all_met, "results": results}
@@ -3042,7 +3078,17 @@ async def _execute_trade(trade: dict) -> dict:
             if p:
                 await db.draft_picks.update_one(
                     {"_id": p["_id"]},
-                    {"$set": {"current_team_id": target_tid, "current_team_name": target.get("name")}}
+                    {
+                        "$set": {"current_team_id": target_tid, "current_team_name": target.get("name")},
+                        "$push": {"trade_history": {
+                            "trade_id": str(trade["_id"]),
+                            "from_team_id": proposer_tid,
+                            "from_team_name": proposer.get("name"),
+                            "to_team_id": target_tid,
+                            "to_team_name": target.get("name"),
+                            "traded_at": datetime.now(timezone.utc),
+                        }},
+                    }
                 )
                 moves["picks_out"].append({"pick_id": str(p["_id"]), "year": p["year"], "round": p["round"],
                                             "from": proposer_tid, "to": target_tid})
@@ -3070,7 +3116,17 @@ async def _execute_trade(trade: dict) -> dict:
             if p:
                 await db.draft_picks.update_one(
                     {"_id": p["_id"]},
-                    {"$set": {"current_team_id": proposer_tid, "current_team_name": proposer.get("name")}}
+                    {
+                        "$set": {"current_team_id": proposer_tid, "current_team_name": proposer.get("name")},
+                        "$push": {"trade_history": {
+                            "trade_id": str(trade["_id"]),
+                            "from_team_id": target_tid,
+                            "from_team_name": target.get("name"),
+                            "to_team_id": proposer_tid,
+                            "to_team_name": proposer.get("name"),
+                            "traded_at": datetime.now(timezone.utc),
+                        }},
+                    }
                 )
                 moves["picks_in"].append({"pick_id": str(p["_id"]), "year": p["year"], "round": p["round"],
                                            "from": target_tid, "to": proposer_tid})

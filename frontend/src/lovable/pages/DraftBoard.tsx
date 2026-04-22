@@ -178,14 +178,18 @@ function TradeHistoryPopover({ pick }: { pick: PickOwnership }) {
                 <Badge variant="outline" className="text-[10px] px-1.5 h-4">
                   Trade {idx + 1}
                 </Badge>
-                <span className="text-[10px] text-muted-foreground">{trade.date}</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {trade.date ? (typeof trade.date === "string" ? trade.date.slice(0, 10) : String(trade.date)) : ""}
+                </span>
               </div>
               <p className="text-xs text-muted-foreground leading-relaxed">
                 <span className="font-medium text-foreground">{trade.from}</span>
                 {" → "}
                 <span className="font-medium text-foreground">{trade.to}</span>
               </p>
-              <p className="text-[11px] text-muted-foreground">{trade.details}</p>
+              {trade.details && (
+                <p className="text-[11px] text-muted-foreground">{trade.details}</p>
+              )}
             </div>
           ))}
         </div>
@@ -233,10 +237,17 @@ export default function DraftBoardPage() {
       const origAbbr = teamIdToAbbr[p.original_team_id];
       if (!origAbbr) return;
       if (!data[origAbbr]) data[origAbbr] = {};
+      const history = (p.trade_history || []).map((h: any, i: number) => ({
+        step: i + 1,
+        from: teamIdToAbbr[h.from_team_id] || h.from_team_name,
+        to: teamIdToAbbr[h.to_team_id] || h.to_team_name,
+        date: h.traded_at,
+        tradeId: h.trade_id,
+      }));
       data[origAbbr][p.round] = {
         currentOwner: teamIdToAbbr[p.current_team_id] || origAbbr,
         isTraded: p.current_team_id !== p.original_team_id,
-        tradeHistory: [],
+        tradeHistory: history,
         pickId: p._id,
       };
     });

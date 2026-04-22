@@ -49,6 +49,7 @@ class TradeAsset(BaseModel):
 
 
 class TradeConditionMetric(str, Enum):
+    # Player-level metrics
     FANTASY_POINTS = "fantasy_points"
     NHL_POINTS = "nhl_points"
     NHL_GOALS = "nhl_goals"
@@ -56,16 +57,26 @@ class TradeConditionMetric(str, Enum):
     NHL_WINS = "nhl_wins"
     GAMES_PLAYED = "games_played"
     LIVE_FANTASY_POINTS = "live_fantasy_points"
+    # Team-level metrics (dynasty hooks)
+    TEAM_WINS = "team_wins"
+    TEAM_LOSSES = "team_losses"
+    TEAM_POINTS_FOR = "team_points_for"
+    TEAM_RANK = "team_rank"
+    MADE_PLAYOFFS = "made_playoffs"   # 1 if playoffs_reached_at set
+    WON_DIVISION = "won_division"     # 1 if division_winner_at set
+    WON_CHAMPIONSHIP = "won_championship"  # 1 if championship_won_at set
 
 
 class TradeCondition(BaseModel):
-    subject: str = "offered"  # "offered" or "requested" — which side the condition applies to
-    player_id: Optional[str] = None  # Specific asset; if None, applies to any asset on that side
+    subject_type: str = "player"   # "player" | "team"
+    subject: str = "offered"       # "offered" | "requested" — which side the condition attaches to
+    player_id: Optional[str] = None  # When subject_type == player
+    team_id: Optional[str] = None    # When subject_type == team. If None, resolves to that side's team.
     metric: TradeConditionMetric
     operator: str = "gte"  # "gte" | "lte" | "eq"
     threshold: float
-    by_date: Optional[str] = None  # ISO date string; evaluate by this date (optional)
-    description: Optional[str] = None  # Human-readable, e.g. "If McDavid scores 100+ pts by trade deadline"
+    by_date: Optional[str] = None  # Evaluate by this date (ISO)
+    description: Optional[str] = None  # Free-form label, e.g. "If team wins championship"
 
 
 class TradeProposalCreate(BaseModel):

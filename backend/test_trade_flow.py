@@ -4,6 +4,7 @@ Run: cd /app/backend && python3 test_trade_flow.py
 import asyncio
 import os
 import sys
+from datetime import datetime, timezone
 import httpx
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
@@ -41,11 +42,12 @@ async def main():
         print(f"My player:  {my_player}")
         print(f"Their player: {their_player}")
 
-        # Find a pick owned by each
-        my_pick = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(my_team["_id"]), "year": 2027, "round": 2})
-        their_pick = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(other["_id"]), "year": 2028, "round": 3})
-        print(f"My pick:    2027 R2 id={my_pick['_id']}")
-        print(f"Their pick: 2028 R3 id={their_pick['_id']}")
+        # Find any pick still owned by each (idempotent across re-runs)
+        my_pick = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(my_team["_id"])})
+        their_pick = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(other["_id"])})
+        assert my_pick and their_pick, "Need at least one pick on each side"
+        print(f"My pick:    {my_pick['year']} R{my_pick['round']} id={my_pick['_id']}")
+        print(f"Their pick: {their_pick['year']} R{their_pick['round']} id={their_pick['_id']}")
 
         # ─── Test 1: Trade with player + pick + salary retention ───
         payload = {
@@ -53,11 +55,11 @@ async def main():
             "target_team_id": str(other["_id"]),
             "assets_offered": [
                 {"asset_type": "player", "player_id": my_player, "salary_retained_pct": 25},
-                {"asset_type": "pick", "pick_year": 2027, "pick_round": "2"},
+                {"asset_type": "pick", "pick_id": str(my_pick["_id"])},
             ],
             "assets_requested": [
                 {"asset_type": "player", "player_id": their_player},
-                {"asset_type": "pick", "pick_year": 2028, "pick_round": "3"},
+                {"asset_type": "pick", "pick_id": str(their_pick["_id"])},
             ],
             "message": "Testing trade flow",
         }
@@ -144,7 +146,59 @@ async def main():
         print(f"✔ Unmet condition trade: executed={data7.get('executed')}, reason={data7.get('reason')}")
         assert data7.get("executed") is False and data7.get("reason") == "conditions_not_met"
 
-        print("\n🎉 ALL TRADE FLOW TESTS PASSED")
+        # ─── Test 4: Team-level condition — 'won_championship' on my team ───
+        from bson import ObjectId
+        # Case A: team has NOT won championship → condition not met
+        # Grab a fresh pick from each side for this test
+        my_pick_b = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(my_team["_id"])})
+        their_pick_b = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(other["_id"])})
+        payload4 = {
+            "league_id": lid,
+            "target_team_id": str(other["_id"]),
+            "assets_offered": [{"asset_type": "pick", "pick_id": str(my_pick_b["_id"])}],
+            "assets_requested": [{"asset_type": "pick", "pick_id": str(their_pick_b["_id"])}],
+            "conditions": [
+                {"subject_type": "team", "subject": "offered", "metric": "won_championship",
+                 "operator": "eq", "threshold": 1, "description": "Only if my team wins championship"},
+            ],
+        }
+        r8 = await http.post(f"{API}/trades", json=payload4, cookies=cookies)
+        trade_id4 = r8.json()["_id"]
+        r9 = await http.post(f"{API}/trades/{trade_id4}/execute", cookies=cookies)
+        assert r9.json().get("executed") is False, f"Expected blocked: {r9.json()}"
+        print(f"✔ Team condition (no championship): blocked correctly")
+
+        # Case B: mark my team as championship winner → should unlock
+        await db.teams.update_one(
+            {"_id": ObjectId(str(my_team["_id"]))},
+            {"$set": {"championship_won_at": datetime.now(timezone.utc)}}
+        )
+        # Re-fetch conditions evaluation
+        r10 = await http.post(f"{API}/trades/{trade_id4}/evaluate-conditions")
+        eval4 = r10.json()
+        assert eval4["all_met"] is True, f"Expected met: {eval4}"
+        print(f"✔ Team condition (after championship flag): met")
+
+        # Execute it — now should succeed
+        r11 = await http.post(f"{API}/trades/{trade_id4}/execute", cookies=cookies)
+        assert r11.json().get("executed") is True
+        print(f"✔ Team condition unlocked trade execution")
+
+        # Undo championship for clean state
+        await db.teams.update_one(
+            {"_id": ObjectId(str(my_team["_id"]))},
+            {"$unset": {"championship_won_at": ""}}
+        )
+
+        # ─── Test 5: Pick trade_history persisted ───
+        p_after = await db.draft_picks.find_one({"_id": my_pick["_id"]})
+        hist = (p_after or {}).get("trade_history", []) if p_after else []
+        assert len(hist) >= 1, f"Expected at least 1 trade_history entry on my_pick: {hist}"
+        print(f"✔ my_pick trade_history length: {len(hist)} entries")
+        for h in hist[:3]:
+            print(f"    {h['from_team_name']} → {h['to_team_name']}")
+        print()
+        print("🎉 ALL TRADE FLOW TESTS PASSED")
 
 
 if __name__ == "__main__":
