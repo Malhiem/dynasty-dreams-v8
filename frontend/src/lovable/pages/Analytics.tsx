@@ -279,7 +279,7 @@ const Analytics = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={350}>
+              <div style={{width:"100%", minHeight:350}}><ResponsiveContainer width="100%" height={350}>
                 <LineChart data={weeklyData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 30%, 20%)" />
                   <XAxis 
@@ -329,7 +329,7 @@ const Analytics = () => {
                     dot={false}
                   />
                 </LineChart>
-              </ResponsiveContainer>
+              </ResponsiveContainer></div>
             </CardContent>
           </Card>
 
@@ -352,7 +352,7 @@ const Analytics = () => {
               </Select>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={350}>
+              <div style={{width:"100%", minHeight:350}}><ResponsiveContainer width="100%" height={350}>
                 <PieChart>
                   <Pie
                     data={getPieData()}
@@ -381,7 +381,7 @@ const Analytics = () => {
                   />
                   <Legend />
                 </PieChart>
-              </ResponsiveContainer>
+              </ResponsiveContainer></div>
               <div className="text-center mt-4">
                 <p className="text-sm text-muted-foreground">{getPieLabel()}</p>
               </div>
@@ -470,7 +470,7 @@ const Analytics = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={400}>
+                  <div style={{width:"100%", minHeight:400}}><ResponsiveContainer width="100%" height={400}>
                     <BarChart data={yoyChartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 30%, 20%)" />
                       <XAxis
@@ -509,7 +509,7 @@ const Analytics = () => {
                         />
                       )}
                     </BarChart>
-                  </ResponsiveContainer>
+                  </ResponsiveContainer></div>
                   <p className="text-xs text-muted-foreground text-center mt-2">
                     2025-26 season is in progress — showing data to date
                   </p>
@@ -553,7 +553,7 @@ const Analytics = () => {
                     ))}
                   </div>
 
-                  <ResponsiveContainer width="100%" height={400}>
+                  <div style={{width:"100%", minHeight:400}}><ResponsiveContainer width="100%" height={400}>
                     <LineChart data={comparisonChartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 30%, 20%)" />
                       <XAxis
@@ -597,7 +597,7 @@ const Analytics = () => {
                         />
                       ))}
                     </LineChart>
-                  </ResponsiveContainer>
+                  </ResponsiveContainer></div>
                   {compareTeams.length === 0 && (
                     <p className="text-sm text-muted-foreground text-center">
                       Select teams above to compare year-over-year performance

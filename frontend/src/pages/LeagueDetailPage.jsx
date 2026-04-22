@@ -144,7 +144,7 @@ export default function LeagueDetailPage() {
                 </h1>
                 <div className="flex flex-wrap items-center gap-3 mt-2">
                   <span className="badge badge-info">{league.format.replace('_', ' ')}</span>
-                  <span className="badge badge-info">{league.scoring_format.replace('_', ' ')}</span>
+                  <span className="badge badge-info">{league.scoring_format.replace(/_/g, ' ')}</span>
                   <span className={`badge ${league.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
                     {league.status}
                   </span>

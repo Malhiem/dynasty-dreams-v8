@@ -246,6 +246,9 @@ class TeamResponse(BaseModel):
     roster: List[str] = []
     live_points: float = 0.0
     logo_abbr: Optional[str] = None
+    championship_won_at: Optional[datetime] = None
+    division_winner_at: Optional[datetime] = None
+    playoffs_reached_at: Optional[datetime] = None
 
 class PaymentCreate(BaseModel):
     package_type: str  # "premium_monthly", "premium_yearly", "league_fee"
@@ -1146,7 +1149,7 @@ async def get_team_week_summary(team_id: str, request: Request):
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])}, {"name": 1})
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])}, {"name": 1, "scoring_format": 1})
 
     roster_ids = team.get("roster") or []
     if not roster_ids:
@@ -1250,17 +1253,56 @@ async def get_team_week_summary(team_id: str, request: Request):
             upsert=True,
         )
 
+    # H2H opponent lookup for current week (if applicable)
+    opponent_info = None
+    scoring_format = (league or {}).get("scoring_format", "") or ""
+    if "head_to_head" in scoring_format or scoring_format == "h2h":
+        # Find the "current" week: first matchup with no winner/status=scheduled
+        cur = await db.matchups.find_one(
+            {"league_id": team["league_id"], "status": {"$in": ["scheduled", "in_progress"]}},
+            sort=[("week", 1)],
+        )
+        week_num = cur.get("week") if cur else 1
+        pair = await db.matchups.find_one({
+            "league_id": team["league_id"],
+            "week": week_num,
+            "$or": [{"home_team_id": team_id}, {"away_team_id": team_id}],
+        })
+        if pair:
+            opp_id = pair["away_team_id"] if pair["home_team_id"] == team_id else pair["home_team_id"]
+            opp_name = pair["away_team_name"] if pair["home_team_id"] == team_id else pair["home_team_name"]
+            opp_team = await db.teams.find_one({"_id": ObjectId(opp_id)}) if opp_id else None
+            opp_weekly = 0.0
+            if opp_team:
+                for pid in (opp_team.get("roster", []) or [])[:50]:
+                    try:
+                        pp = await db.players.find_one({"_id": ObjectId(pid)})
+                        if not pp: continue
+                        is_g = pp.get("player_type") == "goalie" or pp.get("position") == "G"
+                        for gid, gls in (pp.get("live_stats") or {}).items():
+                            opp_weekly += _fantasy_points_from_live(gls, is_g)
+                    except Exception:
+                        pass
+            opponent_info = {
+                "opponent_team_id": opp_id,
+                "opponent_team_name": opp_name,
+                "opponent_weekly_fpts": round(opp_weekly, 2),
+                "week": week_num,
+            }
+
     return {
         "team_id": team_id,
         "team_name": team["name"],
         "league_id": team["league_id"],
         "league_name": league.get("name") if league else None,
+        "scoring_format": scoring_format,
         "daily_fpts": round(daily_total, 2),
         "weekly_fpts": round(weekly_total, 2),
         "top_performer": top_today,
         "rank": current_rank,
         "total_teams": len(ranked),
         "rank_delta": rank_delta,
+        "opponent": opponent_info,
     }
 
 
@@ -1639,6 +1681,9 @@ def _team_to_response(team: dict) -> TeamResponse:
         roster=team.get("roster", []),
         live_points=round(team.get("live_points", 0.0) or 0.0, 2),
         logo_abbr=abbr,
+        championship_won_at=team.get("championship_won_at"),
+        division_winner_at=team.get("division_winner_at"),
+        playoffs_reached_at=team.get("playoffs_reached_at"),
     )
 
 # NHL Players Endpoints
@@ -3203,6 +3248,95 @@ async def get_draft_picks(league_id: str, year: Optional[int] = None):
     for p in picks:
         p["_id"] = str(p["_id"])
     return {"league_id": league_id, "year": year, "picks": picks}
+
+
+class TeamAwardUpdate(BaseModel):
+    championship_won: Optional[bool] = None
+    division_winner: Optional[bool] = None
+    playoffs_reached: Optional[bool] = None
+
+
+@api_router.put("/leagues/{league_id}/teams/{team_id}/awards")
+async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate, request: Request):
+    """Commissioner tool: mark a team with season-end awards (triggers conditional trades)."""
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_comm = league["commissioner_id"] == user["_id"]
+    co_comms = league.get("co_commissioners", []) or []
+    is_co_comm = user["_id"] in co_comms
+    if not (is_comm or is_co_comm):
+        raise HTTPException(status_code=403, detail="Only commissioners can set team awards")
+
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id"), "league_id": league_id})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found in this league")
+
+    now = datetime.now(timezone.utc)
+    update_set: dict = {}
+    update_unset: dict = {}
+    changes: list[str] = []
+    if payload.championship_won is True:
+        update_set["championship_won_at"] = now
+        changes.append("championship_won_at set")
+    elif payload.championship_won is False:
+        update_unset["championship_won_at"] = ""
+        changes.append("championship_won_at cleared")
+    if payload.division_winner is True:
+        update_set["division_winner_at"] = now
+        changes.append("division_winner_at set")
+    elif payload.division_winner is False:
+        update_unset["division_winner_at"] = ""
+        changes.append("division_winner_at cleared")
+    if payload.playoffs_reached is True:
+        update_set["playoffs_reached_at"] = now
+        changes.append("playoffs_reached_at set")
+    elif payload.playoffs_reached is False:
+        update_unset["playoffs_reached_at"] = ""
+        changes.append("playoffs_reached_at cleared")
+
+    ops: dict = {}
+    if update_set: ops["$set"] = update_set
+    if update_unset: ops["$unset"] = update_unset
+    if ops:
+        await db.teams.update_one({"_id": team["_id"]}, ops)
+
+    # Audit entry
+    await db.audit_log.insert_one({
+        "league_id": league_id,
+        "actor_id": user["_id"],
+        "actor_name": user.get("name", user.get("email", "Unknown")),
+        "action": "team_award_updated",
+        "role": "commissioner" if is_comm else "co_commissioner",
+        "diff": {"team_id": team_id, "team_name": team.get("name"), "changes": changes},
+        "created_at": now,
+    })
+
+    # Evaluate any conditional trades in this league that might now unlock
+    unlocked = 0
+    pending = await db.trades.find({"league_id": league_id, "conditional": True,
+                                     "status": {"$in": ["pending", "accepted", "conditional"]}}).to_list(500)
+    for t in pending:
+        try:
+            res = await _evaluate_conditions(t)
+            if res["all_met"] and t.get("status") == "accepted":
+                await _execute_trade(t)
+                unlocked += 1
+        except Exception:
+            pass
+
+    fresh = await db.teams.find_one({"_id": team["_id"]})
+    return {
+        "team_id": team_id,
+        "team_name": fresh.get("name"),
+        "championship_won_at": fresh.get("championship_won_at"),
+        "division_winner_at": fresh.get("division_winner_at"),
+        "playoffs_reached_at": fresh.get("playoffs_reached_at"),
+        "changes": changes,
+        "unlocked_trades": unlocked,
+    }
+
 
 
 

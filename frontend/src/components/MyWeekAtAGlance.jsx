@@ -120,6 +120,44 @@ export default function MyWeekAtAGlance() {
               </div>
             </div>
 
+            {s.opponent && (
+              <Link
+                to={`/matchup?league=${s.league_id}`}
+                data-testid={`week-glance-opponent-${s.team_id}`}
+                className="block mb-3 bg-white/5 rounded-lg p-3 hover:bg-white/10 transition-colors"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] uppercase text-[#52525B] tracking-wider">
+                      Week {s.opponent.week} Matchup · vs
+                    </div>
+                    <div className="text-white text-sm font-semibold truncate">
+                      {s.opponent.opponent_team_name || 'TBD'}
+                    </div>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-[10px] uppercase text-[#52525B] tracking-wider">Their wk</div>
+                    <div className={`text-lg font-bold tabular-nums ${s.weekly_fpts >= s.opponent.opponent_weekly_fpts ? 'text-white' : 'text-red-400'}`}>
+                      {Number(s.opponent.opponent_weekly_fpts || 0).toFixed(1)}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-1">
+                  {s.weekly_fpts > s.opponent.opponent_weekly_fpts ? (
+                    <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-[10px]">
+                      Winning · +{(s.weekly_fpts - s.opponent.opponent_weekly_fpts).toFixed(1)}
+                    </Badge>
+                  ) : s.weekly_fpts < s.opponent.opponent_weekly_fpts ? (
+                    <Badge className="bg-red-500/15 text-red-400 border-red-500/30 text-[10px]">
+                      Losing · -{(s.opponent.opponent_weekly_fpts - s.weekly_fpts).toFixed(1)}
+                    </Badge>
+                  ) : (
+                    <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/30 text-[10px]">Tied</Badge>
+                  )}
+                </div>
+              </Link>
+            )}
+
             {s.top_performer ? (
               <Link
                 to={`/players/${s.top_performer.id}`}

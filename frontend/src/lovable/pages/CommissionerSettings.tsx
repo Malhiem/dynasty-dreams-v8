@@ -20,6 +20,7 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
 import TeamsTab from "@/lovable/components/admin/TeamsTab";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
+import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
 
 const nhlTeams = [
   "Anaheim Ducks", "Arizona Coyotes", "Boston Bruins", "Buffalo Sabres", "Calgary Flames",
@@ -2838,6 +2839,10 @@ const CommissionerSettings = () => {
                   <Calendar className="h-4 w-4 mr-2" />
                   Schedules
                 </TabsTrigger>
+                <TabsTrigger value="season-awards" className="data-[state=active]:bg-primary/20" data-testid="admin-tab-season-awards">
+                  <Trophy className="h-4 w-4 mr-2" />
+                  Season Awards
+                </TabsTrigger>
               </TabsList>
               <TabsContent value="teams">
                 <TeamsTab />
@@ -2854,6 +2859,9 @@ const CommissionerSettings = () => {
                 ) : (
                   <SchedulesTab />
                 )}
+              </TabsContent>
+              <TabsContent value="season-awards">
+                <SeasonAwardsTab />
               </TabsContent>
             </Tabs>
           </TabsContent>

@@ -7,6 +7,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { DataTable } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import RecommendedForYou from '@/components/RecommendedForYou';
+import MyLeaguesOrderedList from '@/components/MyLeaguesOrderedList';
 import LiveScoringWidget from '@/components/LiveScoringWidget';
 import MyWeekAtAGlance from '@/components/MyWeekAtAGlance';
 import FantasyLevelBadge from '@/components/FantasyLevelBadge';
@@ -54,7 +55,7 @@ export default function DashboardPage() {
       ),
     },
     { key: 'format', label: 'Format', render: (v) => v?.replace('_', ' ').toUpperCase() },
-    { key: 'scoring_format', label: 'Scoring', render: (v) => v?.replace('_', ' ').toUpperCase() },
+    { key: 'scoring_format', label: 'Scoring', render: (v) => v?.replace(/_/g, ' ').toUpperCase() },
     { key: 'current_teams', label: 'Teams', render: (v, row) => `${v}/${row.max_teams}` },
     { key: 'status', label: 'Status', render: (v) => (
       <span className={`badge ${v === 'active' ? 'badge-success' : v === 'setup' ? 'badge-warning' : 'badge-info'}`}>
@@ -104,8 +105,8 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {/* Personalized Recommendation Card */}
-        <RecommendedForYou />
+        {/* My Leagues — drag and drop to reorder */}
+        <MyLeaguesOrderedList />
 
         {/* My Week at a Glance — per-league daily/weekly/top performer/rank */}
         <MyWeekAtAGlance />

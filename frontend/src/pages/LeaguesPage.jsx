@@ -45,7 +45,7 @@ export default function LeaguesPage() {
       )
     },
     { key: 'format', label: 'Format', render: (v) => v?.replace('_', ' ').toUpperCase() },
-    { key: 'scoring_format', label: 'Scoring', render: (v) => v?.replace('_', ' ').toUpperCase() },
+    { key: 'scoring_format', label: 'Scoring', render: (v) => v?.replace(/_/g, ' ').toUpperCase() },
     { key: 'current_teams', label: 'Teams', render: (v, row) => `${v}/${row.max_teams}` },
     { key: 'entry_fee', label: 'Entry Fee', render: (v) => v ? `$${v.toFixed(2)}` : 'Free' },
     { 

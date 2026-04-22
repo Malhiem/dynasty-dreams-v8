@@ -1,0 +1,36 @@
+{
+  "summary": "Phase 21 testing complete. Backend: 5/5 pytest passed (week-at-a-glance returns scoring_format+opponent for H2H / omits opponent for non-H2H; PUT /api/leagues/{id}/teams/{id}/awards sets & clears championship_won_at / division_winner_at / playoffs_reached_at and returns unlocked_trades; non-commissioner gets 403; admin-triggered conditional trade with won_championship=eq=1 flips to 'executed' and unlocked_trades=1 when PUT awards fires). Frontend: DashboardPage shows data-testid='my-leagues-ordered' with 5 draggable rows (draggable=true) for chriszarek, '5 LEAGUES' badge, 'Open' link with ArrowRight icon pointing to /leagues/{id}. Drag-drop via Playwright drag_to reorders rows and PERSISTS to localStorage key 'dd_league_order_v1'. No 'HEAD TO_HEAD' text on /dashboard, /leagues, /leagues/{id}; all render as 'HEAD TO HEAD'. My Week at a Glance shows opponent section ('WEEK 1 MATCHUP · VS {name}' + 'THIS WK {score}' + Winning/Losing badge with delta) for H2H cards (Ice Kings, Frozen Dynasty, Perennial Keepers) and HIDES opponent section for non-H2H cards (Stat Chasers Roto, Set-and-Forget Best Ball). Commissioner Settings → League Administration main tab → Season Awards sub-tab (data-testid='admin-tab-season-awards') renders 12 team rows × 3 switches (Playoffs/Division/Champion = 36 total). /analytics: 0 width(-1)/height(-1) warnings in console (2 total warnings, none recharts-related).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Season Awards toggle switch", "issue": "After clicking a toggle switch on Season Awards tab, a toast was not detectable via [role=status]/.toast/[data-sonner-toast] selectors within 2.5s. The backend PUT endpoint works correctly (verified by pytest), so the wiring is likely fine — could be a fast-dismissing toast or non-standard portal. Worth confirming visually that the toast actually appears with correct unlocked_trades copy.", "affected_selectors": ["button[role='switch']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration18_phase21.py",
+    "/app/backend/tests/test_iteration18_conditional_trigger.py",
+    "/app/test_reports/pytest/iteration18_results.xml"
+  ],
+  "action_items": [
+    "(Low-priority) Verify that toasts on SeasonAwardsTab actually render and include the unlocked_trades count copy when >0 — E1 can self-verify by clicking a toggle in the browser."
+  ],
+  "critical_code_review_comments": [
+    "server.py now ~4640 lines — still a single-file monolith. Recommend splitting by domain (routers/trades.py, routers/awards.py, routers/leagues.py) before further growth. Flagged in prior iterations too.",
+    "PUT /api/leagues/{id}/teams/{id}/awards uses $unset with empty-string value when clearing — MongoDB treats any value in $unset the same but using an explicit null/empty dict convention is cleaner.",
+    "MyLeaguesOrderedList ORDER_KEY 'dd_league_order_v1' is shared across users on same browser — fine for per-browser UX but consider scoping by user_id if multiple users share a device (minor).",
+    "Conditional trade re-evaluation on PUT awards swallows all exceptions silently (except Exception: pass). Log with league_id/trade_id so comm can debug why a trade did NOT unlock."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration18_phase21.py (new)",
+    "/app/backend/tests/test_iteration18_conditional_trigger.py (new)"
+  ],
+  "success_rate": {"backend": "100% (5/5 pytest)", "frontend": "100% on review-request acceptance criteria (all 8 items verified)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (co-commissioner of all 5 leagues)",
+  "seed_data_creation": "Conditional-trigger test inserts 1 ephemeral trade doc tagged PHASE21_TRIGGER_TEST and deletes it in teardown. Also toggles chriszarek/Zarek's Frozen championship_won_at on and off (cleanup resets to unset). 403 test creates 1 stranger user TEST_phase21_stranger@example.com (left behind — harmless).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 21 fully verified. Key data: Ice Kings league_id=69e46af167999bfb85c39628, Zarek's Frozen team_id=69e59b30cbd3fea02a914c61. Season Awards UI is a SUB-tab nested inside the 'League Administration' MAIN tab on /commissioner/settings — click main 'League Administration' tab FIRST before looking for [data-testid='admin-tab-season-awards']. Drag-drop works with Playwright's locator.drag_to on [data-testid^='my-leagues-row-']; synthetic dispatchEvent(DragEvent) does NOT work because React wraps dataTransfer events.",
+  "rca of the issue": "N/A - no bugs found."
+}

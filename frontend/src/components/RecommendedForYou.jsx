@@ -171,7 +171,7 @@ export default function RecommendedForYou() {
                   </Link>
                   <div className="text-[#A1A1AA] text-sm mt-1">
                     {topPick.format?.replace('_', ' ').toUpperCase()} ·{' '}
-                    {topPick.scoring_format?.replace('_', ' ').toUpperCase()} ·{' '}
+                    {topPick.scoring_format?.replace(/_/g, ' ').toUpperCase()} ·{' '}
                     {topPick.current_teams}/{topPick.max_teams} teams
                     {topPick.entry_fee ? ` · $${topPick.entry_fee} entry` : ''}
                   </div>
@@ -213,7 +213,7 @@ export default function RecommendedForYou() {
                 </Link>
                 <div className="text-[#A1A1AA] text-xs mt-0.5">
                   {lg.format?.replace('_', ' ').toUpperCase()} ·{' '}
-                  {lg.scoring_format?.replace('_', ' ').toUpperCase()} ·{' '}
+                  {lg.scoring_format?.replace(/_/g, ' ').toUpperCase()} ·{' '}
                   {lg.current_teams}/{lg.max_teams} teams
                 </div>
                 <div className="text-[#52525B] text-xs mt-1">{lg.match_reason}</div>

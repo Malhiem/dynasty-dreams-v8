@@ -262,7 +262,7 @@ export default function CommissionerPage() {
               <CardContent>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div><Label className="text-[#A1A1AA] text-xs">Format</Label><p className="text-white font-medium capitalize">{selectedLeague?.format?.replace('_', ' ')}</p></div>
-                  <div><Label className="text-[#A1A1AA] text-xs">Scoring</Label><p className="text-white font-medium capitalize">{selectedLeague?.scoring_format?.replace('_', ' ')}</p></div>
+                  <div><Label className="text-[#A1A1AA] text-xs">Scoring</Label><p className="text-white font-medium capitalize">{selectedLeague?.scoring_format?.replace(/_/g, ' ')}</p></div>
                   <div><Label className="text-[#A1A1AA] text-xs">Draft Type</Label><p className="text-white font-medium capitalize">{selectedLeague?.draft_type}</p></div>
                   <div><Label className="text-[#A1A1AA] text-xs">Roster Spots</Label><p className="text-white font-medium">{selectedLeague?.roster_spots}</p></div>
                   <div><Label className="text-[#A1A1AA] text-xs">Entry Fee</Label><p className="text-white font-medium">{selectedLeague?.entry_fee ? `$${selectedLeague.entry_fee}` : "Free"}</p></div>
