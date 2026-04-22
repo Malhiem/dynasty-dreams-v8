@@ -4313,6 +4313,114 @@ class GenerateScheduleRequest(BaseModel):
     num_weeks: int = Field(default=18, ge=1, le=52)
 
 
+
+class ConsolationPrize(BaseModel):
+    type: str  # "draft_lottery_boost" | "compensation_pick" | "custom"
+    description: Optional[str] = None
+    lottery_boost_spots: Optional[int] = None
+    fallback_pick_round: Optional[int] = None
+    fallback_pick_year: Optional[int] = None
+    custom_details: Optional[str] = None
+
+
+class ConsolationPrizeUpdate(BaseModel):
+    prize: ConsolationPrize
+
+
+async def _apply_consolation_prize(league_id: str, team_id: str, prize: dict) -> dict:
+    """Auto-apply lottery boost / compensation-pick. Custom prizes left for manual fulfilment."""
+    applied = {"type": prize.get("type"), "steps": []}
+    prize_type = prize.get("type")
+    now = datetime.now(timezone.utc)
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    team_name = team.get("name") if team else None
+
+    if prize_type == "draft_lottery_boost":
+        spots = int(prize.get("lottery_boost_spots") or 0)
+        if spots <= 0:
+            return applied
+        next_year = now.year + 1
+        pick = await db.draft_picks.find_one({
+            "league_id": league_id, "year": next_year, "round": 1,
+            "current_team_id": team_id,
+        })
+        if pick:
+            new_slot = max(1, (pick.get("pick_number") or 12) - spots)
+            await db.draft_picks.update_one(
+                {"_id": pick["_id"]},
+                {"$set": {"pick_number": new_slot, "lottery_boost_applied": spots}}
+            )
+            applied["steps"].append(f"Moved {next_year} R1 pick up {spots} slot(s) to pick #{new_slot}")
+        else:
+            comp_round = prize.get("fallback_pick_round") or 2
+            comp_year = prize.get("fallback_pick_year") or next_year
+            await db.draft_picks.insert_one({
+                "league_id": league_id, "year": comp_year, "round": int(comp_round),
+                "original_team_id": team_id, "original_team_name": team_name,
+                "current_team_id": team_id, "current_team_name": team_name,
+                "pick_number": None, "pick_type": "compensation",
+                "reason": "consolation_winner_no_r1_available", "created_at": now,
+            })
+            applied["steps"].append(f"1st-rounder unavailable — awarded compensation R{comp_round} pick in {comp_year}")
+    elif prize_type == "compensation_pick":
+        comp_round = prize.get("fallback_pick_round") or 2
+        comp_year = prize.get("fallback_pick_year") or now.year + 1
+        await db.draft_picks.insert_one({
+            "league_id": league_id, "year": comp_year, "round": int(comp_round),
+            "original_team_id": team_id, "original_team_name": team_name,
+            "current_team_id": team_id, "current_team_name": team_name,
+            "pick_number": None, "pick_type": "compensation",
+            "reason": "consolation_winner", "created_at": now,
+        })
+        applied["steps"].append(f"Awarded compensation R{comp_round} pick in {comp_year}")
+    elif prize_type == "custom":
+        applied["steps"].append(f"Custom prize '{prize.get('custom_details') or prize.get('description')}' logged for manual fulfilment")
+    return applied
+
+
+@api_router.put("/leagues/{league_id}/consolation-prize")
+async def set_consolation_prize(league_id: str, payload: ConsolationPrizeUpdate, request: Request):
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_comm = league["commissioner_id"] == user["_id"]
+    co_comms = league.get("co_commissioners", []) or []
+    if not (is_comm or user["_id"] in co_comms):
+        raise HTTPException(status_code=403, detail="Only commissioners can set the consolation prize")
+
+    prize_dict = payload.prize.dict()
+    await db.leagues.update_one({"_id": league["_id"]}, {"$set": {"consolation_prize": prize_dict}})
+    await db.audit_log.insert_one({
+        "league_id": league_id, "actor_id": user["_id"],
+        "actor_name": user.get("name", user.get("email", "Unknown")),
+        "action": "consolation_prize_configured",
+        "role": "commissioner" if is_comm else "co_commissioner",
+        "diff": prize_dict, "created_at": datetime.now(timezone.utc),
+    })
+    return {"league_id": league_id, "consolation_prize": prize_dict}
+
+
+@api_router.get("/leagues/{league_id}/consolation-prize")
+async def get_consolation_prize(league_id: str):
+    league = await db.leagues.find_one(
+        {"_id": _safe_object_id(league_id, "league_id")},
+        {"consolation_prize": 1}
+    )
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    return {"league_id": league_id, "consolation_prize": league.get("consolation_prize")}
+
+
+@api_router.get("/leagues/{league_id}/team-rewards")
+async def list_team_rewards(league_id: str):
+    rewards = await db.team_rewards.find({"league_id": league_id}).sort("awarded_at", -1).to_list(200)
+    for r in rewards:
+        r["_id"] = str(r["_id"])
+    return {"league_id": league_id, "rewards": rewards}
+
+
+
 class SimulateWeekRequest(BaseModel):
     league_id: str
     week: int
@@ -4465,7 +4573,57 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         else:
             # Tie
             await db.teams.update_one({"_id": ObjectId(m["home_team_id"])}, {"$inc": {"ties": 1, "points_for": home_score, "points_against": away_score}})
-            await db.teams.update_one({"_id": ObjectId(m["away_team_id"])}, {"$inc": {"ties": 1, "points_for": away_score, "points_against": home_score}})
+            await db.teams.update_one({"_id": ObjectId(m["away_team_id"])}, {"$inc": {"ties": 1, "points_for": home_score, "points_against": away_score}})
+
+        # Auto-crown logic for playoff brackets (is_final matchups)
+        if m.get("is_final") and winner:
+            bracket = m.get("bracket", "championship")
+            now = datetime.now(timezone.utc)
+            loser_id = m["away_team_id"] if winner == m["home_team_id"] else m["home_team_id"]
+            if bracket == "championship":
+                await db.teams.update_one(
+                    {"_id": ObjectId(winner)},
+                    {"$set": {"championship_won_at": now}}
+                )
+                await db.activity_feed.insert_one({
+                    "league_id": input.league_id,
+                    "event_type": "championship_awarded",
+                    "description": f"🏆 {m['home_team_name'] if winner == m['home_team_id'] else m['away_team_name']} won the championship!",
+                    "message": f"Champion crowned: {m['home_team_name'] if winner == m['home_team_id'] else m['away_team_name']}",
+                    "created_at": now,
+                })
+                await db.audit_log.insert_one({
+                    "league_id": input.league_id, "actor_id": "system", "actor_name": "System (auto-crown)",
+                    "action": "championship_awarded", "role": "system",
+                    "diff": {"winner_team_id": winner, "runner_up_team_id": loser_id,
+                             "matchup_id": str(m["_id"]), "score": f"{home_score}-{away_score}"},
+                    "created_at": now,
+                })
+            elif bracket == "consolation":
+                await db.teams.update_one(
+                    {"_id": ObjectId(winner)},
+                    {"$set": {"consolation_won_at": now}}
+                )
+                # If the league has a consolation prize configured, record it as a pending reward
+                prize = (league.get("consolation_prize") or {})
+                if prize.get("type"):
+                    await db.team_rewards.insert_one({
+                        "league_id": input.league_id,
+                        "team_id": winner,
+                        "source": "consolation_winner",
+                        "prize": prize,
+                        "awarded_at": now,
+                        "status": "pending_commissioner_fulfillment",
+                    })
+                    # If the prize is a draft-lottery boost AND can be auto-applied, do so.
+                    await _apply_consolation_prize(input.league_id, winner, prize)
+                await db.activity_feed.insert_one({
+                    "league_id": input.league_id,
+                    "event_type": "consolation_awarded",
+                    "description": f"Consolation bracket won by {m['home_team_name'] if winner == m['home_team_id'] else m['away_team_name']}",
+                    "message": "Consolation bracket concluded",
+                    "created_at": now,
+                })
 
         results.append({
             "home": m["home_team_name"],
