@@ -13,9 +13,11 @@ import { Badge } from "@/components/ui/badge";
 import { Settings, Users, Trophy, Shield, Plus, X, Target, LayoutGrid, AlertTriangle, Flag, ClipboardCheck, Wrench, ScrollText, ArrowRightLeft, UserCog, Sliders, FileText, Calendar, Upload, ImageIcon } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import api from "@/lib/api";
 import TeamsTab from "@/lovable/components/admin/TeamsTab";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
 
@@ -777,6 +779,48 @@ const CommissionerSettings = () => {
   );
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(generateMockAuditLog());
   const [auditFilterCategory, setAuditFilterCategory] = useState<string>("all");
+  const { league: activeLeague } = useActiveLeague();
+
+  // Fetch real audit log entries for the active league and merge with the seeded UI rows
+  useEffect(() => {
+    if (!activeLeague?.id) return;
+    let cancelled = false;
+    api.get(`/leagues/${activeLeague.id}/audit-log`).then(({ data }) => {
+      if (cancelled) return;
+      const backendEvents = (data?.events || []).map((e: any) => {
+        const actionMap: Record<string, string> = {
+          constitution_updated: "setting-change",
+          settings_changed: "setting-change",
+          trade_executed: "trade-override",
+          roster_override: "roster-move",
+        };
+        const categoryMap: Record<string, string> = {
+          constitution_updated: "League Settings",
+          settings_changed: "League Settings",
+          trade_executed: "Trade",
+          roster_override: "Roster",
+        };
+        return {
+          id: e.id || e._id,
+          timestamp: new Date(e.created_at),
+          category: categoryMap[e.action] || "League Settings",
+          team: "—",
+          action: actionMap[e.action] || "setting-change",
+          description: (() => {
+            if (e.action === "constitution_updated") {
+              const n = e.diff?.new_length ?? 0;
+              return `Constitution updated (${n} chars) — preview: "${(e.diff?.preview || '').slice(0, 60)}…"`;
+            }
+            return e.action.replace(/_/g, " ");
+          })(),
+          performedBy: `${e.actor_name || 'Unknown'}${e.role ? ` (${e.role.replace('_', '-')})` : ''}`,
+        };
+      });
+      // Prepend real events so they appear on top; keep generated mock rows below for richer UI
+      setAuditLog((prev: any[]) => [...backendEvents, ...prev]);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeLeague?.id]);
   const [duplicatePlayers, setDuplicatePlayers] = useState("not-used");
   const [leagueLogo, setLeagueLogo] = useState<string | null>(null);
   const [leagueLogoName, setLeagueLogoName] = useState<string | null>(null);

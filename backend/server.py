@@ -2777,6 +2777,7 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
         requested_details.append(detail)
 
     review_period_hours = 72
+    has_conditions = bool(getattr(input, "conditions", None))
     trade_doc = {
         "league_id": input.league_id,
         "proposer_team_id": str(proposer_team["_id"]),
@@ -2787,6 +2788,8 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
         "target_owner_id": target_team["owner_id"],
         "assets_offered": offered_details,
         "assets_requested": requested_details,
+        "conditions": [c.dict() if hasattr(c, "dict") else c for c in (input.conditions or [])],
+        "conditional": has_conditions,
         "message": input.message,
         "status": "pending",
         "votes": {"approve": 0, "veto": 0, "voters": []},
@@ -2869,6 +2872,16 @@ async def accept_trade(trade_id: str, request: Request):
         {"_id": ObjectId(trade_id)},
         {"$set": {"status": "accepted", "responded_at": datetime.now(timezone.utc).isoformat()}}
     )
+    # Refresh trade after status change
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+
+    # If no conditions, execute immediately. Otherwise keep pending until evaluate.
+    executed = None
+    if not trade.get("conditions"):
+        try:
+            executed = await _execute_trade(trade)
+        except Exception as e:
+            logger.exception("Trade auto-execute failed: %s", e)
 
     await broadcast_to_room(f"league_{trade['league_id']}", "trade_accepted", {
         "trade_id": trade_id,
@@ -2886,7 +2899,7 @@ async def accept_trade(trade_id: str, request: Request):
         f"/transactions"
     )
 
-    return {"message": "Trade accepted", "status": "accepted"}
+    return {"message": "Trade accepted", "status": "accepted", "executed": bool(executed and executed.get("executed"))}
     # Note: activity logged via broadcast
 
 @api_router.post("/trades/{trade_id}/reject")
@@ -2924,6 +2937,218 @@ async def withdraw_trade(trade_id: str, request: Request):
     )
 
     return {"message": "Trade withdrawn", "status": "withdrawn"}
+
+
+# ─── Trade Execution + Conditions ─────────────────────────────
+
+def _metric_value_for_player(player: dict, metric: str) -> float:
+    if metric == "nhl_points":
+        return float(player.get("points", 0) or 0)
+    if metric == "nhl_goals":
+        return float(player.get("goals", 0) or 0)
+    if metric == "nhl_assists":
+        return float(player.get("assists", 0) or 0)
+    if metric == "nhl_wins":
+        return float(player.get("wins", 0) or 0)
+    if metric == "games_played":
+        return float(player.get("games_played", 0) or 0)
+    if metric == "fantasy_points":
+        return float(player.get("fantasy_points", 0) or 0)
+    if metric == "live_fantasy_points":
+        live = player.get("live_stats") or {}
+        total = 0.0
+        for _, ls in live.items():
+            total += (ls.get("goals", 0) or 0) * 3 + (ls.get("assists", 0) or 0) * 2
+        return total
+    return 0.0
+
+
+async def _evaluate_conditions(trade: dict) -> dict:
+    results = []
+    all_met = True
+    for cond in (trade.get("conditions") or []):
+        subject = cond.get("subject", "offered")
+        side_assets = trade.get(f"assets_{subject}", []) or []
+        specific_pid = cond.get("player_id")
+        metric = cond.get("metric")
+        operator = (cond.get("operator") or "gte").lower()
+        threshold = float(cond.get("threshold", 0) or 0)
+        candidate_pids = []
+        for a in side_assets:
+            if a.get("asset_type") != "player":
+                continue
+            if specific_pid and a.get("player_id") != specific_pid:
+                continue
+            if a.get("player_id"):
+                candidate_pids.append(a["player_id"])
+        best = 0.0
+        for pid in candidate_pids:
+            try:
+                player = await db.players.find_one({"_id": ObjectId(pid)})
+                if player:
+                    val = _metric_value_for_player(player, metric)
+                    if val > best:
+                        best = val
+            except Exception:
+                pass
+        if operator == "gte":
+            met = best >= threshold
+        elif operator == "lte":
+            met = best <= threshold
+        elif operator == "eq":
+            met = abs(best - threshold) < 1e-6
+        else:
+            met = False
+        results.append({"condition": cond, "actual_value": best, "met": met})
+        if not met:
+            all_met = False
+    return {"all_met": all_met, "results": results}
+
+
+async def _execute_trade(trade: dict) -> dict:
+    if trade.get("status") == "executed":
+        return {"already_executed": True}
+    league_id = trade["league_id"]
+    proposer_tid = trade["proposer_team_id"]
+    target_tid = trade["target_team_id"]
+    proposer = await db.teams.find_one({"_id": ObjectId(proposer_tid)})
+    target = await db.teams.find_one({"_id": ObjectId(target_tid)})
+    if not proposer or not target:
+        raise HTTPException(status_code=404, detail="Trade team(s) not found")
+    proposer_roster = list(proposer.get("roster", []) or [])
+    target_roster = list(target.get("roster", []) or [])
+    moves = {"players_out": [], "picks_out": [], "players_in": [], "picks_in": [], "retained": []}
+
+    for a in trade.get("assets_offered", []):
+        if a.get("asset_type") == "player" and a.get("player_id"):
+            pid = a["player_id"]
+            if pid in proposer_roster:
+                proposer_roster.remove(pid)
+            if pid not in target_roster:
+                target_roster.append(pid)
+            moves["players_out"].append({"player_id": pid, "from": proposer_tid, "to": target_tid})
+            if a.get("salary_retained_pct", 0) > 0:
+                moves["retained"].append({"player_id": pid, "retainer_team_id": proposer_tid, "pct": a["salary_retained_pct"]})
+        elif a.get("asset_type") == "pick":
+            query = {"league_id": league_id, "current_team_id": proposer_tid}
+            if a.get("pick_id"):
+                query["_id"] = ObjectId(a["pick_id"])
+            else:
+                if a.get("pick_year"): query["year"] = int(a["pick_year"])
+                if a.get("pick_round"):
+                    try: query["round"] = int(str(a["pick_round"]).replace("R", "").strip())
+                    except Exception: pass
+            p = await db.draft_picks.find_one(query)
+            if p:
+                await db.draft_picks.update_one(
+                    {"_id": p["_id"]},
+                    {"$set": {"current_team_id": target_tid, "current_team_name": target.get("name")}}
+                )
+                moves["picks_out"].append({"pick_id": str(p["_id"]), "year": p["year"], "round": p["round"],
+                                            "from": proposer_tid, "to": target_tid})
+
+    for a in trade.get("assets_requested", []):
+        if a.get("asset_type") == "player" and a.get("player_id"):
+            pid = a["player_id"]
+            if pid in target_roster:
+                target_roster.remove(pid)
+            if pid not in proposer_roster:
+                proposer_roster.append(pid)
+            moves["players_in"].append({"player_id": pid, "from": target_tid, "to": proposer_tid})
+            if a.get("salary_retained_pct", 0) > 0:
+                moves["retained"].append({"player_id": pid, "retainer_team_id": target_tid, "pct": a["salary_retained_pct"]})
+        elif a.get("asset_type") == "pick":
+            query = {"league_id": league_id, "current_team_id": target_tid}
+            if a.get("pick_id"):
+                query["_id"] = ObjectId(a["pick_id"])
+            else:
+                if a.get("pick_year"): query["year"] = int(a["pick_year"])
+                if a.get("pick_round"):
+                    try: query["round"] = int(str(a["pick_round"]).replace("R", "").strip())
+                    except Exception: pass
+            p = await db.draft_picks.find_one(query)
+            if p:
+                await db.draft_picks.update_one(
+                    {"_id": p["_id"]},
+                    {"$set": {"current_team_id": proposer_tid, "current_team_name": proposer.get("name")}}
+                )
+                moves["picks_in"].append({"pick_id": str(p["_id"]), "year": p["year"], "round": p["round"],
+                                           "from": target_tid, "to": proposer_tid})
+
+    await db.teams.update_one({"_id": proposer["_id"]}, {"$set": {"roster": proposer_roster}})
+    await db.teams.update_one({"_id": target["_id"]}, {"$set": {"roster": target_roster}})
+
+    for r in moves["retained"]:
+        await db.salary_retentions.update_one(
+            {"league_id": league_id, "player_id": r["player_id"], "retainer_team_id": r["retainer_team_id"]},
+            {"$set": {**r, "league_id": league_id, "trade_id": str(trade["_id"]),
+                      "created_at": datetime.now(timezone.utc)}},
+            upsert=True,
+        )
+
+    await db.trades.update_one(
+        {"_id": trade["_id"]},
+        {"$set": {
+            "status": "executed",
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "execution_moves": moves,
+        }}
+    )
+
+    try:
+        await db.activity_feed.insert_one({
+            "league_id": league_id,
+            "event_type": "trade_executed",
+            "description": f"Trade executed: {trade['proposer_team_name']} ↔ {trade['target_team_name']}",
+            "message": f"Trade executed: {trade['proposer_team_name']} ↔ {trade['target_team_name']}",
+            "created_at": datetime.now(timezone.utc),
+        })
+    except Exception:
+        pass
+    return {"executed": True, "moves": moves}
+
+
+@api_router.post("/trades/{trade_id}/execute")
+async def execute_trade_endpoint(trade_id: str, request: Request):
+    user = await get_current_user(request)
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if trade.get("status") not in ("accepted", "pending", "conditional"):
+        raise HTTPException(status_code=400, detail=f"Trade status is {trade.get('status')}")
+    league = await db.leagues.find_one({"_id": ObjectId(trade["league_id"])})
+    is_participant = user["_id"] in (trade.get("proposer_id"), trade.get("target_owner_id"))
+    is_comm = league and (league["commissioner_id"] == user["_id"] or user["_id"] in (league.get("co_commissioners") or []))
+    if not (is_participant or is_comm):
+        raise HTTPException(status_code=403, detail="Not authorized to execute this trade")
+    if trade.get("conditions"):
+        check = await _evaluate_conditions(trade)
+        if not check["all_met"]:
+            return {"executed": False, "reason": "conditions_not_met", **check}
+    return await _execute_trade(trade)
+
+
+@api_router.post("/trades/{trade_id}/evaluate-conditions")
+async def evaluate_trade_conditions_endpoint(trade_id: str):
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return await _evaluate_conditions(trade)
+
+
+# ─── Draft Picks ──────────────────────────────────────────────
+
+@api_router.get("/drafts/{league_id}/picks")
+async def get_draft_picks(league_id: str, year: Optional[int] = None):
+    query = {"league_id": league_id}
+    if year:
+        query["year"] = int(year)
+    picks = await db.draft_picks.find(query).sort([("year", 1), ("round", 1)]).to_list(1000)
+    for p in picks:
+        p["_id"] = str(p["_id"])
+    return {"league_id": league_id, "year": year, "picks": picks}
+
+
 
 @api_router.post("/trades/{trade_id}/vote")
 async def vote_on_trade(trade_id: str, input: TradeVote, request: Request):

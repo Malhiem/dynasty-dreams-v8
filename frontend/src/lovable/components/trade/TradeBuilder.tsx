@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
+import { TradeConditionsEditor } from "./TradeConditionsEditor";
 import {
   Select,
   SelectContent,
@@ -583,6 +584,26 @@ export const TradeBuilder = ({
               )}
             </div>
           )}
+
+          {/* Conditional Trade section */}
+          <div className="px-4 py-3 border-t border-border bg-secondary/10">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="text-xs font-semibold text-foreground">Conditional Triggers</h4>
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-[11px] h-7"
+                onClick={() => (window as any).__addTradeCondition?.()}
+                data-testid="add-trade-condition-btn"
+              >
+                + Add condition
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Trade executes only when all conditions are satisfied (e.g. "Only if McDavid scores 100+ NHL points").
+            </p>
+            <TradeConditionsEditor />
+          </div>
         </div>
       )}
 

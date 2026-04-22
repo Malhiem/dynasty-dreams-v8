@@ -44,7 +44,28 @@ class TradeAsset(BaseModel):
     nhl_team: Optional[str] = None
     pick_year: Optional[int] = None
     pick_round: Optional[str] = None
+    pick_id: Optional[str] = None  # ObjectId of the draft_pick row when trading a specific pick
     salary_retained_pct: float = 0
+
+
+class TradeConditionMetric(str, Enum):
+    FANTASY_POINTS = "fantasy_points"
+    NHL_POINTS = "nhl_points"
+    NHL_GOALS = "nhl_goals"
+    NHL_ASSISTS = "nhl_assists"
+    NHL_WINS = "nhl_wins"
+    GAMES_PLAYED = "games_played"
+    LIVE_FANTASY_POINTS = "live_fantasy_points"
+
+
+class TradeCondition(BaseModel):
+    subject: str = "offered"  # "offered" or "requested" — which side the condition applies to
+    player_id: Optional[str] = None  # Specific asset; if None, applies to any asset on that side
+    metric: TradeConditionMetric
+    operator: str = "gte"  # "gte" | "lte" | "eq"
+    threshold: float
+    by_date: Optional[str] = None  # ISO date string; evaluate by this date (optional)
+    description: Optional[str] = None  # Human-readable, e.g. "If McDavid scores 100+ pts by trade deadline"
 
 
 class TradeProposalCreate(BaseModel):
@@ -53,6 +74,7 @@ class TradeProposalCreate(BaseModel):
     assets_offered: list[TradeAsset]
     assets_requested: list[TradeAsset]
     message: Optional[str] = None
+    conditions: list[TradeCondition] = Field(default_factory=list)
 
 
 class TradeVote(BaseModel):

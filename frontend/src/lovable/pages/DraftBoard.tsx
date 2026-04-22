@@ -199,15 +199,58 @@ export default function DraftBoardPage() {
   const availableYears = Array.from({ length: maxTradeYears }, (_, i) => String(currentYear + i));
   const [selectedYear, setSelectedYear] = useState(availableYears[0]);
   const { league, leagueTeams: liveLeagueTeams } = useActiveLeague();
+  const [livePicks, setLivePicks] = useState<any[]>([]);
 
-  const yearData = allPickData[selectedYear] || {};
+  useEffect(() => {
+    if (!league?.id) return;
+    let cancelled = false;
+    api.get(`/drafts/${league.id}/picks?year=${selectedYear}`).then(({ data }) => {
+      if (!cancelled) setLivePicks(data?.picks || []);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [league?.id, selectedYear]);
+
+  // Build teams list + per-team abbr mapping from live data when available.
+  const teams = useMemo(() => {
+    if (!liveLeagueTeams?.length) return leagueTeams;
+    return liveLeagueTeams.map(t => ({
+      name: t.name,
+      abbr: t.logo_abbr || t.name.slice(0, 3).toUpperCase(),
+      id: t.id,
+    }));
+  }, [liveLeagueTeams]);
+
+  // Map live pick rows -> {originalAbbr: {round: {currentOwner: abbr, tradeHistory:[]}}}
+  const teamIdToAbbr = useMemo(() => {
+    const m: Record<string, string> = {};
+    teams.forEach(t => { if ((t as any).id) m[(t as any).id] = t.abbr; });
+    return m;
+  }, [teams]);
+  const liveYearData = useMemo(() => {
+    if (!livePicks?.length) return null;
+    const data: Record<string, Record<number, any>> = {};
+    livePicks.forEach(p => {
+      const origAbbr = teamIdToAbbr[p.original_team_id];
+      if (!origAbbr) return;
+      if (!data[origAbbr]) data[origAbbr] = {};
+      data[origAbbr][p.round] = {
+        currentOwner: teamIdToAbbr[p.current_team_id] || origAbbr,
+        isTraded: p.current_team_id !== p.original_team_id,
+        tradeHistory: [],
+        pickId: p._id,
+      };
+    });
+    return data;
+  }, [livePicks, teamIdToAbbr]);
+
+  const yearData = liveYearData || allPickData[selectedYear] || {};
 
   // Count how many picks each team owns for this year
   const pickCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    leagueTeams.forEach((t) => (counts[t.abbr] = 0));
-    
-    leagueTeams.forEach((team) => {
+    teams.forEach((t) => (counts[t.abbr] = 0));
+
+    teams.forEach((team) => {
       for (let round = 1; round <= totalRounds; round++) {
         const pick = yearData[team.abbr]?.[round];
         if (pick) {
@@ -216,7 +259,7 @@ export default function DraftBoardPage() {
       }
     });
     return counts;
-  }, [yearData]);
+  }, [yearData, teams]);
 
   const rounds = Array.from({ length: totalRounds }, (_, i) => i + 1);
 
@@ -240,7 +283,7 @@ export default function DraftBoardPage() {
               </p>
             </div>
             <Select value={selectedYear} onValueChange={setSelectedYear}>
-              <SelectTrigger className="w-[160px] bg-card border-border">
+              <SelectTrigger className="w-[160px] bg-card border-border" data-testid="draft-board-year-select">
                 <SelectValue placeholder="Select Year" />
               </SelectTrigger>
               <SelectContent>
@@ -255,7 +298,7 @@ export default function DraftBoardPage() {
 
           {/* Summary badges */}
           <div className="flex flex-wrap gap-2">
-            {leagueTeams.map((team) => {
+            {teams.map((team) => {
               const count = pickCounts[team.abbr] || 0;
               const diff = count - totalRounds;
               return (
@@ -319,7 +362,7 @@ export default function DraftBoardPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {leagueTeams.map((team, teamIdx) => (
+                      {teams.map((team, teamIdx) => (
                         <TableRow
                           key={team.abbr}
                           className={cn(

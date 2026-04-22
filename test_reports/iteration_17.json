@@ -1,0 +1,40 @@
+{
+  "summary": "Phase 19 testing complete. Backend: trade flow script PASSED (player swap, picks 2027 R2 / 2028 R3 transferred, salary retention 25% persisted, conditional trade executed when all_met=True, conditional trade blocked when threshold=99999). Pytest 5/5 PASSED for /api/drafts/{lid}/picks (Ice Kings 60, Roto 70, Frozen Dynasty 80, Keepers 60, Best Ball 160; real team names like Zarek's Frozen / Ice Breakers / Slapshot Snipers, no mock leaks ARC/BLZ/FRZ), /api/trades/{id}/evaluate-conditions returns {all_met,results} without auth, /api/trades/{id}/execute returns 403 for non-participant. Frontend: sidebar 'League Home' link points to /leagues/69e46af167999bfb85c39628 and loads LeagueDetailPage with 'Ice Kings' content. CommissionerSettings Audit Log tab shows 23 entries (>20) with real entries 'Constitution updated', actor 'co-commissioner', category 'League Settings'. DraftBoard /draft-board renders real abbrs ZF, IB, SS, CC, BLB, HTH (no mock ARC/BLZ/FRZ leaks). Trade Builder drawer (open via /roster, switch to Ice Breakers, click swap icon on player card) shows 'Conditional Triggers' section, '+ Add condition' button (data-testid=add-trade-condition-btn), and after click renders trade-condition-row-0 with 3 dropdowns + threshold input default 100 (data-testid=trade-condition-threshold-0) + X to remove. Subtitle 'Trade executes only when all conditions are satisfied' present. 10 regression pages (/roster, /matchup, /standings, /transactions, /trade-block, /waivers, /salary-cap, /analytics, /live, /league-info) all load without uncaught errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "DraftBoard / Roster team-switcher options", "issue": "React warning 'Encountered two children with the same key, CC' fires on draft-board (duplicate Crease Crashers abbreviation 'CC' used as React key). Use pick._id or team_id as key instead of abbr.", "selector": "draft-board grid", "priority": "MEDIUM"},
+      {"component": "Player roster row 'Trade' (swap) action button on other team", "issue": "No data-testid / aria-label on the trade swap icon button in the Actions column when viewing another team's roster — could not be selected by accessible attributes; had to click by coordinates.", "selector": "tr > button (Actions col, single-button row)", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/analytics", "issues": ["Recharts 'width(-1) and height(-1) of chart' warning — container has unresolved size on initial render"]},
+      {"screen": "/live", "issues": ["Pre-existing socket.io WebSocket connection-closed warning (carried over)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration17_phase19.py",
+    "/app/test_reports/pytest/iteration17_results.xml",
+    "/app/backend/test_trade_flow.py"
+  ],
+  "action_items": [
+    "Add data-testid (e.g., trade-add-{player_id}) to the trade swap icon button rendered on other-team roster rows so Playwright can target it without coordinates.",
+    "Fix React duplicate-key warning on DraftBoard — use pick._id/team_id instead of team abbreviation as React key.",
+    "Wrap Recharts containers on /analytics in a sized parent (or use ResponsiveContainer with explicit min dimensions) to silence width(-1)/height(-1) warning."
+  ],
+  "critical_code_review_comments": [
+    "test_trade_flow.py is not idempotent w.r.t. picks: when re-run, the previously transferred 2027 R2 pick is no longer owned by Zarek's Frozen so the script crashes with TypeError before any test runs. Either query a still-owned pick dynamically or add a setup phase that resets pick ownership.",
+    "/api/teams (and the sub-resources used by Team page) returns _id but the trade swap icon in PlayerRoster rows lacks data-testid/aria-label — adding one is a 1-line change that significantly improves testability.",
+    "server.py is now ~4450 lines — still recommend splitting into routers/ by domain (trades.py, drafts.py, leagues.py).",
+    "POST /api/trades/{id}/evaluate-conditions intentionally has no auth — fine for read, but consider rate-limit / leagueId scoping if it ever exposes player metrics across leagues."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration17_phase19.py (new)"
+  ],
+  "success_rate": {"backend": "100% (5/5 pytest + trade_flow script all green)", "frontend": "100% on review-request acceptance criteria (sidebar, /leagues/{id}, audit log tab, draft board real abbrs, trade builder Conditional Triggers section + testids, 10 regression pages)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (co-commissioner)",
+  "seed_data_creation": "test_trade_flow.py wrote 3 trades to db.trades + roster mutations + 1 salary_retentions doc + 2 pick ownership swaps in Ice Kings (Zarek's Frozen <-> Ice Breakers). Phase19 pytest also created ~3 small trade docs and 1 stranger user (TEST_phase19_*@example.com).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 19 fully verified. /app/backend/tests/test_iteration17_phase19.py covers draft picks counts/abbrs, evaluate-conditions no-auth, execute 403 for non-participant. trade_flow script: NOTE if you re-run it AFTER picks have been swapped you must reset draft_picks current_team_id back to original_team_id for 2027 R2 (Zarek's Frozen) and 2028 R3 (Ice Breakers) first — see fix snippet in this iteration's bash history. Trade Builder drawer must be opened via: /roster -> 2nd combobox (team switcher in current league) option index 1 (Ice Breakers) -> click swap icon at coords (1758, 899) since the swap button has no data-testid yet."
+}

@@ -1,7 +1,7 @@
 import {
   Home, Users, MessageSquare, Newspaper, ArrowRightLeft, Trophy, DollarSign,
   Star, Clock, Settings, BarChart3, CreditCard, History, Medal, UserSearch,
-  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle
+  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle, Flag
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
@@ -12,6 +12,7 @@ import {
   SidebarHeader, SidebarFooter, useSidebar,
 } from "@/components/ui/sidebar";
 import FantasyLevelBadge from "@/components/FantasyLevelBadge";
+import { useActiveLeague } from "@/hooks/use-active-league";
 
 const userItems = [
   { title: "User Dashboard", url: "/dashboard", icon: UserCircle },
@@ -46,8 +47,19 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const location = useLocation();
   const { user, logout } = useAuth();
+  const { leagueId: activeLeagueId } = useActiveLeague();
 
   const isActive = (path) => location.pathname === path;
+
+  // Dynamic League Hub: prepend "League Home" linking to the active league's landing page
+  const dynamicLeagueHub = [
+    {
+      title: "League Home",
+      url: activeLeagueId ? `/leagues/${activeLeagueId}` : "/leagues",
+      icon: Flag,
+    },
+    ...leagueHubItems,
+  ];
 
   const renderGroup = (label, items) => (
     <SidebarGroup>
@@ -92,7 +104,7 @@ export function AppSidebar() {
 
       <SidebarContent className="px-2">
         {renderGroup("User", userItems)}
-        {renderGroup("League Hub", leagueHubItems)}
+        {renderGroup("League Hub", dynamicLeagueHub)}
         {renderGroup("Social", socialItems)}
         {renderGroup("Management", managementItems)}
         {renderGroup("Draft", draftItems)}
