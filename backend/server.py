@@ -3323,8 +3323,9 @@ async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate
             if res["all_met"] and t.get("status") == "accepted":
                 await _execute_trade(t)
                 unlocked += 1
-        except Exception:
-            pass
+        except Exception as ex:
+            logger.warning("Conditional trade re-eval failed league=%s trade=%s: %s",
+                           league_id, str(t.get("_id")), ex)
 
     fresh = await db.teams.find_one({"_id": team["_id"]})
     return {
