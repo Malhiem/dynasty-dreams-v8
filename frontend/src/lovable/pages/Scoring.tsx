@@ -6,7 +6,14 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Calendar, Users, Shield, Trophy, Clock, DollarSign, ArrowRightLeft, Star } from "lucide-react";
+import { Calendar, Users, Shield, Trophy, Clock, DollarSign, ArrowRightLeft, Star, ScrollText, Save, Loader2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { useState, useEffect, useMemo } from "react";
+import { toast } from "sonner";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import { useAuth } from "@/contexts/AuthContext";
+import api from "@/lib/api";
 
 interface ScoringCategory {
   name: string;
@@ -108,9 +115,63 @@ const draftInfo: LeagueInfoItem[] = [
 ];
 
 const Scoring = () => {
+  const { league } = useActiveLeague();
+  const { user } = useAuth();
+  const [constitution, setConstitution] = useState("");
+  const [originalConstitution, setOriginalConstitution] = useState("");
+  const [constitutionMeta, setConstitutionMeta] = useState<any>(null);
+  const [constLoading, setConstLoading] = useState(false);
+  const [constSaving, setConstSaving] = useState(false);
+
+  // Commissioner or co-commissioner can edit
+  const canEditConstitution = useMemo(() => {
+    if (!user || !league) return false;
+    if (league.commissioner_id === user.id) return true;
+    const coComm = (league as any).co_commissioners || [];
+    return Array.isArray(coComm) && coComm.includes(user.id);
+  }, [user, league]);
+
+  useEffect(() => {
+    if (!league?.id) return;
+    let cancelled = false;
+    setConstLoading(true);
+    api.get(`/leagues/${league.id}/constitution`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setConstitution(data?.content || "");
+        setOriginalConstitution(data?.content || "");
+        setConstitutionMeta(data);
+      })
+      .catch(() => {})
+      .finally(() => !cancelled && setConstLoading(false));
+    return () => { cancelled = true; };
+  }, [league?.id]);
+
+  const saveConstitution = async () => {
+    if (!league?.id) return;
+    if (constitution.length > 5000) {
+      toast.error("Constitution exceeds the 5,000 character limit");
+      return;
+    }
+    setConstSaving(true);
+    try {
+      const { data } = await api.put(`/leagues/${league.id}/constitution`, { content: constitution });
+      setOriginalConstitution(constitution);
+      setConstitutionMeta(data);
+      toast.success("League Constitution saved", { description: "Change logged to audit log" });
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail || "Failed to save constitution";
+      toast.error(detail);
+    } finally {
+      setConstSaving(false);
+    }
+  };
+
+  const constitutionDirty = constitution !== originalConstitution;
+
   return (
     <AppLayout>
-      <div className="container py-8 space-y-6">
+      <div className="container py-8 space-y-6" data-testid="league-info-page">
         <div>
           <h1 className="text-2xl font-bold">League Information</h1>
           <p className="text-muted-foreground">Everything you need to know about how the league works</p>
@@ -118,13 +179,77 @@ const Scoring = () => {
 
         <Tabs defaultValue="overview" className="space-y-4">
           <TabsList className="bg-secondary flex-wrap h-auto gap-1">
-            <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="roster">Roster Rules</TabsTrigger>
-            <TabsTrigger value="scoring">Scoring</TabsTrigger>
-            <TabsTrigger value="salary">Salary Cap</TabsTrigger>
-            <TabsTrigger value="draft">Draft</TabsTrigger>
-            <TabsTrigger value="transactions">Transactions</TabsTrigger>
+            <TabsTrigger value="overview" data-testid="league-info-tab-overview">Overview</TabsTrigger>
+            <TabsTrigger value="roster" data-testid="league-info-tab-roster">Roster Rules</TabsTrigger>
+            <TabsTrigger value="scoring" data-testid="league-info-tab-scoring">Scoring</TabsTrigger>
+            <TabsTrigger value="salary" data-testid="league-info-tab-salary">Salary Cap</TabsTrigger>
+            <TabsTrigger value="draft" data-testid="league-info-tab-draft">Draft</TabsTrigger>
+            <TabsTrigger value="transactions" data-testid="league-info-tab-transactions">Transactions</TabsTrigger>
+            <TabsTrigger value="constitution" data-testid="league-info-tab-constitution">
+              <ScrollText className="h-3.5 w-3.5 mr-1" /> League Constitution
+            </TabsTrigger>
           </TabsList>
+
+          {/* LEAGUE CONSTITUTION TAB */}
+          <TabsContent value="constitution" className="space-y-4">
+            <Card className="bg-card border-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <ScrollText className="h-5 w-5 text-primary" />
+                  League Constitution
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  The rules and norms that govern this league. Up to 5,000 characters. All edits are tracked in the League Administration audit log.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {constLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground" data-testid="constitution-loading">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading constitution...
+                  </div>
+                ) : (
+                  <>
+                    <Textarea
+                      data-testid="league-constitution-textarea"
+                      value={constitution}
+                      onChange={(e) => setConstitution(e.target.value.slice(0, 5000))}
+                      placeholder={canEditConstitution
+                        ? "Describe your league's rules, tiebreakers, trade deadlines, off-season norms, penalty policies, etc."
+                        : "The commissioner has not published a constitution yet."}
+                      className="min-h-[360px] font-mono text-sm"
+                      readOnly={!canEditConstitution}
+                      maxLength={5000}
+                    />
+                    <div className="flex items-center justify-between flex-wrap gap-3">
+                      <p className="text-xs text-muted-foreground" data-testid="constitution-char-count">
+                        {constitution.length.toLocaleString()} / 5,000 characters
+                      </p>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        {constitutionMeta?.updated_at && (
+                          <span data-testid="constitution-last-updated">
+                            Last updated: {new Date(constitutionMeta.updated_at).toLocaleString()}
+                          </span>
+                        )}
+                        {canEditConstitution ? (
+                          <Button
+                            size="sm"
+                            onClick={saveConstitution}
+                            disabled={!constitutionDirty || constSaving}
+                            data-testid="league-constitution-save-btn"
+                          >
+                            {constSaving ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Save className="h-3.5 w-3.5 mr-1" />}
+                            Save changes
+                          </Button>
+                        ) : (
+                          <Badge variant="outline" className="text-xs">Read-only (commissioner edits only)</Badge>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* OVERVIEW TAB */}
           <TabsContent value="overview" className="space-y-6">

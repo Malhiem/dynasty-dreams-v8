@@ -120,19 +120,31 @@ const DEFAULT_COLUMNS: ColumnConfig = {
   pf: true, pa: true, diff: true, divRecord: true, confRecord: true, streak: true,
 };
 
-const Sparkline = ({ results }: { results: ("W" | "L" | "T")[] }) => (
-  <div className="flex items-center gap-0.5">
-    {results.map((r, i) => (
-      <div
-        key={i}
-        className={`w-2.5 h-2.5 rounded-full ${
-          r === "W" ? "bg-success" : r === "L" ? "bg-destructive" : "bg-muted-foreground"
-        }`}
-        title={r}
-      />
-    ))}
-  </div>
-);
+const Sparkline = ({ results }: { results: ("W" | "L" | "T" | null)[] }) => {
+  // Always render 5 dots; grey-out slots where no game has been played yet.
+  const padded: ("W" | "L" | "T" | null)[] = [...results];
+  while (padded.length < 5) padded.push(null);
+  return (
+    <div className="flex items-center gap-0.5">
+      {padded.slice(0, 5).map((r, i) => (
+        <div
+          key={i}
+          className={`w-2.5 h-2.5 rounded-full ${
+            r === "W"
+              ? "bg-success"
+              : r === "L"
+                ? "bg-destructive"
+                : r === "T"
+                  ? "bg-muted-foreground"
+                  : "bg-muted/30 border border-muted"
+          }`}
+          title={r || "No game"}
+          data-testid={`sparkline-dot-${i}-${r ?? "none"}`}
+        />
+      ))}
+    </div>
+  );
+};
 
 // ─── Customization Cog Modal ──────────────────────────────────────────────────
 const CustomizationModal = ({
@@ -580,29 +592,43 @@ const StandingsPage = () => {
       .sort((a, b) => b._total - a._total);
     const divisions: ("Atlantic"|"Metropolitan"|"Central"|"Pacific")[] = ["Atlantic","Metropolitan","Central","Pacific"];
     const conferences: ("Eastern"|"Western")[] = ["Eastern","Western"];
-    return ranked.map((t, idx) => ({
-      rank: idx + 1,
-      prevRank: idx + 1,
-      name: t.name,
-      teamId: t.id,
-      wins: t.wins || 0,
-      losses: t.losses || 0,
-      ties: t.ties || 0,
-      points: Math.round((t.points_for || 0) + (t.live_points || 0)),
-      pointsFor: Math.round((t.points_for || 0) + (t.live_points || 0)),
-      pointsAgainst: Math.round(t.points_against || 0),
-      streak: (t.wins || 0) > (t.losses || 0) ? `W${Math.min(t.wins, 5)}` : `L${Math.min(t.losses, 5)}`,
-      last5: ["W","W","L","W","L"],
-      division: divisions[idx % 4],
-      conference: conferences[Math.floor(idx / 4) % 2],
-      divWins: Math.floor((t.wins || 0) / 2),
-      divLosses: Math.floor((t.losses || 0) / 2),
-      confWins: Math.floor((t.wins || 0) * 0.7),
-      confLosses: Math.floor((t.losses || 0) * 0.7),
-      isUser: myTeam?.id === t.id,
-      projectedSeed: idx + 1,
-      clinched: idx === 0 ? ["presidents","conference","division","playoff"] : idx < 3 ? ["playoff"] : undefined,
-    })) as StandingsTeam[];
+    return ranked.map((t, idx) => {
+      const gp = (t.wins || 0) + (t.losses || 0) + (t.ties || 0);
+      // Synthesize a rough last-5 from the cumulative W/L/T counts. If no games
+      // played, leave as empty array so the Sparkline renders all grey dots.
+      const last5: ("W" | "L" | "T")[] = [];
+      if (gp > 0) {
+        const pool: ("W" | "L" | "T")[] = [
+          ...Array(Math.min(t.wins || 0, 5)).fill("W"),
+          ...Array(Math.min(t.losses || 0, 5)).fill("L"),
+          ...Array(Math.min(t.ties || 0, 5)).fill("T"),
+        ];
+        last5.push(...pool.slice(0, 5) as ("W" | "L" | "T")[]);
+      }
+      return {
+        rank: idx + 1,
+        prevRank: idx + 1,
+        name: t.name,
+        teamId: t.id,
+        wins: t.wins || 0,
+        losses: t.losses || 0,
+        ties: t.ties || 0,
+        points: Math.round((t.points_for || 0) + (t.live_points || 0)),
+        pointsFor: Math.round((t.points_for || 0) + (t.live_points || 0)),
+        pointsAgainst: Math.round(t.points_against || 0),
+        streak: gp === 0 ? "—" : ((t.wins || 0) > (t.losses || 0) ? `W${Math.min(t.wins, 5)}` : `L${Math.min(t.losses, 5)}`),
+        last5,
+        division: divisions[idx % 4],
+        conference: conferences[Math.floor(idx / 4) % 2],
+        divWins: Math.floor((t.wins || 0) / 2),
+        divLosses: Math.floor((t.losses || 0) / 2),
+        confWins: Math.floor((t.wins || 0) * 0.7),
+        confLosses: Math.floor((t.losses || 0) * 0.7),
+        isUser: myTeam?.id === t.id,
+        projectedSeed: idx + 1,
+        clinched: idx === 0 ? ["presidents","conference","division","playoff"] : idx < 3 ? ["playoff"] : undefined,
+      };
+    }) as StandingsTeam[];
   }, [leagueTeams, myTeam]);
 
   const getFilteredTeams = () => {

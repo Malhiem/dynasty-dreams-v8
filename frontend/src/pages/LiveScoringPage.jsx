@@ -11,6 +11,7 @@ import {
 import { Activity, Flame, RefreshCw, Radio, Trophy, Loader2 } from 'lucide-react';
 import api from '@/lib/api';
 import { useGlobalSocketEvent } from '@/hooks/use-global-socket';
+import { useActiveLeague } from '@/hooks/use-active-league';
 
 const STATE_BADGE = {
   LIVE: { label: 'LIVE', className: 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse' },
@@ -30,6 +31,9 @@ export default function LiveScoringPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  const [currentMatchup, setCurrentMatchup] = useState(null);
+  const [selectedLeague, setSelectedLeague] = useState(null);
+  const { myTeam } = useActiveLeague();
 
   useGlobalSocketEvent('live_scoring_update', (payload) => {
     setSummary(payload);
@@ -65,6 +69,60 @@ export default function LiveScoringPage() {
         setMyTeamLive(tlv);
       } else {
         setMyTeamLive(null);
+      }
+
+      // Pull league metadata so we know the format (H2H vs roto/BB)
+      const l = leagues.find(x => x.id === leagueId);
+      setSelectedLeague(l || null);
+
+      // Fetch current-week matchup and enrich my team's matchup with live points
+      const isH2H = (l?.scoring_format || "").toLowerCase().includes("head") || (l?.scoring_format || "").toLowerCase() === "h2h";
+      if (isH2H || !l) {
+        try {
+          const { data: wk } = await api.get(`/matchups/${leagueId}/current-week`);
+          // Find my team from /auth/me + team listing for this league
+          let meId = null;
+          try {
+            const [{ data: me }, { data: teams }] = await Promise.all([
+              api.get('/auth/me'),
+              api.get(`/teams?league_id=${leagueId}`),
+            ]);
+            const mine = (teams || []).find(t => t.owner_id === me?.id);
+            meId = mine?.id || null;
+          } catch {}
+          let pair = null;
+          if (meId && wk?.matchups?.length) {
+            pair = wk.matchups.find(m => m.home_team_id === meId || m.away_team_id === meId) || null;
+          }
+          if (pair) {
+            const oppId = pair.home_team_id === meId ? pair.away_team_id : pair.home_team_id;
+            let oppLive = null;
+            try {
+              const { data: opp } = await api.get(`/live-scoring/team/${oppId}`);
+              oppLive = opp;
+            } catch {}
+            const meLivePts = (data?.leaderboard || []).find(r => r.team_id === meId)?.live_points || 0;
+            const oppLivePts = (data?.leaderboard || []).find(r => r.team_id === oppId)?.live_points || oppLive?.live_points || 0;
+            setCurrentMatchup({
+              week: wk.week,
+              me: {
+                id: meId,
+                name: pair.home_team_id === meId ? pair.home_team_name : pair.away_team_name,
+                live_points: meLivePts,
+              },
+              opponent: {
+                id: oppId,
+                name: pair.home_team_id === meId ? pair.away_team_name : pair.home_team_name,
+                live_points: oppLivePts,
+                players: oppLive?.players || [],
+              },
+            });
+          } else {
+            setCurrentMatchup(null);
+          }
+        } catch (e) { setCurrentMatchup(null); }
+      } else {
+        setCurrentMatchup(null);
       }
     } catch (e) { console.error(e); }
   };
@@ -130,6 +188,66 @@ export default function LiveScoringPage() {
           <div className="surface p-8 text-center text-[#A1A1AA]">Loading live data…</div>
         ) : (
           <>
+            {/* My Head-to-Head Matchup */}
+            {currentMatchup && (
+              <div className="surface p-5 border border-[#00D2FF]/20 mb-6" data-testid="live-my-matchup-card">
+                <div className="flex items-center gap-2 mb-3">
+                  <Trophy size={16} className="text-[#00D2FF]" />
+                  <h2 className="font-heading text-sm uppercase tracking-wider text-[#A1A1AA]">
+                    My Matchup — Week {currentMatchup.week}
+                  </h2>
+                  <Badge className="bg-[#00D2FF]/15 text-[#00D2FF] border-[#00D2FF]/30 ml-auto">
+                    {selectedLeague?.name || ""}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-3 items-center gap-3">
+                  <div className="text-right">
+                    <div className="text-xs text-[#A1A1AA] mb-1">ME</div>
+                    <Link
+                      to={`/teams/${currentMatchup.me.id}`}
+                      className="text-white text-lg font-bold hover:text-[#00D2FF]"
+                      data-testid="live-matchup-me-link"
+                    >
+                      {currentMatchup.me.name}
+                    </Link>
+                    <div className="text-3xl font-bold tabular-nums text-[#00D2FF] mt-1" data-testid="live-matchup-me-points">
+                      {Number(currentMatchup.me.live_points || 0).toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="text-center text-[#A1A1AA] text-sm font-semibold">
+                    VS
+                    <div className="mt-1">
+                      {(() => {
+                        const a = Number(currentMatchup.me.live_points || 0);
+                        const b = Number(currentMatchup.opponent.live_points || 0);
+                        if (a > b) return <Badge className="bg-emerald-500/20 text-emerald-400 border-emerald-500/40">Winning · +{(a - b).toFixed(2)}</Badge>;
+                        if (b > a) return <Badge className="bg-red-500/20 text-red-400 border-red-500/40">Losing · -{(b - a).toFixed(2)}</Badge>;
+                        return <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/40">Tied</Badge>;
+                      })()}
+                    </div>
+                  </div>
+                  <div className="text-left">
+                    <div className="text-xs text-[#A1A1AA] mb-1">OPPONENT</div>
+                    <Link
+                      to={`/teams/${currentMatchup.opponent.id}`}
+                      className="text-white text-lg font-bold hover:text-[#00D2FF]"
+                      data-testid="live-matchup-opp-link"
+                    >
+                      {currentMatchup.opponent.name}
+                    </Link>
+                    <div className="text-3xl font-bold tabular-nums text-white mt-1" data-testid="live-matchup-opp-points">
+                      {Number(currentMatchup.opponent.live_points || 0).toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3 pt-3 border-t border-white/5 text-right">
+                  <Link to="/matchup" className="text-xs text-[#00D2FF] hover:underline" data-testid="live-matchup-view-full">
+                    View full matchup →
+                  </Link>
+                </div>
+              </div>
+            )}
+
             {/* NHL Games Row */}
             <h2 className="font-heading text-xl font-bold text-white mb-3 tracking-wide">
               NHL GAMES ({games.length})

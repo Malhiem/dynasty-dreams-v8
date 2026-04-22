@@ -93,6 +93,7 @@ function App() {
           <Route path="/depth-chart" element={<ProtectedRoute><LovableDepthChart /></ProtectedRoute>} />
           <Route path="/salary-cap" element={<ProtectedRoute><LovableSalaryCap /></ProtectedRoute>} />
           <Route path="/scoring" element={<ProtectedRoute><LovableScoring /></ProtectedRoute>} />
+          <Route path="/league-info" element={<ProtectedRoute><LovableScoring /></ProtectedRoute>} />
           <Route path="/draft-board" element={<ProtectedRoute><LovableDraftBoard /></ProtectedRoute>} />
           <Route path="/draft-room" element={<ProtectedRoute><LovableDraftRoom /></ProtectedRoute>} />
           <Route path="/draft-lottery" element={<ProtectedRoute><LovableDraftLottery /></ProtectedRoute>} />

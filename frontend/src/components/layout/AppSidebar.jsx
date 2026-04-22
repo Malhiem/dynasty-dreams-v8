@@ -1,7 +1,7 @@
 import {
   Home, Users, MessageSquare, Newspaper, ArrowRightLeft, Trophy, DollarSign,
   Star, Clock, Settings, BarChart3, CreditCard, History, Medal, UserSearch,
-  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio
+  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
@@ -13,8 +13,11 @@ import {
 } from "@/components/ui/sidebar";
 import FantasyLevelBadge from "@/components/FantasyLevelBadge";
 
-const mainItems = [
-  { title: "Dashboard", url: "/dashboard", icon: Home },
+const userItems = [
+  { title: "User Dashboard", url: "/dashboard", icon: UserCircle },
+];
+
+const leagueHubItems = [
   { title: "Roster", url: "/roster", icon: Users },
   { title: "Live Scoring", url: "/live", icon: Radio },
   { title: "Standings", url: "/standings", icon: Trophy },
@@ -27,10 +30,10 @@ const socialItems = [
 ];
 
 const managementItems = [
-  { title: "Scoring", url: "/scoring", icon: Trophy },
+  { title: "League Information", url: "/league-info", icon: ScrollText },
   { title: "Salary Cap", url: "/salary-cap", icon: DollarSign },
   { title: "Waivers", url: "/waivers", icon: Clock },
-  { title: "Commissioner", url: "/commissioner", icon: Shield },
+  { title: "League Administration", url: "/commissioner/settings", icon: Shield },
 ];
 
 const draftItems = [
@@ -88,7 +91,8 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-2">
-        {renderGroup("Main", mainItems)}
+        {renderGroup("User", userItems)}
+        {renderGroup("League Hub", leagueHubItems)}
         {renderGroup("Social", socialItems)}
         {renderGroup("Management", managementItems)}
         {renderGroup("Draft", draftItems)}
