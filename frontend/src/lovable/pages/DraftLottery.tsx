@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -13,9 +13,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dices, Trophy, AlertCircle, CheckCircle2, Shuffle, Scale, ArrowRight, AlertTriangle, Bell } from "lucide-react";
+import { Dices, Trophy, AlertCircle, CheckCircle2, Shuffle, Scale, ArrowRight, AlertTriangle, Bell, Medal, Gift } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+import api from "@/lib/api";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import { useGlobalSocketEvent } from "@/hooks/use-global-socket";
+import { toast } from "sonner";
 
 // ─── NHL Draft Lottery Odds (2024 format, 16 non-playoff teams) ──────────────
 // Official NHL odds for the #1 overall pick by standings position
@@ -78,8 +82,47 @@ export default function DraftLottery() {
   const [nhlFinalized, setNhlFinalized] = useState(true);
   const [lotteryResults, setLotteryResults] = useState<LotteryResult[] | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
+  const { league } = useActiveLeague();
+  const [consolationRewards, setConsolationRewards] = useState<any[]>([]);
+  const [boostedPicks, setBoostedPicks] = useState<any[]>([]);
 
   const numTeams = eliminatedTeams.length;
+
+  // Load real consolation rewards + lottery-boosted picks for the active league
+  useEffect(() => {
+    if (!league?.id) { setConsolationRewards([]); setBoostedPicks([]); return; }
+    let cancelled = false;
+    Promise.all([
+      api.get(`/leagues/${league.id}/team-rewards`).catch(() => ({ data: { rewards: [] } })),
+      api.get(`/drafts/${league.id}/picks`).catch(() => ({ data: { picks: [] } })),
+    ]).then(([rewardsRes, picksRes]) => {
+      if (cancelled) return;
+      const rewards = (rewardsRes.data?.rewards || []).filter((r: any) => r.source === "consolation_winner");
+      setConsolationRewards(rewards);
+      const picks = (picksRes.data?.picks || []).filter((p: any) =>
+        p.lottery_boost_applied != null || p.pick_type === "compensation"
+      );
+      setBoostedPicks(picks);
+    });
+    return () => { cancelled = true; };
+  }, [league?.id]);
+
+  // Refresh when a consolation final is auto-crowned server-side
+  useGlobalSocketEvent("consolation_crowned", (payload: any) => {
+    if (!league?.id || payload?.league_id !== league.id) return;
+    toast.success(`🎖 ${payload.team_name} won consolation`, {
+      description: payload.applied_steps?.[0] || "Prize recorded",
+    });
+    // Re-fetch
+    api.get(`/leagues/${league.id}/team-rewards`).then(({ data }) => {
+      setConsolationRewards((data?.rewards || []).filter((r: any) => r.source === "consolation_winner"));
+    });
+    api.get(`/drafts/${league.id}/picks`).then(({ data }) => {
+      setBoostedPicks((data?.picks || []).filter((p: any) =>
+        p.lottery_boost_applied != null || p.pick_type === "compensation"
+      ));
+    });
+  });
 
   // Map NHL teams to league teams round-robin style
   // 1st place lottery team gets NHL positions 1, 1+N, 1+2N, ...
@@ -191,6 +234,65 @@ export default function DraftLottery() {
           </TabsList>
 
           <TabsContent value="lottery" className="space-y-6 mt-4">
+            {(consolationRewards.length > 0 || boostedPicks.length > 0) && (
+              <Card className="border-amber-500/30 bg-amber-500/5" data-testid="consolation-winners-card">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-lg flex items-center gap-2">
+                    <Gift className="h-5 w-5 text-amber-400" />
+                    Consolation Winners & Applied Prizes
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Auto-awarded when the consolation final is simulated. Lottery boosts advance the
+                    winner's upcoming R1 pick; unavailable picks convert to compensation picks.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {consolationRewards.map((r: any) => (
+                    <div key={r._id} className="flex items-start gap-3 p-3 rounded-lg border border-amber-500/20 bg-card">
+                      <Medal className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold">
+                          {r.team_name || "Team"}
+                          <Badge variant="outline" className="ml-2 text-[10px] border-amber-500/40 text-amber-400">
+                            {r.prize?.type?.replace(/_/g, " ") || "prize"}
+                          </Badge>
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {r.prize?.description || r.prize?.custom_details || "—"}
+                          {r.prize?.lottery_boost_spots ? ` · +${r.prize.lottery_boost_spots} lottery spots` : ""}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          Awarded {new Date(r.awarded_at).toLocaleDateString()} · {r.status?.replace(/_/g, " ")}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  {boostedPicks.length > 0 && (
+                    <div className="pt-2">
+                      <p className="text-xs font-semibold text-muted-foreground mb-2">Adjusted Draft Picks</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {boostedPicks.map((p: any) => (
+                          <div key={p._id} className="p-2.5 rounded-lg border border-border bg-secondary/40 text-xs">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold">{p.current_team_name || "Team"}</span>
+                              <Badge variant="outline" className="text-[10px]">
+                                {p.year} R{p.round}{p.pick_number ? ` · #${p.pick_number}` : ""}
+                              </Badge>
+                            </div>
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                              {p.pick_type === "compensation"
+                                ? `Compensation pick — ${p.reason?.replace(/_/g, " ") || "awarded"}`
+                                : `Lottery boost applied (+${p.lottery_boost_applied} spot${p.lottery_boost_applied > 1 ? "s" : ""})`}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Lottery Teams & NHL Representation */}
             <Card className="border-border">
               <CardHeader className="pb-3">

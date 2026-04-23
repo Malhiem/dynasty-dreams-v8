@@ -1,13 +1,15 @@
 // @ts-nocheck
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trophy, Crown, Award, TrendingUp, TrendingDown, Target, Users, BarChart3, Calendar, Star, Shield, Medal, Stars } from "lucide-react";
+import { Trophy, Crown, Award, TrendingUp, TrendingDown, Target, Users, BarChart3, Calendar, Star, Shield, Medal, Stars, Gift } from "lucide-react";
 import { allStarTeams } from "@/lovable/data/playerAwardsData";
+import api from "@/lib/api";
+import { useActiveLeague } from "@/hooks/use-active-league";
 
 // Mock data for league history
 const lifetimeTeamRecords = [
@@ -258,6 +260,26 @@ const AllStarTeamsSection = () => {
 };
 
 const LeagueHistory = () => {
+  const { league, leagueTeams } = useActiveLeague();
+  const [recentChampions, setRecentChampions] = useState<any[]>([]);
+  const [consolationWinners, setConsolationWinners] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!league?.id) return;
+    // Live champions = teams with championship_won_at populated
+    const champs = (leagueTeams || [])
+      .filter((t: any) => t.championship_won_at)
+      .sort((a: any, b: any) => new Date(b.championship_won_at).getTime() - new Date(a.championship_won_at).getTime());
+    setRecentChampions(champs);
+
+    api.get(`/leagues/${league.id}/team-rewards`)
+      .then(({ data }) => {
+        const list = (data?.rewards || []).filter((r: any) => r.source === "consolation_winner");
+        setConsolationWinners(list);
+      })
+      .catch(() => {});
+  }, [league?.id, leagueTeams]);
+
   return (
     <AppLayout>
       <div className="container py-8">
@@ -272,6 +294,78 @@ const LeagueHistory = () => {
         </div>
 
         <Tabs defaultValue="lifetime" className="space-y-6">
+          {(recentChampions.length > 0 || consolationWinners.length > 0) && (
+            <Card
+              className="bg-card/50 backdrop-blur border-amber-500/30"
+              data-testid="league-history-recent-crowns"
+            >
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Crown className="h-5 w-5 text-amber-400" />
+                  Recent Crowns — {league?.name || "This League"}
+                </CardTitle>
+                <CardDescription>
+                  Auto-recorded when playoff final matchups are simulated.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                    <Trophy className="h-3.5 w-3.5 text-yellow-500" /> Champions
+                  </p>
+                  {recentChampions.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No champions crowned yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {recentChampions.slice(0, 5).map((t: any) => (
+                        <div
+                          key={t.id}
+                          className="flex items-center gap-2 p-2 rounded-lg border border-amber-500/20 bg-amber-500/5"
+                          data-testid={`champion-${t.id}`}
+                        >
+                          <Trophy className="h-4 w-4 text-yellow-500 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold truncate">{t.name}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {new Date(t.championship_won_at).toLocaleDateString()} · {t.owner_name || ""}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
+                    <Gift className="h-3.5 w-3.5 text-amber-400" /> Consolation Winners
+                  </p>
+                  {consolationWinners.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No consolation winners yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {consolationWinners.slice(0, 5).map((r: any) => (
+                        <div
+                          key={r._id}
+                          className="flex items-center gap-2 p-2 rounded-lg border border-border bg-secondary/30"
+                          data-testid={`consolation-${r._id}`}
+                        >
+                          <Medal className="h-4 w-4 text-amber-400 shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold truncate">{r.team_name || "Team"}</p>
+                            <p className="text-[10px] text-muted-foreground truncate">
+                              {r.prize?.type?.replace(/_/g, " ") || "prize"}
+                              {r.prize?.lottery_boost_spots ? ` · +${r.prize.lottery_boost_spots} spots` : ""}
+                              {" · "}{new Date(r.awarded_at).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
           <TabsList className="grid w-full grid-cols-6 lg:w-auto lg:inline-grid">
             <TabsTrigger value="lifetime" className="flex items-center gap-2">
               <Users className="h-4 w-4" />

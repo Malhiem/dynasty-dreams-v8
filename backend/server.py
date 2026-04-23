@@ -4580,6 +4580,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
             bracket = m.get("bracket", "championship")
             now = datetime.now(timezone.utc)
             loser_id = m["away_team_id"] if winner == m["home_team_id"] else m["home_team_id"]
+            winner_name = m["home_team_name"] if winner == m["home_team_id"] else m["away_team_name"]
             if bracket == "championship":
                 await db.teams.update_one(
                     {"_id": ObjectId(winner)},
@@ -4588,8 +4589,8 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                 await db.activity_feed.insert_one({
                     "league_id": input.league_id,
                     "event_type": "championship_awarded",
-                    "description": f"🏆 {m['home_team_name'] if winner == m['home_team_id'] else m['away_team_name']} won the championship!",
-                    "message": f"Champion crowned: {m['home_team_name'] if winner == m['home_team_id'] else m['away_team_name']}",
+                    "description": f"🏆 {winner_name} won the championship!",
+                    "message": f"Champion crowned: {winner_name}",
                     "created_at": now,
                 })
                 await db.audit_log.insert_one({
@@ -4599,30 +4600,74 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                              "matchup_id": str(m["_id"]), "score": f"{home_score}-{away_score}"},
                     "created_at": now,
                 })
+                # Re-evaluate pending conditional trades (won_championship may now resolve)
+                pending = await db.trades.find({
+                    "league_id": input.league_id, "conditional": True,
+                    "status": {"$in": ["pending", "accepted", "conditional"]}
+                }).to_list(500)
+                unlocked = 0
+                for t in pending:
+                    try:
+                        res = await _evaluate_conditions(t)
+                        if res["all_met"] and t.get("status") == "accepted":
+                            await _execute_trade(t)
+                            unlocked += 1
+                    except Exception as ex:
+                        logger.warning("Conditional trade re-eval (auto-crown) failed league=%s trade=%s: %s",
+                                       input.league_id, str(t.get("_id")), ex)
+                # Real-time broadcast
+                await sio.emit("championship_crowned", {
+                    "league_id": input.league_id,
+                    "team_id": winner, "team_name": winner_name,
+                    "runner_up_team_id": loser_id,
+                    "score": f"{home_score}-{away_score}",
+                    "unlocked_trades": unlocked,
+                    "crowned_at": now.isoformat(),
+                })
             elif bracket == "consolation":
                 await db.teams.update_one(
                     {"_id": ObjectId(winner)},
                     {"$set": {"consolation_won_at": now}}
                 )
+                applied_steps: list = []
                 # If the league has a consolation prize configured, record it as a pending reward
                 prize = (league.get("consolation_prize") or {})
                 if prize.get("type"):
                     await db.team_rewards.insert_one({
                         "league_id": input.league_id,
                         "team_id": winner,
+                        "team_name": winner_name,
                         "source": "consolation_winner",
                         "prize": prize,
                         "awarded_at": now,
                         "status": "pending_commissioner_fulfillment",
                     })
                     # If the prize is a draft-lottery boost AND can be auto-applied, do so.
-                    await _apply_consolation_prize(input.league_id, winner, prize)
+                    applied = await _apply_consolation_prize(input.league_id, winner, prize)
+                    applied_steps = applied.get("steps", [])
                 await db.activity_feed.insert_one({
                     "league_id": input.league_id,
                     "event_type": "consolation_awarded",
-                    "description": f"Consolation bracket won by {m['home_team_name'] if winner == m['home_team_id'] else m['away_team_name']}",
+                    "description": f"Consolation bracket won by {winner_name}" + (
+                        f" — {applied_steps[0]}" if applied_steps else ""
+                    ),
                     "message": "Consolation bracket concluded",
                     "created_at": now,
+                })
+                await db.audit_log.insert_one({
+                    "league_id": input.league_id, "actor_id": "system", "actor_name": "System (auto-crown)",
+                    "action": "consolation_awarded", "role": "system",
+                    "diff": {"winner_team_id": winner, "runner_up_team_id": loser_id,
+                             "matchup_id": str(m["_id"]), "score": f"{home_score}-{away_score}",
+                             "prize": prize or None, "applied_steps": applied_steps},
+                    "created_at": now,
+                })
+                await sio.emit("consolation_crowned", {
+                    "league_id": input.league_id,
+                    "team_id": winner, "team_name": winner_name,
+                    "prize": prize or None,
+                    "applied_steps": applied_steps,
+                    "crowned_at": now.isoformat(),
                 })
 
         results.append({

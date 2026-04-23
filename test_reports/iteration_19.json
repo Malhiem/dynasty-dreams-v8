@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 19 (Phase 22) — auto-crown + consolation-prize + rewards. Backend 10/10 pytest passed (put-requires-auth, put-rejects-non-commissioner, put-commissioner-ok, get-reflects-put, compensation_pick type, custom type, unauth-GET-ok, team-rewards shape, no-ObjectId leak, health). End-to-end `python /app/backend/test_crown_flow.py` passed — champion + consolation crowned, lottery boost applied (2027 R1 #3, boost=3), team_reward recorded with team_name. Frontend: Season Awards renders 3 sub-tabs (season-awards-tab-{team,consolation,rewards}), ConsolationPrizeEditor supports all 3 types (draft_lottery_boost shows boost-spots field only when that type is selected — by design), Save button wired to PUT /api/leagues/{id}/consolation-prize, Awarded Prizes list renders 3 rewards w/ team name + prize details, Draft Lottery /draft-lottery shows consolation-winners-card w/ adjusted picks section + boosted 2027 R1 pick #3, League History /league-history (NOT /leagues/{id}/history) shows league-history-recent-crowns card.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "DraftLottery consolation-winners-card (line 254)", "issue": "React hydration error: <div> (Badge) rendered as descendant of <p>. Console logs 'In HTML, <div> cannot be a descendant of <p>'. Wrap the badge in a <span> or change the <p> to a <div>.", "selector": "[data-testid='consolation-winners-card'] p .inline-flex", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "ConsolationPrizeEditor Save toast", "issue": "After clicking consolation-prize-save, no visible toast was detected via [role=status]/.toast/[data-sonner-toast]. PUT succeeds on backend (pytest 200 + Awarded Prizes list updates), but user gets no confirmation. Same pattern flagged in iter18 for SeasonAwardsTab team-awards toggles.", "affected_selectors": ["[data-testid='consolation-prize-save']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration19_consolation.py",
+    "/app/test_reports/pytest/iteration19_results.xml",
+    "/app/backend/test_crown_flow.py"
+  ],
+  "action_items": [
+    "(LOW) Wrap the Badge inside DraftLottery consolation winner card in <span> (or change wrapping <p> to <div>) to silence the hydration error. File: /app/frontend/src/lovable/pages/DraftLottery.tsx around line 254.",
+    "(LOW) Confirm ConsolationPrizeEditor Save toast actually renders with success copy — backend is fine; likely Toaster/Sonner wiring or fast-dismissing toast (same known pattern as iter18 SeasonAwardsTab).",
+    "(INFO) The review-request mentions route '/leagues/{id}/history' for Recent Crowns, but the actual route is '/league-history' (uses active-league context) — no action needed, just noting for correctness of the request text."
+  ],
+  "critical_code_review_comments": [
+    "server.py now ~4844 lines — monolithic. Split by domain (routers/{awards,trades,draft,consolation}.py) before further growth. Flagged in iter15/17/18 too.",
+    "simulate-week auto-crown branch swallows sio.emit exceptions silently — should log league_id/winner when a broadcast fails so UI desyncs are debuggable.",
+    "_apply_consolation_prize return value (applied/compensation) is logged into team_rewards but not currently exposed back in the simulate-week response payload — commissioner would benefit from seeing 'which pick was adjusted' in the API response, not just on the Draft Lottery page.",
+    "PUT /api/leagues/{id}/consolation-prize's ConsolationPrizeUpdate Pydantic model could reject boost_spots<1 for draft_lottery_boost type with a validator (currently allowed lottery_boost_spots=0 which is a no-op)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration19_consolation.py (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10 pytest + test_crown_flow.py)", "frontend": "100% on review-request acceptance criteria (all testIds verified across 3 pages)"},
+  "test_credentials": "admin@dynastydreams.com / Admin123! (commissioner of all seed leagues incl. Ice Kings Head-to-Head, id=69e46af167999bfb85c39628)",
+  "seed_data_creation": "test_crown_flow.py seeds 2 is_final week-99 matchups for Ice Kings, temporarily promotes chriszarek to commissioner, then restores. pytest module creates 1 ephemeral stranger user TEST_iter19_stranger@example.com (left behind — harmless).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Consolation prize editor: boost-spots field is conditionally rendered only when type=draft_lottery_boost (by design, not a bug). League History page is at /league-history (NOT /leagues/{id}/history) and uses active-league localStorage context. Consolation-winners-card on /draft-lottery has an HTML hydration warning (Badge inside <p>) — low priority but visible in console. Ice Kings league_id=69e46af167999bfb85c39628. After running test_crown_flow.py, the Slapshot Snipers team will have multiple team_rewards entries (script is idempotent for crowning but appends rewards) — consider adding a cleanup or upsert on team_rewards keyed by (league_id, team_id, season) if dedupe is desired.",
+  "rca of the issue": "N/A — no blocking bugs. One LOW-priority hydration warning on DraftLottery (div-in-p) and a recurring toast-visibility gap on Season Awards editors (affects UX not persistence)."
+}

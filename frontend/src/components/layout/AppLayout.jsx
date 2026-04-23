@@ -5,9 +5,27 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NotificationsPanel } from "@/components/NotificationsPanel";
+import { useGlobalSocketEvent } from "@/hooks/use-global-socket";
+import { toast } from "sonner";
 
 export function AppLayout({ children }) {
   const { user } = useAuth();
+
+  // Real-time championship / consolation toasts (app-wide)
+  useGlobalSocketEvent("championship_crowned", (payload) => {
+    toast.success(`🏆 ${payload?.team_name || "A team"} won the championship!`, {
+      description: payload?.unlocked_trades
+        ? `${payload.unlocked_trades} conditional trade(s) unlocked`
+        : `Final score ${payload?.score || ""}`.trim(),
+      duration: 8000,
+    });
+  });
+  useGlobalSocketEvent("consolation_crowned", (payload) => {
+    toast(`🎖 ${payload?.team_name || "A team"} won the consolation bracket`, {
+      description: payload?.applied_steps?.[0] || "Prize recorded",
+      duration: 7000,
+    });
+  });
 
   return (
     <SidebarProvider>
