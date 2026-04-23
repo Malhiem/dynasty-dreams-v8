@@ -248,7 +248,9 @@ class TeamResponse(BaseModel):
     logo_abbr: Optional[str] = None
     championship_won_at: Optional[datetime] = None
     division_winner_at: Optional[datetime] = None
+    conference_winner_at: Optional[datetime] = None
     playoffs_reached_at: Optional[datetime] = None
+    consolation_won_at: Optional[datetime] = None
 
 class PaymentCreate(BaseModel):
     package_type: str  # "premium_monthly", "premium_yearly", "league_fee"
@@ -1437,6 +1439,11 @@ async def get_public_profile(username: str):
 
     team_cards = []
     trophies = []  # current 1st place finishes — our "championships in progress"
+    championships_won = 0
+    division_titles = 0
+    conference_titles = 0
+    consolations_won = 0
+    playoff_appearances = 0
     total_wins = total_losses = total_ties = 0
     total_points_for = 0.0
 
@@ -1459,6 +1466,17 @@ async def get_public_profile(username: str):
         total_ties += t.get("ties", 0) or 0
         total_points_for += (t.get("points_for", 0.0) or 0.0) + (t.get("live_points", 0.0) or 0.0)
 
+        champ_at = t.get("championship_won_at")
+        div_at = t.get("division_winner_at")
+        conf_at = t.get("conference_winner_at")
+        cons_at = t.get("consolation_won_at")
+        playoffs_at = t.get("playoffs_reached_at")
+        if champ_at: championships_won += 1
+        if div_at: division_titles += 1
+        if conf_at: conference_titles += 1
+        if cons_at: consolations_won += 1
+        if playoffs_at: playoff_appearances += 1
+
         card = {
             "team_id": str(t["_id"]),
             "team_name": t["name"],
@@ -1473,9 +1491,41 @@ async def get_public_profile(username: str):
             "rank": rank,
             "total_teams": len(league_teams),
             "live_points": round(t.get("live_points", 0.0) or 0.0, 2),
+            "championship_won_at": champ_at,
+            "division_winner_at": div_at,
+            "conference_winner_at": conf_at,
+            "consolation_won_at": cons_at,
+            "playoffs_reached_at": playoffs_at,
         }
         team_cards.append(card)
 
+        # Permanent career trophies (most visible first)
+        if champ_at:
+            trophies.append({
+                "league_id": t["league_id"], "league_name": lg.get("name"),
+                "team_name": t["name"], "label": "League Champion",
+                "type": "championship", "earned_at": champ_at,
+            })
+        if conf_at:
+            trophies.append({
+                "league_id": t["league_id"], "league_name": lg.get("name"),
+                "team_name": t["name"], "label": "Conference Champion",
+                "type": "conference", "earned_at": conf_at,
+            })
+        if div_at:
+            trophies.append({
+                "league_id": t["league_id"], "league_name": lg.get("name"),
+                "team_name": t["name"], "label": "Division Champion",
+                "type": "division", "earned_at": div_at,
+            })
+        if cons_at:
+            trophies.append({
+                "league_id": t["league_id"], "league_name": lg.get("name"),
+                "team_name": t["name"], "label": "Consolation Winner",
+                "type": "consolation", "earned_at": cons_at,
+            })
+
+        # Current-standing trophies (non-permanent)
         if rank == 1:
             trophies.append({
                 "league_id": t["league_id"],
@@ -1544,6 +1594,11 @@ async def get_public_profile(username: str):
         + drafts_completed * 40
         + waiver_claims * 5
         + total_points_for / 5
+        + championships_won * 500
+        + conference_titles * 250
+        + division_titles * 150
+        + consolations_won * 100
+        + playoff_appearances * 75
     )
     level = 1
     xp_rem = xp
@@ -1572,6 +1627,11 @@ async def get_public_profile(username: str):
             "trades_accepted": trades_executed,
             "drafts_completed": drafts_completed,
             "waiver_claims": waiver_claims,
+            "championships_won": championships_won,
+            "conference_titles": conference_titles,
+            "division_titles": division_titles,
+            "consolations_won": consolations_won,
+            "playoff_appearances": playoff_appearances,
         },
         "teams": team_cards,
         "trophies": trophies,
@@ -1683,7 +1743,9 @@ def _team_to_response(team: dict) -> TeamResponse:
         logo_abbr=abbr,
         championship_won_at=team.get("championship_won_at"),
         division_winner_at=team.get("division_winner_at"),
+        conference_winner_at=team.get("conference_winner_at"),
         playoffs_reached_at=team.get("playoffs_reached_at"),
+        consolation_won_at=team.get("consolation_won_at"),
     )
 
 # NHL Players Endpoints
@@ -3047,8 +3109,12 @@ async def _evaluate_conditions(trade: dict) -> dict:
                     actual = 1.0 if team.get("playoffs_reached_at") else 0.0
                 elif metric == "won_division":
                     actual = 1.0 if team.get("division_winner_at") else 0.0
+                elif metric == "won_conference":
+                    actual = 1.0 if team.get("conference_winner_at") else 0.0
                 elif metric == "won_championship":
                     actual = 1.0 if team.get("championship_won_at") else 0.0
+                elif metric == "won_consolation":
+                    actual = 1.0 if team.get("consolation_won_at") else 0.0
         else:
             # Player-level
             specific_pid = cond.get("player_id")
@@ -3253,7 +3319,9 @@ async def get_draft_picks(league_id: str, year: Optional[int] = None):
 class TeamAwardUpdate(BaseModel):
     championship_won: Optional[bool] = None
     division_winner: Optional[bool] = None
+    conference_winner: Optional[bool] = None
     playoffs_reached: Optional[bool] = None
+    consolation_won: Optional[bool] = None
 
 
 @api_router.put("/leagues/{league_id}/teams/{team_id}/awards")
@@ -3289,12 +3357,24 @@ async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate
     elif payload.division_winner is False:
         update_unset["division_winner_at"] = ""
         changes.append("division_winner_at cleared")
+    if payload.conference_winner is True:
+        update_set["conference_winner_at"] = now
+        changes.append("conference_winner_at set")
+    elif payload.conference_winner is False:
+        update_unset["conference_winner_at"] = ""
+        changes.append("conference_winner_at cleared")
     if payload.playoffs_reached is True:
         update_set["playoffs_reached_at"] = now
         changes.append("playoffs_reached_at set")
     elif payload.playoffs_reached is False:
         update_unset["playoffs_reached_at"] = ""
         changes.append("playoffs_reached_at cleared")
+    if payload.consolation_won is True:
+        update_set["consolation_won_at"] = now
+        changes.append("consolation_won_at set")
+    elif payload.consolation_won is False:
+        update_unset["consolation_won_at"] = ""
+        changes.append("consolation_won_at cleared")
 
     ops: dict = {}
     if update_set: ops["$set"] = update_set
@@ -3333,7 +3413,9 @@ async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate
         "team_name": fresh.get("name"),
         "championship_won_at": fresh.get("championship_won_at"),
         "division_winner_at": fresh.get("division_winner_at"),
+        "conference_winner_at": fresh.get("conference_winner_at"),
         "playoffs_reached_at": fresh.get("playoffs_reached_at"),
+        "consolation_won_at": fresh.get("consolation_won_at"),
         "changes": changes,
         "unlocked_trades": unlocked,
     }
@@ -4667,6 +4749,56 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                     "team_id": winner, "team_name": winner_name,
                     "prize": prize or None,
                     "applied_steps": applied_steps,
+                    "crowned_at": now.isoformat(),
+                })
+            elif bracket in ("conference_final", "conference"):
+                await db.teams.update_one(
+                    {"_id": ObjectId(winner)},
+                    {"$set": {"conference_winner_at": now}}
+                )
+                await db.activity_feed.insert_one({
+                    "league_id": input.league_id,
+                    "event_type": "conference_awarded",
+                    "description": f"🥇 {winner_name} won the conference!",
+                    "message": f"Conference champion crowned: {winner_name}",
+                    "created_at": now,
+                })
+                await db.audit_log.insert_one({
+                    "league_id": input.league_id, "actor_id": "system", "actor_name": "System (auto-crown)",
+                    "action": "conference_awarded", "role": "system",
+                    "diff": {"winner_team_id": winner, "runner_up_team_id": loser_id,
+                             "matchup_id": str(m["_id"]), "score": f"{home_score}-{away_score}"},
+                    "created_at": now,
+                })
+                await sio.emit("conference_crowned", {
+                    "league_id": input.league_id,
+                    "team_id": winner, "team_name": winner_name,
+                    "score": f"{home_score}-{away_score}",
+                    "crowned_at": now.isoformat(),
+                })
+            elif bracket in ("division_final", "division"):
+                await db.teams.update_one(
+                    {"_id": ObjectId(winner)},
+                    {"$set": {"division_winner_at": now}}
+                )
+                await db.activity_feed.insert_one({
+                    "league_id": input.league_id,
+                    "event_type": "division_awarded",
+                    "description": f"🏅 {winner_name} won the division!",
+                    "message": f"Division champion crowned: {winner_name}",
+                    "created_at": now,
+                })
+                await db.audit_log.insert_one({
+                    "league_id": input.league_id, "actor_id": "system", "actor_name": "System (auto-crown)",
+                    "action": "division_awarded", "role": "system",
+                    "diff": {"winner_team_id": winner, "runner_up_team_id": loser_id,
+                             "matchup_id": str(m["_id"]), "score": f"{home_score}-{away_score}"},
+                    "created_at": now,
+                })
+                await sio.emit("division_crowned", {
+                    "league_id": input.league_id,
+                    "team_id": winner, "team_name": winner_name,
+                    "score": f"{home_score}-{away_score}",
                     "crowned_at": now.isoformat(),
                 })
 

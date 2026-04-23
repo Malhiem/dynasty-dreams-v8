@@ -66,16 +66,19 @@ export function SeasonAwardsTab() {
     const body: any = {};
     if (field === "championship_won_at") body.championship_won = value;
     if (field === "division_winner_at") body.division_winner = value;
+    if (field === "conference_winner_at") body.conference_winner = value;
     if (field === "playoffs_reached_at") body.playoffs_reached = value;
+    if (field === "consolation_won_at") body.consolation_won = value;
     try {
       const { data } = await api.put(`/leagues/${league.id}/teams/${teamId}/awards`, body);
       setAwards((prev) => ({
         ...prev,
         [teamId]: {
-          ...prev[teamId],
           championship_won_at: data.championship_won_at,
           division_winner_at: data.division_winner_at,
+          conference_winner_at: data.conference_winner_at,
           playoffs_reached_at: data.playoffs_reached_at,
+          consolation_won_at: data.consolation_won_at,
         },
       }));
       let msg = value ? `Awarded ${field.replace("_at", "").replace(/_/g, " ")}` : `Cleared ${field.replace("_at", "").replace(/_/g, " ")}`;
@@ -156,6 +159,22 @@ export function SeasonAwardsTab() {
                     onChange={(v) => toggle(t.id, "division_winner_at", v)}
                     saving={savingId === `${t.id}:division_winner_at`}
                     testId={`season-awards-division-${t.id}`}
+                  />
+                  <AwardToggle
+                    label="Conference"
+                    icon={<Medal className="h-3.5 w-3.5" />}
+                    active={!!a.conference_winner_at}
+                    onChange={(v) => toggle(t.id, "conference_winner_at", v)}
+                    saving={savingId === `${t.id}:conference_winner_at`}
+                    testId={`season-awards-conference-${t.id}`}
+                  />
+                  <AwardToggle
+                    label="Consolation"
+                    icon={<Gift className="h-3.5 w-3.5" />}
+                    active={!!a.consolation_won_at}
+                    onChange={(v) => toggle(t.id, "consolation_won_at", v)}
+                    saving={savingId === `${t.id}:consolation_won_at`}
+                    testId={`season-awards-consolation-${t.id}`}
                   />
                   <AwardToggle
                     label="Champion"

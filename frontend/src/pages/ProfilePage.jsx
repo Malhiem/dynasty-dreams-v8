@@ -169,6 +169,35 @@ export default function ProfilePage() {
           ))}
         </div>
 
+        {/* Career championships row */}
+        {(profile.stats.championships_won > 0
+          || profile.stats.conference_titles > 0
+          || profile.stats.division_titles > 0
+          || profile.stats.consolations_won > 0
+          || profile.stats.playoff_appearances > 0) && (
+          <div className="grid gap-4 grid-cols-2 md:grid-cols-5" data-testid="profile-career-championships">
+            {[
+              { label: 'Championships', value: profile.stats.championships_won || 0, color: 'from-amber-500/20 to-amber-900/20 border-amber-500/40', text: 'text-amber-400', icon: '🏆', testId: 'stat-championships' },
+              { label: 'Conference Titles', value: profile.stats.conference_titles || 0, color: 'from-violet-500/20 to-violet-900/20 border-violet-500/40', text: 'text-violet-300', icon: '🥇', testId: 'stat-conferences' },
+              { label: 'Division Titles', value: profile.stats.division_titles || 0, color: 'from-sky-500/15 to-sky-900/15 border-sky-500/30', text: 'text-sky-300', icon: '🏅', testId: 'stat-divisions' },
+              { label: 'Consolations', value: profile.stats.consolations_won || 0, color: 'from-emerald-500/15 to-emerald-900/15 border-emerald-500/30', text: 'text-emerald-300', icon: '🎖', testId: 'stat-consolations' },
+              { label: 'Playoff Apps', value: profile.stats.playoff_appearances || 0, color: 'from-slate-500/10 to-slate-900/10 border-slate-500/30', text: 'text-slate-300', icon: '⭐', testId: 'stat-playoffs' },
+            ].map((s) => (
+              <div
+                key={s.label}
+                data-testid={s.testId}
+                className={`rounded-xl p-4 bg-gradient-to-br ${s.color} border`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg leading-none">{s.icon}</span>
+                  <div className="text-[10px] uppercase text-white/60 tracking-wider">{s.label}</div>
+                </div>
+                <div className={`text-3xl font-black tabular-nums ${s.text}`}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Trophy case */}
         {profile.trophies.length > 0 && (
           <section data-testid="profile-trophy-case">
@@ -182,31 +211,48 @@ export default function ProfilePage() {
               </Badge>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {profile.trophies.map((t, idx) => (
-                <div
-                  key={`${t.league_id}-${idx}`}
-                  className={`rounded-xl p-4 bg-gradient-to-br ${
-                    t.type === 'lead'
-                      ? 'from-amber-500/20 to-amber-900/20 border-amber-500/40'
-                      : 'from-sky-500/15 to-sky-900/15 border-sky-500/30'
-                  } border`}
-                >
-                  <Trophy
-                    size={20}
-                    className={t.type === 'lead' ? 'text-amber-400 mb-2' : 'text-sky-400 mb-2'}
-                  />
-                  <div className="text-xs uppercase text-white/70 tracking-wider mb-1">
-                    {t.label}
-                  </div>
-                  <Link
-                    to={`/leagues/${t.league_id}`}
-                    className="text-white font-bold hover:text-[#00D2FF] block"
+              {profile.trophies.map((t, idx) => {
+                const palette = (() => {
+                  switch (t.type) {
+                    case 'championship':
+                      return { bg: 'from-amber-500/30 to-amber-900/30 border-amber-400/60', icon: 'text-amber-400' };
+                    case 'conference':
+                      return { bg: 'from-violet-500/25 to-violet-900/25 border-violet-400/50', icon: 'text-violet-300' };
+                    case 'division':
+                      return { bg: 'from-sky-500/20 to-sky-900/20 border-sky-400/40', icon: 'text-sky-300' };
+                    case 'consolation':
+                      return { bg: 'from-emerald-500/20 to-emerald-900/20 border-emerald-400/40', icon: 'text-emerald-300' };
+                    case 'lead':
+                      return { bg: 'from-amber-500/20 to-amber-900/20 border-amber-500/40', icon: 'text-amber-400' };
+                    default:
+                      return { bg: 'from-sky-500/15 to-sky-900/15 border-sky-500/30', icon: 'text-sky-400' };
+                  }
+                })();
+                return (
+                  <div
+                    key={`${t.league_id}-${idx}`}
+                    data-testid={`trophy-${t.type}-${idx}`}
+                    className={`rounded-xl p-4 bg-gradient-to-br ${palette.bg} border`}
                   >
-                    {t.team_name}
-                  </Link>
-                  <div className="text-[#A1A1AA] text-xs mt-0.5">{t.league_name}</div>
-                </div>
-              ))}
+                    <Trophy size={20} className={`${palette.icon} mb-2`} />
+                    <div className="text-xs uppercase text-white/70 tracking-wider mb-1">
+                      {t.label}
+                    </div>
+                    <Link
+                      to={`/leagues/${t.league_id}`}
+                      className="text-white font-bold hover:text-[#00D2FF] block"
+                    >
+                      {t.team_name}
+                    </Link>
+                    <div className="text-[#A1A1AA] text-xs mt-0.5">{t.league_name}</div>
+                    {t.earned_at && (
+                      <div className="text-[#52525B] text-[10px] mt-1">
+                        Earned {new Date(t.earned_at).toLocaleDateString()}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </section>
         )}
