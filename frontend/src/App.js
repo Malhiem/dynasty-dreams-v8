@@ -53,10 +53,12 @@ import LovableProspects from "@/lovable/pages/Prospects";
 import LovableSiteAdmin from "@/lovable/pages/SiteAdmin";
 import LovableTeamsOwners from "@/lovable/pages/TeamsOwners";
 import LovableNotFound from "@/lovable/pages/NotFound";
+import { Toaster } from "@/components/ui/sonner";
 
 function App() {
   return (
     <AuthProvider>
+      <Toaster position="top-right" richColors closeButton />
       <BrowserRouter>
         <Routes>
           {/* Public */}

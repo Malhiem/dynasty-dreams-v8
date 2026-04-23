@@ -251,12 +251,12 @@ export default function DraftLottery() {
                     <div key={r._id} className="flex items-start gap-3 p-3 rounded-lg border border-amber-500/20 bg-card">
                       <Medal className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold">
-                          {r.team_name || "Team"}
-                          <Badge variant="outline" className="ml-2 text-[10px] border-amber-500/40 text-amber-400">
+                        <div className="text-sm font-semibold flex items-center flex-wrap gap-2">
+                          <span>{r.team_name || "Team"}</span>
+                          <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-400">
                             {r.prize?.type?.replace(/_/g, " ") || "prize"}
                           </Badge>
-                        </p>
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           {r.prize?.description || r.prize?.custom_details || "—"}
                           {r.prize?.lottery_boost_spots ? ` · +${r.prize.lottery_boost_spots} lottery spots` : ""}
