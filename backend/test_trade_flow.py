@@ -19,6 +19,14 @@ async def main():
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
     db = client[os.environ["DB_NAME"]]
 
+    # Idempotency: clear award timestamps from all teams so championship-condition assertions
+    # work regardless of whether test_crown_flow.py ran earlier in the same session.
+    await db.teams.update_many({}, {"$unset": {
+        "championship_won_at": "", "consolation_won_at": "",
+        "conference_winner_at": "", "division_winner_at": "",
+        "playoffs_reached_at": "",
+    }})
+
     # Login as chriszarek to get cookie
     async with httpx.AsyncClient(follow_redirects=True) as http:
         login = await http.post(f"{API}/auth/login",
