@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 22 — Retest of P1 Historical weekly analytics rollup after iter21 fixes. ALL 4 FIXES VERIFIED. Backend: 8/8 pytest passed in test_iteration21_weekly_analytics.py (added 1 new test for FIX 1 NHL-convention default season, updated backfill test for FIX 3 new response shape {rows_upserted, rows_inserted, rows_updated}). Regression: test_crown_flow.py + test_trade_flow.py both PASS (with timestamps cleanup between them as documented in iter21). Frontend smoke: /analytics for chriszarek (Ice Kings Head-to-Head) renders LIVE badge ([data-testid=analytics-live-badge]) and the Weekly Points chart shows W1..W10 from seeded data on x-axis. 'vs League Avg' card shows '+14' (sign-aware formatting confirmed working — no '+-' double sign). Code inspection: routes/matchups.py L207 now `from routes.analytics import _current_season` (FIX 4 confirmed — single source of truth).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration21_weekly_analytics.py",
+    "/app/test_reports/pytest/iteration22_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "(carry-over from iter21 — non-blocking) routes/analytics.py L102 `league_avg_total = sum(league_avg_by_week.values())` is a sum of per-week averages, not a true season-long mean. season_summary.leagueAvg is ~10× the per-week scale. FE doesn't currently render this number directly so no user-visible bug.",
+    "(carry-over) routes/analytics.py L91 league-wide branch sets `pointsAgainst = total_pf` (mirrors itself) — semantic wart, no consumer affected.",
+    "(carry-over) routes/analytics.py L156 leagueAvg per season divides league_total by team_count only — should divide by (team_count * weeks) for a comparable per-team-per-week figure.",
+    "FIX 1 implementation in routes/analytics._current_season() correctly follows NHL convention (month<10 → previous-year-pair). FIX 4 import-and-reuse is clean. Both look good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration21_weekly_analytics.py — added test_default_season_is_nhl_convention_and_returns_seeded_weeks (FIX 1), updated TestBackfillIdempotency to assert new {rows_upserted, rows_inserted, rows_updated} shape (FIX 3)"
+  ],
+  "success_rate": {"backend": "100% (8/8 pytest + crown_flow + trade_flow)", "frontend": "100% — LIVE badge present + W1..W10 visible on chart + vs-league-avg formatted correctly (+14)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! — verified working. League: Ice Kings Head-to-Head (lid=69e46af167999bfb85c39628).",
+  "seed_data_creation": "test_crown_flow.py auto-crown briefly inserted week=99 matchups + week_summaries during the regression run. Cleaned up after test (8 week_summaries + 2 matchups + crown timestamps). Per iter21 doc, this cleanup is required between crown_flow and trade_flow test runs.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 iter21 fixes verified. Acceptance criteria met for the analytics page (LIVE badge + W1..W10). The 3 carry-over code-review items (league_avg_total = sum not mean, league-wide pointsAgainst mirrors itself, season leagueAvg divides only by team_count) are LOW-priority correctness issues with no current FE consumer; safe to defer. Backend test added: test_default_season_is_nhl_convention_and_returns_seeded_weeks confirms Jan 2026 → '2025-26' AND default-season query returns 10 seeded W1..W10 weeks for chris's team in Ice Kings. Backfill response shape now correctly returns {rows_upserted, rows_inserted, rows_updated} and second-run inserted=0 (idempotency).",
+  "rca of the issue": "iter21 P1 fully resolved. _current_season() in routes/analytics.py uses NHL convention; routes/matchups.py imports it (single source of truth). Analytics.tsx vs-League-Avg uses sign-aware concat `${delta>=0?'+':''}${delta}`. Backfill response renamed/expanded to {rows_upserted, rows_inserted, rows_updated}. FE smoke confirmed LIVE badge + W1..W10 chart for chriszarek/Ice Kings."
+}

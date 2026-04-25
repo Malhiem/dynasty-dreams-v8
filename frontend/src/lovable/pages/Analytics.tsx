@@ -297,7 +297,9 @@ const Analytics = () => {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">vs League Avg</p>
-                <p className="text-2xl font-bold text-success">+{avgPointsFor - avgLeague}</p>
+                <p className={`text-2xl font-bold ${(avgPointsFor - avgLeague) >= 0 ? 'text-success' : 'text-destructive'}`}>
+                  {(avgPointsFor - avgLeague) >= 0 ? '+' : ''}{avgPointsFor - avgLeague}
+                </p>
               </div>
             </CardContent>
           </Card>

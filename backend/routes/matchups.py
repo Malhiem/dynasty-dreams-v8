@@ -204,7 +204,8 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         )
 
         # Snapshot per-team week summary for analytics rollup (idempotent upsert)
-        _season = league.get("season") or f"{datetime.now(timezone.utc).year}-{str(datetime.now(timezone.utc).year + 1)[-2:]}"
+        from routes.analytics import _current_season
+        _season = league.get("season") or _current_season()
         for side, opp in (("home", "away"), ("away", "home")):
             tid = m[f"{side}_team_id"]
             _doc = {

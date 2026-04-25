@@ -12,10 +12,15 @@ def setup(deps: dict) -> None:
 
 
 def _current_season() -> str:
-    """Default season label tied to the current year (e.g. '2025-26')."""
+    """Default season label following NHL convention: Oct-Dec belongs to that year's season,
+    Jan-Sep belongs to the season that started the previous October.
+    e.g. Apr 2026 → '2025-26', Nov 2026 → '2026-27'.
+    """
     from datetime import datetime, timezone
-    y = datetime.now(timezone.utc).year
-    return f"{y}-{str(y + 1)[-2:]}"
+    now = datetime.now(timezone.utc)
+    if now.month >= 10:
+        return f"{now.year}-{str(now.year + 1)[-2:]}"
+    return f"{now.year - 1}-{str(now.year)[-2:]}"
 
 
 @router.get("/leagues/{league_id}/weekly-analytics")
@@ -176,6 +181,7 @@ async def backfill_week_summaries(league_id: str, season: Optional[str] = None):
         raise HTTPException(status_code=404, detail="No completed matchups to backfill")
 
     written = 0
+    inserted = 0
     for m in matchups:
         winner = m.get("winner")
         for side in ("home", "away"):
@@ -199,11 +205,17 @@ async def backfill_week_summaries(league_id: str, season: Optional[str] = None):
                 "tie": winner is None,
                 "matchup_id": str(m["_id"]),
             }
-            await db.week_summaries.update_one(
+            res = await db.week_summaries.update_one(
                 {"league_id": league_id, "season": target_season,
                  "week": m["week"], "team_id": team_id},
                 {"$set": doc},
                 upsert=True,
             )
             written += 1
-    return {"league_id": league_id, "season": target_season, "rows_written": written}
+            if res.upserted_id is not None:
+                inserted += 1
+    return {
+        "league_id": league_id, "season": target_season,
+        "rows_upserted": written, "rows_inserted": inserted,
+        "rows_updated": written - inserted,
+    }

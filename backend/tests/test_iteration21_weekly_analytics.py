@@ -106,15 +106,44 @@ class TestWeeklyAnalyticsEndpoint:
         assert data["weeks"][0]["matchups_played"] >= 1
 
     def test_default_season_label_format(self, chris_session):
-        # Without season param, falls back to current calendar year
+        # Without season param, falls back to NHL convention current season
         r = chris_session.get(
             f"{API}/leagues/{ICE_KINGS_LEAGUE_ID}/weekly-analytics",
             timeout=15,
         )
         assert r.status_code == 200
         data = r.json()
-        # Format e.g. "2026-27"
+        # Format e.g. "2025-26"
         assert "-" in data["season"] and len(data["season"]) == 7, data["season"]
+
+    # FIX 1 (HIGH iter21): default season should be NHL convention.
+    # In Jan 2026 (month<10) → '2025-26', and chriszarek's team should see W1..W10 from the seed.
+    def test_default_season_is_nhl_convention_and_returns_seeded_weeks(self, chris_session, chris_team_in_ice_kings):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        expected_season = (
+            f"{now.year}-{str(now.year + 1)[-2:]}" if now.month >= 10
+            else f"{now.year - 1}-{str(now.year)[-2:]}"
+        )
+        team_id = chris_team_in_ice_kings.get("id") or chris_team_in_ice_kings.get("_id")
+        # NO season param → backend should default to NHL convention current season
+        r = chris_session.get(
+            f"{API}/leagues/{ICE_KINGS_LEAGUE_ID}/weekly-analytics",
+            params={"team_id": team_id},
+            timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        data = r.json()
+        assert data["season"] == expected_season, f"expected {expected_season}, got {data['season']}"
+        weeks = data["weeks"]
+        # Should now return seeded W1..W10 (not just W99 leftover from crown-flow)
+        assert len(weeks) >= 10, f"expected >=10 seeded weeks under default season, got {len(weeks)}: {[w['week'] for w in weeks]}"
+        # Seeded weeks are in the 200-320 range
+        first_ten = sorted(weeks, key=lambda w: w["weekNum"])[:10]
+        nums = [w["weekNum"] for w in first_ten]
+        assert nums == list(range(1, 11)), f"expected weekNums 1..10, got {nums}"
+        for w in first_ten:
+            assert 140 <= w["pointsFor"] <= 360, f"unexpected pointsFor in default-season query: {w}"
 
 
 # ─── /backfill-week-summaries idempotency ──────────────────
@@ -130,7 +159,13 @@ class TestBackfillIdempotency:
         if r1.status_code == 404:
             pytest.skip("No completed matchups to backfill in Ice Kings — endpoint correctly returns 404")
         assert r1.status_code == 200, r1.text
-        rows1 = r1.json()["rows_written"]
+        body1 = r1.json()
+        # FIX 3 (LOW iter21): response shape is now {rows_upserted, rows_inserted, rows_updated}
+        for k in ("rows_upserted", "rows_inserted", "rows_updated"):
+            assert k in body1, f"missing key {k} in backfill response: {body1}"
+        # Sanity: upserted = inserted + updated
+        assert body1["rows_upserted"] == body1["rows_inserted"] + body1["rows_updated"], body1
+        rows1 = body1["rows_upserted"]
 
         r2 = admin_session.post(
             f"{API}/leagues/{ICE_KINGS_LEAGUE_ID}/backfill-week-summaries",
@@ -138,8 +173,12 @@ class TestBackfillIdempotency:
             timeout=20,
         )
         assert r2.status_code == 200, r2.text
-        rows2 = r2.json()["rows_written"]
+        body2 = r2.json()
+        rows2 = body2["rows_upserted"]
         assert rows1 == rows2, f"idempotency violation: {rows1} != {rows2}"
+        # Second run: nothing new inserted; everything is an update
+        assert body2["rows_inserted"] == 0, f"second-run inserted should be 0, got {body2}"
+        assert body2["rows_updated"] == rows2, body2
 
     def test_backfill_no_matchups_returns_404(self, admin_session):
         r = admin_session.post(
