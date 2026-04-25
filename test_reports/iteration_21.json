@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 21 — Historical weekly analytics rollup. 7/7 backend pytest passed (test_iteration21_weekly_analytics.py). Verified: GET /api/leagues/{lid}/weekly-analytics returns the documented shape with team_id and league-wide modes, including season_summary and year_over_year arrays. Verified backfill endpoint is idempotent (rows_written stable across 2 calls) and 404s on unknown league. Verified simulate_week now upserts 2 week_summaries rows per matchup (manual end-to-end: simulated week 999 in Ice Kings → 2 rows written, then cleaned up). Verified seed integrity via DB count: 9,808 week_summaries (>=9000). chriszarek has 10 W1-W10 rows in season=2025-26 across all 5 seed leagues + 26-row historical seasons 2021-22..2023-24. Non-regression: test_crown_flow.py + test_trade_flow.py both passed (with the documented timestamps-cleanup between them). Frontend: LIVE badge correctly renders for chriszarek on Analytics page in Ice Kings — BUT the weekly chart shows ONLY W99 at ~4,648 pts (a leftover row from test_crown_flow.py auto-simulating final matchups under season=2026-27), NOT the W1..W10 200-320 range from seed_analytics.py. Root cause: _current_season() returns '2026-27' for Jan 2026 (calendar year + 1), but seed_analytics.py wrote 2025-26. The FE hook does not pass `season=`, so the endpoint defaults to current-calendar-year and finds only the small auto-crown rows.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/leagues/{league_id}/weekly-analytics", "issue": "Default season='2026-27' (Jan 2026 calendar year + 1) does not align with NHL season convention nor the seed_analytics.py CURRENT_SEASON='2025-26'. Hockey/fantasy seasons start in October, so before Oct of any calendar year `y`, the season should still be `(y-1)-${y%100 padded}` (e.g. Jan 2026 → '2025-26'). Caused the FE to show only the 1 auto-crown row at W99 instead of the rich W1..W10 seed."},
+      {"endpoint": "POST /api/leagues/{league_id}/backfill-week-summaries", "issue": "Returns rows_written counted as raw upsert calls (incl. updates), not as net inserts. Idempotency test still passes because both runs return the same number, but the field name implies first-run-only writes. Consider renaming to rows_upserted or returning {inserted, updated} split."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Analytics weekly chart for chriszarek / Ice Kings", "issue": "LIVE badge renders correctly (data-testid=analytics-live-badge present), but the chart shows ONLY the W99 final-matchup row from test_crown_flow.py at ~4648 pts — NOT the seeded W1..W10 (200-320 range). Cause: Analytics.tsx calls /weekly-analytics?team_id=X without `season=`; backend defaults to calendar year ('2026-27') instead of seed season ('2025-26'). FIX OPTIONS (pick one): (A) backend: change _current_season() in routes/analytics.py + routes/matchups.py to NHL convention — if month<10 use y-1..y else y..y+1; (B) frontend: pass `&season=2025-26` (or compute dynamic NHL season client-side); (C) seeder: rewrite seed_analytics.py to use the same _current_season() helper as the API.", "affected_selectors": ["[data-testid=\"analytics-live-badge\"]", ".recharts-line-curve"]},
+      {"flow": "Analytics summary cards (Total PF / PA / Avg / vs League Avg)", "issue": "Because the live-data path returns only 1 week (W99 @ 4648.2), the summary cards show: Total PF=4,648.2, Total PA=4,618.1, Avg=4648, vs League Avg=+-18 (literal '+-18', sign concatenation bug — `+${avgPointsFor - avgLeague}` for a negative value renders '+-18'). Both side-effects of the season-default mismatch + a small string-concat issue on the vs-league-avg label.", "affected_selectors": [".recharts-cartesian-axis-line"]}
+    ],
+    "design_issues": [
+      {"screen": "Analytics — Avg vs League Avg card", "issues": ["String concat '+{avgPointsFor - avgLeague}' renders '+-18' for negative deltas. Use sign-aware formatting: `${delta>=0?'+':''}${delta}`."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration21_weekly_analytics.py",
+    "/app/test_reports/pytest/iteration21_results.xml"
+  ],
+  "action_items": [
+    "[HIGH] Align season default: change `_current_season()` in /app/backend/routes/analytics.py (and the inline duplicate in /app/backend/routes/matchups.py L207) to NHL season convention — month<10 → '${y-1}-${str(y)[-2:]}' else '${y}-${str(y+1)[-2:]}'. This makes Jan 2026 → '2025-26' and the FE chart will pick up the seeded 10 weeks automatically. Alternative: re-run `python /app/backend/seed_analytics.py` after changing CURRENT_SEASON to match _current_season(), but then the AC says season=2025-26 must work — so the helper fix is preferred.",
+    "[MED] Fix '+-18' concat in Analytics.tsx vs-league-avg card: replace `+{avgPointsFor - avgLeague}` with `{delta>=0?'+':''}{delta}`.",
+    "[LOW] Have routes/matchups.py reuse routes/analytics._current_season() instead of inlining the same formula — single source of truth.",
+    "[LOW] Consider renaming backfill response field `rows_written` → `rows_upserted` to reflect that it counts both inserts and updates (idempotency works, but name is misleading)."
+  ],
+  "critical_code_review_comments": [
+    "_current_season() is implemented identically in routes/analytics.py and inlined in routes/matchups.py simulate_week (L207). DRY violation + risk of divergence — extract to a shared helper module.",
+    "routes/analytics.py L97 `league_avg_total = sum(league_avg_by_week.values())` then rounds — this is a SUM of per-week averages, not a true season-long league average. Should be `mean(values)` not sum. Currently season_summary.leagueAvg returns a number ~10× larger than expected.",
+    "routes/analytics.py L86 league-wide branch sets `pointsAgainst = total_pf` (mirrors itself) — semantically wrong but no FE consumer relies on it yet. Either remove the field or compute against the next-week opposing teams.",
+    "routes/analytics.py L151 leagueAvg per season uses `sa['league_total'] / len(sa['team_count'])` — that's points-per-team-per-season, not points-per-week. Should divide by (team_count * weeks) for a comparable league-avg figure.",
+    "seed_analytics.py uses `hash(str(t['_id']))` for team strength — Python hash randomization means the synthetic YoY differs across runs (mitigated only because the upsert key is league+season+week+team). Consider hashlib.md5 for deterministic strengths.",
+    "Analytics.tsx fallback YoY hardcodes a 2025-26 row that conflicts with live data (line 61). When live data is partial it still gets replaced by full STATIC_YOY in else-branch — currently fine but brittle."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration21_weekly_analytics.py (new, 7 tests, all passing)"
+  ],
+  "success_rate": {"backend": "100% (7/7 pytest + crown_flow + trade_flow)", "frontend": "50% — LIVE badge renders correctly but chart data does NOT show W1..W10 due to season default mismatch (highest-priority blocker for the AC)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! and admin@dynastydreams.com / Admin123! both confirmed working. Chris has teams in Ice Kings (lid=69e46af167999bfb85c39628) and 4 other seed leagues, each with 10 seeded W1..W10 rows for season=2025-26.",
+  "seed_data_creation": "No new persistent data created. Briefly inserted matchup at week 999 in Ice Kings to verify simulate_week upserts week_summaries → confirmed 2 rows written → cleaned up immediately. The leftover 'season=2026-27 W99' row in week_summaries is from test_crown_flow.py's championship simulation (not from this test run).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes _current_season() to NHL convention (or hardcodes season=2025-26 in the FE hook), re-load Analytics.tsx as chriszarek and verify: (1) [data-testid=analytics-live-badge] still present; (2) chart x-axis shows W1..W10 not W99; (3) Total PF on summary card is in 2,000-3,200 range (10 weeks × 200-320 each), not 4,648; (4) 'vs League Avg' shows a properly-formatted positive or negative number (no '+-' double sign). Backend env vars: REACT_APP_BACKEND_URL is in /app/frontend/.env (NOT backend/.env), so the test file calls `load_dotenv('/app/frontend/.env')` then `load_dotenv('/app/backend/.env')`. Reuse this pattern.",
+  "rca of the issue": "The acceptance criteria 'chart shows W1..W10 in 200-320 range' fails because of a season-naming mismatch:\n  - seed_analytics.py writes CURRENT_SEASON='2025-26'\n  - routes/analytics._current_season() and the inlined version in routes/matchups.py compute `f'{y}-{str(y+1)[-2:]}'` where y = current calendar year (2026 in Jan 2026) → 'season=2026-27'\n  - Analytics.tsx calls the endpoint without `season=`, so backend defaults to '2026-27' which has only 1 row (W99 from test_crown_flow.py auto-simulation)\nFix priority: change _current_season() to NHL season convention — month<10 returns previous-year-pair. Reproduction: GET /api/leagues/69e46af167999bfb85c39628/weekly-analytics?team_id=69e59b30cbd3fea02a914c61 returns 1 week. Same call with `&season=2025-26` returns 10 weeks at 200-320 pts."
+}

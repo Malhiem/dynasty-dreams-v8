@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
@@ -30,10 +30,11 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { TrendingUp, Users, Target, DollarSign, ArrowUpRight, ArrowDownRight } from "lucide-react";
+import { TrendingUp, Users, Target, DollarSign, ArrowUpRight, ArrowDownRight, Loader2, Database } from "lucide-react";
+import api from "@/lib/api";
 
-// Weekly performance data (current season)
-const weeklyData = [
+// Fallback weekly/YoY data — used only when the backend has no week_summaries yet
+const FALLBACK_WEEKLY = [
   { week: "W1", pointsFor: 245, pointsAgainst: 220, leagueAvg: 232 },
   { week: "W2", pointsFor: 268, pointsAgainst: 255, leagueAvg: 241 },
   { week: "W3", pointsFor: 231, pointsAgainst: 248, leagueAvg: 238 },
@@ -46,8 +47,11 @@ const weeklyData = [
   { week: "W10", pointsFor: 271, pointsAgainst: 245, leagueAvg: 262 },
 ];
 
-// Year-over-year data
-const yearOverYearData = [
+// Fallback weekly data (module-level) + YoY
+const STATIC_WEEKLY = FALLBACK_WEEKLY;
+
+// Year-over-year fallback
+const STATIC_YOY = [
   { season: "2019-20", pointsFor: 11240, pointsAgainst: 10850, leagueAvg: 10950, wins: 14, losses: 10 },
   { season: "2020-21", pointsFor: 11680, pointsAgainst: 11120, leagueAvg: 11200, wins: 16, losses: 8 },
   { season: "2021-22", pointsFor: 12100, pointsAgainst: 11450, leagueAvg: 11550, wins: 17, losses: 7 },
@@ -59,7 +63,7 @@ const yearOverYearData = [
 
 // Other teams data for comparison
 const teamsSeasonData: Record<string, { season: string; pointsFor: number; pointsAgainst: number }[]> = {
-  "My Team": yearOverYearData.map(d => ({ season: d.season, pointsFor: d.pointsFor, pointsAgainst: d.pointsAgainst })),
+  "My Team": STATIC_YOY.map(d => ({ season: d.season, pointsFor: d.pointsFor, pointsAgainst: d.pointsAgainst })),
   "Frostbite FC": [
     { season: "2019-20", pointsFor: 10800, pointsAgainst: 11100 },
     { season: "2020-21", pointsFor: 11200, pointsAgainst: 10900 },
@@ -133,7 +137,7 @@ const COLORS = [
 ];
 
 const Analytics = () => {
-  const { league, leagueTeams } = useActiveLeague();
+  const { league, leagueTeams, myTeam } = useActiveLeague();
   const leagueTeamsCount = leagueTeams?.length || 0;
   const totalFpts = Math.round((leagueTeams || []).reduce((a, t) => a + ((t.points_for || 0) + (t.live_points || 0)), 0));
   const pendingTradesCount = 0; // wired in follow-up
@@ -144,6 +148,37 @@ const Analytics = () => {
   const [showLeagueAvg, setShowLeagueAvg] = useState(true);
   const [compareTeams, setCompareTeams] = useState<string[]>([]);
   const [compareMetric, setCompareMetric] = useState<"pointsFor" | "pointsAgainst" | "differential">("pointsFor");
+
+  // ─── Live weekly / YoY data (with fallback to synthetic when empty) ───
+  const [weeklyData, setWeeklyData] = useState<any[]>(STATIC_WEEKLY);
+  const [yearOverYearData, setYearOverYearData] = useState<any[]>(STATIC_YOY);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsLive, setAnalyticsLive] = useState(false);
+
+  useEffect(() => {
+    if (!league?.id || !myTeam?.id) return;
+    let cancelled = false;
+    setAnalyticsLoading(true);
+    api.get(`/leagues/${league.id}/weekly-analytics?team_id=${myTeam.id}`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const live = (data?.weeks || []).length > 0;
+        setAnalyticsLive(live);
+        setWeeklyData(live ? data.weeks : STATIC_WEEKLY);
+        if ((data?.year_over_year || []).length > 0) {
+          setYearOverYearData(data.year_over_year);
+        } else {
+          setYearOverYearData(STATIC_YOY);
+        }
+      })
+      .catch(() => {
+        setAnalyticsLive(false);
+        setWeeklyData(STATIC_WEEKLY);
+        setYearOverYearData(STATIC_YOY);
+      })
+      .finally(() => { if (!cancelled) setAnalyticsLoading(false); });
+    return () => { cancelled = true; };
+  }, [league?.id, myTeam?.id]);
 
   const getPieData = () => {
     switch (pieChartType) {
@@ -276,6 +311,16 @@ const Analytics = () => {
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp className="h-5 w-5 text-primary" />
                 Weekly Points For/Against
+                {analyticsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin ml-1 text-muted-foreground" />}
+                {analyticsLive ? (
+                  <Badge variant="outline" className="ml-auto text-[10px] border-emerald-500/40 text-emerald-400" data-testid="analytics-live-badge">
+                    <Database className="h-2.5 w-2.5 mr-1" /> LIVE
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="ml-auto text-[10px] border-amber-500/30 text-amber-300" data-testid="analytics-fallback-badge">
+                    DEMO DATA
+                  </Badge>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent>

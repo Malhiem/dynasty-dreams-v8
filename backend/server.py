@@ -4300,7 +4300,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes
 
 _router_deps = {
     "db": db,
@@ -4316,9 +4316,11 @@ _router_deps = {
 awards_routes.setup(_router_deps)
 drafts_routes.setup(_router_deps)
 matchups_routes.setup(_router_deps)
+analytics_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
+api_router.include_router(analytics_routes.router)
 
 # Include router
 fastapi_app.include_router(api_router)

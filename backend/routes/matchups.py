@@ -203,6 +203,28 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
             }}
         )
 
+        # Snapshot per-team week summary for analytics rollup (idempotent upsert)
+        _season = league.get("season") or f"{datetime.now(timezone.utc).year}-{str(datetime.now(timezone.utc).year + 1)[-2:]}"
+        for side, opp in (("home", "away"), ("away", "home")):
+            tid = m[f"{side}_team_id"]
+            _doc = {
+                "league_id": input.league_id, "season": _season, "week": input.week,
+                "team_id": tid, "team_name": m[f"{side}_team_name"],
+                "opponent_team_id": m[f"{opp}_team_id"],
+                "points_for": float(home_score if side == "home" else away_score),
+                "points_against": float(away_score if side == "home" else home_score),
+                "win": winner == tid,
+                "loss": bool(winner) and winner != tid,
+                "tie": winner is None,
+                "matchup_id": str(m["_id"]),
+            }
+            await db.week_summaries.update_one(
+                {"league_id": input.league_id, "season": _season,
+                 "week": input.week, "team_id": tid},
+                {"$set": _doc},
+                upsert=True,
+            )
+
         if winner == m["home_team_id"]:
             await db.teams.update_one({"_id": ObjectId(m["home_team_id"])},
                                       {"$inc": {"wins": 1, "points_for": home_score, "points_against": away_score}})
