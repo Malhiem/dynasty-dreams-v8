@@ -3216,6 +3216,26 @@ async def trade_block_summary(league_id: str, limit: int = 10):
     """Return enriched, top-valued trade block items for a league, ranked by season fantasy
     points then by recent_form_ppw (last 3 weeks). Used by the league homepage widget."""
     items = await db.trade_block.find({"league_id": league_id}).to_list(500)
+
+    # Backfill team_name + salary_retention_pref for legacy items that were added before
+    # the team_id field existed. We resolve the team via the owner_id within this league.
+    needs_fill = [it for it in items if not it.get("team_name") or not it.get("salary_retention_pref")]
+    if needs_fill:
+        owner_ids = list({it["owner_id"] for it in needs_fill if it.get("owner_id")})
+        teams_in_league = await db.teams.find({
+            "league_id": league_id, "owner_id": {"$in": owner_ids},
+        }).to_list(100)
+        by_owner = {t["owner_id"]: t for t in teams_in_league}
+        for it in needs_fill:
+            t = by_owner.get(it.get("owner_id"))
+            if t:
+                if not it.get("team_name"):
+                    it["team_name"] = t.get("name")
+                if not it.get("salary_retention_pref"):
+                    it["salary_retention_pref"] = t.get("salary_retention_pref", "no_preference")
+                if not it.get("team_id"):
+                    it["team_id"] = str(t["_id"])
+
     items.sort(
         key=lambda x: (
             float(x.get("fantasy_points") or 0),

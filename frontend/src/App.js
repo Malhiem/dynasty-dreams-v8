@@ -89,6 +89,7 @@ function App() {
           {/* Lovable-ported design pages */}
           <Route path="/league/:leagueId/home" element={<ProtectedRoute><LovableIndex /></ProtectedRoute>} />
           <Route path="/roster" element={<ProtectedRoute><LovableTeam /></ProtectedRoute>} />
+          <Route path="/team" element={<ProtectedRoute><LovableTeam /></ProtectedRoute>} />
           <Route path="/matchup" element={<ProtectedRoute><LovableMatchup /></ProtectedRoute>} />
           <Route path="/standings" element={<ProtectedRoute><LovableStandings /></ProtectedRoute>} />
           <Route path="/transactions" element={<ProtectedRoute><LovableTransactions /></ProtectedRoute>} />

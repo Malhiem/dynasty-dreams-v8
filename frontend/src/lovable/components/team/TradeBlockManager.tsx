@@ -48,7 +48,7 @@ export default function TradeBlockManager({ team, league, isOwnTeam }) {
   }, [team?.id, league?.id]);
 
   const togglePlayer = async (player) => {
-    if (!isOwnTeam || busy) return;
+    if (!isOwnTeam || busy || !team?.id) return;
     setBusy(true);
     try {
       const existing = items.find(i => i.item_type === "player" && i.player_id === player.id);
