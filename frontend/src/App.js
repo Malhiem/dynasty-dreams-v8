@@ -53,6 +53,7 @@ import LovableProspects from "@/lovable/pages/Prospects";
 import LovableSiteAdmin from "@/lovable/pages/SiteAdmin";
 import LovableTeamsOwners from "@/lovable/pages/TeamsOwners";
 import LovableNotFound from "@/lovable/pages/NotFound";
+import LovableLeagueSearch from "@/lovable/pages/LeagueSearch";
 import { Toaster } from "@/components/ui/sonner";
 
 function App() {
@@ -71,6 +72,7 @@ function App() {
           {/* Backend-wired (data-driven) */}
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
           <Route path="/leagues" element={<ProtectedRoute><LeaguesPage /></ProtectedRoute>} />
+          <Route path="/league-search" element={<ProtectedRoute><LovableLeagueSearch /></ProtectedRoute>} />
           <Route path="/leagues/create" element={<ProtectedRoute><CreateLeaguePage /></ProtectedRoute>} />
           <Route path="/leagues/:id" element={<ProtectedRoute><LeagueDetailPage /></ProtectedRoute>} />
           <Route path="/players" element={<ProtectedRoute><PlayersPage /></ProtectedRoute>} />

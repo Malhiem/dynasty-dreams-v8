@@ -1,7 +1,7 @@
 import {
   Home, Users, MessageSquare, Newspaper, ArrowRightLeft, Trophy, DollarSign,
   Star, Clock, Settings, BarChart3, CreditCard, History, Medal, UserSearch,
-  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle, Flag
+  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle, Flag, Search
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
@@ -113,14 +113,15 @@ export function AppSidebar() {
       <SidebarFooter className="p-4 border-t border-white/10">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton asChild isActive={isActive("/leagues")} tooltip="Leagues">
+            <SidebarMenuButton asChild isActive={isActive("/league-search")} tooltip="League Search">
               <NavLink
-                to="/leagues"
+                to="/league-search"
+                data-testid="sidebar-league-search-link"
                 className="flex items-center gap-3 px-3 py-2 rounded-lg transition-colors hover:bg-secondary"
                 activeClassName="bg-[#00D2FF]/10 text-[#00D2FF]"
               >
-                <Settings className="h-4 w-4 shrink-0" />
-                {!collapsed && <span>League Settings</span>}
+                <Search className="h-4 w-4 shrink-0" />
+                {!collapsed && <span>League Search</span>}
               </NavLink>
             </SidebarMenuButton>
           </SidebarMenuItem>

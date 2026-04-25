@@ -834,6 +834,142 @@ async def join_league_by_invite(input: JoinByInviteRequest, request: Request):
     return {"message": f"Joined {league['name']}!", "team_id": str(result.inserted_id), "league_id": league_id, "league_name": league["name"]}
 
 
+# ─── Public league discovery + join + privacy toggle ──────────────
+class JoinPublicLeagueRequest(BaseModel):
+    team_name: str = Field(..., min_length=1, max_length=80)
+
+
+class LeagueUpdate(BaseModel):
+    is_private: Optional[bool] = None
+    name: Optional[str] = Field(default=None, max_length=120)
+
+
+@api_router.put("/leagues/{league_id}")
+async def update_league(league_id: str, payload: LeagueUpdate, request: Request):
+    """Commissioner-only: update mutable league settings (currently is_private + name)."""
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_comm = league["commissioner_id"] == user["_id"]
+    co_comms = league.get("co_commissioners", []) or []
+    if not (is_comm or user["_id"] in co_comms):
+        raise HTTPException(status_code=403, detail="Only commissioners can update league settings")
+
+    update: dict = {}
+    diff: dict = {}
+    if payload.is_private is not None and bool(payload.is_private) != bool(league.get("is_private")):
+        update["is_private"] = bool(payload.is_private)
+        diff["is_private"] = {"from": bool(league.get("is_private")), "to": bool(payload.is_private)}
+    if payload.name and payload.name.strip() and payload.name.strip() != league.get("name"):
+        update["name"] = payload.name.strip()
+        diff["name"] = {"from": league.get("name"), "to": payload.name.strip()}
+
+    if update:
+        await db.leagues.update_one({"_id": league["_id"]}, {"$set": update})
+        await db.audit_log.insert_one({
+            "league_id": league_id,
+            "actor_id": user["_id"],
+            "actor_name": user.get("name", user.get("email", "Unknown")),
+            "action": "league_settings_updated",
+            "role": "commissioner" if is_comm else "co_commissioner",
+            "diff": diff,
+            "created_at": datetime.now(timezone.utc),
+        })
+
+    fresh = await db.leagues.find_one({"_id": league["_id"]})
+    return {"league_id": league_id, "is_private": bool(fresh.get("is_private")), "name": fresh.get("name"), "changes": diff}
+
+
+@api_router.get("/public-leagues")
+async def discover_public_leagues(request: Request, q: Optional[str] = None, sport: Optional[str] = None, format: Optional[str] = None):
+    """Return public leagues with open spots, excluding ones the current user is already in."""
+    user_id = None
+    try:
+        user = await get_current_user(request)
+        user_id = user["_id"]
+    except HTTPException:
+        user_id = None
+
+    query: dict = {"is_private": {"$ne": True}}
+    if sport:
+        query["sport"] = sport
+    if format:
+        query["format"] = format
+    if q:
+        query["name"] = {"$regex": q, "$options": "i"}
+
+    leagues = await db.leagues.find(query).sort("created_at", -1).to_list(200)
+
+    # Pre-compute which leagues the user already belongs to (so we can mark them)
+    user_league_ids = set()
+    if user_id:
+        user_teams = await db.teams.find({"owner_id": user_id}, {"league_id": 1}).to_list(500)
+        user_league_ids = {t["league_id"] for t in user_teams}
+
+    out = []
+    for league in leagues:
+        lid = str(league["_id"])
+        out.append({
+            "id": lid,
+            "name": league.get("name"),
+            "sport": league.get("sport", "nhl"),
+            "format": league.get("format"),
+            "scoring_format": league.get("scoring_format"),
+            "max_teams": league.get("max_teams"),
+            "current_teams": league.get("current_teams", 0),
+            "open_spots": max(0, (league.get("max_teams", 0) or 0) - (league.get("current_teams", 0) or 0)),
+            "commissioner_name": league.get("commissioner_name"),
+            "salary_cap_enabled": bool(league.get("salary_cap_enabled")),
+            "salary_cap": league.get("salary_cap"),
+            "entry_fee": league.get("entry_fee"),
+            "keepers_allowed": league.get("keepers_allowed", 0),
+            "is_full": (league.get("current_teams", 0) >= (league.get("max_teams", 0) or 0)),
+            "already_member": lid in user_league_ids,
+            "created_at": league.get("created_at"),
+        })
+    return {"leagues": out, "total": len(out)}
+
+
+@api_router.post("/leagues/{league_id}/join-public")
+async def join_public_league(league_id: str, payload: JoinPublicLeagueRequest, request: Request):
+    """Self-serve join for any public (is_private=false) league with an open spot."""
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league.get("is_private"):
+        raise HTTPException(status_code=403, detail="This league is private — invite only")
+    if league.get("current_teams", 0) >= league["max_teams"]:
+        raise HTTPException(status_code=400, detail="League is full")
+
+    existing = await db.teams.find_one({"league_id": league_id, "owner_id": user["_id"]})
+    if existing:
+        raise HTTPException(status_code=400, detail="You already have a team in this league")
+
+    team_doc = {
+        "name": payload.team_name.strip(),
+        "league_id": league_id,
+        "owner_id": user["_id"],
+        "owner_name": user["name"],
+        "roster": [],
+        "salary_used": 0.0,
+        "wins": 0, "losses": 0, "ties": 0,
+        "points_for": 0.0, "points_against": 0.0,
+        "created_at": datetime.now(timezone.utc),
+    }
+    result = await db.teams.insert_one(team_doc)
+    await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$inc": {"current_teams": 1}})
+    await log_activity(league_id, "team_joined",
+                       f"{user['name']} joined with team '{payload.team_name}'", user["_id"])
+    return {
+        "message": f"Joined {league['name']}!",
+        "team_id": str(result.inserted_id),
+        "league_id": league_id,
+        "league_name": league["name"],
+    }
+
+
 @api_router.post("/leagues/{league_id}/invite/email")
 async def send_email_invites(league_id: str, input: EmailInviteRequest, request: Request):
     user = await get_current_user(request)

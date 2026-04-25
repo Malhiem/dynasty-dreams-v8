@@ -782,6 +782,32 @@ const CommissionerSettings = () => {
   const [auditFilterCategory, setAuditFilterCategory] = useState<string>("all");
   const { league: activeLeague } = useActiveLeague();
 
+  // ─── Privacy toggle (League Setup) ──────────────────────────────
+  const [isPrivate, setIsPrivate] = useState<boolean>(false);
+  const [privacyLoading, setPrivacyLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    setIsPrivate(!!activeLeague?.is_private);
+  }, [activeLeague?.id, activeLeague?.is_private]);
+
+  const togglePrivacy = async (next: boolean) => {
+    if (!activeLeague?.id) return;
+    setPrivacyLoading(true);
+    try {
+      const { data } = await api.put(`/leagues/${activeLeague.id}`, { is_private: next });
+      setIsPrivate(!!data.is_private);
+      toast.success(next ? "League is now PRIVATE" : "League is now PUBLIC", {
+        description: next
+          ? "Hidden from search — invite-only."
+          : "Visible in League Search to anyone with an account.",
+      });
+    } catch (e: any) {
+      toast.error("Failed to update privacy", { description: e?.response?.data?.detail || e?.message });
+    } finally {
+      setPrivacyLoading(false);
+    }
+  };
+
   // Fetch real audit log entries for the active league and merge with the seeded UI rows
   useEffect(() => {
     if (!activeLeague?.id) return;
@@ -1041,6 +1067,34 @@ const CommissionerSettings = () => {
 
           {/* League Setup Tab */}
           <TabsContent value="league-setup" className="space-y-6">
+            {/* ─── Privacy Toggle ────────────────────────────── */}
+            <Card className="bg-card border-border" data-testid="league-privacy-card">
+              <CardHeader>
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      {isPrivate ? "🔒 Private League" : "🌐 Public League"}
+                    </CardTitle>
+                    <CardDescription className="mt-1">
+                      {isPrivate
+                        ? "Hidden from League Search — owners can only join via invite link/code."
+                        : "Listed in League Search — any account can browse and self-join while spots remain."}
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground">Public</span>
+                    <Switch
+                      checked={isPrivate}
+                      onCheckedChange={togglePrivacy}
+                      disabled={privacyLoading || !activeLeague?.id}
+                      data-testid="league-privacy-toggle"
+                    />
+                    <span className="text-xs text-muted-foreground">Private</span>
+                  </div>
+                </div>
+              </CardHeader>
+            </Card>
+
             <Card className="bg-card border-border">
               <CardHeader>
                 <CardTitle>Scoring System</CardTitle>

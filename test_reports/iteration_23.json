@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 23 — League Search + privacy toggle + self-serve join. ALL FEATURES VERIFIED. Backend: 11/11 pytest pass in /app/backend/tests/test_iteration23_public_leagues.py covering /public-leagues (anon OK, required fields, q/sport/format filters, already_member flag for chris), PUT /leagues/{id} (commissioner+co-commissioner allowed; outsider 403), round-trip is_private toggle visibility (public count: N → N-1 → N), POST /leagues/{id}/join-public (success, duplicate 400, private 403), and /api/leagues regression. Crown_flow + trade_flow regression both PASS. Frontend smoke: sidebar 'League Settings' replaced with 'League Search' (testID present); /league-search renders page + query input + format select + submit; 5 seeded leagues + admin-created TEST leagues render as cards with Join buttons (full leagues correctly show 'League full' disabled). Join dialog opens, team-name input + Confirm work, success toast 'Joined TEST_PrivacyToggle_xxx! Team \"TEST_ChrisFE_Team\" created.' displayed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/leagues/{id}", "issue": "No DELETE endpoint exists (returns 405). Test-created TEST_PrivacyToggle_* / TEST_JoinPublic_* leagues from prior runs accumulate in /public-leagues forever. Consider adding a commissioner-only DELETE for cleanup, or filtering TEST_-prefixed leagues from /public-leagues by default."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "LeagueSearch (post-join)", "issue": "After Confirm Join completes and the success toast fires, the SPA navigates to `/` which renders the unauthenticated marketing landing page (Sign In / Get Started), even though the session is still valid. User has to manually click Sign In or browser-back to get back to the app. Expected behaviour is to either stay on /league-search (with the joined card now showing 'Already a member') or navigate to /dashboard.", "selector": "[data-testid=league-search-confirm-join]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/league-search", "issues": ["Leftover TEST_PrivacyToggle_* and TEST_JoinPublic_* leagues from prior backend test runs are visible at the top of the user-facing list (sorted by created_at DESC). Real seeded leagues are pushed below the test fixtures. This is the same root cause as the missing DELETE endpoint."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration23_public_leagues.py",
+    "/app/test_reports/pytest/iteration23_results.xml"
+  ],
+  "action_items": [
+    "(MEDIUM) Fix post-join navigation in /app/frontend/src/lovable/pages/LeagueSearch.tsx so that after a successful POST /leagues/{id}/join-public the user lands on /dashboard (or stays on /league-search with refreshed already_member badges) instead of the marketing landing page at `/`.",
+    "(LOW) Add a commissioner-only DELETE /api/leagues/{id} endpoint OR have /public-leagues filter out leagues with name starting with 'TEST_' to keep the search list clean while running e2e tests."
+  ],
+  "critical_code_review_comments": [
+    "server.py L894: query uses {is_private: {$ne: True}} — correctly includes legacy docs missing the field. Good.",
+    "server.py L854-857: PUT /leagues/{id} permission check correctly admits commissioner OR co-commissioner. Audit log diff captures from/to values. Good.",
+    "server.py L943: full-check uses `>=` against max_teams — correct. Increment of current_teams happens AFTER the team insert (L962), so concurrent joins could over-fill. Low-likelihood race, not blocking.",
+    "server.py L962: db.leagues.update_one uses {$inc: {current_teams: 1}} — atomic, but the read-then-write check at L943 is not transactional. Acceptable for MVP.",
+    "LeagueSearch.tsx: post-join handler should navigate('/dashboard') or call refetch() and close the dialog rather than letting the SPA bounce to the marketing page."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration23_public_leagues.py — NEW: 11 tests covering /public-leagues + PUT /leagues/{id} + POST /leagues/{id}/join-public + regression."
+  ],
+  "success_rate": {"backend": "100% (11/11 pytest + crown_flow + trade_flow)", "frontend": "95% — all required testIDs present, search/filter/join all work end-to-end; 1 medium UX bug post-join navigation, 1 low cleanup issue"},
+  "test_credentials": "admin@dynastydreams.com/Admin123! and chriszarek@gmail.com/Chris2026! both verified working. NOTE: chriszarek is a CO-COMMISSIONER (not just a member) in all 5 seeded leagues — therefore PUT /leagues/{id} returns 200 for chris (correct per spec which allows co-comms). The 403 case must be tested with a freshly-registered outsider account.",
+  "seed_data_creation": "Test created brand-new leagues via POST /api/leagues (e.g. TEST_PrivacyToggle_1777093320, TEST_JoinPublic_1777093321, TEST_PrivacyToggle_1777093380, TEST_JoinPublic_1777093381) for round-trip + join testing. These cannot be deleted (no DELETE endpoint) and are now visible in /public-leagues. Set-and-Forget Best Ball was briefly flipped private during a failed test run and was restored to is_private=false via API. Chris also joined TEST_PrivacyToggle_1777093380 with team 'TEST_ChrisFE_Team' during the FE smoke test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 9 review-request items VERIFIED (anon /public-leagues with full required-field set, commissioner-only PUT with 403 for outsider, round-trip is_private visibility, self-serve join with 403/400 edge cases, sidebar replacement, /league-search testIDs and rendering, join dialog + toast, privacy card testIDs in CommissionerSettings, regression). The CO-COMMISSIONER role of chriszarek invalidates the literal review-request line 'standard users get 403' if interpreted as 'chris should get 403' — but the underlying spec ('only commissioner OR co-commissioner') is correctly enforced (verified via outsider account 403). Two non-blocking issues to fix: (1) post-join SPA navigation lands on marketing page, (2) no DELETE for test leagues clutters /public-leagues.",
+  "rca of the issue": "N/A — no failing functionality. Backend implementation in server.py L838-970 is correct. Frontend testIDs all present. Only minor UX bug: after Confirm Join the SPA navigates to '/' (marketing landing) instead of /dashboard or staying on /league-search. Likely a navigate('/') call or a missing fallback in LeagueSearch.tsx after the POST resolves."
+}
