@@ -1,9 +1,10 @@
 // @ts-nocheck
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import api from "@/lib/api";
 import PlayerRoster from "@/lovable/components/dashboard/PlayerRoster";
+import { PlayerCardChip } from "@/lovable/components/trade/PlayerCardChip";
 import TradeBlockManager from "@/lovable/components/team/TradeBlockManager";
 import LiveTeamHeader from "@/lovable/components/dashboard/LiveTeamHeader";
 import TeamDraftPicks from "@/lovable/components/dashboard/TeamDraftPicks";
@@ -113,6 +114,8 @@ const Team = () => {
   // bullhorn icon on each row).
   const [tradeBlockPlayerIds, setTradeBlockPlayerIds] = useState<string[]>([]);
   const [tradeBlockReloadKey, setTradeBlockReloadKey] = useState(0);
+  /** Bumped after drops/trade-block changes so PlayerRoster re-fetches. */
+  const [rosterReloadKey, setRosterReloadKey] = useState(0);
 
   useEffect(() => {
     if (!selectedTeamId) { setRosterPlayers([]); setTeamRecord(null); setTradeBlockPlayerIds([]); return; }
@@ -137,7 +140,7 @@ const Team = () => {
       );
     });
     return () => { cancelled = true; };
-  }, [selectedTeamId, tradeBlockReloadKey]);
+  }, [selectedTeamId, tradeBlockReloadKey, rosterReloadKey]);
 
   // No real pending trades yet — keep empty so banner hides
   const pendingTrades: any[] = [];
@@ -218,95 +221,239 @@ const Team = () => {
     handleAddPickToTrade(pick);
   }, [handleAddPickToTrade]);
 
-  // ── Drop player flow: confirmation toast → POST /api/roster/{id}/drop
-  // The dropped player becomes a free agent. Other teams may then claim him
-  // via the existing waiver flow (POST /api/waivers/claim) if the league has
-  // waivers configured.
-  const handleDropPlayer = useCallback((player: any) => {
+  // ── Drop player flow: confirmation toast w/ player card → POST /api/roster/{id}/drop
+  const handleDropPlayer = useCallback(async (player: any) => {
     if (!isOwnTeam || !selectedTeamId) return;
     const playerId = String(player.id);
     const playerName = player.name;
-    const toastId = toast(
-      `Drop ${playerName}?`,
-      {
-        description:
-          "Player will be removed from your roster and placed in free agency. " +
-          "If your league has waivers enabled, other teams must clear waivers before signing.",
-        duration: Infinity,
-        action: {
-          label: "Confirm Drop",
-          onClick: async () => {
-            try {
-              await api.post(`/roster/${selectedTeamId}/drop`, { player_id: playerId });
-              toast.success(`${playerName} dropped to free agency`, {
-                description: "League will process per waiver rules.",
-              });
-              setTradeBlockReloadKey((k) => k + 1);
-            } catch (e: any) {
-              toast.error("Drop failed", {
-                description: e?.response?.data?.detail || e?.message || "Unknown error",
-              });
-            } finally {
-              toast.dismiss(toastId);
-            }
-          },
-        },
-        cancel: { label: "Cancel", onClick: () => toast.dismiss(toastId) },
-      },
-    );
-  }, [isOwnTeam, selectedTeamId]);
 
-  // ── Trade-block toggle flow: confirmation toast → POST /api/trade-block
-  // Owners must confirm before the player is announced on the trade block.
-  const handleAddToTradeBlock = useCallback((player: any) => {
+    // Fetch % owned for the toast card (best effort — toast still works without it)
+    let ownership: any = undefined;
+    try {
+      const { data } = await api.post(`/players/ownership-bulk`, {
+        player_ids: [playerId],
+        league_id: league?.id,
+      });
+      ownership = data?.ownership?.[playerId];
+    } catch {}
+
+    const toastId = `drop-${playerId}`;
+    toast.custom(
+      (t) => (
+        <div className="w-[360px] rounded-md border border-border bg-card p-3 shadow-lg" data-testid={`drop-toast-${playerId}`}>
+          <div className="flex items-center justify-between mb-1">
+            <h4 className="text-sm font-bold">Drop {playerName}?</h4>
+            <button
+              className="text-muted-foreground hover:text-foreground text-xs"
+              onClick={() => toast.dismiss(t)}
+              data-testid={`drop-toast-close-${playerId}`}
+            >×</button>
+          </div>
+          <p className="text-[11px] text-muted-foreground mb-2">
+            Player will be removed from your roster and placed in free agency.
+            If waivers are enabled, other teams must clear waivers before signing.
+          </p>
+          <PlayerCardChip player={player} ownership={ownership} />
+          <div className="flex gap-2 mt-3">
+            <button
+              className="flex-1 h-8 rounded-md bg-destructive/90 hover:bg-destructive text-destructive-foreground text-xs font-semibold"
+              data-testid={`drop-confirm-${playerId}`}
+              onClick={async () => {
+                try {
+                  await api.post(`/roster/${selectedTeamId}/drop`, { player_id: playerId });
+                  toast.success(`${playerName} dropped to free agency`, {
+                    description: "League will process per waiver rules.",
+                  });
+                  setRosterReloadKey((k) => k + 1);
+                } catch (e: any) {
+                  toast.error("Drop failed", {
+                    description: e?.response?.data?.detail || e?.message || "Unknown error",
+                  });
+                } finally {
+                  toast.dismiss(t);
+                }
+              }}
+            >Confirm Drop</button>
+            <button
+              className="flex-1 h-8 rounded-md border border-border hover:bg-secondary text-xs"
+              data-testid={`drop-cancel-${playerId}`}
+              onClick={() => toast.dismiss(t)}
+            >Cancel</button>
+          </div>
+        </div>
+      ),
+      { duration: Infinity, id: toastId },
+    );
+  }, [isOwnTeam, selectedTeamId, league]);
+
+  // ── Trade-block batch flow ──────────────────────────────
+  // Bullhorn click adds the player to a pending batch; a single persistent
+  // toast shows every queued player. Submit POSTs all in parallel; Cancel
+  // discards the batch.
+  const tradeBlockBatchRef = useRef<Map<string, any>>(new Map());
+  const tradeBlockOwnershipRef = useRef<Record<string, any>>({});
+  const tradeBlockToastId = "trade-block-batch";
+
+  const renderTradeBlockToast = useCallback(() => {
+    const players = Array.from(tradeBlockBatchRef.current.values());
+    if (players.length === 0) {
+      toast.dismiss(tradeBlockToastId);
+      return;
+    }
+    const submit = async () => {
+      const queued = players;
+      try {
+        await Promise.all(queued.map((p) => api.post(`/trade-block`, {
+          league_id: league?.id,
+          team_id: selectedTeamId,
+          item_type: "player",
+          player_id: String(p.id),
+          looking_for: [],
+        })));
+        toast.success(
+          queued.length === 1
+            ? `${queued[0].name} added to trade block`
+            : `${queued.length} players added to trade block`,
+        );
+        tradeBlockBatchRef.current.clear();
+        toast.dismiss(tradeBlockToastId);
+        setRosterReloadKey((k) => k + 1);
+        setTradeBlockReloadKey((k) => k + 1);
+      } catch (e: any) {
+        toast.error("Trade block update failed", {
+          description: e?.response?.data?.detail || e?.message || "Unknown error",
+        });
+      }
+    };
+    const cancel = () => {
+      tradeBlockBatchRef.current.clear();
+      toast.dismiss(tradeBlockToastId);
+    };
+    const removeFromBatch = (pid: string) => {
+      tradeBlockBatchRef.current.delete(pid);
+      renderTradeBlockToast();
+    };
+
+    toast.custom(
+      () => (
+        <div className="w-[400px] rounded-md border border-border bg-card p-3 shadow-lg" data-testid="trade-block-batch-toast">
+          <div className="flex items-center justify-between mb-1">
+            <h4 className="text-sm font-bold">
+              {players.length === 1
+                ? `Put ${players[0].name} on the trade block?`
+                : `Put ${players.length} players on the trade block?`}
+            </h4>
+            <button
+              className="text-muted-foreground hover:text-foreground text-xs"
+              onClick={cancel}
+              data-testid="trade-block-batch-close"
+            >×</button>
+          </div>
+          <p className="text-[11px] text-muted-foreground mb-2">
+            Other managers will see {players.length === 1 ? "this player" : "these players"} listed in your trade block.
+            You can remove them at any time. Click another bullhorn to add more.
+          </p>
+          <div className="space-y-1.5 max-h-[260px] overflow-y-auto">
+            {players.map((p) => (
+              <div key={p.id} className="relative">
+                <PlayerCardChip player={p} ownership={tradeBlockOwnershipRef.current[String(p.id)]} />
+                <button
+                  className="absolute top-1 right-1 h-5 w-5 rounded-full bg-background/80 hover:bg-destructive/80 hover:text-destructive-foreground text-muted-foreground text-xs flex items-center justify-center"
+                  onClick={() => removeFromBatch(String(p.id))}
+                  data-testid={`trade-block-batch-remove-${p.id}`}
+                  title="Remove from batch"
+                >×</button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button
+              className="flex-1 h-8 rounded-md bg-amber-400 hover:bg-amber-300 text-black text-xs font-semibold"
+              onClick={submit}
+              data-testid="trade-block-batch-submit"
+            >Submit ({players.length})</button>
+            <button
+              className="flex-1 h-8 rounded-md border border-border hover:bg-secondary text-xs"
+              onClick={cancel}
+              data-testid="trade-block-batch-cancel"
+            >Cancel</button>
+          </div>
+        </div>
+      ),
+      { duration: Infinity, id: tradeBlockToastId },
+    );
+  }, [league, selectedTeamId]);
+
+  const handleAddToTradeBlock = useCallback(async (player: any) => {
     if (!isOwnTeam || !selectedTeamId || !league?.id) return;
     const playerId = String(player.id);
-    const playerName = player.name;
     const alreadyOnBlock = tradeBlockPlayerIds.includes(playerId);
-    const toastId = toast(
-      alreadyOnBlock ? `Remove ${playerName} from trade block?` : `Put ${playerName} on the trade block?`,
-      {
-        description: alreadyOnBlock
-          ? "Other managers will no longer see this player listed in your trade block."
-          : "Other managers will see this player listed in your trade block. You can remove them at any time.",
-        duration: Infinity,
-        action: {
-          label: alreadyOnBlock ? "Remove" : "Submit",
-          onClick: async () => {
-            try {
-              if (alreadyOnBlock) {
-                // Find existing trade-block item id
-                const list = await api.get(`/trade-block`, { params: { team_id: selectedTeamId } });
-                const items = list.data?.items || list.data || [];
-                const item = items.find((i: any) => String(i.player_id) === playerId);
-                if (item?._id || item?.id) {
-                  await api.delete(`/trade-block/${item._id || item.id}`);
-                  toast.success(`${playerName} removed from trade block`);
-                }
-              } else {
-                await api.post(`/trade-block`, {
-                  league_id: league.id,
-                  team_id: selectedTeamId,
-                  item_type: "player",
-                  player_id: playerId,
-                  looking_for: [],
-                });
-                toast.success(`${playerName} added to trade block`);
-              }
-              setTradeBlockReloadKey((k) => k + 1);
-            } catch (e: any) {
-              toast.error("Trade block update failed", {
-                description: e?.response?.data?.detail || e?.message || "Unknown error",
-              });
-            } finally {
-              toast.dismiss(toastId);
-            }
-          },
-        },
-        cancel: { label: "Cancel", onClick: () => toast.dismiss(toastId) },
-      },
-    );
-  }, [isOwnTeam, selectedTeamId, league, tradeBlockPlayerIds]);
+
+    // Removal stays single-confirm (no batching for removals).
+    if (alreadyOnBlock) {
+      let ownership: any = undefined;
+      try {
+        const { data } = await api.post(`/players/ownership-bulk`, {
+          player_ids: [playerId], league_id: league.id,
+        });
+        ownership = data?.ownership?.[playerId];
+      } catch {}
+      const toastId = `tb-remove-${playerId}`;
+      toast.custom(
+        (t) => (
+          <div className="w-[360px] rounded-md border border-border bg-card p-3 shadow-lg" data-testid={`tb-remove-toast-${playerId}`}>
+            <div className="flex items-center justify-between mb-1">
+              <h4 className="text-sm font-bold">Remove {player.name} from trade block?</h4>
+              <button className="text-muted-foreground hover:text-foreground text-xs" onClick={() => toast.dismiss(t)}>×</button>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-2">Other managers will no longer see this player listed.</p>
+            <PlayerCardChip player={player} ownership={ownership} />
+            <div className="flex gap-2 mt-3">
+              <button
+                className="flex-1 h-8 rounded-md bg-destructive/90 hover:bg-destructive text-destructive-foreground text-xs font-semibold"
+                data-testid={`tb-remove-confirm-${playerId}`}
+                onClick={async () => {
+                  try {
+                    const list = await api.get(`/trade-block`, { params: { team_id: selectedTeamId } });
+                    const items = list.data?.items || list.data || [];
+                    const item = items.find((i: any) => String(i.player_id) === playerId);
+                    if (item?._id || item?.id) {
+                      await api.delete(`/trade-block/${item._id || item.id}`);
+                      toast.success(`${player.name} removed from trade block`);
+                    }
+                    setRosterReloadKey((k) => k + 1);
+                    setTradeBlockReloadKey((k) => k + 1);
+                  } catch (e: any) {
+                    toast.error("Remove failed", { description: e?.response?.data?.detail || e?.message });
+                  } finally {
+                    toast.dismiss(t);
+                  }
+                }}
+              >Remove</button>
+              <button className="flex-1 h-8 rounded-md border border-border hover:bg-secondary text-xs" onClick={() => toast.dismiss(t)}>Cancel</button>
+            </div>
+          </div>
+        ),
+        { duration: Infinity, id: toastId },
+      );
+      return;
+    }
+
+    // Add to the batch (or no-op if already queued)
+    if (!tradeBlockBatchRef.current.has(playerId)) {
+      tradeBlockBatchRef.current.set(playerId, player);
+      // Best-effort ownership fetch (non-blocking refresh of toast)
+      try {
+        const { data } = await api.post(`/players/ownership-bulk`, {
+          player_ids: [playerId], league_id: league.id,
+        });
+        if (data?.ownership?.[playerId]) {
+          tradeBlockOwnershipRef.current[playerId] = data.ownership[playerId];
+        }
+      } catch {}
+      renderTradeBlockToast();
+    }
+  }, [isOwnTeam, selectedTeamId, league, tradeBlockPlayerIds, renderTradeBlockToast]);
 
   const onTradePlayer = isOwnTeam ? handleAddPlayerToTrade : handleTradeFromOtherTeam;
 
@@ -426,6 +573,7 @@ const Team = () => {
           tradeBlockPlayerIds={tradeBlockPlayerIds}
           isTradeBuilderOpen={tradeBuilder.open}
           currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
+          refreshKey={rosterReloadKey}
           teamId={selectedTeamId as string}
         />
 

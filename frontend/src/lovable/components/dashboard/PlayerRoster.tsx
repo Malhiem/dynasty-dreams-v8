@@ -582,6 +582,10 @@ interface PlayerRosterProps {
   isTradeBuilderOpen?: boolean;
   currentTeamContext?: string;
   teamId?: string;
+  /** Bump this number to force a re-fetch of /roster/{teamId}/detail.
+   * Used after drops, trade-block toggles, or other mutations so the table
+   * reflects the latest server state without a full page reload. */
+  refreshKey?: number;
 }
 
 const PlayerRoster = ({
@@ -594,6 +598,7 @@ const PlayerRoster = ({
   isTradeBuilderOpen = false,
   currentTeamContext = "mine",
   teamId = "frostbite",
+  refreshKey = 0,
 }: PlayerRosterProps) => {
   const location = useLocation();
   const isTeamRosterPage = location.pathname.startsWith("/team");
@@ -642,7 +647,7 @@ const PlayerRoster = ({
       .catch((e) => { console.error("roster detail load failed", e); setLivePlayers([]); })
       .finally(() => { if (!cancelled) setLiveLoading(false); });
     return () => { cancelled = true; };
-  }, [teamId, isRealTeamId]);
+  }, [teamId, isRealTeamId, refreshKey]);
 
   const teamRoster = useMemo(() => {
     if (isRealTeamId && livePlayers) return livePlayers;

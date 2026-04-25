@@ -2969,12 +2969,16 @@ async def log_activity(league_id: str, event_type: str, message: str, user_id: s
         "message": message,
         "user_id": user_id,
         "metadata": metadata or {},
-        "created_at": datetime.now(timezone.utc).isoformat()
+        # Store as native datetime so it sorts consistently with trade/waiver
+        # entries; mixing ISO strings with datetimes breaks MongoDB sort order.
+        "created_at": datetime.now(timezone.utc),
     }
     await db.activity_feed.insert_one(doc)
     # Broadcast to league room
     doc.pop("_id", None)
-    await broadcast_to_room(f"league_{league_id}", "activity_feed", doc)
+    # Convert to ISO for the JSON broadcast
+    broadcast_doc = {**doc, "created_at": doc["created_at"].isoformat()}
+    await broadcast_to_room(f"league_{league_id}", "activity_feed", broadcast_doc)
 
 
 @api_router.get("/activity/{league_id}")
@@ -4794,6 +4798,63 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     )
 
     return {"message": f"Added {player['name']} to roster"}
+
+
+@api_router.post("/players/ownership-bulk")
+async def get_players_ownership(payload: dict, request: Request):
+    """Compute % ownership for a batch of players.
+
+    Body: {"player_ids": [...], "league_id": "<optional>"}
+    Returns: {<player_id>: {league_owned, league_total, league_pct,
+                            global_owned, global_total, global_pct}}
+    `global_*` is the count across every team in every league. `league_*` is
+    scoped to the supplied league_id (omitted from the response when none).
+    """
+    player_ids = [str(pid) for pid in (payload.get("player_ids") or []) if pid]
+    if not player_ids:
+        return {"ownership": {}}
+    league_id = payload.get("league_id")
+
+    global_total = await db.teams.count_documents({})
+
+    pipeline = [
+        {"$match": {"roster": {"$in": player_ids}}},
+        {"$project": {"matched": {"$setIntersection": ["$roster", player_ids]}}},
+        {"$unwind": "$matched"},
+        {"$group": {"_id": "$matched", "count": {"$sum": 1}}},
+    ]
+    global_counts: dict[str, int] = {}
+    async for row in db.teams.aggregate(pipeline):
+        global_counts[str(row["_id"])] = int(row["count"])
+
+    league_counts: dict[str, int] = {}
+    league_total = 0
+    if league_id:
+        league_total = await db.teams.count_documents({"league_id": league_id})
+        pipeline_l = [
+            {"$match": {"league_id": league_id, "roster": {"$in": player_ids}}},
+            {"$project": {"matched": {"$setIntersection": ["$roster", player_ids]}}},
+            {"$unwind": "$matched"},
+            {"$group": {"_id": "$matched", "count": {"$sum": 1}}},
+        ]
+        async for row in db.teams.aggregate(pipeline_l):
+            league_counts[str(row["_id"])] = int(row["count"])
+
+    out: dict[str, dict] = {}
+    for pid in player_ids:
+        g = global_counts.get(pid, 0)
+        entry = {
+            "global_owned": g,
+            "global_total": global_total,
+            "global_pct": round(100 * g / global_total, 1) if global_total else 0.0,
+        }
+        if league_id:
+            l = league_counts.get(pid, 0)
+            entry["league_owned"] = l
+            entry["league_total"] = league_total
+            entry["league_pct"] = round(100 * l / league_total, 1) if league_total else 0.0
+        out[pid] = entry
+    return {"ownership": out}
 
 
 @api_router.post("/roster/{team_id}/drop")
