@@ -376,6 +376,10 @@ async def login(input: UserLogin, request: Request, response: Response):
     attempts = await db.login_attempts.find_one({"identifier": identifier})
     if attempts and attempts.get("count", 0) >= 5:
         lockout_until = attempts.get("lockout_until")
+        # Motor sometimes returns naive datetimes from MongoDB; coerce to UTC-aware
+        # to avoid `TypeError: can't compare offset-naive and offset-aware datetimes`.
+        if lockout_until and lockout_until.tzinfo is None:
+            lockout_until = lockout_until.replace(tzinfo=timezone.utc)
         if lockout_until and datetime.now(timezone.utc) < lockout_until:
             raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
         else:
