@@ -455,6 +455,10 @@ export default function LeagueDetailPage() {
                 const expiresIn = t.expires_at
                   ? Math.max(0, Math.ceil((new Date(t.expires_at) - new Date()) / 86400000))
                   : null;
+                const isMulti = t.is_multi_party || (Array.isArray(t.parties) && t.parties.length > 2);
+                const parties = Array.isArray(t.parties) ? t.parties : null;
+                const acceptedCount = parties ? parties.filter(p => p.accepted).length : 0;
+                const totalParties = parties ? parties.length : 2;
                 return (
                   <div
                     key={t._id}
@@ -462,24 +466,77 @@ export default function LeagueDetailPage() {
                     data-testid={`pending-trade-card-${t._id}`}
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">
-                        {(t.status || 'pending').toUpperCase()}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">
+                          {(t.status || 'pending').toUpperCase()}
+                        </span>
+                        {isMulti && (
+                          <span
+                            className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-400"
+                            data-testid={`pending-trade-multi-badge-${t._id}`}
+                          >
+                            {totalParties}-TEAM · {acceptedCount}/{totalParties} ACCEPTED
+                          </span>
+                        )}
+                      </div>
                       {expiresIn != null && (
                         <span className="text-[10px] text-[#A1A1AA]">
                           {expiresIn === 0 ? 'Expires today' : `Expires in ${expiresIn}d`}
                         </span>
                       )}
                     </div>
-                    <div className="flex items-center justify-between gap-2 text-sm">
-                      <Link to={`/teams/${t.proposer_team_id}`} className="font-semibold text-white truncate hover:underline">
-                        {t.proposer_team_name || 'Team A'}
-                      </Link>
-                      <span className="text-[#52525B]">↔</span>
-                      <Link to={`/teams/${t.target_team_id}`} className="font-semibold text-white truncate hover:underline">
-                        {t.target_team_name || 'Team B'}
-                      </Link>
-                    </div>
+
+                    {parties ? (
+                      <div className="space-y-1.5" data-testid={`pending-trade-parties-${t._id}`}>
+                        {parties.map(p => (
+                          <div
+                            key={p.team_id}
+                            className="flex items-center justify-between gap-2 text-sm"
+                            data-testid={`pending-trade-party-${t._id}-${p.team_id}`}
+                          >
+                            <Link
+                              to={`/teams/${p.team_id}`}
+                              className="font-semibold text-white truncate hover:underline"
+                            >
+                              {p.team_name}
+                            </Link>
+                            <span className="text-[10px] text-[#52525B]">
+                              {(p.sends || []).length} sending · {(p.receives || []).length} receiving
+                            </span>
+                            {p.accepted ? (
+                              <span
+                                className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400"
+                                data-testid={`pending-trade-status-accepted-${p.team_id}`}
+                              >
+                                ✓ ACCEPTED
+                              </span>
+                            ) : p.rejected ? (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-500/15 text-red-400">
+                                ✗ REJECTED
+                              </span>
+                            ) : (
+                              <span
+                                className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400"
+                                data-testid={`pending-trade-status-pending-${p.team_id}`}
+                              >
+                                ⌛ AWAITING
+                              </span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <Link to={`/teams/${t.proposer_team_id}`} className="font-semibold text-white truncate hover:underline">
+                          {t.proposer_team_name || 'Team A'}
+                        </Link>
+                        <span className="text-[#52525B]">↔</span>
+                        <Link to={`/teams/${t.target_team_id}`} className="font-semibold text-white truncate hover:underline">
+                          {t.target_team_name || 'Team B'}
+                        </Link>
+                      </div>
+                    )}
+
                     {Array.isArray(t.assets) && t.assets.length > 0 && (
                       <div className="mt-2 text-xs text-[#A1A1AA]">
                         {t.assets.length} asset{t.assets.length === 1 ? '' : 's'} ·{' '}
@@ -492,7 +549,7 @@ export default function LeagueDetailPage() {
                     )}
                     <div className="mt-3 flex items-center justify-between text-[11px] text-[#52525B]">
                       <span>Proposed {submittedDate}</span>
-                      <Link to="/trades" className="text-[#00D2FF] hover:underline">Review →</Link>
+                      <Link to="/transactions" className="text-[#00D2FF] hover:underline">Review →</Link>
                     </div>
                   </div>
                 );

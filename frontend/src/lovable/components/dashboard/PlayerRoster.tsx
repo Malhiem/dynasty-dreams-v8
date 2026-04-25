@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings, Megaphone } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -576,12 +576,25 @@ interface PlayerRosterProps {
   isOwnTeam?: boolean;
   commissionerMode?: boolean;
   onTradePlayer?: (player: any) => void;
+  onDropPlayer?: (player: any) => void;
+  onAddToTradeBlock?: (player: any) => void;
+  tradeBlockPlayerIds?: string[];
   isTradeBuilderOpen?: boolean;
   currentTeamContext?: string;
   teamId?: string;
 }
 
-const PlayerRoster = ({ isOwnTeam = true, commissionerMode = false, onTradePlayer, isTradeBuilderOpen = false, currentTeamContext = "mine", teamId = "frostbite" }: PlayerRosterProps) => {
+const PlayerRoster = ({
+  isOwnTeam = true,
+  commissionerMode = false,
+  onTradePlayer,
+  onDropPlayer,
+  onAddToTradeBlock,
+  tradeBlockPlayerIds = [],
+  isTradeBuilderOpen = false,
+  currentTeamContext = "mine",
+  teamId = "frostbite",
+}: PlayerRosterProps) => {
   const location = useLocation();
   const isTeamRosterPage = location.pathname.startsWith("/team");
 
@@ -1238,6 +1251,9 @@ const PlayerRoster = ({ isOwnTeam = true, commissionerMode = false, onTradePlaye
           <StatsTable
             grouped={grouped}
             onTrade={handleOpenTrade}
+            onDrop={onDropPlayer}
+            onMegaphone={onAddToTradeBlock}
+            tradeBlockPlayerIds={tradeBlockPlayerIds}
             onPlayerClick={handleOpenCard}
             getPlayerPoints={getPlayerPoints}
             getSectionTotal={getSectionTotal}
@@ -1328,6 +1344,9 @@ const shouldShowOpenSlotForSection = (
 const StatsTable = ({
   grouped,
   onTrade,
+  onDrop,
+  onMegaphone,
+  tradeBlockPlayerIds = [],
   onPlayerClick,
   getPlayerPoints,
   getSectionTotal,
@@ -1345,6 +1364,9 @@ const StatsTable = ({
 }: {
   grouped: Record<RosterSection, Player[]>;
   onTrade: (p: Player) => void;
+  onDrop?: (p: Player) => void;
+  onMegaphone?: (p: Player) => void;
+  tradeBlockPlayerIds?: string[];
   onPlayerClick: (p: Player) => void;
   getPlayerPoints: (p: Player) => number;
   getSectionTotal: (s: RosterSection) => number;
@@ -1396,7 +1418,7 @@ const StatsTable = ({
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (player) {
                       return (
-                        <PlayerRow key={player.id} player={player} index={slotIdx} onTrade={onTrade} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
+                        <PlayerRow key={player.id} player={player} index={slotIdx} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
                           {displayCategories.map(cat => (
                             <td key={cat} className="p-2 text-center text-sm">
                               {player.categoryBreakdown[cat] ?? 0}
@@ -1430,7 +1452,7 @@ const StatsTable = ({
                 ) : (
                   <>
                     {sectionPlayers.map((player, index) => (
-                      <PlayerRow key={player.id} player={player} index={index} onTrade={onTrade} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
+                      <PlayerRow key={player.id} player={player} index={index} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
                         {displayCategories.map(cat => (
                           <td key={cat} className="p-2 text-center text-sm">
                             {player.categoryBreakdown[cat] ?? 0}
@@ -1918,6 +1940,9 @@ const PlayerRow = ({
   player,
   index,
   onTrade,
+  onDrop,
+  onMegaphone,
+  isOnTradeBlock = false,
   onPlayerClick,
   children,
   isOwnTeam = true,
@@ -1930,6 +1955,9 @@ const PlayerRow = ({
   player: Player;
   index: number;
   onTrade: (p: Player) => void;
+  onDrop?: (p: Player) => void;
+  onMegaphone?: (p: Player) => void;
+  isOnTradeBlock?: boolean;
   onPlayerClick: (p: Player) => void;
   children: React.ReactNode;
   isOwnTeam?: boolean;
@@ -1966,7 +1994,10 @@ const PlayerRow = ({
       <td className="p-2 text-center">
         <div className="flex items-center justify-center gap-0.5">
           <TradeButton player={player} onTrade={onTrade} />
-          {canEdit && <DropButton player={player} onDrop={onTrade} />}
+          {canEdit && onMegaphone && (
+            <MegaphoneButton player={player} active={isOnTradeBlock} onMegaphone={onMegaphone} />
+          )}
+          {canEdit && <DropButton player={player} onDrop={onDrop || onTrade} />}
           {commissionerMode && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -2008,11 +2039,45 @@ const TradeButton = ({ player, onTrade }: { player: Player; onTrade: (p: Player)
   </TooltipProvider>
 );
 
+const MegaphoneButton = ({
+  player, active, onMegaphone,
+}: { player: Player; active?: boolean; onMegaphone: (p: Player) => void }) => (
+  <TooltipProvider>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={`h-7 w-7 transition-colors ${
+            active
+              ? "text-amber-300 bg-amber-400/15 hover:bg-amber-400/25 ring-1 ring-amber-400/40"
+              : "text-muted-foreground hover:text-amber-300 hover:bg-amber-400/10"
+          }`}
+          onClick={() => onMegaphone(player)}
+          data-testid={`roster-megaphone-btn-${player.id}`}
+          aria-label={active ? "Remove from trade block" : "Add to trade block"}
+        >
+          <Megaphone className="h-3.5 w-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>{active ? "On trade block — click to remove" : "Add to trade block"}</p>
+      </TooltipContent>
+    </Tooltip>
+  </TooltipProvider>
+);
+
 const DropButton = ({ player, onDrop }: { player: Player; onDrop: (p: Player) => void }) => (
   <TooltipProvider>
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10" onClick={() => onDrop(player)}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          onClick={() => onDrop(player)}
+          data-testid={`roster-drop-btn-${player.id}`}
+        >
           <MinusCircle className="h-3.5 w-3.5" />
         </Button>
       </TooltipTrigger>

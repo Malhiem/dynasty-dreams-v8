@@ -109,15 +109,20 @@ const Team = () => {
   // Roster players (for the Trade Block quick-toggle UI)
   const [rosterPlayers, setRosterPlayers] = useState<any[]>([]);
   const [teamRecord, setTeamRecord] = useState<any>(null);
+  // Trade-block player IDs for THIS selected team (used to "light up" the
+  // bullhorn icon on each row).
+  const [tradeBlockPlayerIds, setTradeBlockPlayerIds] = useState<string[]>([]);
+  const [tradeBlockReloadKey, setTradeBlockReloadKey] = useState(0);
+
   useEffect(() => {
-    if (!selectedTeamId) { setRosterPlayers([]); setTeamRecord(null); return; }
+    if (!selectedTeamId) { setRosterPlayers([]); setTeamRecord(null); setTradeBlockPlayerIds([]); return; }
     let cancelled = false;
     Promise.all([
       api.get(`/roster/${selectedTeamId}`).catch(() => ({ data: { players: [] } })),
       api.get(`/teams/${selectedTeamId}`).catch(() => ({ data: null })),
-    ]).then(([rosterRes, teamRes]) => {
+      api.get(`/trade-block`, { params: { team_id: selectedTeamId } }).catch(() => ({ data: { items: [] } })),
+    ]).then(([rosterRes, teamRes, tbRes]) => {
       if (cancelled) return;
-      // /roster returns {players: [{player_id, name, position, ...}]}; map to {id, name, ...}
       const players = (rosterRes.data?.players || []).map((p: any) => ({
         id: p.player_id || p.id,
         name: p.name,
@@ -126,9 +131,13 @@ const Team = () => {
       }));
       setRosterPlayers(players);
       setTeamRecord(teamRes.data || null);
+      const tbItems = tbRes.data?.items || tbRes.data || [];
+      setTradeBlockPlayerIds(
+        tbItems.filter((i: any) => i.player_id).map((i: any) => String(i.player_id))
+      );
     });
     return () => { cancelled = true; };
-  }, [selectedTeamId]);
+  }, [selectedTeamId, tradeBlockReloadKey]);
 
   // No real pending trades yet — keep empty so banner hides
   const pendingTrades: any[] = [];
@@ -208,6 +217,96 @@ const Team = () => {
   const handleTradePickFromOtherTeam = useCallback((pick: TradeDraftPick) => {
     handleAddPickToTrade(pick);
   }, [handleAddPickToTrade]);
+
+  // ── Drop player flow: confirmation toast → POST /api/roster/{id}/drop
+  // The dropped player becomes a free agent. Other teams may then claim him
+  // via the existing waiver flow (POST /api/waivers/claim) if the league has
+  // waivers configured.
+  const handleDropPlayer = useCallback((player: any) => {
+    if (!isOwnTeam || !selectedTeamId) return;
+    const playerId = String(player.id);
+    const playerName = player.name;
+    const toastId = toast(
+      `Drop ${playerName}?`,
+      {
+        description:
+          "Player will be removed from your roster and placed in free agency. " +
+          "If your league has waivers enabled, other teams must clear waivers before signing.",
+        duration: Infinity,
+        action: {
+          label: "Confirm Drop",
+          onClick: async () => {
+            try {
+              await api.post(`/roster/${selectedTeamId}/drop`, { player_id: playerId });
+              toast.success(`${playerName} dropped to free agency`, {
+                description: "League will process per waiver rules.",
+              });
+              setTradeBlockReloadKey((k) => k + 1);
+            } catch (e: any) {
+              toast.error("Drop failed", {
+                description: e?.response?.data?.detail || e?.message || "Unknown error",
+              });
+            } finally {
+              toast.dismiss(toastId);
+            }
+          },
+        },
+        cancel: { label: "Cancel", onClick: () => toast.dismiss(toastId) },
+      },
+    );
+  }, [isOwnTeam, selectedTeamId]);
+
+  // ── Trade-block toggle flow: confirmation toast → POST /api/trade-block
+  // Owners must confirm before the player is announced on the trade block.
+  const handleAddToTradeBlock = useCallback((player: any) => {
+    if (!isOwnTeam || !selectedTeamId || !league?.id) return;
+    const playerId = String(player.id);
+    const playerName = player.name;
+    const alreadyOnBlock = tradeBlockPlayerIds.includes(playerId);
+    const toastId = toast(
+      alreadyOnBlock ? `Remove ${playerName} from trade block?` : `Put ${playerName} on the trade block?`,
+      {
+        description: alreadyOnBlock
+          ? "Other managers will no longer see this player listed in your trade block."
+          : "Other managers will see this player listed in your trade block. You can remove them at any time.",
+        duration: Infinity,
+        action: {
+          label: alreadyOnBlock ? "Remove" : "Submit",
+          onClick: async () => {
+            try {
+              if (alreadyOnBlock) {
+                // Find existing trade-block item id
+                const list = await api.get(`/trade-block`, { params: { team_id: selectedTeamId } });
+                const items = list.data?.items || list.data || [];
+                const item = items.find((i: any) => String(i.player_id) === playerId);
+                if (item?._id || item?.id) {
+                  await api.delete(`/trade-block/${item._id || item.id}`);
+                  toast.success(`${playerName} removed from trade block`);
+                }
+              } else {
+                await api.post(`/trade-block`, {
+                  league_id: league.id,
+                  team_id: selectedTeamId,
+                  item_type: "player",
+                  player_id: playerId,
+                  looking_for: [],
+                });
+                toast.success(`${playerName} added to trade block`);
+              }
+              setTradeBlockReloadKey((k) => k + 1);
+            } catch (e: any) {
+              toast.error("Trade block update failed", {
+                description: e?.response?.data?.detail || e?.message || "Unknown error",
+              });
+            } finally {
+              toast.dismiss(toastId);
+            }
+          },
+        },
+        cancel: { label: "Cancel", onClick: () => toast.dismiss(toastId) },
+      },
+    );
+  }, [isOwnTeam, selectedTeamId, league, tradeBlockPlayerIds]);
 
   const onTradePlayer = isOwnTeam ? handleAddPlayerToTrade : handleTradeFromOtherTeam;
 
@@ -322,6 +421,9 @@ const Team = () => {
           isOwnTeam={!!isOwnTeam}
           commissionerMode={commissionerMode}
           onTradePlayer={onTradePlayer}
+          onDropPlayer={handleDropPlayer}
+          onAddToTradeBlock={handleAddToTradeBlock}
+          tradeBlockPlayerIds={tradeBlockPlayerIds}
           isTradeBuilderOpen={tradeBuilder.open}
           currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
           teamId={selectedTeamId as string}
