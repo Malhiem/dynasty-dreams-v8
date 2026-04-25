@@ -785,6 +785,7 @@ const CommissionerSettings = () => {
   // ─── Privacy toggle (League Setup) ──────────────────────────────
   const [isPrivate, setIsPrivate] = useState<boolean>(false);
   const [privacyLoading, setPrivacyLoading] = useState<boolean>(false);
+  const [recalcing, setRecalcing] = useState<boolean>(false);
 
   useEffect(() => {
     setIsPrivate(!!activeLeague?.is_private);
@@ -805,6 +806,21 @@ const CommissionerSettings = () => {
       toast.error("Failed to update privacy", { description: e?.response?.data?.detail || e?.message });
     } finally {
       setPrivacyLoading(false);
+    }
+  };
+
+  const recalcStats = async () => {
+    if (!activeLeague?.id) return;
+    setRecalcing(true);
+    try {
+      const { data } = await api.post(`/leagues/${activeLeague.id}/recalculate-stats`);
+      toast.success("League stats recalculated", {
+        description: `${data.teams_changed} team(s) updated from ${data.completed_matchups} completed matchup(s).`,
+      });
+    } catch (e: any) {
+      toast.error("Recalculation failed", { description: e?.response?.data?.detail || e?.message });
+    } finally {
+      setRecalcing(false);
     }
   };
 
@@ -1093,6 +1109,20 @@ const CommissionerSettings = () => {
                   </div>
                 </div>
               </CardHeader>
+              <CardContent className="pt-0 pb-4 flex items-center justify-between gap-3 border-t border-border/50">
+                <div className="text-xs text-muted-foreground">
+                  <strong className="text-foreground">Stats out of sync?</strong> Recompute every team's wins / losses / PF / PA from completed matchups.
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={recalcStats}
+                  disabled={recalcing || !activeLeague?.id}
+                  data-testid="league-recalc-stats"
+                >
+                  {recalcing ? "Recalculating…" : "Recalculate Stats"}
+                </Button>
+              </CardContent>
             </Card>
 
             <Card className="bg-card border-border">

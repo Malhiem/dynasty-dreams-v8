@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 24 — Recalculate-Stats endpoint + H2H Matchups section on LeagueDetailPage. ALL FEATURES VERIFIED. Backend: 11/11 pytest pass in /app/backend/tests/test_iteration24_recalc_matchups.py covering POST /leagues/{id}/recalculate-stats (admin-commissioner 200, outsider 403, unauthenticated 401, unknown-league 404, co-commissioner 200, idempotent on 2nd call with teams_changed=0, PF parity vs sum of completed home/away_score, max-PF sanity check < 20000), GET /matchups/{id}/current-week (returns week+matchups with required fields), and scoring_format detection (Ice Kings = head_to_head, Stat Chasers = rotisserie). Regression: 40/40 pass across iter19/21/23/24. Frontend smoke (admin@dynastydreams.com): /leagues/{ice_kings_id} renders [data-testid=league-matchups-section] with heading 'MATCHUPS — WEEK 1', 6 matchup cards each with all required testIDs (matchup-home-name, matchup-home-record, matchup-home-score, matchup-away-name, matchup-away-record, matchup-away-score), SCHEDULED status badges, and team records (e.g. '0-1-0 · Demo Owner 4'). Stat Chasers (rotisserie) correctly does NOT render the matchups section. CommissionerSettings → League Setup tab → Privacy card now contains 'Recalculate Stats' button with [data-testid=league-recalc-stats]; clicking it fires POST /api/leagues/.../recalculate-stats which returns 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration24_recalc_matchups.py",
+    "/app/test_reports/pytest/iteration24_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L811-814: permission gate accepts commissioner OR co_commissioner — matches iter23 PUT /leagues/{id} pattern. Good.",
+    "server.py L820-867: aggregation walks matchups status='completed' and atomically updates {wins,losses,ties,points_for,points_against} when before != after; rounding to 2dp prevents float drift on idempotent re-runs. Good.",
+    "server.py L869-878: audit_log entry written with role discriminator (commissioner vs co_commissioner) and counts. Good.",
+    "LeagueDetailPage.jsx L28: H2H detection `scoring_format === 'head_to_head' || (scoring_format||'').toLowerCase().includes('h2h')` — verified rotisserie is correctly excluded.",
+    "LeagueDetailPage.jsx L55-68: separate effect to fetch /matchups/{id}/current-week only when isH2H — clean.",
+    "LeagueDetailPage.jsx L264-265: `(typeof m.home_score === 'number' ? m.home_score : 0).toFixed(1)` is null-safe and gives '0.0' for unscored scheduled games — matches the screenshot (all SCHEDULED rows show 0.0).",
+    "CommissionerSettings.tsx L812-825: recalcStats() handler wraps the POST in try/finally with toast.success/error and a setRecalcing loading flag — good UX.",
+    "MINOR (not blocking): the recalc toast uses Sonner default duration (~4s); the FE smoke captured 0 visible toasts after a 4.5s wait — toast had auto-dismissed. Consider increasing duration or providing a visible inline confirmation banner for the recalc result so commissioners can read the diff message ('N team(s) updated from M completed matchup(s).')."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration24_recalc_matchups.py — NEW: 11 pytest tests covering recalc endpoint + matchups GET + H2H/non-H2H scoring_format detection."
+  ],
+  "success_rate": {"backend": "100% (11/11 new + 29/29 regression = 40/40)", "frontend": "100% — all required testIDs present, H2H/non-H2H gating works, recalc button + endpoint integration confirmed via 200 response"},
+  "test_credentials": "admin@dynastydreams.com / Admin123! (commissioner of Ice Kings + 4 other seed leagues), chriszarek@gmail.com / Chris2026! (co-commissioner). Outsider account auto-created in fixture with 'username' field (required by /auth/register).",
+  "seed_data_creation": "None new. Backend tests are read-only against existing Ice Kings + Stat Chasers seeds. The recalc was run multiple times (idempotent — first run may correct drift, subsequent runs return teams_changed=0).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Both review-request features (BUG FIX 1 backend recalc endpoint + BUG FIX 2 FE button + FEATURE 1 H2H matchups section) are fully working. Route for CommissionerSettings is /commissioner/settings (NOT /commissioner-settings). Recalc returns {league_id, completed_matchups, teams_changed, diffs:[{team_id,team_name,before,after}]}. The /matchups/{id}/current-week endpoint returns week=1 with all SCHEDULED matchups for Ice Kings (no completed week-99 matchups visible because the aggregation picks the MIN scheduled week — confirms agent-to-agent note from reviewer). PF parity assertion validated programmatically: walked weeks 1..104 and summed completed matchup home/away scores, all team PF values matched standings within 0.05 tolerance. The Sonner toast for recalc auto-dismisses ~4s — main agent may want to lengthen if user feedback is desired.",
+  "rca of the issue": "N/A — no failing functionality. Backend: server.py L801-885 implements the recalc endpoint correctly with permission gate, atomic per-team updates, audit log, and idempotency. Frontend: LeagueDetailPage.jsx L237-332 renders the matchups section only when isH2H, with correct testIDs and conditional winner highlight; CommissionerSettings.tsx L812-825 wires the recalc button to the new endpoint with toast feedback."
+}

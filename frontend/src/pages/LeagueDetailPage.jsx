@@ -25,6 +25,12 @@ export default function LeagueDetailPage() {
 
   const isCommissioner = league?.commissioner_id === user?.id;
   const hasTeam = teams.some(t => t.owner_id === user?.id);
+  const isH2H = league?.scoring_format === 'head_to_head' || (league?.scoring_format || '').toLowerCase().includes('h2h');
+
+  const [currentWeek, setCurrentWeek] = useState(null);
+  const [weekMatchups, setWeekMatchups] = useState([]);
+  const [matchupsLoading, setMatchupsLoading] = useState(false);
+  const teamById = teams.reduce((acc, t) => { acc[t.id] = t; return acc; }, {});
 
   useEffect(() => {
     const fetchData = async () => {
@@ -45,6 +51,21 @@ export default function LeagueDetailPage() {
     };
     fetchData();
   }, [id]);
+
+  useEffect(() => {
+    if (!isH2H || !id) return;
+    let cancelled = false;
+    setMatchupsLoading(true);
+    api.get(`/matchups/${id}/current-week`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setCurrentWeek(data?.week || null);
+        setWeekMatchups(data?.matchups || []);
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setMatchupsLoading(false); });
+    return () => { cancelled = true; };
+  }, [id, isH2H]);
 
   const handleJoin = async () => {
     if (!teamName.trim()) return;
@@ -212,6 +233,103 @@ export default function LeagueDetailPage() {
             </div>
           )}
         </div>
+
+        {/* Matchups (H2H only) */}
+        {isH2H && (
+          <div className="mb-8" data-testid="league-matchups-section">
+            <div className="flex items-baseline justify-between mb-4">
+              <h2 className="font-heading text-2xl font-bold text-white">
+                MATCHUPS{currentWeek ? ` — WEEK ${currentWeek}` : ''}
+              </h2>
+              {weekMatchups.length > 0 && (
+                <span className="text-[#A1A1AA] text-sm">{weekMatchups.length} game{weekMatchups.length === 1 ? '' : 's'}</span>
+              )}
+            </div>
+            {matchupsLoading ? (
+              <div className="surface p-6 text-center text-[#A1A1AA]">Loading matchups…</div>
+            ) : weekMatchups.length === 0 ? (
+              <div className="surface p-6 text-center text-[#A1A1AA]">
+                No scheduled matchups. Commissioner can generate a schedule from <span className="text-white">League Administration</span>.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {weekMatchups.map(m => {
+                  const home = teamById[m.home_team_id] || {};
+                  const away = teamById[m.away_team_id] || {};
+                  const homeRec = `${home.wins || 0}-${home.losses || 0}-${home.ties || 0}`;
+                  const awayRec = `${away.wins || 0}-${away.losses || 0}-${away.ties || 0}`;
+                  const homeWon = m.winner === m.home_team_id;
+                  const awayWon = m.winner === m.away_team_id;
+                  const isComplete = m.status === 'completed';
+                  const homeScore = (typeof m.home_score === 'number' ? m.home_score : 0).toFixed(1);
+                  const awayScore = (typeof m.away_score === 'number' ? m.away_score : 0).toFixed(1);
+                  return (
+                    <div
+                      key={m._id}
+                      className="surface p-4 hover:border-[#00D2FF]/40 transition-colors"
+                      data-testid={`league-matchup-card-${m._id}`}
+                    >
+                      {/* Home */}
+                      <div className={`flex items-center justify-between gap-3 ${homeWon ? 'text-[#00D2FF]' : 'text-white'}`}>
+                        <Link to={`/teams/${m.home_team_id}`} className="flex-1 min-w-0 hover:underline">
+                          <div className="font-semibold truncate" data-testid={`matchup-home-name-${m._id}`}>
+                            {m.home_team_name}
+                          </div>
+                          <div className="text-xs text-[#A1A1AA]" data-testid={`matchup-home-record-${m._id}`}>
+                            {homeRec}{home.owner_name ? ` · ${home.owner_name}` : ''}
+                          </div>
+                        </Link>
+                        <div
+                          className={`text-2xl font-black tabular-nums ${homeWon ? 'text-[#00D2FF]' : 'text-white'}`}
+                          data-testid={`matchup-home-score-${m._id}`}
+                        >
+                          {homeScore}
+                        </div>
+                      </div>
+
+                      <div className="my-2 flex items-center gap-2">
+                        <div className="flex-1 h-px bg-white/10" />
+                        <span className="text-[10px] uppercase tracking-wider text-[#52525B]">vs</span>
+                        <div className="flex-1 h-px bg-white/10" />
+                      </div>
+
+                      {/* Away */}
+                      <div className={`flex items-center justify-between gap-3 ${awayWon ? 'text-[#00D2FF]' : 'text-white'}`}>
+                        <Link to={`/teams/${m.away_team_id}`} className="flex-1 min-w-0 hover:underline">
+                          <div className="font-semibold truncate" data-testid={`matchup-away-name-${m._id}`}>
+                            {m.away_team_name}
+                          </div>
+                          <div className="text-xs text-[#A1A1AA]" data-testid={`matchup-away-record-${m._id}`}>
+                            {awayRec}{away.owner_name ? ` · ${away.owner_name}` : ''}
+                          </div>
+                        </Link>
+                        <div
+                          className={`text-2xl font-black tabular-nums ${awayWon ? 'text-[#00D2FF]' : 'text-white'}`}
+                          data-testid={`matchup-away-score-${m._id}`}
+                        >
+                          {awayScore}
+                        </div>
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between">
+                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
+                          isComplete ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-[#A1A1AA]'
+                        }`}>
+                          {isComplete ? 'FINAL' : 'SCHEDULED'}
+                        </span>
+                        {m.bracket && (
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                            {m.is_final ? '🏆 ' : ''}{(m.bracket || '').replace(/_/g, ' ')}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Standings */}
         <div className="mb-8">

@@ -798,6 +798,93 @@ async def get_invite_qr_image(league_id: str):
     return StreamingResponse(buffer, media_type="image/png")
 
 
+@api_router.post("/leagues/{league_id}/recalculate-stats")
+async def recalculate_league_stats(league_id: str, request: Request):
+    """Commissioner-only: re-derive every team's wins/losses/ties/PF/PA from
+    `matchups` where status='completed'. Fixes drift introduced by repeated
+    simulate-week runs over deleted matchups, partial seeds, etc.
+    """
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_comm = league["commissioner_id"] == user["_id"]
+    co_comms = league.get("co_commissioners", []) or []
+    if not (is_comm or user["_id"] in co_comms):
+        raise HTTPException(status_code=403, detail="Only commissioners can recalculate league stats")
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+    completed = await db.matchups.find({"league_id": league_id, "status": "completed"}).to_list(2000)
+
+    # Aggregate per-team
+    agg: dict = {str(t["_id"]): {"wins": 0, "losses": 0, "ties": 0,
+                                  "points_for": 0.0, "points_against": 0.0}
+                 for t in teams}
+    for mm in completed:
+        h, a = mm.get("home_team_id"), mm.get("away_team_id")
+        hs = float(mm.get("home_score", 0) or 0)
+        as_ = float(mm.get("away_score", 0) or 0)
+        winner = mm.get("winner")
+        if h in agg:
+            agg[h]["points_for"] += hs
+            agg[h]["points_against"] += as_
+            if winner == h:
+                agg[h]["wins"] += 1
+            elif winner == a:
+                agg[h]["losses"] += 1
+            else:
+                agg[h]["ties"] += 1
+        if a in agg:
+            agg[a]["points_for"] += as_
+            agg[a]["points_against"] += hs
+            if winner == a:
+                agg[a]["wins"] += 1
+            elif winner == h:
+                agg[a]["losses"] += 1
+            else:
+                agg[a]["ties"] += 1
+
+    # Apply
+    diffs = []
+    for tid, vals in agg.items():
+        old = next((t for t in teams if str(t["_id"]) == tid), None)
+        if not old:
+            continue
+        before = {
+            "wins": old.get("wins", 0), "losses": old.get("losses", 0),
+            "ties": old.get("ties", 0),
+            "points_for": round(old.get("points_for", 0.0) or 0.0, 2),
+            "points_against": round(old.get("points_against", 0.0) or 0.0, 2),
+        }
+        after = {
+            "wins": vals["wins"], "losses": vals["losses"], "ties": vals["ties"],
+            "points_for": round(vals["points_for"], 2),
+            "points_against": round(vals["points_against"], 2),
+        }
+        if before != after:
+            await db.teams.update_one({"_id": ObjectId(tid)}, {"$set": after})
+            diffs.append({"team_id": tid, "team_name": old.get("name"),
+                          "before": before, "after": after})
+
+    await db.audit_log.insert_one({
+        "league_id": league_id,
+        "actor_id": user["_id"],
+        "actor_name": user.get("name", user.get("email", "Unknown")),
+        "action": "league_stats_recalculated",
+        "role": "commissioner" if is_comm else "co_commissioner",
+        "diff": {"completed_matchups": len(completed),
+                 "teams_changed": len(diffs)},
+        "created_at": datetime.now(timezone.utc),
+    })
+
+    return {
+        "league_id": league_id,
+        "completed_matchups": len(completed),
+        "teams_changed": len(diffs),
+        "diffs": diffs,
+    }
+
+
 @api_router.post("/leagues/join-by-invite")
 async def join_league_by_invite(input: JoinByInviteRequest, request: Request):
     user = await get_current_user(request)
