@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 25 — League home page Pending Trades + Recent Transactions panels (FE) and supporting backend endpoints (GET /leagues/{id}/transactions, GET /leagues/{id}/pending-trades, comma-separated event_type filter on /activity, waiver_won activity log + roster $addToSet, enriched roster_add/drop metadata). ALL FEATURES VERIFIED. Backend: 17/17 pytest pass in /app/backend/tests/test_iteration25_transactions.py. Regression: test_crown_flow.py and test_trade_flow.py both pass. Frontend smoke (admin@dynastydreams.com on Ice Kings 69e46af167999bfb85c39628): all 5 required testIDs render (league-pending-trades-section, pending-trade-card-{id} ×6, league-transactions-section, league-transaction-{id} ×20, league-pending-trades-view-all). View-all link reads 'View all 20 pending trades →' (cap-at-6 logic correct). Pending cards show animated amber dot, PENDING badge, proposer ↔ target team names with team links, proposed date, Review→ link. Transactions rows show ⇄ TRADE icon (trade_executed) with description 'Trade executed: Zarek's Frozen ↔ Ice Breakers' and date. Matchups section (iter24) still renders correctly above pending trades.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "LeagueDetailPage / Recent Transactions", "issues": ["All 20 visible rows in Ice Kings are trade_executed because the existing seed has 19 pending + ~20 trade_executed events that swamp the limit=20 query. roster_add/drop/waiver_won rows DO get returned by /leagues/{id}/transactions but are pushed past the 20-row cutoff. Verified by direct API call: types include roster_add/roster_drop/waiver_won when limit=100. UI-only side effect of seed data — not a functional bug."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration25_transactions.py",
+    "/app/test_reports/pytest/iteration25_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py L2995-3021: /leagues/{id}/transactions normalizes the four supported event types correctly with $in query, sort by created_at desc, limit clamped to [1,100]. Good.",
+    "server.py L3024-3034: /leagues/{id}/pending-trades $in filter on [pending,voting,conditional] and submitted_at desc sort. ObjectId properly stringified before return. Good.",
+    "server.py L2977-2991: comma-separated event_type filter properly degrades to single-equality when only one type, $in for multiple, ignores empty tokens. Good.",
+    "server.py L3899-3922: process_waivers now does $addToSet on team.roster (idempotent — won't duplicate if claim re-processed) AND log_activity('waiver_won', ...) with full metadata (team_id, team_name, player_id, player_name, bid_amount). The try/except around $addToSet correctly logs but doesn't fail the whole batch. Good.",
+    "server.py L4209-4218 (roster_add) + L4243-4251 (roster_drop): metadata now includes team_id, team_name, player_id, player_name, +position for adds. Verified end-to-end via test_roster_add_writes_metadata.",
+    "LeagueDetailPage.jsx L74-92: Promise.all guard returns empty arrays on individual fetch failure (defensive). Good.",
+    "LeagueDetailPage.jsx L356: pending-trades section is hidden entirely when length===0 — matches spec.",
+    "LeagueDetailPage.jsx L414-422: 'View all' link only renders when length > 6 — verified showing '20 pending trades' on Ice Kings.",
+    "LeagueDetailPage.jsx L437-439: empty state testID correct; empty branch renders the 'No transactions yet…' copy.",
+    "LeagueDetailPage.jsx L443-448: ICON map covers the 4 supported types with sensible color tokens (emerald add, rose drop, violet waiver, cyan trade) and a fallback. Good.",
+    "MINOR: Pending-trade cards conditionally render asset summary `{t.assets.length} asset(s) · ...`. The current Ice Kings pending-trade docs don't have an `assets` array so summary is never shown — this is a data-shape mismatch (the trade docs use proposer_offer_players/target_offer_players or similar). Consider deriving the summary from those fields too so users see what's being moved without clicking through to /trades."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration25_transactions.py — NEW: 17 pytest tests across 6 classes (TestLeagueTransactions, TestPendingTrades, TestActivityCommaFilter, TestRosterAddDropMetadata, TestWaiverWonProcessing, TestNegative). Uses chriszarek's session for roster ops (admin doesn't own a team in Ice Kings); inserts a synthetic winning waiver claim directly into the DB and calls /waivers/process via admin (commissioner) to verify $addToSet + waiver_won activity + /transactions surfacing."
+  ],
+  "success_rate": {"backend": "100% (17/17 new + crown_flow + trade_flow regression)", "frontend": "100% — all required testIDs render with correct content; pending cards have amber dot, status badge, team names, proposed date, review link; tx rows have icon, label, description, date"},
+  "test_credentials": "admin@dynastydreams.com / Admin123! (commissioner of Ice Kings — used for /transactions, /pending-trades, /waivers/process). chriszarek@gmail.com / Chris2026! (owner of Zarek's Frozen — used for /roster/{id}/add and /roster/{id}/drop tests).",
+  "seed_data_creation": "test_waiver_won_logged_and_roster_updated inserts a single synthetic pending waiver_claim and removes it in finally{}; roster add/drop tests add and then drop the same player so net roster delta is 0. No persistent test data left behind.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Both feature backends + frontend are working. The /leagues/{id}/transactions endpoint correctly returns only the 4 supported event types ($in filter at L3003); status_code 200 even for unknown league_id (returns count=0). /leagues/{id}/pending-trades stringifies _id and excludes finalized statuses. process_waivers is idempotent over $addToSet so re-running won't duplicate roster entries — the testing_agent_v3 process_waivers test from earlier iterations should still pass. On Ice Kings the 20 newest activity_feed rows all happen to be trade_executed (because of cumulative test fixtures across iter18/22/25), so the UI's RECENT TRANSACTIONS shows only TRADE rows by default. To smoke-test ADD/DROP/WAIVER icons in the UI, call the API with limit=100 or use a quieter league. Frontend layout order: Header → Matchups (H2H only) → Pending Trades (only if >0) → Recent Transactions → Standings — verified visually.",
+  "rca of the issue": "N/A — no failing functionality. The new server endpoints and the LeagueDetailPage panels are implemented per spec and integrate end-to-end."
+}

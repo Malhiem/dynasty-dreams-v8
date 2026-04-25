@@ -32,6 +32,10 @@ export default function LeagueDetailPage() {
   const [matchupsLoading, setMatchupsLoading] = useState(false);
   const teamById = teams.reduce((acc, t) => { acc[t.id] = t; return acc; }, {});
 
+  const [transactions, setTransactions] = useState([]);
+  const [pendingTrades, setPendingTrades] = useState([]);
+  const [txnsLoading, setTxnsLoading] = useState(false);
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -66,6 +70,23 @@ export default function LeagueDetailPage() {
       .finally(() => { if (!cancelled) setMatchupsLoading(false); });
     return () => { cancelled = true; };
   }, [id, isH2H]);
+
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    setTxnsLoading(true);
+    Promise.all([
+      api.get(`/leagues/${id}/transactions?limit=20`).catch(() => ({ data: { transactions: [] } })),
+      api.get(`/leagues/${id}/pending-trades`).catch(() => ({ data: { pending_trades: [] } })),
+    ])
+      .then(([txnsRes, ptRes]) => {
+        if (cancelled) return;
+        setTransactions(txnsRes.data?.transactions || []);
+        setPendingTrades(ptRes.data?.pending_trades || []);
+      })
+      .finally(() => { if (!cancelled) setTxnsLoading(false); });
+    return () => { cancelled = true; };
+  }, [id]);
 
   const handleJoin = async () => {
     if (!teamName.trim()) return;
@@ -330,6 +351,135 @@ export default function LeagueDetailPage() {
             )}
           </div>
         )}
+
+        {/* Pending Trades */}
+        {pendingTrades.length > 0 && (
+          <div className="mb-8" data-testid="league-pending-trades-section">
+            <div className="flex items-baseline justify-between mb-4">
+              <h2 className="font-heading text-2xl font-bold text-white flex items-center gap-2">
+                <span className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
+                PENDING TRADES
+              </h2>
+              <span className="text-[#A1A1AA] text-sm">{pendingTrades.length} processing</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {pendingTrades.slice(0, 6).map(t => {
+                const submittedDate = t.submitted_at ? new Date(t.submitted_at).toLocaleDateString() : '';
+                const expiresIn = t.expires_at
+                  ? Math.max(0, Math.ceil((new Date(t.expires_at) - new Date()) / 86400000))
+                  : null;
+                return (
+                  <div
+                    key={t._id}
+                    className="surface p-4 border-amber-500/30"
+                    data-testid={`pending-trade-card-${t._id}`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/15 text-amber-400">
+                        {(t.status || 'pending').toUpperCase()}
+                      </span>
+                      {expiresIn != null && (
+                        <span className="text-[10px] text-[#A1A1AA]">
+                          {expiresIn === 0 ? 'Expires today' : `Expires in ${expiresIn}d`}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <Link to={`/teams/${t.proposer_team_id}`} className="font-semibold text-white truncate hover:underline">
+                        {t.proposer_team_name || 'Team A'}
+                      </Link>
+                      <span className="text-[#52525B]">↔</span>
+                      <Link to={`/teams/${t.target_team_id}`} className="font-semibold text-white truncate hover:underline">
+                        {t.target_team_name || 'Team B'}
+                      </Link>
+                    </div>
+                    {Array.isArray(t.assets) && t.assets.length > 0 && (
+                      <div className="mt-2 text-xs text-[#A1A1AA]">
+                        {t.assets.length} asset{t.assets.length === 1 ? '' : 's'} ·{' '}
+                        {t.assets.slice(0, 2).map(a => a.player_name || a.asset_type).filter(Boolean).join(', ')}
+                        {t.assets.length > 2 && ` +${t.assets.length - 2} more`}
+                      </div>
+                    )}
+                    {t.message && (
+                      <div className="mt-2 text-xs italic text-[#A1A1AA] line-clamp-2">"{t.message}"</div>
+                    )}
+                    <div className="mt-3 flex items-center justify-between text-[11px] text-[#52525B]">
+                      <span>Proposed {submittedDate}</span>
+                      <Link to="/trades" className="text-[#00D2FF] hover:underline">Review →</Link>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {pendingTrades.length > 6 && (
+              <Link
+                to="/trades"
+                className="mt-3 inline-block text-sm text-[#00D2FF] hover:underline"
+                data-testid="league-pending-trades-view-all"
+              >
+                View all {pendingTrades.length} pending trades →
+              </Link>
+            )}
+          </div>
+        )}
+
+        {/* Recent Transactions */}
+        <div className="mb-8" data-testid="league-transactions-section">
+          <div className="flex items-baseline justify-between mb-4">
+            <h2 className="font-heading text-2xl font-bold text-white">RECENT TRANSACTIONS</h2>
+            {!txnsLoading && transactions.length > 0 && (
+              <span className="text-[#A1A1AA] text-sm">last {transactions.length}</span>
+            )}
+          </div>
+          {txnsLoading ? (
+            <div className="surface p-6 text-center text-[#A1A1AA]">Loading transactions…</div>
+          ) : transactions.length === 0 ? (
+            <div className="surface p-6 text-center text-[#A1A1AA]" data-testid="league-transactions-empty">
+              No transactions yet. Add or drop a player, win a waiver claim, or accept a trade — all activity shows up here.
+            </div>
+          ) : (
+            <div className="surface divide-y divide-white/5" data-testid="league-transactions-list">
+              {transactions.map(tx => {
+                const ICON = {
+                  roster_add: { icon: '+', color: 'text-emerald-400 bg-emerald-500/15', label: 'ADD' },
+                  roster_drop: { icon: '−', color: 'text-rose-400 bg-rose-500/15', label: 'DROP' },
+                  waiver_won: { icon: '★', color: 'text-violet-400 bg-violet-500/15', label: 'WAIVER' },
+                  trade_executed: { icon: '⇄', color: 'text-[#00D2FF] bg-[#00D2FF]/15', label: 'TRADE' },
+                }[tx.type] || { icon: '·', color: 'text-[#A1A1AA] bg-white/5', label: 'TXN' };
+                return (
+                  <div
+                    key={tx.id}
+                    className="px-4 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition-colors"
+                    data-testid={`league-transaction-${tx.id}`}
+                  >
+                    <div className={`h-8 w-8 rounded-md flex items-center justify-center text-base font-black shrink-0 ${ICON.color}`}>
+                      {ICON.icon}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[10px] font-bold tracking-wider ${ICON.color.split(' ')[0]}`}>
+                          {ICON.label}
+                        </span>
+                        {tx.team_name && (
+                          <Link to={`/teams/${tx.team_id}`} className="text-sm font-semibold text-white hover:underline truncate">
+                            {tx.team_name}
+                          </Link>
+                        )}
+                        {tx.bid_amount != null && (
+                          <span className="text-[10px] text-violet-400 font-bold">${tx.bid_amount} FAAB</span>
+                        )}
+                      </div>
+                      <div className="text-xs text-[#A1A1AA] truncate mt-0.5">{tx.description}</div>
+                    </div>
+                    <div className="text-[10px] text-[#52525B] shrink-0 tabular-nums">
+                      {tx.created_at ? new Date(tx.created_at).toLocaleDateString() : ''}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Standings */}
         <div className="mb-8">

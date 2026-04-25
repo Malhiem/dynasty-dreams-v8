@@ -2975,15 +2975,63 @@ async def log_activity(league_id: str, event_type: str, message: str, user_id: s
 
 @api_router.get("/activity/{league_id}")
 async def get_activity_feed(league_id: str, event_type: Optional[str] = None, limit: int = 50, page: int = 1):
-    query = {"league_id": league_id}
+    query: dict = {"league_id": league_id}
     if event_type:
-        query["event_type"] = event_type
+        # Support comma-separated event types: "roster_add,roster_drop,trade_executed"
+        types = [t.strip() for t in event_type.split(",") if t.strip()]
+        if len(types) == 1:
+            query["event_type"] = types[0]
+        elif types:
+            query["event_type"] = {"$in": types}
     skip = (page - 1) * limit
     items = await db.activity_feed.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     total = await db.activity_feed.count_documents(query)
     for item in items:
         item["_id"] = str(item["_id"])
     return {"items": items, "total": total, "page": page, "pages": (total + limit - 1) // limit}
+
+
+# ─── League transactions (normalized adds/drops/waivers/trades) ─
+@api_router.get("/leagues/{league_id}/transactions")
+async def get_league_transactions(league_id: str, limit: int = 30):
+    """Returns the most recent player transactions for a league in a normalized shape:
+    [{type, description, team_id?, team_name?, player_name?, created_at, raw}, ...]
+    Types: roster_add, roster_drop, waiver_won, trade_executed.
+    """
+    cursor = db.activity_feed.find({
+        "league_id": league_id,
+        "event_type": {"$in": ["roster_add", "roster_drop", "waiver_won", "trade_executed"]},
+    }).sort("created_at", -1).limit(max(1, min(limit, 100)))
+    items = await cursor.to_list(limit)
+    out = []
+    for it in items:
+        it["_id"] = str(it["_id"])
+        meta = it.get("metadata") or {}
+        out.append({
+            "id": it["_id"],
+            "type": it.get("event_type"),
+            "description": it.get("message") or it.get("description"),
+            "team_id": meta.get("team_id"),
+            "team_name": meta.get("team_name"),
+            "player_id": meta.get("player_id"),
+            "player_name": meta.get("player_name"),
+            "bid_amount": meta.get("bid_amount"),
+            "created_at": it.get("created_at"),
+        })
+    return {"league_id": league_id, "transactions": out, "count": len(out)}
+
+
+@api_router.get("/leagues/{league_id}/pending-trades")
+async def get_pending_trades(league_id: str):
+    """Trades currently in flight (status in pending/voting/conditional). Intended for the
+    league homepage 'Pending Trades' panel."""
+    trades = await db.trades.find({
+        "league_id": league_id,
+        "status": {"$in": ["pending", "voting", "conditional"]},
+    }).sort("submitted_at", -1).to_list(100)
+    for t in trades:
+        t["_id"] = str(t["_id"])
+    return {"league_id": league_id, "pending_trades": trades, "count": len(trades)}
 
 
 @api_router.post("/activity/{league_id}/chat")
@@ -3848,6 +3896,31 @@ async def process_waivers(league_id: str, request: Request):
                 {"$set": {"status": "lost", "processed_at": datetime.now(timezone.utc).isoformat()}}
             )
 
+        # Add the player to the winner's roster (if not already there)
+        try:
+            await db.teams.update_one(
+                {"_id": ObjectId(winner["team_id"])},
+                {"$addToSet": {"roster": winner["player_id"]}}
+            )
+        except Exception as ex:
+            logger.warning("Failed to add waiver-won player to roster team=%s player=%s: %s",
+                           winner["team_id"], winner["player_id"], ex)
+
+        # Activity feed entry so transactions UI can show 'waiver pickup'
+        await log_activity(
+            league_id,
+            "waiver_won",
+            f"{winner['team_name']} won {winner['player_name']} on waivers (${winner['bid_amount']} FAAB)",
+            None,
+            metadata={
+                "team_id": winner["team_id"],
+                "team_name": winner["team_name"],
+                "player_id": winner["player_id"],
+                "player_name": winner["player_name"],
+                "bid_amount": winner["bid_amount"],
+            },
+        )
+
         results.append({
             "player": winner["player_name"],
             "winner": winner["team_name"],
@@ -4133,7 +4206,16 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
         {"$push": {"roster": input.player_id}}
     )
 
-    await log_activity(team["league_id"], "roster_add", f"{team['name']} adds {player['name']} ({player['position']})", user["_id"])
+    await log_activity(
+        team["league_id"], "roster_add",
+        f"{team['name']} adds {player['name']} ({player['position']})",
+        user["_id"],
+        metadata={
+            "team_id": team_id, "team_name": team["name"],
+            "player_id": input.player_id, "player_name": player["name"],
+            "position": player.get("position"),
+        },
+    )
 
     return {"message": f"Added {player['name']} to roster"}
 
@@ -4158,7 +4240,15 @@ async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
 
     player = await db.players.find_one({"_id": ObjectId(input.player_id)})
     name = player["name"] if player else "Unknown"
-    await log_activity(team["league_id"], "roster_drop", f"{team['name']} drops {name}", user["_id"])
+    await log_activity(
+        team["league_id"], "roster_drop",
+        f"{team['name']} drops {name}",
+        user["_id"],
+        metadata={
+            "team_id": team_id, "team_name": team["name"],
+            "player_id": input.player_id, "player_name": name,
+        },
+    )
     return {"message": f"Dropped {name} from roster"}
 
 
