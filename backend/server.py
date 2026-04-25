@@ -3130,8 +3130,12 @@ async def add_to_trade_block(input: TradeBlockItemCreate, request: Request):
             item_doc["pick_round"] = input.pick_round
         item_doc["position"] = "PICK"
 
-    # Prevent duplicates (per-owner, per-asset)
+    # Prevent duplicates (per-owner, per-league, per-asset)
     dup_query: dict = {"owner_id": user["_id"], "item_type": input.item_type}
+    if input.league_id:
+        dup_query["league_id"] = input.league_id
+    if input.team_id:
+        dup_query["team_id"] = input.team_id
     if input.player_id:
         dup_query["player_id"] = input.player_id
     elif input.pick_id:
