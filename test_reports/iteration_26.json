@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 26 — Trade Block system (backend POST/GET/DELETE/PUT/summary/refresh + frontend LeagueDetailPage card + Lovable Team page TradeBlockManager). Backend: 15/15 pass + 1 skipped (pick test - no draft-picks API endpoint discoverable for test fixture; pick path covered by manual curl). Regression: test_crown_flow.py and test_trade_flow.py both PASS. Frontend smoke (chriszarek@gmail.com on Ice Kings): LeagueDetailPage shows 6 top-trade-block items with retention badges + FPTS/PPG tiles + 'View all 6 →' link. Lovable Team page mounts TradeBlockManager with all 7 required testIDs (team-trade-block-manager, 3× team-retention-*, trade-block-pick-select, trade-block-commit-pick, 21× trade-block-toggle-{player_id}). Retention toggle persists via PUT and emits success toast 'Salary retention: A · Willing to retain'. Other-team /teams/{id} route does NOT mount TradeBlockManager — needs main-agent confirmation if read-only mode was supposed to be on a different route.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/leagues/{id}/trade-block-summary", "issue": "Returns legacy items (added before iter26) without team_name / salary_retention_pref because they were created without team_id. The endpoint does NOT backfill these fields on read. Frontend will see undefined for retention badge on legacy rows. Suggest either (a) one-time migration to populate team_name from owner_id, or (b) fallback in summary handler."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Lovable Team route", "issue": "Problem statement says route is /team but actual App.js mounts LovableTeam at /roster (App.js L91). /team returns 404. Either docs in problem statement are stale OR a route alias should be added.", "affected_selectors": ["team-trade-block-manager"]},
+      {"flow": "Roster quick-toggle add to trade block", "issue": "Clicking trade-block-toggle-{player_id} chip did NOT visibly add an item card under 'Trade Block' (items count stayed 0 after click + 2.5s wait, UI still showed 'Nothing on the block yet.'). Backend POST /trade-block works fine (verified in pytest), so this is likely a frontend issue: either the togglePlayer call's POST fails silently, or the items list isn't re-fetched after the optimistic toggle. Note: the retention toggle (PUT) DOES work and emits toast.", "affected_selectors": ["trade-block-toggle-{player_id}", "trade-block-items"]},
+      {"flow": "Other-team read-only view", "issue": "TradeBlockManager does NOT render on /teams/{id} for OTHER teams. Per spec it should render read-only. Either the read-only branch was scoped only to /roster (which only ever shows OWN team via active league context), or the integration was missed on /teams/{id}.", "affected_selectors": ["team-trade-block-manager"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration26_trade_block.py",
+    "/app/test_reports/pytest/iteration26_results.xml"
+  ],
+  "action_items": [
+    "Investigate frontend togglePlayer POST flow on Lovable Team page — chip click is not surfacing the new trade-block item in the UI (no error toast visible either; possibly silent failure of the optimistic re-fetch).",
+    "Decide on /team vs /roster route — either alias /team → /roster or update spec/docs.",
+    "Confirm whether read-only TradeBlockManager should also mount on /teams/{id} (other team's profile). Currently it only renders on /roster (own team).",
+    "Optional backend fix: backfill team_name + salary_retention_pref in trade-block-summary handler so legacy items render the retention badge."
+  ],
+  "critical_code_review_comments": [
+    "server.py L3055-3153 add_to_trade_block: enrichment is correct. season_stats fallback to player root fields is defensive. recent_form_ppw computed from week_summaries last-3 sorted by week desc — note this uses team_id+league_id of the OWNER, not the player's team, which is the correct semantic (we want the team's recent form as a proxy for value).",
+    "server.py L3155-3171 GET /trade-block: added league_id/team_id/owner_id filters. Good. Sort by created_at desc.",
+    "server.py L3193-3211 PUT /teams/{id}/trade-block-preference: validates value, owner-only via owner_id check, AND cascades via update_many. Idempotent and atomic per team. Good.",
+    "server.py L3214-3230 trade-block-summary: in-memory sort by (fantasy_points, recent_form_ppw) desc. Limit clamped to [1,50]. CAVEAT: legacy items with no team_id are included in the list and missing team_name + salary_retention_pref. UI will show 'undefined' badge unless guarded.",
+    "server.py L3233-3281 refresh-stats: commissioner OR co-commissioner allowed (good — not just commissioner). Re-pulls season_stats + recent_form. Idempotent. Returns items_refreshed count.",
+    "TradeBlockManager.tsx: testIDs all match spec. Uses /trade-block?team_id={id} for fetch. Uses /teams/{id}/trade-block-preference for retention update. Read-only branch likely guarded by isOwnTeam prop — verify which page passes isOwnTeam=false.",
+    "App.js L91: route is /roster (not /team). Spec mismatch."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration26_trade_block.py — NEW: 16 pytest tests across 5 classes (TestTradeBlockPlayer, TestTradeBlockPick, TestRetentionPreference, TestSummaryAndRefresh, TestRegression). Cleans up TEST artifacts via _cleanup_owner_block. Uses chriszarek (co-commissioner of Ice Kings) and admin (commissioner) sessions."
+  ],
+  "success_rate": {
+    "backend": "100% (15/15 pass + 1 skipped — pick test skipped due to no public draft-picks API; backend code path covered by manual curl per problem statement)",
+    "frontend": "~75% — LeagueDetailPage 100% (top-trade-block card with 6 items, retention badges, FPTS/PPG tiles, view-all link verified). Lovable Team page testIDs all render and retention toggle persists, BUT roster quick-toggle to add to block did not surface item in UI (likely silent POST or stale list); /team route is 404 (actual route is /roster); other-team read-only view does not mount on /teams/{id}."
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (co-commissioner of Ice Kings, owner of Zarek's Frozen). admin@dynastydreams.com / Admin123! (commissioner of Ice Kings).",
+  "seed_data_creation": "Tests create + delete trade-block items in the same test class via _cleanup_owner_block helper. No persistent test data left behind. Refresh-stats test does call the production endpoint which mutates 9 existing items in Ice Kings — this is idempotent (re-pulls current player season_stats) and matches what the commissioner UI button would do.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend trade-block APIs all pass pytest. The 3 outstanding items are FE-side: (1) togglePlayer chip click doesn't visibly add item to /roster's Trade Block grid — needs main agent to inspect TradeBlockManager.togglePlayer flow + ensure setItems() is called after POST resolves; (2) /team route is 404 in App.js — only /roster works; (3) TradeBlockManager doesn't appear on /teams/{id} — confirm if read-only view was supposed to be there. Backend test file is at /app/backend/tests/test_iteration26_trade_block.py — re-run with: pytest backend/tests/test_iteration26_trade_block.py -v",
+  "rca of the issue": "Quick-toggle add: most likely TradeBlockManager.togglePlayer in /app/frontend/src/lovable/components/team/TradeBlockManager.tsx calls api.post('/trade-block', {...}) but doesn't append the returned item to local state OR doesn't re-fetch /trade-block?team_id={id} after success. Need to verify the await pattern and setItems() call. Backend POST is verified working via pytest test_post_player_returns_enriched_fields."
+}

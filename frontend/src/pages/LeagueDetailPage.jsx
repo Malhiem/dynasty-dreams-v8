@@ -35,6 +35,8 @@ export default function LeagueDetailPage() {
   const [transactions, setTransactions] = useState([]);
   const [pendingTrades, setPendingTrades] = useState([]);
   const [txnsLoading, setTxnsLoading] = useState(false);
+  const [topBlock, setTopBlock] = useState([]);
+  const [blockTotal, setBlockTotal] = useState(0);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -78,11 +80,14 @@ export default function LeagueDetailPage() {
     Promise.all([
       api.get(`/leagues/${id}/transactions?limit=20`).catch(() => ({ data: { transactions: [] } })),
       api.get(`/leagues/${id}/pending-trades`).catch(() => ({ data: { pending_trades: [] } })),
+      api.get(`/leagues/${id}/trade-block-summary?limit=8`).catch(() => ({ data: { items: [], count: 0 } })),
     ])
-      .then(([txnsRes, ptRes]) => {
+      .then(([txnsRes, ptRes, tbRes]) => {
         if (cancelled) return;
         setTransactions(txnsRes.data?.transactions || []);
         setPendingTrades(ptRes.data?.pending_trades || []);
+        setTopBlock(tbRes.data?.items || []);
+        setBlockTotal(tbRes.data?.count || 0);
       })
       .finally(() => { if (!cancelled) setTxnsLoading(false); });
     return () => { cancelled = true; };
@@ -349,6 +354,88 @@ export default function LeagueDetailPage() {
                 })}
               </div>
             )}
+          </div>
+        )}
+
+        {/* Top Trade Block */}
+        {topBlock.length > 0 && (
+          <div className="mb-8" data-testid="league-top-trade-block">
+            <div className="flex items-baseline justify-between mb-4">
+              <h2 className="font-heading text-2xl font-bold text-white">TOP TRADE BLOCK</h2>
+              <Link
+                to="/trade-block"
+                className="text-sm text-[#00D2FF] hover:underline"
+                data-testid="league-top-trade-block-view-all"
+              >
+                View all {blockTotal} →
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {topBlock.map(it => {
+                const RET_PALETTE = {
+                  willing_to_retain: { label: 'WILLING', color: 'text-emerald-400 bg-emerald-500/15' },
+                  seeking_retention: { label: 'SEEKING', color: 'text-amber-400 bg-amber-500/15' },
+                  no_preference:     { label: 'NEUTRAL', color: 'text-[#A1A1AA] bg-white/5' },
+                }[it.salary_retention_pref] || { label: 'NEUTRAL', color: 'text-[#A1A1AA] bg-white/5' };
+                return (
+                  <div
+                    key={it._id}
+                    className="surface p-3 hover:border-[#00D2FF]/40 transition-colors"
+                    data-testid={`top-trade-block-item-${it._id}`}
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-white truncate text-sm">{it.name}</div>
+                        <div className="text-[11px] text-[#A1A1AA] flex items-center gap-1">
+                          <span className="text-[#00D2FF] font-bold">{it.position || '–'}</span>
+                          {it.nhl_team && <span>· {it.nhl_team}</span>}
+                          {it.item_type === 'pick' && it.pick_year && (
+                            <span className="text-amber-400">· PICK</span>
+                          )}
+                        </div>
+                      </div>
+                      <span className={`text-[9px] font-bold tracking-wider px-1.5 py-0.5 rounded ${RET_PALETTE.color}`}>
+                        {RET_PALETTE.label}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1 mt-2 text-[11px]">
+                      <div>
+                        <div className="text-[#52525B] text-[9px] uppercase">FPTS</div>
+                        <div className="text-white font-bold tabular-nums">
+                          {(it.fantasy_points || 0).toFixed(1)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[#52525B] text-[9px] uppercase">PPG</div>
+                        <div className="text-white font-bold tabular-nums">
+                          {(it.fantasy_ppg || 0).toFixed(2)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[#52525B] text-[9px] uppercase">REC FORM</div>
+                        <div className="text-white font-bold tabular-nums">
+                          {it.recent_form_ppw != null ? it.recent_form_ppw.toFixed(0) : '—'}
+                        </div>
+                      </div>
+                    </div>
+                    {(it.goals != null || it.assists != null) && it.item_type === 'player' && (
+                      <div className="mt-2 text-[10px] text-[#A1A1AA] flex items-center gap-2">
+                        <span>{it.goals || 0}G</span>
+                        <span>·</span>
+                        <span>{it.assists || 0}A</span>
+                        <span>·</span>
+                        <span>{it.points || 0}P</span>
+                        <span>·</span>
+                        <span>{it.games_played || 0}GP</span>
+                      </div>
+                    )}
+                    <div className="mt-2 pt-2 border-t border-white/5 text-[10px] text-[#A1A1AA] truncate">
+                      {it.team_name || it.owner_name || ''}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 

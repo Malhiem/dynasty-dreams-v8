@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import api from "@/lib/api";
 import PlayerRoster from "@/lovable/components/dashboard/PlayerRoster";
+import TradeBlockManager from "@/lovable/components/team/TradeBlockManager";
 import LiveTeamHeader from "@/lovable/components/dashboard/LiveTeamHeader";
 import TeamDraftPicks from "@/lovable/components/dashboard/TeamDraftPicks";
 import TeamSalaryCap from "@/lovable/components/dashboard/TeamSalaryCap";
@@ -104,6 +105,30 @@ const Team = () => {
   const pointsTotal = selectedTeam
     ? Math.round((selectedTeam.points_for || 0) + (selectedTeam.live_points || 0))
     : 0;
+
+  // Roster players (for the Trade Block quick-toggle UI)
+  const [rosterPlayers, setRosterPlayers] = useState<any[]>([]);
+  const [teamRecord, setTeamRecord] = useState<any>(null);
+  useEffect(() => {
+    if (!selectedTeamId) { setRosterPlayers([]); setTeamRecord(null); return; }
+    let cancelled = false;
+    Promise.all([
+      api.get(`/roster/${selectedTeamId}`).catch(() => ({ data: { players: [] } })),
+      api.get(`/teams/${selectedTeamId}`).catch(() => ({ data: null })),
+    ]).then(([rosterRes, teamRes]) => {
+      if (cancelled) return;
+      // /roster returns {players: [{player_id, name, position, ...}]}; map to {id, name, ...}
+      const players = (rosterRes.data?.players || []).map((p: any) => ({
+        id: p.player_id || p.id,
+        name: p.name,
+        position: p.position,
+        nhl_team: p.nhl_team,
+      }));
+      setRosterPlayers(players);
+      setTeamRecord(teamRes.data || null);
+    });
+    return () => { cancelled = true; };
+  }, [selectedTeamId]);
 
   // No real pending trades yet — keep empty so banner hides
   const pendingTrades: any[] = [];
@@ -381,6 +406,18 @@ const Team = () => {
           isOwnTeam={!!isOwnTeam}
           currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
           teamId={selectedTeamId as string}
+        />
+
+        <TradeBlockManager
+          team={{
+            ...(teamRecord || {}),
+            id: selectedTeamId,
+            name: selectedTeam?.name,
+            salary_retention_pref: teamRecord?.salary_retention_pref || "no_preference",
+            _players: rosterPlayers,
+          }}
+          league={league ? { id: league.id, name: league.name } : null}
+          isOwnTeam={!!isOwnTeam}
         />
       </div>
 

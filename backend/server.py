@@ -3058,11 +3058,23 @@ async def add_to_trade_block(input: TradeBlockItemCreate, request: Request):
 
     item_doc = {
         "item_type": input.item_type,
-        "looking_for": input.looking_for,
+        "looking_for": input.looking_for or [],
         "owner_id": user["_id"],
         "owner_name": user["name"],
-        "created_at": datetime.now(timezone.utc).isoformat()
+        "league_id": input.league_id,
+        "team_id": input.team_id,
+        "note": (input.note or "").strip(),
+        "created_at": datetime.now(timezone.utc),
     }
+
+    # Resolve team_name + retention preference once
+    if input.team_id:
+        team = await db.teams.find_one({"_id": ObjectId(input.team_id)})
+        if team:
+            item_doc["team_name"] = team.get("name")
+            item_doc["salary_retention_pref"] = team.get(
+                "salary_retention_pref", "no_preference"
+            )
 
     if input.item_type == "player" and input.player_id:
         player = await db.players.find_one({"_id": ObjectId(input.player_id)})
@@ -3072,36 +3084,88 @@ async def add_to_trade_block(input: TradeBlockItemCreate, request: Request):
         item_doc["name"] = player["name"]
         item_doc["position"] = player["position"]
         item_doc["nhl_team"] = player.get("team", "")
-        item_doc["goals"] = player.get("goals", 0)
-        item_doc["assists"] = player.get("assists", 0)
-        item_doc["points"] = player.get("points", 0)
-        item_doc["games_played"] = player.get("games_played", 0)
-        item_doc["plus_minus"] = player.get("plus_minus", 0)
-    elif input.item_type == "pick":
-        item_doc["name"] = f"{input.pick_year} {input.pick_round} Round"
-        item_doc["position"] = "Pick"
-        item_doc["pick_year"] = input.pick_year
-        item_doc["pick_round"] = input.pick_round
 
-    # Prevent duplicates
-    existing = await db.trade_block.find_one({
-        "owner_id": user["_id"],
-        "player_id": input.player_id if input.player_id else None,
-        "item_type": input.item_type
-    })
+        season = player.get("season_stats") or {}
+        gp = int(season.get("games_played") or player.get("games_played") or 0)
+        item_doc["goals"] = int(season.get("goals") or player.get("goals") or 0)
+        item_doc["assists"] = int(season.get("assists") or player.get("assists") or 0)
+        item_doc["points"] = int(season.get("points") or player.get("points") or 0)
+        item_doc["plus_minus"] = int(season.get("plus_minus") or player.get("plus_minus") or 0)
+        item_doc["games_played"] = gp
+        fpts = float(
+            player.get("fantasy_points")
+            or season.get("fantasy_points")
+            or 0
+        )
+        item_doc["fantasy_points"] = round(fpts, 1)
+        item_doc["fantasy_ppg"] = round(fpts / gp, 2) if gp else 0.0
+
+        # Recent form: last 3 weeks of fantasy points from week_summaries (avg)
+        if input.team_id and input.league_id:
+            recent = await db.week_summaries.find({
+                "league_id": input.league_id,
+                "team_id": input.team_id,
+            }).sort("week", -1).limit(3).to_list(3)
+            if recent:
+                item_doc["recent_form_ppw"] = round(
+                    sum((r.get("points_for", 0.0) or 0.0) for r in recent) / len(recent),
+                    1,
+                )
+    elif input.item_type == "pick":
+        if input.pick_id:
+            pick = await db.draft_picks.find_one({"_id": ObjectId(input.pick_id)})
+            if not pick:
+                raise HTTPException(status_code=404, detail="Pick not found")
+            item_doc["pick_id"] = input.pick_id
+            item_doc["pick_year"] = pick.get("year")
+            item_doc["pick_round"] = pick.get("round")
+            item_doc["pick_number"] = pick.get("pick_number")
+            item_doc["name"] = (
+                f"{pick.get('year')} R{pick.get('round')}"
+                + (f" #{pick.get('pick_number')}" if pick.get("pick_number") else "")
+            )
+        else:
+            item_doc["name"] = f"{input.pick_year} {input.pick_round} Round"
+            item_doc["pick_year"] = input.pick_year
+            item_doc["pick_round"] = input.pick_round
+        item_doc["position"] = "PICK"
+
+    # Prevent duplicates (per-owner, per-asset)
+    dup_query: dict = {"owner_id": user["_id"], "item_type": input.item_type}
+    if input.player_id:
+        dup_query["player_id"] = input.player_id
+    elif input.pick_id:
+        dup_query["pick_id"] = input.pick_id
+    elif input.pick_year and input.pick_round:
+        dup_query["pick_year"] = input.pick_year
+        dup_query["pick_round"] = input.pick_round
+    existing = await db.trade_block.find_one(dup_query)
     if existing:
         raise HTTPException(status_code=400, detail="Already on trade block")
 
     result = await db.trade_block.insert_one(item_doc)
     item_doc["_id"] = str(result.inserted_id)
+
+    # Also broadcast for live UI updates
+    if input.league_id:
+        await broadcast_to_room(f"league_{input.league_id}", "trade_block_changed",
+                                {"action": "added", "item_id": str(result.inserted_id)})
     return item_doc
 
 @api_router.get("/trade-block")
-async def get_trade_block(league_id: Optional[str] = None):
+async def get_trade_block(
+    league_id: Optional[str] = None,
+    team_id: Optional[str] = None,
+    owner_id: Optional[str] = None,
+):
     query: dict = {}
     if league_id:
         query["league_id"] = league_id
-    items = await db.trade_block.find(query).sort("created_at", -1).to_list(200)
+    if team_id:
+        query["team_id"] = team_id
+    if owner_id:
+        query["owner_id"] = owner_id
+    items = await db.trade_block.find(query).sort("created_at", -1).to_list(500)
     for item in items:
         item["_id"] = str(item["_id"])
     return items
@@ -3115,7 +3179,106 @@ async def remove_from_trade_block(item_id: str, request: Request):
     if item["owner_id"] != user["_id"]:
         raise HTTPException(status_code=403, detail="Not your item")
     await db.trade_block.delete_one({"_id": ObjectId(item_id)})
+    if item.get("league_id"):
+        await broadcast_to_room(f"league_{item['league_id']}", "trade_block_changed",
+                                {"action": "removed", "item_id": item_id})
     return {"message": "Removed from trade block"}
+
+
+# ─── Trade Block: salary retention preference (per team) ────────
+class SalaryRetentionPrefUpdate(BaseModel):
+    preference: str  # "willing_to_retain" | "no_preference" | "seeking_retention"
+
+
+@api_router.put("/teams/{team_id}/trade-block-preference")
+async def set_trade_block_preference(team_id: str, payload: SalaryRetentionPrefUpdate, request: Request):
+    user = await get_current_user(request)
+    if payload.preference not in ("willing_to_retain", "no_preference", "seeking_retention"):
+        raise HTTPException(status_code=400, detail="Invalid preference")
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if team.get("owner_id") != user["_id"]:
+        raise HTTPException(status_code=403, detail="Not your team")
+
+    await db.teams.update_one({"_id": team["_id"]},
+                              {"$set": {"salary_retention_pref": payload.preference}})
+    # Cascade preference to current trade-block items for this team
+    await db.trade_block.update_many(
+        {"owner_id": user["_id"], "team_id": team_id},
+        {"$set": {"salary_retention_pref": payload.preference}},
+    )
+    return {"team_id": team_id, "preference": payload.preference}
+
+
+@api_router.get("/leagues/{league_id}/trade-block-summary")
+async def trade_block_summary(league_id: str, limit: int = 10):
+    """Return enriched, top-valued trade block items for a league, ranked by season fantasy
+    points then by recent_form_ppw (last 3 weeks). Used by the league homepage widget."""
+    items = await db.trade_block.find({"league_id": league_id}).to_list(500)
+    items.sort(
+        key=lambda x: (
+            float(x.get("fantasy_points") or 0),
+            float(x.get("recent_form_ppw") or 0),
+        ),
+        reverse=True,
+    )
+    out = []
+    for it in items[: max(1, min(limit, 50))]:
+        it["_id"] = str(it["_id"])
+        out.append(it)
+    return {"league_id": league_id, "items": out, "count": len(items)}
+
+
+@api_router.post("/leagues/{league_id}/trade-block/refresh-stats")
+async def refresh_trade_block_stats(league_id: str, request: Request):
+    """Re-pull current player season_stats + recent-form into all this league's trade-block
+    items so the homepage widget stays in sync as the season advances. Idempotent.
+    """
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_comm = league["commissioner_id"] == user["_id"]
+    co_comms = league.get("co_commissioners", []) or []
+    if not (is_comm or user["_id"] in co_comms):
+        raise HTTPException(status_code=403, detail="Only commissioners can refresh trade-block stats")
+
+    items = await db.trade_block.find({"league_id": league_id, "item_type": "player"}).to_list(500)
+    updated = 0
+    for it in items:
+        pid = it.get("player_id")
+        if not pid:
+            continue
+        try:
+            player = await db.players.find_one({"_id": ObjectId(pid)})
+        except Exception:
+            continue
+        if not player:
+            continue
+        season = player.get("season_stats") or {}
+        gp = int(season.get("games_played") or player.get("games_played") or 0)
+        fpts = float(player.get("fantasy_points") or season.get("fantasy_points") or 0)
+        patch = {
+            "goals": int(season.get("goals") or player.get("goals") or 0),
+            "assists": int(season.get("assists") or player.get("assists") or 0),
+            "points": int(season.get("points") or player.get("points") or 0),
+            "plus_minus": int(season.get("plus_minus") or player.get("plus_minus") or 0),
+            "games_played": gp,
+            "fantasy_points": round(fpts, 1),
+            "fantasy_ppg": round(fpts / gp, 2) if gp else 0.0,
+        }
+        if it.get("team_id"):
+            recent = await db.week_summaries.find({
+                "league_id": league_id, "team_id": it["team_id"],
+            }).sort("week", -1).limit(3).to_list(3)
+            if recent:
+                patch["recent_form_ppw"] = round(
+                    sum((r.get("points_for", 0.0) or 0.0) for r in recent) / len(recent), 1,
+                )
+        await db.trade_block.update_one({"_id": it["_id"]}, {"$set": patch})
+        updated += 1
+    return {"league_id": league_id, "items_refreshed": updated}
 
 # ─── Trade Proposals ──────────────────────────────────────────
 

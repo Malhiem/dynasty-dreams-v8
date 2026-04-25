@@ -30,6 +30,10 @@ class TradeBlockItemCreate(BaseModel):
     looking_for: list[str] = Field(default_factory=list)
     pick_year: Optional[int] = None
     pick_round: Optional[str] = None
+    pick_id: Optional[str] = None  # ObjectId of draft_picks row
+    league_id: Optional[str] = None
+    team_id: Optional[str] = None
+    note: Optional[str] = None
 
 
 class TradeBlockItemRemove(BaseModel):
