@@ -2,6 +2,7 @@ import "@/App.css";
 import "@/index.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { TradeBuilderProvider } from "@/lovable/state/TradeBuilderContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 
 // Landing / auth (keep existing)
@@ -61,6 +62,7 @@ function App() {
     <AuthProvider>
       <Toaster position="top-right" richColors closeButton />
       <BrowserRouter>
+        <TradeBuilderProvider>
         <Routes>
           {/* Public */}
           <Route path="/" element={<LandingPage />} />
@@ -117,6 +119,7 @@ function App() {
           {/* 404 */}
           <Route path="*" element={<LovableNotFound />} />
         </Routes>
+        </TradeBuilderProvider>
       </BrowserRouter>
     </AuthProvider>
   );

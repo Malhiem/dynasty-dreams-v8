@@ -30,8 +30,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { TradeBuilder } from "@/lovable/components/trade/TradeBuilder";
 import type { TradePlayer, TradeDraftPick } from "@/lovable/components/trade/TradeBuilder";
+import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
 import { toast } from "sonner";
 
 interface TradeAssetState {
@@ -133,154 +133,81 @@ const Team = () => {
   // No real pending trades yet — keep empty so banner hides
   const pendingTrades: any[] = [];
 
-  // ── Trade Builder State ──
-  const [tradeOpen, setTradeOpen] = useState(false);
-  const [tradeAssets, setTradeAssets] = useState<TradeAssetState[]>([]);
-  const [tradePicks, setTradePicks] = useState<TradeDraftPick[]>([]);
-  const [tradePartner, setTradePartner] = useState("");
+  // ── Global Trade Builder (persistent, lives in AppLayout) ──
+  const tradeBuilder = useTradeBuilder();
+
+  const ensureTradeOpen = useCallback(() => {
+    if (!myTeam?.id || !league?.id) return false;
+    if (!tradeBuilder.open) {
+      tradeBuilder.openBuilder({
+        leagueId: league.id,
+        myTeam: {
+          id: myTeam.id,
+          name: myTeam.name,
+          abbr: myTeam.logo_abbr,
+          owner_id: myTeam.owner_id,
+          owner_name: myTeam.owner_name,
+        },
+      });
+    }
+    return true;
+  }, [tradeBuilder, myTeam, league]);
 
   const handleAddPlayerToTrade = useCallback((player: TradePlayer) => {
-    setTradeAssets(prev => {
-      if (prev.some(a => a.player.id === player.id)) {
-        toast.info(`${player.name} is already in the trade`);
-        return prev;
-      }
-      return [...prev, { player, retainSalary: false, retainedPercentage: 0 }];
-    });
-    setTradeOpen(true);
-  }, []);
-
-  const handleAddPickToTrade = useCallback((pick: TradeDraftPick) => {
-    setTradePicks(prev => {
-      if (prev.some(p => p.id === pick.id)) {
-        toast.info("This pick is already in the trade");
-        return prev;
-      }
-      return [...prev, pick];
-    });
-    setTradeOpen(true);
-  }, []);
-
-  const handleRemovePlayer = useCallback((playerId: number | string) => {
-    setTradeAssets(prev => prev.filter(a => a.player.id !== playerId));
-  }, []);
-
-  const handleRemovePick = useCallback((pickId: string) => {
-    setTradePicks(prev => prev.filter(p => p.id !== pickId));
-  }, []);
-
-  const handleToggleRetain = useCallback((playerId: number | string) => {
-    setTradeAssets(prev => prev.map(a =>
-      a.player.id === playerId ? { ...a, retainSalary: !a.retainSalary, retainedPercentage: a.retainSalary ? 0 : 10 } : a
-    ));
-  }, []);
-
-  const handleUpdateRetention = useCallback((playerId: number | string, pct: number) => {
-    setTradeAssets(prev => prev.map(a =>
-      a.player.id === playerId ? { ...a, retainedPercentage: pct } : a
-    ));
-  }, []);
-
-  const handleCloseTrade = useCallback(() => {
-    setTradeOpen(false);
-    setTradeAssets([]);
-    setTradePicks([]);
-    setTradePartner("");
-  }, []);
-
-  const handleSendProposal = useCallback(async () => {
-    // Target team = the currently selected team (opponent view)
-    const targetTeamId = !isOwnTeam ? selectedTeamId : null;
-    if (!targetTeamId || !myTeam?.id) {
-      toast.error("Select a partner team before sending a trade.");
+    if (!ensureTradeOpen()) {
+      toast.error("Cannot start a trade right now");
       return;
     }
-    // Build assets_offered (my assets leaving) + assets_requested (their assets coming to me)
-    const offered: any[] = [];
-    const requested: any[] = [];
-
-    tradeAssets.forEach((a) => {
-      const asset = {
-        asset_type: "player" as const,
-        player_id: String(a.player.id),
-        player_name: a.player.name,
-        position: a.player.position,
-        nhl_team: a.player.team,
-        salary_retained_pct: a.retainSalary ? (a.retainedPercentage || 0) : 0,
-      };
-      // Ownership ambiguous from current state — assume assets on MY side if partner is targetTeam
-      // The TradeBuilder only supports proposer-side for now; partner-side swaps are the requested side.
-      // Determining side: if the TradeBuilder stored it under partner team, it's requested.
-      // Our Team.tsx wires both sides via handleAddPlayerToTrade → tradeAssets.
-      // Heuristic: if player.ownerTeamId === myTeam.id → offered, else requested.
-      const ownerId = (a.player as any).ownerTeamId;
-      if (ownerId && ownerId !== myTeam.id) requested.push(asset);
-      else offered.push(asset);
+    // Tag the player with which team they belong to (used by the global builder
+    // to group sends by team and route assets correctly in 3+ way trades).
+    const ownerTeamId = (player as any).ownerTeamId
+      || (player.fromTeam === "mine" ? myTeam?.id : selectedTeamId);
+    const ownerTeamName = (player as any).ownerTeamName
+      || (ownerTeamId === myTeam?.id ? myTeam?.name : selectedTeam?.name);
+    tradeBuilder.addAsset({
+      ...player,
+      ownerTeamId,
+      ownerTeamName,
     });
-
-    tradePicks.forEach((p) => {
-      const yearNum = Number(String(p.year || p.id || "").match(/\d{4}/)?.[0]) || undefined;
-      const roundNum = Number(String(p.round || p.id || "").match(/R?(\d+)/i)?.[1]) || undefined;
-      const asset = {
-        asset_type: "pick" as const,
-        pick_id: (p as any).pickId || undefined,
-        pick_year: yearNum,
-        pick_round: roundNum ? String(roundNum) : undefined,
-      };
-      const ownerId = (p as any).ownerTeamId;
-      if (ownerId && ownerId !== myTeam.id) requested.push(asset);
-      else offered.push(asset);
-    });
-
-    // Pull conditions from the shared editor state
-    const rawConditions = (typeof window !== "undefined" && (window as any).__getTradeConditions?.()) || [];
-    const conditions = rawConditions.map((c: any) => ({
-      subject_type: c.subject_type || "player",
-      subject: c.subject || "offered",
-      player_id: c.player_id || undefined,
-      team_id: c.team_id || undefined,
-      metric: c.metric,
-      operator: c.operator || "gte",
-      threshold: Number(c.threshold || 0),
-      description: c.description,
-    }));
-
-    try {
-      const { data } = await api.post(`/trades`, {
-        league_id: league?.id || myTeam.league_id,
-        target_team_id: targetTeamId,
-        assets_offered: offered,
-        assets_requested: requested,
-        conditions,
-        message: tradePartner ? `Proposal to ${tradePartner}` : undefined,
+    // If the asset belongs to a team not yet a partner, ensure we add it
+    if (ownerTeamId && ownerTeamId !== myTeam?.id && selectedTeam) {
+      tradeBuilder.addPartner({
+        id: selectedTeam.id, name: selectedTeam.name,
+        logo_abbr: selectedTeam.abbr, owner_id: selectedTeam.owner_id,
       });
-      const label = conditions.length > 0 ? "Conditional trade proposal sent" : "Trade proposal sent";
-      toast.success(label, {
-        description: `Proposal sent to ${tradePartner || "partner"}${conditions.length ? ` with ${conditions.length} condition(s)` : ""}`,
-      });
-      handleCloseTrade();
-    } catch (e: any) {
-      toast.error("Trade proposal failed", { description: e?.response?.data?.detail || e?.message || "Unknown error" });
     }
-  }, [tradePartner, handleCloseTrade, tradeAssets, tradePicks, selectedTeamId, isOwnTeam, myTeam, league]);
+  }, [ensureTradeOpen, tradeBuilder, myTeam, selectedTeamId, selectedTeam]);
+
+  const handleAddPickToTrade = useCallback((pick: TradeDraftPick) => {
+    if (!ensureTradeOpen()) {
+      toast.error("Cannot start a trade right now");
+      return;
+    }
+    const ownerTeamId = (pick as any).ownerTeamId
+      || (pick.fromTeam === "mine" ? myTeam?.id : selectedTeamId);
+    const ownerTeamName = (pick as any).ownerTeamName
+      || (ownerTeamId === myTeam?.id ? myTeam?.name : selectedTeam?.name);
+    tradeBuilder.addPick({
+      ...pick,
+      ownerTeamId,
+      ownerTeamName,
+      pickId: (pick as any).pickId,
+    });
+    if (ownerTeamId && ownerTeamId !== myTeam?.id && selectedTeam) {
+      tradeBuilder.addPartner({
+        id: selectedTeam.id, name: selectedTeam.name,
+        logo_abbr: selectedTeam.abbr, owner_id: selectedTeam.owner_id,
+      });
+    }
+  }, [ensureTradeOpen, tradeBuilder, myTeam, selectedTeamId, selectedTeam]);
 
   const handleTradeFromOtherTeam = useCallback((player: TradePlayer) => {
-    if (selectedTeam && !isOwnTeam) {
-      setTradePartner(selectedTeam.name);
-    }
     handleAddPlayerToTrade(player);
-  }, [selectedTeam, isOwnTeam, handleAddPlayerToTrade]);
+  }, [handleAddPlayerToTrade]);
 
   const handleTradePickFromOtherTeam = useCallback((pick: TradeDraftPick) => {
-    if (selectedTeam && !isOwnTeam) {
-      setTradePartner(selectedTeam.name);
-    }
     handleAddPickToTrade(pick);
-  }, [selectedTeam, isOwnTeam, handleAddPickToTrade]);
-
-  const handleNext = useCallback(() => {
-    if (myTeamId) setSelectedTeamId(myTeamId);
-  }, [myTeamId]);
+  }, [handleAddPickToTrade]);
 
   const onTradePlayer = isOwnTeam ? handleAddPlayerToTrade : handleTradeFromOtherTeam;
 
@@ -395,7 +322,7 @@ const Team = () => {
           isOwnTeam={!!isOwnTeam}
           commissionerMode={commissionerMode}
           onTradePlayer={onTradePlayer}
-          isTradeBuilderOpen={tradeOpen}
+          isTradeBuilderOpen={tradeBuilder.open}
           currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
           teamId={selectedTeamId as string}
         />
@@ -421,23 +348,7 @@ const Team = () => {
         />
       </div>
 
-      <TradeBuilder
-        open={tradeOpen}
-        onClose={handleCloseTrade}
-        assets={tradeAssets}
-        picks={tradePicks}
-        selectedTeam={tradePartner}
-        onSelectTeam={setTradePartner}
-        onRemovePlayer={handleRemovePlayer}
-        onRemovePick={handleRemovePick}
-        onToggleRetain={handleToggleRetain}
-        onUpdateRetention={handleUpdateRetention}
-        onSendProposal={handleSendProposal}
-        teams={allTeams}
-        myTeamId={myTeamId || ""}
-        onNavigateToTeam={setSelectedTeamId}
-        onNext={!isOwnTeam ? handleNext : undefined}
-      />
+      {/* Trade Builder is mounted globally in AppLayout — no per-page panel here. */}
     </AppLayout>
   );
 };

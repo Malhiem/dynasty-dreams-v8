@@ -50,6 +50,28 @@ class TradeAsset(BaseModel):
     pick_round: Optional[str] = None
     pick_id: Optional[str] = None  # ObjectId of the draft_pick row when trading a specific pick
     salary_retained_pct: float = 0
+    # For multi-party trades: which team this asset is being sent TO.
+    # When omitted (legacy 2-party trade), the engine routes to the other party.
+    to_team_id: Optional[str] = None
+
+
+class TradePartyInput(BaseModel):
+    """One team's role in a multi-party trade.
+    `sends` are assets this team gives up; `receives` are assets it gets."""
+    team_id: str
+    sends: list[TradeAsset] = Field(default_factory=list)
+    receives: list[TradeAsset] = Field(default_factory=list)
+
+
+class MultiPartyTradeProposalCreate(BaseModel):
+    league_id: str
+    parties: list[TradePartyInput] = Field(min_length=2)
+    message: Optional[str] = None
+    conditions: list["TradeCondition"] = Field(default_factory=list)
+
+
+class TradePartyResponse(BaseModel):
+    action: str  # "accept" | "reject"
 
 
 class TradeConditionMetric(str, Enum):
@@ -90,6 +112,10 @@ class TradeProposalCreate(BaseModel):
     assets_requested: list[TradeAsset]
     message: Optional[str] = None
     conditions: list[TradeCondition] = Field(default_factory=list)
+
+
+# Resolve forward reference now that TradeCondition is defined
+MultiPartyTradeProposalCreate.model_rebuild()
 
 
 class TradeVote(BaseModel):

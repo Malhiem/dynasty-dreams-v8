@@ -1993,7 +1993,13 @@ const TradeButton = ({ player, onTrade }: { player: Player; onTrade: (p: Player)
   <TooltipProvider>
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10" onClick={() => onTrade(player)}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-primary hover:bg-primary/10"
+          onClick={() => onTrade(player)}
+          data-testid={`roster-trade-btn-${player.id}`}
+        >
           <ArrowUpDown className="h-3.5 w-3.5" />
         </Button>
       </TooltipTrigger>

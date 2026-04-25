@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { NotificationsPanel } from "@/components/NotificationsPanel";
 import { useGlobalSocketEvent } from "@/hooks/use-global-socket";
 import { toast } from "sonner";
+import GlobalTradeBuilder from "@/lovable/components/trade/GlobalTradeBuilder";
 
 export function AppLayout({ children }) {
   const { user } = useAuth();
@@ -64,6 +65,8 @@ export function AppLayout({ children }) {
           </main>
         </div>
       </div>
+      {/* Persistent floating Trade Builder — survives route changes */}
+      <GlobalTradeBuilder />
     </SidebarProvider>
   );
 }

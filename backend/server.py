@@ -3051,6 +3051,7 @@ async def post_league_chat(league_id: str, input: DraftChatRequest, request: Req
 from trade_waiver_engine import (
     TradeBlockItemCreate, TradeBlockItemRemove, TradeProposalCreate,
     TradeVote, TradeAsset as TradeAssetModel,
+    MultiPartyTradeProposalCreate, TradePartyResponse,
     WaiverClaimCreate, WaiverClaimCancel
 )
 
@@ -3519,6 +3520,238 @@ async def withdraw_trade(trade_id: str, request: Request):
     return {"message": "Trade withdrawn", "status": "withdrawn"}
 
 
+# ─── Multi-Party Trade (3+ teams) ─────────────────────────────
+
+async def _enrich_trade_assets(assets: list[dict]) -> list[dict]:
+    """Hydrate player_name/position/nhl_team/points for player assets."""
+    enriched = []
+    for a in assets or []:
+        d = dict(a)
+        if a.get("asset_type") == "player" and a.get("player_id"):
+            try:
+                player = await db.players.find_one({"_id": ObjectId(a["player_id"])})
+            except Exception:
+                player = None
+            if player:
+                d.setdefault("player_name", player.get("name"))
+                d.setdefault("position", player.get("position"))
+                d.setdefault("nhl_team", player.get("team", ""))
+                d["points"] = player.get("points", 0)
+                d["goals"] = player.get("goals", 0)
+                d["assists"] = player.get("assists", 0)
+        enriched.append(d)
+    return enriched
+
+
+@api_router.post("/trades/multi")
+async def create_multi_party_trade(input: MultiPartyTradeProposalCreate, request: Request):
+    """Create a 3+ team trade. The proposer is whichever party belongs to the
+    current user. All non-proposer parties must accept before execution.
+    Backwards-compatible: also writes legacy proposer_team_id/target_team_id/
+    assets_offered/assets_requested for the proposer→first-other-party slice
+    so existing list/get endpoints continue to render the trade.
+    """
+    user = await get_current_user(request)
+
+    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    if len(input.parties) < 2:
+        raise HTTPException(status_code=400, detail="A trade needs at least 2 parties")
+
+    # Resolve every party team and validate league membership
+    parties: list[dict] = []
+    proposer_index: Optional[int] = None
+    seen_team_ids = set()
+    for idx, p in enumerate(input.parties):
+        if p.team_id in seen_team_ids:
+            raise HTTPException(status_code=400, detail=f"Duplicate team in parties: {p.team_id}")
+        seen_team_ids.add(p.team_id)
+
+        try:
+            team = await db.teams.find_one({"_id": ObjectId(p.team_id)})
+        except Exception:
+            team = None
+        if not team:
+            raise HTTPException(status_code=404, detail=f"Team {p.team_id} not found")
+        if team.get("league_id") != input.league_id:
+            raise HTTPException(status_code=400, detail=f"Team {p.team_id} is not in this league")
+
+        if team.get("owner_id") == user["_id"]:
+            proposer_index = idx
+
+        sends = await _enrich_trade_assets([a.dict() for a in p.sends])
+        receives = await _enrich_trade_assets([a.dict() for a in p.receives])
+
+        parties.append({
+            "team_id": p.team_id,
+            "team_name": team.get("name"),
+            "owner_id": team.get("owner_id"),
+            "sends": sends,
+            "receives": receives,
+            "accepted": False,
+            "accepted_at": None,
+            "rejected": False,
+            "rejected_at": None,
+        })
+
+    if proposer_index is None:
+        raise HTTPException(status_code=403, detail="You don't own a team in this trade")
+
+    # Proposer auto-accepts
+    parties[proposer_index]["accepted"] = True
+    parties[proposer_index]["accepted_at"] = datetime.now(timezone.utc).isoformat()
+
+    # Build legacy mirror fields for back-compat with existing UI
+    legacy_target_idx = next((i for i in range(len(parties)) if i != proposer_index), proposer_index)
+    proposer_team = parties[proposer_index]
+    target_team = parties[legacy_target_idx]
+
+    has_conditions = bool(input.conditions)
+    review_period_hours = 72
+    trade_doc = {
+        "league_id": input.league_id,
+        "is_multi_party": len(parties) > 2,
+        "parties": parties,
+        "proposer_team_id": proposer_team["team_id"],
+        "proposer_team_name": proposer_team["team_name"],
+        "proposer_id": user["_id"],
+        "proposer_party_index": proposer_index,
+        "target_team_id": target_team["team_id"],
+        "target_team_name": target_team["team_name"],
+        "target_owner_id": target_team["owner_id"],
+        "assets_offered": proposer_team["sends"],
+        "assets_requested": proposer_team["receives"],
+        "conditions": [c.dict() if hasattr(c, "dict") else c for c in (input.conditions or [])],
+        "conditional": has_conditions,
+        "message": input.message,
+        "status": "pending",
+        "votes": {"approve": 0, "veto": 0, "voters": []},
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "processes_at": (datetime.now(timezone.utc) + timedelta(hours=review_period_hours)).isoformat(),
+        "responded_at": None,
+        "processed_at": None,
+    }
+
+    result = await db.trades.insert_one(trade_doc)
+    trade_doc["_id"] = str(result.inserted_id)
+
+    # Notify every non-proposer team owner
+    for p in parties:
+        if p["owner_id"] == user["_id"]:
+            continue
+        try:
+            await create_notification(
+                p["owner_id"],
+                NotificationType.TRADE_PROPOSED.value,
+                "New Multi-Team Trade Proposal" if trade_doc["is_multi_party"] else "New Trade Proposal",
+                f"{proposer_team['team_name']} included you in a {len(parties)}-team trade",
+                input.league_id,
+                "/transactions",
+            )
+        except Exception:
+            pass
+
+    await broadcast_to_room(f"league_{input.league_id}", "trade_proposed", {
+        "trade_id": str(result.inserted_id),
+        "proposer": proposer_team["team_name"],
+        "parties": [p["team_name"] for p in parties],
+        "is_multi_party": trade_doc["is_multi_party"],
+    })
+
+    return trade_doc
+
+
+def _all_non_proposer_accepted(trade: dict) -> bool:
+    parties = trade.get("parties") or []
+    if not parties:
+        return False
+    proposer_idx = trade.get("proposer_party_index", 0)
+    for i, p in enumerate(parties):
+        if i == proposer_idx:
+            continue
+        if not p.get("accepted"):
+            return False
+    return True
+
+
+@api_router.post("/trades/{trade_id}/party-respond")
+async def party_respond_to_trade(trade_id: str, input: TradePartyResponse, request: Request):
+    """Accept or reject the trade as the user's party. Auto-executes when all
+    non-proposer parties have accepted (and conditions are satisfied)."""
+    user = await get_current_user(request)
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    parties = trade.get("parties") or []
+    if not parties:
+        raise HTTPException(status_code=400, detail="This trade does not support party-respond. Use /accept or /reject.")
+    if trade.get("status") != "pending":
+        raise HTTPException(status_code=400, detail=f"Trade status is {trade.get('status')}")
+
+    party_idx = next((i for i, p in enumerate(parties) if p.get("owner_id") == user["_id"]), None)
+    if party_idx is None:
+        raise HTTPException(status_code=403, detail="You are not a party to this trade")
+
+    action = input.action.lower()
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    if action == "reject":
+        await db.trades.update_one(
+            {"_id": ObjectId(trade_id)},
+            {"$set": {
+                f"parties.{party_idx}.rejected": True,
+                f"parties.{party_idx}.rejected_at": now_iso,
+                "status": "rejected",
+                "responded_at": now_iso,
+            }},
+        )
+        await broadcast_to_room(f"league_{trade['league_id']}", "trade_rejected", {
+            "trade_id": trade_id, "rejecter": parties[party_idx]["team_name"],
+        })
+        return {"status": "rejected", "rejected_by": parties[party_idx]["team_name"]}
+
+    if action != "accept":
+        raise HTTPException(status_code=400, detail="action must be 'accept' or 'reject'")
+
+    await db.trades.update_one(
+        {"_id": ObjectId(trade_id)},
+        {"$set": {
+            f"parties.{party_idx}.accepted": True,
+            f"parties.{party_idx}.accepted_at": now_iso,
+        }},
+    )
+    refreshed = await db.trades.find_one({"_id": ObjectId(trade_id)})
+
+    executed = None
+    if _all_non_proposer_accepted(refreshed):
+        await db.trades.update_one(
+            {"_id": ObjectId(trade_id)},
+            {"$set": {"status": "accepted", "responded_at": now_iso}},
+        )
+        refreshed = await db.trades.find_one({"_id": ObjectId(trade_id)})
+        if not refreshed.get("conditions"):
+            try:
+                executed = await _execute_trade(refreshed)
+                refreshed = await db.trades.find_one({"_id": ObjectId(trade_id)})
+            except Exception as e:
+                logger.exception("Multi-party trade auto-execute failed: %s", e)
+
+    await broadcast_to_room(f"league_{trade['league_id']}", "trade_party_accepted", {
+        "trade_id": trade_id, "accepter": parties[party_idx]["team_name"],
+        "all_accepted": _all_non_proposer_accepted(refreshed),
+        "executed": bool(executed and executed.get("executed")),
+    })
+
+    return {
+        "status": refreshed.get("status"),
+        "all_accepted": _all_non_proposer_accepted(refreshed),
+        "executed": bool(executed and executed.get("executed")),
+    }
+
+
 # ─── Trade Execution + Conditions ─────────────────────────────
 
 def _metric_value_for_player(player: dict, metric: str) -> float:
@@ -3625,9 +3858,161 @@ async def _evaluate_conditions(trade: dict) -> dict:
     return {"all_met": all_met, "results": results}
 
 
+async def _execute_multi_party_trade(trade: dict) -> dict:
+    """Execute a trade with 3+ parties.
+    Each party's `sends` are removed from their roster; the engine then routes
+    each sent asset to the receiving party. Routing rules:
+      1. If asset has explicit `to_team_id`, send there.
+      2. Otherwise, find the unique party whose `receives` lists this asset
+         (matched by player_id or pick_id) and send there.
+      3. If neither resolves, raise.
+    Draft picks update `current_team_id` and append to `trade_history`.
+    """
+    league_id = trade["league_id"]
+    parties = trade.get("parties") or []
+    teams_by_id: dict[str, dict] = {}
+    rosters: dict[str, list] = {}
+    for p in parties:
+        team = await db.teams.find_one({"_id": ObjectId(p["team_id"])})
+        if not team:
+            raise HTTPException(status_code=404, detail=f"Trade team {p['team_id']} not found")
+        teams_by_id[p["team_id"]] = team
+        rosters[p["team_id"]] = list(team.get("roster", []) or [])
+
+    moves: list[dict] = []
+    retentions: list[dict] = []
+
+    def _find_recipient(asset: dict, sender_team_id: str) -> Optional[str]:
+        if asset.get("to_team_id") and asset["to_team_id"] != sender_team_id:
+            return asset["to_team_id"]
+        match_pid = asset.get("player_id")
+        match_pick = asset.get("pick_id")
+        for q in parties:
+            if q["team_id"] == sender_team_id:
+                continue
+            for r in q.get("receives", []):
+                if match_pid and r.get("player_id") == match_pid:
+                    return q["team_id"]
+                if match_pick and r.get("pick_id") == match_pick:
+                    return q["team_id"]
+                # Loose match by year+round when pick_id absent
+                if (asset.get("asset_type") == "pick" and not match_pick
+                        and r.get("asset_type") == "pick"
+                        and r.get("pick_year") == asset.get("pick_year")
+                        and str(r.get("pick_round")) == str(asset.get("pick_round"))):
+                    return q["team_id"]
+        return None
+
+    for p in parties:
+        sender_id = p["team_id"]
+        sender = teams_by_id[sender_id]
+        for a in p.get("sends", []):
+            recipient_id = _find_recipient(a, sender_id)
+            if not recipient_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Cannot route asset from {sender.get('name')}: no matching recipient party",
+                )
+            recipient = teams_by_id[recipient_id]
+
+            if a.get("asset_type") == "player" and a.get("player_id"):
+                pid = a["player_id"]
+                if pid in rosters[sender_id]:
+                    rosters[sender_id].remove(pid)
+                if pid not in rosters[recipient_id]:
+                    rosters[recipient_id].append(pid)
+                moves.append({
+                    "asset_type": "player", "player_id": pid,
+                    "from": sender_id, "from_name": sender.get("name"),
+                    "to": recipient_id, "to_name": recipient.get("name"),
+                })
+                if a.get("salary_retained_pct", 0) > 0:
+                    retentions.append({
+                        "player_id": pid, "retainer_team_id": sender_id,
+                        "pct": a["salary_retained_pct"],
+                    })
+            elif a.get("asset_type") == "pick":
+                query = {"league_id": league_id, "current_team_id": sender_id}
+                if a.get("pick_id"):
+                    query["_id"] = ObjectId(a["pick_id"])
+                else:
+                    if a.get("pick_year"):
+                        query["year"] = int(a["pick_year"])
+                    if a.get("pick_round"):
+                        try:
+                            query["round"] = int(str(a["pick_round"]).replace("R", "").strip())
+                        except Exception:
+                            pass
+                pick_doc = await db.draft_picks.find_one(query)
+                if pick_doc:
+                    await db.draft_picks.update_one(
+                        {"_id": pick_doc["_id"]},
+                        {
+                            "$set": {
+                                "current_team_id": recipient_id,
+                                "current_team_name": recipient.get("name"),
+                            },
+                            "$push": {"trade_history": {
+                                "trade_id": str(trade["_id"]),
+                                "from_team_id": sender_id,
+                                "from_team_name": sender.get("name"),
+                                "to_team_id": recipient_id,
+                                "to_team_name": recipient.get("name"),
+                                "traded_at": datetime.now(timezone.utc),
+                            }},
+                        },
+                    )
+                    moves.append({
+                        "asset_type": "pick", "pick_id": str(pick_doc["_id"]),
+                        "year": pick_doc["year"], "round": pick_doc["round"],
+                        "from": sender_id, "from_name": sender.get("name"),
+                        "to": recipient_id, "to_name": recipient.get("name"),
+                    })
+
+    # Persist all roster updates
+    for tid, roster in rosters.items():
+        await db.teams.update_one({"_id": ObjectId(tid)}, {"$set": {"roster": roster}})
+
+    for r in retentions:
+        await db.salary_retentions.update_one(
+            {"league_id": league_id, "player_id": r["player_id"], "retainer_team_id": r["retainer_team_id"]},
+            {"$set": {**r, "league_id": league_id, "trade_id": str(trade["_id"]),
+                      "created_at": datetime.now(timezone.utc)}},
+            upsert=True,
+        )
+
+    await db.trades.update_one(
+        {"_id": trade["_id"]},
+        {"$set": {
+            "status": "executed",
+            "processed_at": datetime.now(timezone.utc).isoformat(),
+            "execution_moves": moves,
+        }}
+    )
+
+    description = "Multi-team trade executed: " + " ↔ ".join(p["team_name"] for p in parties)
+    try:
+        await db.activity_feed.insert_one({
+            "league_id": league_id,
+            "event_type": "trade_executed",
+            "description": description,
+            "message": description,
+            "created_at": datetime.now(timezone.utc),
+        })
+    except Exception:
+        pass
+    return {"executed": True, "moves": moves, "parties": [p["team_name"] for p in parties]}
+
+
 async def _execute_trade(trade: dict) -> dict:
     if trade.get("status") == "executed":
         return {"already_executed": True}
+
+    # ── Multi-party (3+ teams) execution path ────────────────
+    parties = trade.get("parties") or []
+    if parties and trade.get("is_multi_party"):
+        return await _execute_multi_party_trade(trade)
+
     league_id = trade["league_id"]
     proposer_tid = trade["proposer_team_id"]
     target_tid = trade["target_team_id"]
