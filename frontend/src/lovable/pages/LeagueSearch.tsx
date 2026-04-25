@@ -57,8 +57,10 @@ export default function LeagueSearch() {
       toast.success(`Joined ${data.league_name}!`, { description: `Team "${teamName.trim()}" created.` });
       setJoinTarget(null);
       setTeamName("");
+      // Persist active league so the Dashboard / sidebar show the new league immediately
+      try { localStorage.setItem("active_league_id", data.league_id); } catch (_) { /* ignore */ }
       await load();
-      navigate(`/?league_id=${data.league_id}`);
+      navigate("/dashboard");
     } catch (e) {
       toast.error("Failed to join", { description: e?.response?.data?.detail || e?.message });
     } finally {
