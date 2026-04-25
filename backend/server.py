@@ -182,6 +182,8 @@ class UserResponse(BaseModel):
     name: str  # Retained for backward compat — mirrors username
     role: str
     created_at: datetime
+    access_token: Optional[str] = None  # Populated on login/register for mobile/Bearer clients
+    refresh_token: Optional[str] = None
 
 class ForgotPassword(BaseModel):
     email: EmailStr
@@ -360,7 +362,9 @@ async def register(input: UserRegister, response: Response):
         username=username,
         name=username,
         role=UserRole.USER.value,
-        created_at=user_doc["created_at"]
+        created_at=user_doc["created_at"],
+        access_token=access_token,
+        refresh_token=refresh_token,
     )
 
 @api_router.post("/auth/login", response_model=UserResponse)
@@ -406,7 +410,9 @@ async def login(input: UserLogin, request: Request, response: Response):
         username=user.get("username") or user.get("name", ""),
         name=user.get("username") or user.get("name", ""),
         role=user["role"],
-        created_at=user["created_at"]
+        created_at=user["created_at"],
+        access_token=access_token,
+        refresh_token=refresh_token,
     )
 
 @api_router.post("/auth/logout")
@@ -429,7 +435,12 @@ async def get_me(request: Request):
 
 @api_router.post("/auth/refresh")
 async def refresh_token(request: Request, response: Response):
+    # Accept refresh token from cookie OR Authorization header (for mobile)
     token = request.cookies.get("refresh_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
     if not token:
         raise HTTPException(status_code=401, detail="No refresh token")
     try:
@@ -443,7 +454,7 @@ async def refresh_token(request: Request, response: Response):
         user_id = str(user["_id"])
         access_token = create_access_token(user_id, user["email"])
         response.set_cookie(key="access_token", value=access_token, httponly=True, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, max_age=43200, path="/")
-        return {"message": "Token refreshed"}
+        return {"message": "Token refreshed", "access_token": access_token, "refresh_token": token}
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Refresh token expired")
     except jwt.InvalidTokenError:
@@ -3303,124 +3314,8 @@ async def evaluate_trade_conditions_endpoint(trade_id: str):
     return await _evaluate_conditions(trade)
 
 
-# ─── Draft Picks ──────────────────────────────────────────────
-
-@api_router.get("/drafts/{league_id}/picks")
-async def get_draft_picks(league_id: str, year: Optional[int] = None):
-    query = {"league_id": league_id}
-    if year:
-        query["year"] = int(year)
-    picks = await db.draft_picks.find(query).sort([("year", 1), ("round", 1)]).to_list(1000)
-    for p in picks:
-        p["_id"] = str(p["_id"])
-    return {"league_id": league_id, "year": year, "picks": picks}
-
-
-class TeamAwardUpdate(BaseModel):
-    championship_won: Optional[bool] = None
-    division_winner: Optional[bool] = None
-    conference_winner: Optional[bool] = None
-    playoffs_reached: Optional[bool] = None
-    consolation_won: Optional[bool] = None
-
-
-@api_router.put("/leagues/{league_id}/teams/{team_id}/awards")
-async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate, request: Request):
-    """Commissioner tool: mark a team with season-end awards (triggers conditional trades)."""
-    user = await get_current_user(request)
-    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    is_comm = league["commissioner_id"] == user["_id"]
-    co_comms = league.get("co_commissioners", []) or []
-    is_co_comm = user["_id"] in co_comms
-    if not (is_comm or is_co_comm):
-        raise HTTPException(status_code=403, detail="Only commissioners can set team awards")
-
-    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id"), "league_id": league_id})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found in this league")
-
-    now = datetime.now(timezone.utc)
-    update_set: dict = {}
-    update_unset: dict = {}
-    changes: list[str] = []
-    if payload.championship_won is True:
-        update_set["championship_won_at"] = now
-        changes.append("championship_won_at set")
-    elif payload.championship_won is False:
-        update_unset["championship_won_at"] = ""
-        changes.append("championship_won_at cleared")
-    if payload.division_winner is True:
-        update_set["division_winner_at"] = now
-        changes.append("division_winner_at set")
-    elif payload.division_winner is False:
-        update_unset["division_winner_at"] = ""
-        changes.append("division_winner_at cleared")
-    if payload.conference_winner is True:
-        update_set["conference_winner_at"] = now
-        changes.append("conference_winner_at set")
-    elif payload.conference_winner is False:
-        update_unset["conference_winner_at"] = ""
-        changes.append("conference_winner_at cleared")
-    if payload.playoffs_reached is True:
-        update_set["playoffs_reached_at"] = now
-        changes.append("playoffs_reached_at set")
-    elif payload.playoffs_reached is False:
-        update_unset["playoffs_reached_at"] = ""
-        changes.append("playoffs_reached_at cleared")
-    if payload.consolation_won is True:
-        update_set["consolation_won_at"] = now
-        changes.append("consolation_won_at set")
-    elif payload.consolation_won is False:
-        update_unset["consolation_won_at"] = ""
-        changes.append("consolation_won_at cleared")
-
-    ops: dict = {}
-    if update_set: ops["$set"] = update_set
-    if update_unset: ops["$unset"] = update_unset
-    if ops:
-        await db.teams.update_one({"_id": team["_id"]}, ops)
-
-    # Audit entry
-    await db.audit_log.insert_one({
-        "league_id": league_id,
-        "actor_id": user["_id"],
-        "actor_name": user.get("name", user.get("email", "Unknown")),
-        "action": "team_award_updated",
-        "role": "commissioner" if is_comm else "co_commissioner",
-        "diff": {"team_id": team_id, "team_name": team.get("name"), "changes": changes},
-        "created_at": now,
-    })
-
-    # Evaluate any conditional trades in this league that might now unlock
-    unlocked = 0
-    pending = await db.trades.find({"league_id": league_id, "conditional": True,
-                                     "status": {"$in": ["pending", "accepted", "conditional"]}}).to_list(500)
-    for t in pending:
-        try:
-            res = await _evaluate_conditions(t)
-            if res["all_met"] and t.get("status") == "accepted":
-                await _execute_trade(t)
-                unlocked += 1
-        except Exception as ex:
-            logger.warning("Conditional trade re-eval failed league=%s trade=%s: %s",
-                           league_id, str(t.get("_id")), ex)
-
-    fresh = await db.teams.find_one({"_id": team["_id"]})
-    return {
-        "team_id": team_id,
-        "team_name": fresh.get("name"),
-        "championship_won_at": fresh.get("championship_won_at"),
-        "division_winner_at": fresh.get("division_winner_at"),
-        "conference_winner_at": fresh.get("conference_winner_at"),
-        "playoffs_reached_at": fresh.get("playoffs_reached_at"),
-        "consolation_won_at": fresh.get("consolation_won_at"),
-        "changes": changes,
-        "unlocked_trades": unlocked,
-    }
-
-
+# ─── Draft Picks → moved to routes/drafts.py ──────────────────
+# ─── Team Awards (set_team_awards) → moved to routes/awards.py ────
 
 
 @api_router.post("/trades/{trade_id}/vote")
@@ -4367,494 +4262,9 @@ async def stripe_webhook(request: Request):
 # ═══════════════════════════════════════════════════════════════
 # Weekly Matchup Simulation Engine
 # ═══════════════════════════════════════════════════════════════
-import random as _random
-import itertools
+# Matchups + schedule generation → moved to routes/matchups.py
+# ═══════════════════════════════════════════════════════════════
 
-
-def generate_round_robin(team_ids):
-    """Generate a full round-robin schedule. Returns list of rounds, each a list of (home, away) tuples."""
-    teams = list(team_ids)
-    if len(teams) % 2 == 1:
-        teams.append(None)  # bye
-    n = len(teams)
-    schedule = []
-    for r in range(n - 1):
-        round_matchups = []
-        for i in range(n // 2):
-            home = teams[i]
-            away = teams[n - 1 - i]
-            if home is not None and away is not None:
-                round_matchups.append((home, away))
-        schedule.append(round_matchups)
-        teams.insert(1, teams.pop())
-    return schedule
-
-
-class GenerateScheduleRequest(BaseModel):
-    league_id: str
-    num_weeks: int = Field(default=18, ge=1, le=52)
-
-
-
-class ConsolationPrize(BaseModel):
-    type: str  # "draft_lottery_boost" | "compensation_pick" | "custom"
-    description: Optional[str] = None
-    lottery_boost_spots: Optional[int] = None
-    fallback_pick_round: Optional[int] = None
-    fallback_pick_year: Optional[int] = None
-    custom_details: Optional[str] = None
-
-
-class ConsolationPrizeUpdate(BaseModel):
-    prize: ConsolationPrize
-
-
-async def _apply_consolation_prize(league_id: str, team_id: str, prize: dict) -> dict:
-    """Auto-apply lottery boost / compensation-pick. Custom prizes left for manual fulfilment."""
-    applied = {"type": prize.get("type"), "steps": []}
-    prize_type = prize.get("type")
-    now = datetime.now(timezone.utc)
-    team = await db.teams.find_one({"_id": ObjectId(team_id)})
-    team_name = team.get("name") if team else None
-
-    if prize_type == "draft_lottery_boost":
-        spots = int(prize.get("lottery_boost_spots") or 0)
-        if spots <= 0:
-            return applied
-        next_year = now.year + 1
-        pick = await db.draft_picks.find_one({
-            "league_id": league_id, "year": next_year, "round": 1,
-            "current_team_id": team_id,
-        })
-        if pick:
-            new_slot = max(1, (pick.get("pick_number") or 12) - spots)
-            await db.draft_picks.update_one(
-                {"_id": pick["_id"]},
-                {"$set": {"pick_number": new_slot, "lottery_boost_applied": spots}}
-            )
-            applied["steps"].append(f"Moved {next_year} R1 pick up {spots} slot(s) to pick #{new_slot}")
-        else:
-            comp_round = prize.get("fallback_pick_round") or 2
-            comp_year = prize.get("fallback_pick_year") or next_year
-            await db.draft_picks.insert_one({
-                "league_id": league_id, "year": comp_year, "round": int(comp_round),
-                "original_team_id": team_id, "original_team_name": team_name,
-                "current_team_id": team_id, "current_team_name": team_name,
-                "pick_number": None, "pick_type": "compensation",
-                "reason": "consolation_winner_no_r1_available", "created_at": now,
-            })
-            applied["steps"].append(f"1st-rounder unavailable — awarded compensation R{comp_round} pick in {comp_year}")
-    elif prize_type == "compensation_pick":
-        comp_round = prize.get("fallback_pick_round") or 2
-        comp_year = prize.get("fallback_pick_year") or now.year + 1
-        await db.draft_picks.insert_one({
-            "league_id": league_id, "year": comp_year, "round": int(comp_round),
-            "original_team_id": team_id, "original_team_name": team_name,
-            "current_team_id": team_id, "current_team_name": team_name,
-            "pick_number": None, "pick_type": "compensation",
-            "reason": "consolation_winner", "created_at": now,
-        })
-        applied["steps"].append(f"Awarded compensation R{comp_round} pick in {comp_year}")
-    elif prize_type == "custom":
-        applied["steps"].append(f"Custom prize '{prize.get('custom_details') or prize.get('description')}' logged for manual fulfilment")
-    return applied
-
-
-@api_router.put("/leagues/{league_id}/consolation-prize")
-async def set_consolation_prize(league_id: str, payload: ConsolationPrizeUpdate, request: Request):
-    user = await get_current_user(request)
-    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    is_comm = league["commissioner_id"] == user["_id"]
-    co_comms = league.get("co_commissioners", []) or []
-    if not (is_comm or user["_id"] in co_comms):
-        raise HTTPException(status_code=403, detail="Only commissioners can set the consolation prize")
-
-    prize_dict = payload.prize.dict()
-    await db.leagues.update_one({"_id": league["_id"]}, {"$set": {"consolation_prize": prize_dict}})
-    await db.audit_log.insert_one({
-        "league_id": league_id, "actor_id": user["_id"],
-        "actor_name": user.get("name", user.get("email", "Unknown")),
-        "action": "consolation_prize_configured",
-        "role": "commissioner" if is_comm else "co_commissioner",
-        "diff": prize_dict, "created_at": datetime.now(timezone.utc),
-    })
-    return {"league_id": league_id, "consolation_prize": prize_dict}
-
-
-@api_router.get("/leagues/{league_id}/consolation-prize")
-async def get_consolation_prize(league_id: str):
-    league = await db.leagues.find_one(
-        {"_id": _safe_object_id(league_id, "league_id")},
-        {"consolation_prize": 1}
-    )
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    return {"league_id": league_id, "consolation_prize": league.get("consolation_prize")}
-
-
-@api_router.get("/leagues/{league_id}/team-rewards")
-async def list_team_rewards(league_id: str):
-    rewards = await db.team_rewards.find({"league_id": league_id}).sort("awarded_at", -1).to_list(200)
-    for r in rewards:
-        r["_id"] = str(r["_id"])
-    return {"league_id": league_id, "rewards": rewards}
-
-
-
-class SimulateWeekRequest(BaseModel):
-    league_id: str
-    week: int
-
-
-@api_router.post("/matchups/generate-schedule")
-async def generate_schedule(input: GenerateScheduleRequest, request: Request):
-    """Commissioner generates the full season schedule."""
-    user = await get_current_user(request)
-    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can generate schedule")
-
-    teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
-    if len(teams) < 2:
-        raise HTTPException(status_code=400, detail="Need at least 2 teams")
-
-    team_ids = [str(t["_id"]) for t in teams]
-    team_map = {str(t["_id"]): t["name"] for t in teams}
-
-    scoring_format = league.get("scoring_format", "head_to_head")
-
-    # Generate round-robin and repeat to fill weeks
-    base_schedule = generate_round_robin(team_ids)
-    full_schedule = []
-    week = 1
-    cycle = itertools.cycle(base_schedule)
-    while week <= input.num_weeks:
-        round_matchups = next(cycle)
-        _random.shuffle(round_matchups)
-        matchups = []
-        for home_id, away_id in round_matchups:
-            matchups.append({
-                "week": week,
-                "home_team_id": home_id,
-                "home_team_name": team_map.get(home_id, ""),
-                "away_team_id": away_id,
-                "away_team_name": team_map.get(away_id, ""),
-                "home_score": 0,
-                "away_score": 0,
-                "status": "scheduled",
-                "winner": None
-            })
-        full_schedule.extend(matchups)
-        week += 1
-
-    # Clear existing and save
-    await db.matchups.delete_many({"league_id": input.league_id})
-    if full_schedule:
-        for m in full_schedule:
-            m["league_id"] = input.league_id
-            m["scoring_format"] = scoring_format
-        await db.matchups.insert_many(full_schedule)
-
-    return {"message": f"Generated {len(full_schedule)} matchups for {input.num_weeks} weeks", "weeks": input.num_weeks}
-
-
-@api_router.get("/matchups/{league_id}")
-async def get_matchups(league_id: str, week: Optional[int] = None):
-    query = {"league_id": league_id}
-    if week:
-        query["week"] = week
-    matchups = await db.matchups.find(query).sort("week", 1).to_list(1000)
-    for m in matchups:
-        m["_id"] = str(m["_id"])
-    return matchups
-
-
-@api_router.get("/matchups/{league_id}/current-week")
-async def get_current_week(league_id: str):
-    # Find the latest unplayed week
-    pipeline = [
-        {"$match": {"league_id": league_id, "status": "scheduled"}},
-        {"$group": {"_id": None, "min_week": {"$min": "$week"}}},
-    ]
-    result = await db.matchups.aggregate(pipeline).to_list(1)
-    current = result[0]["min_week"] if result else 1
-    matchups = await db.matchups.find({"league_id": league_id, "week": current}).to_list(100)
-    for m in matchups:
-        m["_id"] = str(m["_id"])
-    return {"week": current, "matchups": matchups}
-
-
-@api_router.post("/matchups/simulate-week")
-async def simulate_week(input: SimulateWeekRequest, request: Request):
-    """Simulate a week's matchups using roster fantasy points."""
-    user = await get_current_user(request)
-    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can simulate")
-
-    matchups = await db.matchups.find({
-        "league_id": input.league_id,
-        "week": input.week,
-        "status": "scheduled"
-    }).to_list(100)
-
-    if not matchups:
-        raise HTTPException(status_code=400, detail="No scheduled matchups for this week")
-
-    config = await db.scoring_configs.find_one({"league_id": input.league_id})
-    scoring_format = league.get("scoring_format", "head_to_head")
-
-    # Calculate each team's score from their roster
-    async def calc_team_score(team_id):
-        team = await db.teams.find_one({"_id": ObjectId(team_id)})
-        if not team:
-            return 0.0
-        roster = team.get("roster", [])
-        total = 0.0
-        for pid in roster:
-            player = await db.players.find_one({"_id": ObjectId(pid)})
-            if player:
-                total += calculate_fantasy_points(player, config)
-        return round(total, 1)
-
-    results = []
-    for m in matchups:
-        home_score = await calc_team_score(m["home_team_id"])
-        away_score = await calc_team_score(m["away_team_id"])
-
-        winner = None
-        if home_score > away_score:
-            winner = m["home_team_id"]
-        elif away_score > home_score:
-            winner = m["away_team_id"]
-
-        await db.matchups.update_one(
-            {"_id": m["_id"]},
-            {"$set": {
-                "home_score": home_score,
-                "away_score": away_score,
-                "winner": winner,
-                "status": "completed",
-                "simulated_at": datetime.now(timezone.utc).isoformat()
-            }}
-        )
-
-        # Update team records
-        if winner == m["home_team_id"]:
-            await db.teams.update_one({"_id": ObjectId(m["home_team_id"])}, {"$inc": {"wins": 1, "points_for": home_score, "points_against": away_score}})
-            await db.teams.update_one({"_id": ObjectId(m["away_team_id"])}, {"$inc": {"losses": 1, "points_for": away_score, "points_against": home_score}})
-        elif winner == m["away_team_id"]:
-            await db.teams.update_one({"_id": ObjectId(m["away_team_id"])}, {"$inc": {"wins": 1, "points_for": away_score, "points_against": home_score}})
-            await db.teams.update_one({"_id": ObjectId(m["home_team_id"])}, {"$inc": {"losses": 1, "points_for": home_score, "points_against": away_score}})
-        else:
-            # Tie
-            await db.teams.update_one({"_id": ObjectId(m["home_team_id"])}, {"$inc": {"ties": 1, "points_for": home_score, "points_against": away_score}})
-            await db.teams.update_one({"_id": ObjectId(m["away_team_id"])}, {"$inc": {"ties": 1, "points_for": home_score, "points_against": away_score}})
-
-        # Auto-crown logic for playoff brackets (is_final matchups)
-        if m.get("is_final") and winner:
-            bracket = m.get("bracket", "championship")
-            now = datetime.now(timezone.utc)
-            loser_id = m["away_team_id"] if winner == m["home_team_id"] else m["home_team_id"]
-            winner_name = m["home_team_name"] if winner == m["home_team_id"] else m["away_team_name"]
-            if bracket == "championship":
-                await db.teams.update_one(
-                    {"_id": ObjectId(winner)},
-                    {"$set": {"championship_won_at": now}}
-                )
-                await db.activity_feed.insert_one({
-                    "league_id": input.league_id,
-                    "event_type": "championship_awarded",
-                    "description": f"🏆 {winner_name} won the championship!",
-                    "message": f"Champion crowned: {winner_name}",
-                    "created_at": now,
-                })
-                await db.audit_log.insert_one({
-                    "league_id": input.league_id, "actor_id": "system", "actor_name": "System (auto-crown)",
-                    "action": "championship_awarded", "role": "system",
-                    "diff": {"winner_team_id": winner, "runner_up_team_id": loser_id,
-                             "matchup_id": str(m["_id"]), "score": f"{home_score}-{away_score}"},
-                    "created_at": now,
-                })
-                # Re-evaluate pending conditional trades (won_championship may now resolve)
-                pending = await db.trades.find({
-                    "league_id": input.league_id, "conditional": True,
-                    "status": {"$in": ["pending", "accepted", "conditional"]}
-                }).to_list(500)
-                unlocked = 0
-                for t in pending:
-                    try:
-                        res = await _evaluate_conditions(t)
-                        if res["all_met"] and t.get("status") == "accepted":
-                            await _execute_trade(t)
-                            unlocked += 1
-                    except Exception as ex:
-                        logger.warning("Conditional trade re-eval (auto-crown) failed league=%s trade=%s: %s",
-                                       input.league_id, str(t.get("_id")), ex)
-                # Real-time broadcast
-                await sio.emit("championship_crowned", {
-                    "league_id": input.league_id,
-                    "team_id": winner, "team_name": winner_name,
-                    "runner_up_team_id": loser_id,
-                    "score": f"{home_score}-{away_score}",
-                    "unlocked_trades": unlocked,
-                    "crowned_at": now.isoformat(),
-                })
-            elif bracket == "consolation":
-                await db.teams.update_one(
-                    {"_id": ObjectId(winner)},
-                    {"$set": {"consolation_won_at": now}}
-                )
-                applied_steps: list = []
-                # If the league has a consolation prize configured, record it as a pending reward
-                prize = (league.get("consolation_prize") or {})
-                if prize.get("type"):
-                    await db.team_rewards.insert_one({
-                        "league_id": input.league_id,
-                        "team_id": winner,
-                        "team_name": winner_name,
-                        "source": "consolation_winner",
-                        "prize": prize,
-                        "awarded_at": now,
-                        "status": "pending_commissioner_fulfillment",
-                    })
-                    # If the prize is a draft-lottery boost AND can be auto-applied, do so.
-                    applied = await _apply_consolation_prize(input.league_id, winner, prize)
-                    applied_steps = applied.get("steps", [])
-                await db.activity_feed.insert_one({
-                    "league_id": input.league_id,
-                    "event_type": "consolation_awarded",
-                    "description": f"Consolation bracket won by {winner_name}" + (
-                        f" — {applied_steps[0]}" if applied_steps else ""
-                    ),
-                    "message": "Consolation bracket concluded",
-                    "created_at": now,
-                })
-                await db.audit_log.insert_one({
-                    "league_id": input.league_id, "actor_id": "system", "actor_name": "System (auto-crown)",
-                    "action": "consolation_awarded", "role": "system",
-                    "diff": {"winner_team_id": winner, "runner_up_team_id": loser_id,
-                             "matchup_id": str(m["_id"]), "score": f"{home_score}-{away_score}",
-                             "prize": prize or None, "applied_steps": applied_steps},
-                    "created_at": now,
-                })
-                await sio.emit("consolation_crowned", {
-                    "league_id": input.league_id,
-                    "team_id": winner, "team_name": winner_name,
-                    "prize": prize or None,
-                    "applied_steps": applied_steps,
-                    "crowned_at": now.isoformat(),
-                })
-            elif bracket in ("conference_final", "conference"):
-                await db.teams.update_one(
-                    {"_id": ObjectId(winner)},
-                    {"$set": {"conference_winner_at": now}}
-                )
-                await db.activity_feed.insert_one({
-                    "league_id": input.league_id,
-                    "event_type": "conference_awarded",
-                    "description": f"🥇 {winner_name} won the conference!",
-                    "message": f"Conference champion crowned: {winner_name}",
-                    "created_at": now,
-                })
-                await db.audit_log.insert_one({
-                    "league_id": input.league_id, "actor_id": "system", "actor_name": "System (auto-crown)",
-                    "action": "conference_awarded", "role": "system",
-                    "diff": {"winner_team_id": winner, "runner_up_team_id": loser_id,
-                             "matchup_id": str(m["_id"]), "score": f"{home_score}-{away_score}"},
-                    "created_at": now,
-                })
-                await sio.emit("conference_crowned", {
-                    "league_id": input.league_id,
-                    "team_id": winner, "team_name": winner_name,
-                    "score": f"{home_score}-{away_score}",
-                    "crowned_at": now.isoformat(),
-                })
-            elif bracket in ("division_final", "division"):
-                await db.teams.update_one(
-                    {"_id": ObjectId(winner)},
-                    {"$set": {"division_winner_at": now}}
-                )
-                await db.activity_feed.insert_one({
-                    "league_id": input.league_id,
-                    "event_type": "division_awarded",
-                    "description": f"🏅 {winner_name} won the division!",
-                    "message": f"Division champion crowned: {winner_name}",
-                    "created_at": now,
-                })
-                await db.audit_log.insert_one({
-                    "league_id": input.league_id, "actor_id": "system", "actor_name": "System (auto-crown)",
-                    "action": "division_awarded", "role": "system",
-                    "diff": {"winner_team_id": winner, "runner_up_team_id": loser_id,
-                             "matchup_id": str(m["_id"]), "score": f"{home_score}-{away_score}"},
-                    "created_at": now,
-                })
-                await sio.emit("division_crowned", {
-                    "league_id": input.league_id,
-                    "team_id": winner, "team_name": winner_name,
-                    "score": f"{home_score}-{away_score}",
-                    "crowned_at": now.isoformat(),
-                })
-
-        results.append({
-            "home": m["home_team_name"],
-            "away": m["away_team_name"],
-            "home_score": home_score,
-            "away_score": away_score,
-            "winner": m["home_team_name"] if winner == m["home_team_id"] else m["away_team_name"] if winner else "Tie"
-        })
-
-    # For All-Play: every team plays every other team (calculated separately)
-    if scoring_format == "all_play":
-        all_teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
-        scores = {}
-        for t in all_teams:
-            scores[str(t["_id"])] = await calc_team_score(str(t["_id"]))
-
-        for team_id, score in scores.items():
-            ap_wins = sum(1 for oid, oscore in scores.items() if oid != team_id and score > oscore)
-            ap_losses = sum(1 for oid, oscore in scores.items() if oid != team_id and score < oscore)
-            await db.teams.update_one(
-                {"_id": ObjectId(team_id)},
-                {"$inc": {"wins": ap_wins, "losses": ap_losses}}
-            )
-
-    # For Guillotine: find lowest scorer and mark eliminated
-    if scoring_format == "guillotine":
-        all_teams = await db.teams.find({"league_id": input.league_id, "eliminated": {"$ne": True}}).to_list(100)
-        scores = []
-        for t in all_teams:
-            s = await calc_team_score(str(t["_id"]))
-            scores.append((str(t["_id"]), t["name"], s))
-        if scores:
-            scores.sort(key=lambda x: x[2])
-            eliminated = scores[0]
-            await db.teams.update_one({"_id": ObjectId(eliminated[0])}, {"$set": {"eliminated": True}})
-            results.append({"eliminated": eliminated[1], "score": eliminated[2]})
-
-    await broadcast_to_room(f"league_{input.league_id}", "week_simulated", {
-        "week": input.week,
-        "results": results
-    })
-
-    return {"week": input.week, "results": results, "matchups_simulated": len(matchups)}
-
-
-@api_router.get("/matchups/{league_id}/results")
-async def get_week_results(league_id: str, week: int):
-    matchups = await db.matchups.find({
-        "league_id": league_id,
-        "week": week
-    }).to_list(100)
-    for m in matchups:
-        m["_id"] = str(m["_id"])
-    return matchups
 
 # Standings
 @api_router.get("/leagues/{league_id}/standings")
@@ -4888,6 +4298,27 @@ async def root():
 @api_router.get("/health")
 async def health():
     return {"status": "healthy"}
+
+# ─── Wire modular routers (awards, drafts, matchups) ──────────
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes
+
+_router_deps = {
+    "db": db,
+    "sio": sio,
+    "logger": logger,
+    "get_current_user": get_current_user,
+    "_safe_object_id": _safe_object_id,
+    "_evaluate_conditions": _evaluate_conditions,
+    "_execute_trade": _execute_trade,
+    "calculate_fantasy_points": calculate_fantasy_points,
+    "broadcast_to_room": broadcast_to_room,
+}
+awards_routes.setup(_router_deps)
+drafts_routes.setup(_router_deps)
+matchups_routes.setup(_router_deps)
+api_router.include_router(awards_routes.router)
+api_router.include_router(drafts_routes.router)
+api_router.include_router(matchups_routes.router)
 
 # Include router
 fastapi_app.include_router(api_router)

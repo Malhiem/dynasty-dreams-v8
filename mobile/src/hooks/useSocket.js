@@ -1,19 +1,35 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
-
-const API_BASE_URL = 'https://your-dynasty-dreams-api.com';
+import { BACKEND_URL } from '../lib/api';
 
 let socketInstance = null;
 
 function getSocket() {
   if (!socketInstance) {
-    socketInstance = io(API_BASE_URL, {
+    socketInstance = io(BACKEND_URL, {
       path: '/api/socket.io',
       transports: ['websocket'],
       autoConnect: false,
     });
   }
   return socketInstance;
+}
+
+/**
+ * Global event listener (no room join). Use for app-wide broadcasts like
+ * `championship_crowned`, `consolation_crowned`, `live_scoring_update`.
+ */
+export function useGlobalSocketEvent(eventName, handler) {
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
+  useEffect(() => {
+    if (!eventName) return undefined;
+    const socket = getSocket();
+    if (!socket.connected) socket.connect();
+    const onEvent = (payload) => handlerRef.current?.(payload);
+    socket.on(eventName, onEvent);
+    return () => { socket.off(eventName, onEvent); };
+  }, [eventName]);
 }
 
 export function useSocket(roomId, handlers = {}, userId = null) {
@@ -78,5 +94,9 @@ export function useLeagueSocket(leagueId, callbacks = {}) {
     week_simulated: callbacks.onWeekSimulated,
     activity_feed: callbacks.onActivityFeed,
     notification: callbacks.onNotification,
+    championship_crowned: callbacks.onChampionshipCrowned,
+    consolation_crowned: callbacks.onConsolationCrowned,
+    conference_crowned: callbacks.onConferenceCrowned,
+    division_crowned: callbacks.onDivisionCrowned,
   }, callbacks.userId);
 }

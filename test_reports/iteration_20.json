@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 20 — Backend refactor (routes/awards.py, routes/drafts.py, routes/matchups.py) non-regression + mobile-friendly auth contract. 15/15 pytest passed. test_crown_flow.py passed end-to-end (champion + consolation crowned, lottery boost applied to 2027 R1 pick #1 with boost=3). test_trade_flow.py passed end-to-end AFTER unsetting championship_won_at/consolation_won_at/conference_winner_at/division_winner_at on all teams between the two scripts (as the review-request called out). Mobile static review: api.js reads EXPO_PUBLIC_BACKEND_URL, useSocket.js imports BACKEND_URL from api.js, useGlobalSocketEvent hook exported, championship/consolation/conference/division crowned callbacks present in useLeagueSocket, DashboardScreen subscribes to all 4 crown events with native Alert toasts, AppNavigator wires Profile + Matchup under both HomeStack and LeagueStack. Backend non-regression aggregate /api/u/chriszarek still returns stats.{championships_won, conference_titles, division_titles, consolations_won, playoff_appearances} + teams[] with all 5 award timestamp fields. No ObjectId leaks observed in team-rewards response.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/matchups/{league_id}/results", "issue": "Requires `week` query param (returns 422 when omitted). Review-request called out the endpoint without mentioning the required param. Not a regression — confirmed pre-existing contract."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration20_refactor_mobile_auth.py",
+    "/app/test_reports/pytest/iteration20_results.xml",
+    "/app/backend/test_crown_flow.py",
+    "/app/backend/test_trade_flow.py"
+  ],
+  "action_items": [
+    "(LOW / docs-only) Document in routes/matchups.py or in README that test_trade_flow.py must be run with championship/consolation/conference/division timestamps CLEARED on all teams, otherwise the 'Team condition (no championship): blocked correctly' assertion fails due to stale state from test_crown_flow. Better: make test_trade_flow.py idempotent by running an _unset at its setup step.",
+    "(LOW) Open iter19 follow-up still valid: wrap Badge inside <span> on DraftLottery consolation-winners-card to silence hydration warning; verify ConsolationPrizeEditor Save toast actually renders (backend save is fine).",
+    "(INFO) server.py is still ~4406 lines post-refactor. The 3 new modules (awards 244 loc, drafts 23 loc, matchups 387 loc) account for only ~580 loc moved out. Consider extracting /trades, /players, /auth, /users next."
+  ],
+  "critical_code_review_comments": [
+    "routes/__init__.py deps-injection pattern works but is silent-by-design: if setup() isn't called before include_router, all endpoints 500 on first request with KeyError('db'). Recommend adding a sentinel check at the top of each route handler (e.g. if not _deps: raise RuntimeError('awards router not initialised')) with a clear error so future mis-wiring surfaces at startup, not at request time.",
+    "routes/matchups.py auto-crown branch emits sio events for 4 bracket types but swallows sio.emit failures silently (inherited from the pre-refactor code, flagged in iter19 review). Add a logger.warning with league_id + winner_team_id on broadcast failure.",
+    "/api/auth/refresh returns a NEW access_token but echoes the SAME refresh_token back — acceptable, but consider refresh-token rotation (issue a new refresh_token each refresh and revoke the old one) for mobile, which keeps long-lived sessions on the device.",
+    "routes/awards.py PUT /awards endpoint: when the same field is set True twice, audit_log records duplicate 'championship_won_at set' entries without comparing to the existing value. Minor — but a no-op PUT still writes an audit row and re-runs all conditional trades.",
+    "ConsolationPrizeUpdate still accepts lottery_boost_spots=0 for type=draft_lottery_boost (apply_consolation_prize correctly no-ops with a warning, but a Pydantic validator would reject it at the edge). Re-flagged from iter19."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration20_refactor_mobile_auth.py (new, 15 tests)"
+  ],
+  "success_rate": {"backend": "100% (15/15 pytest + test_crown_flow.py + test_trade_flow.py)", "frontend": "n/a — skipped per review-request (mobile cannot be E2E tested without Expo simulator)"},
+  "test_credentials": "admin@dynastydreams.com / Admin123! (commissioner of seed leagues). chriszarek@gmail.com / Chris2026! confirmed working for login but NOT commissioner of any league — updated fixture to use admin for commissioner-only endpoints.",
+  "seed_data_creation": "1 ephemeral register user created per pytest run (test_iter20_<random>@example.com — harmless). test_crown_flow.py seeded week-99 final matchups in Ice Kings and appended a team_reward. Teams championship/consolation/conference/division timestamps were unset globally between the two e2e scripts (also clears the side-effect of iter19's test_crown_flow run).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Ice Kings league_id=69e46af167999bfb85c39628 (admin=69dc63e232b1b7aac227c0a3 is commissioner, NOT chriszarek). /api/leagues/{id}/teams is 404 — use /api/teams?league_id=<id>. /api/matchups/{id}/results requires ?week=. /api/auth/register requires both `username` AND `name`. /api/u/chriszarek returns aggregates under `stats.*` + `teams[]` with the 5 award timestamps, not top-level. To run test_trade_flow.py cleanly after test_crown_flow.py, must db.teams.update_many({}, {$unset:{championship_won_at:'', consolation_won_at:'', conference_winner_at:'', division_winner_at:''}}) — otherwise the 'blocked correctly' assertion fails. Main agent should add this cleanup as a setUp in test_trade_flow.py. Mobile was NOT E2E tested (no Expo simulator available); contract verified only via static file inspection.",
+  "rca of the issue": "N/A — no backend bugs found. All 15 pytest + both e2e scripts pass. One test-ordering caveat: test_crown_flow.py is non-idempotent w.r.t. championship_won_at, so test_trade_flow.py's 'no championship yet → blocked' assertion requires prior cleanup."
+}

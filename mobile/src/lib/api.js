@@ -1,8 +1,13 @@
 import axios from 'axios';
 import * as SecureStore from 'expo-secure-store';
 
-// Update this to your production API URL
-const API_BASE_URL = 'https://your-dynasty-dreams-api.com/api';
+// Backend base URL — set EXPO_PUBLIC_BACKEND_URL in /app/mobile/.env
+const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
+if (!BACKEND_URL) {
+  console.warn('[api] EXPO_PUBLIC_BACKEND_URL is not set. Mobile API calls will fail.');
+}
+const API_BASE_URL = `${BACKEND_URL || ''}/api`;
+export { BACKEND_URL, API_BASE_URL };
 
 const api = axios.create({
   baseURL: API_BASE_URL,

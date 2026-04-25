@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl, Alert } from 'react-native';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import { useGlobalSocketEvent } from '../hooks/useSocket';
 
 export default function DashboardScreen({ navigation }) {
   const { user, logout } = useAuth();
@@ -23,6 +24,16 @@ export default function DashboardScreen({ navigation }) {
   useEffect(() => { fetchData(); }, []);
   const onRefresh = async () => { setRefreshing(true); await fetchData(); setRefreshing(false); };
 
+  // Real-time championship/consolation toasts
+  useGlobalSocketEvent('championship_crowned', (p) =>
+    Alert.alert('🏆 Champion Crowned!', `${p?.team_name || 'A team'} won the championship.${p?.unlocked_trades ? `\n${p.unlocked_trades} conditional trade(s) unlocked.` : ''}`));
+  useGlobalSocketEvent('consolation_crowned', (p) =>
+    Alert.alert('🎖 Consolation Winner', `${p?.team_name || 'A team'} won the consolation bracket.${p?.applied_steps?.[0] ? `\n${p.applied_steps[0]}` : ''}`));
+  useGlobalSocketEvent('conference_crowned', (p) =>
+    Alert.alert('🥇 Conference Champion', `${p?.team_name || 'A team'} won the conference.`));
+  useGlobalSocketEvent('division_crowned', (p) =>
+    Alert.alert('🏅 Division Champion', `${p?.team_name || 'A team'} won the division.`));
+
   const stats = {
     leagues: leagues.length,
     teams: leagues.reduce((a, l) => a + (l.current_teams || 0), 0),
@@ -33,10 +44,10 @@ export default function DashboardScreen({ navigation }) {
     <SafeAreaView style={s.container}>
       <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00D2FF" />}>
         <View style={s.header}>
-          <View>
+          <TouchableOpacity onPress={() => navigation.navigate('Profile')} testID="dashboard-profile-link">
             <Text style={s.greeting}>WELCOME BACK,</Text>
             <Text style={s.name}>{user?.name?.toUpperCase()}</Text>
-          </View>
+          </TouchableOpacity>
           <TouchableOpacity style={s.bellBtn} onPress={() => navigation.navigate('Notifications')}>
             <Text style={s.bellIcon}>🔔</Text>
             {unread > 0 && <View style={s.badge}><Text style={s.badgeText}>{unread}</Text></View>}

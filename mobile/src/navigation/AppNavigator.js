@@ -20,6 +20,8 @@ import StandingsScreen from '../screens/StandingsScreen';
 import SalaryCapScreen from '../screens/SalaryCapScreen';
 import ActivityFeedScreen from '../screens/ActivityFeedScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
+import ProfileScreen from '../screens/ProfileScreen';
+import MatchupScreen from '../screens/MatchupScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -45,6 +47,8 @@ function HomeStack() {
       <Stack.Screen name="LeagueDetail" component={LeaguesScreen} />
       <Stack.Screen name="StandingsDetail" component={StandingsScreen} />
       <Stack.Screen name="Notifications" component={NotificationsScreen} />
+      <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: 'My Profile' }} />
+      <Stack.Screen name="Matchup" component={MatchupScreen} options={{ title: 'Matchups' }} />
     </Stack.Navigator>
   );
 }
@@ -70,6 +74,7 @@ function LeagueStack() {
       headerTintColor: '#fff',
     }}>
       <Stack.Screen name="Roster" component={RosterScreen} />
+      <Stack.Screen name="Matchup" component={MatchupScreen} />
       <Stack.Screen name="TradeBlock" component={TradeBlockScreen} />
       <Stack.Screen name="Waivers" component={WaiversScreen} />
       <Stack.Screen name="SalaryCap" component={SalaryCapScreen} />
