@@ -7,21 +7,14 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Star, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Star, Search, ChevronLeft, ChevronRight, ArrowUp, ArrowDown,
+  ArrowUpDown, Calendar, FileText,
+} from "lucide-react";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
-
-/**
- * Players page
- *
- * Powerful filtered listing of every NHL player relative to the active
- * league. Supports the full set of filtered views the commissioner asked
- * for (free agents, owned, watchlist, trade block, waivers, injured,
- * minors-eligible, etc.) plus position / NHL-team / fantasy-team filters
- * and a star (watchlist) column.
- */
 
 const VIEWS = [
   { value: "available", label: "All Available Players (default)" },
@@ -54,8 +47,30 @@ const POSITIONS = [
   { value: "G", label: "Goaltenders" },
 ];
 
-// All league-tracked categories (matches PlayerRoster). Order = column order.
-const STAT_COLS = ["G", "A", "PTS", "+/-", "SOG", "PPP", "SHP", "HIT", "BLK", "FOW"];
+const TIMEFRAMES = [
+  { value: "season", label: "Season Totals" },
+  { value: "today", label: "Today" },
+  { value: "7d", label: "Last 7 Days" },
+  { value: "14d", label: "Last 14 Days" },
+  { value: "30d", label: "Last 30 Days" },
+  { value: "60d", label: "Last 60 Days" },
+  { value: "90d", label: "Last 90 Days" },
+];
+
+// All league-tracked stat columns (in display order). Each row maps to a sortable
+// backend field when supported.
+const STAT_COLS = [
+  { key: "G",     label: "G",   sort: "goals" },
+  { key: "A",     label: "A",   sort: "assists" },
+  { key: "PTS",   label: "PTS", sort: "points" },
+  { key: "+/-",   label: "+/-", sort: "plus_minus" },
+  { key: "SOG",   label: "SOG", sort: null },
+  { key: "PPP",   label: "PPP", sort: null },
+  { key: "SHP",   label: "SHP", sort: null },
+  { key: "HIT",   label: "HIT", sort: null },
+  { key: "BLK",   label: "BLK", sort: null },
+  { key: "FOW",   label: "FOW", sort: null },
+];
 
 const NHL_TEAMS = [
   "ANA","BOS","BUF","CGY","CAR","CHI","COL","CBJ","DAL","DET","EDM","FLA",
@@ -63,27 +78,24 @@ const NHL_TEAMS = [
   "STL","TBL","TOR","UTA","VAN","VGK","WPG","WSH",
 ];
 
-function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId) {
+function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir) {
   const p = new URLSearchParams();
   if (leagueId) p.append("league_id", leagueId);
   if (search) p.append("search", search);
   if (position && position !== "all") p.append("position", position);
   if (nhlTeam && nhlTeam !== "all") p.append("nhl_team", nhlTeam);
   if (fantasyTeamId && fantasyTeamId !== "all") p.append("fantasy_team_id", fantasyTeamId);
+  if (timeframe) p.append("timeframe", timeframe);
+  if (sortBy) p.append("sort_by", sortBy);
+  if (sortDir) p.append("sort_dir", sortDir);
   p.append("page", String(page));
   p.append("limit", "50");
 
-  // Map our high-level views onto backend params
   switch (view) {
     case "all": break;
     case "available":
       p.append("availability", "free_agent"); break;
-    case "available_or_own":
-      // Backend doesn't have a single op for this, use availability=all and let
-      // the page render anything that's either FA or owned by the user's team.
-      // To keep it server-side, we issue free_agent + own roster client-side.
-      // Simpler: fall back to "all" and post-filter.
-      break;
+    case "available_or_own": break;
     case "watchlist_or_own":
       p.append("availability", "watchlist_or_own"); break;
     case "owned":
@@ -161,6 +173,105 @@ function PctCell({ pct }) {
   );
 }
 
+function ChangeCell({ delta }) {
+  if (delta == null) return <span className="text-muted-foreground text-xs">—</span>;
+  const tone = delta > 0 ? "text-emerald-300" : delta < 0 ? "text-rose-400" : "text-muted-foreground";
+  const Arrow = delta > 0 ? ArrowUp : delta < 0 ? ArrowDown : null;
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className={`text-xs font-semibold inline-flex items-center gap-0.5 cursor-help ${tone}`}>
+            {Arrow && <Arrow className="h-3 w-3" />}
+            {delta > 0 ? "+" : ""}{delta}%
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-[11px]">
+          7-day ownership change across DD
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function StartPctCell({ pct }) {
+  if (pct == null) return <span className="text-muted-foreground text-xs">—</span>;
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="text-xs font-semibold text-violet-300 cursor-help">{pct}%</span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-[11px]">
+          Estimated % of leagues starting this player. Refines as active-lineup tracking is rolled out.
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/** Document icon with a 3-bar signal strength based on news age band. */
+function NewsSignal({ player }) {
+  const signal = player.news_signal;
+  if (!signal) return <span className="text-muted-foreground text-xs">—</span>;
+  const palette = signal === "fresh"
+    ? { color: "text-emerald-400", bars: 3 }
+    : signal === "stale"
+      ? { color: "text-amber-300", bars: 2 }
+      : { color: "text-rose-400", bars: 1 };
+  const heights = [3, 6, 9];
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <a
+            href={player.news_url || "#"}
+            target="_blank" rel="noreferrer"
+            className={`inline-flex items-center gap-1 ${palette.color}`}
+            data-testid={`players-news-signal-${player._id}`}
+            onClick={(e) => { if (!player.news_url) e.preventDefault(); }}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            <span className="inline-flex items-end gap-[1px] h-3">
+              {heights.map((h, i) => (
+                <span
+                  key={i}
+                  className={`w-[3px] rounded-sm ${i < palette.bars ? "bg-current" : "bg-current/25"}`}
+                  style={{ height: `${h}px` }}
+                />
+              ))}
+            </span>
+          </a>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-[11px] max-w-[280px]">
+          <div className="font-semibold">{player.news_headline}</div>
+          <div className="text-muted-foreground mt-1">
+            {player.news_age_days} days old · {signal === "fresh" ? "Recent" : signal === "stale" ? "Aging" : "Stale"}
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/** Sortable header cell: click to toggle asc/desc, indicates active sort. */
+function SortHeader({ label, sortKey, currentSort, currentDir, onSort, align = "center" }) {
+  const isActive = currentSort === sortKey;
+  const Icon = !isActive ? ArrowUpDown : currentDir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <th
+      className={`p-2 text-${align} text-xs uppercase tracking-wider text-muted-foreground ${sortKey ? "cursor-pointer select-none hover:text-foreground" : ""}`}
+      onClick={() => sortKey && onSort(sortKey)}
+      data-testid={sortKey ? `players-sort-${sortKey}` : undefined}
+    >
+      <span className={`inline-flex items-center gap-1 ${isActive ? "text-primary" : ""}`}>
+        {label}
+        {sortKey && <Icon className="h-3 w-3 opacity-60" />}
+      </span>
+    </th>
+  );
+}
+
 export default function PlayersPage() {
   const navigate = useNavigate();
   const { league: activeLeague, leagueId, myTeam, leagueTeams } = useActiveLeague();
@@ -171,27 +282,30 @@ export default function PlayersPage() {
   const [nhlTeam, setNhlTeam] = useState("all");
   const [fantasyTeamId, setFantasyTeamId] = useState("all");
   const [search, setSearch] = useState("");
+  const [timeframe, setTimeframe] = useState("season");
+  const [sortBy, setSortBy] = useState("points");
+  const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
 
   const [players, setPlayers] = useState([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [timeframeSupported, setTimeframeSupported] = useState(true);
 
-  // Reset to page 1 when filters change
-  useEffect(() => { setPage(1); }, [view, position, nhlTeam, fantasyTeamId, search]);
+  useEffect(() => { setPage(1); }, [view, position, nhlTeam, fantasyTeamId, search, timeframe]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const qs = buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId);
+    const qs = buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir);
     api.get(`/players?${qs}`)
       .then(({ data }) => {
         if (cancelled) return;
         let list = data.players || [];
         let totalCount = data.total ?? list.length;
         let totalPages = data.pages ?? 1;
-        // Client-side post-filter for "Available + Own Team" (API can't union the two sets cheaply)
+        setTimeframeSupported(!!data.timeframe_supported);
         if (view === "available_or_own" && ownTeamId) {
           list = list.filter((p) => !p.owned_by_team_id || p.owned_by_team_id === ownTeamId);
           totalCount = list.length;
@@ -204,7 +318,7 @@ export default function PlayersPage() {
       .catch(() => { if (!cancelled) { setPlayers([]); setTotal(0); setPages(1); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId]);
+  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId, timeframe, sortBy, sortDir]);
 
   const toggleWatchlist = async (player) => {
     try {
@@ -217,6 +331,15 @@ export default function PlayersPage() {
     } catch (e) { /* ignore */ }
   };
 
+  const handleSort = (key) => {
+    if (sortBy === key) {
+      setSortDir((d) => d === "asc" ? "desc" : "asc");
+    } else {
+      setSortBy(key);
+      setSortDir("desc");
+    }
+  };
+
   const fantasyTeamOptions = useMemo(() => {
     const items = [{ value: "all", label: "All Fantasy Teams" }];
     (leagueTeams || []).forEach((t) => {
@@ -227,8 +350,7 @@ export default function PlayersPage() {
 
   return (
     <AppLayout>
-      <div className="max-w-[1400px] mx-auto px-2" data-testid="players-page">
-        {/* Header */}
+      <div className="max-w-[1500px] mx-auto px-2" data-testid="players-page">
         <div className="mb-6 flex items-end justify-between">
           <div>
             <h1 className="font-heading text-4xl font-bold tracking-tight text-white">PLAYERS</h1>
@@ -241,7 +363,7 @@ export default function PlayersPage() {
 
         {/* Filter bar */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-2 mb-4 items-center">
-          <div className="md:col-span-4">
+          <div className="md:col-span-3">
             <Select value={view} onValueChange={setView}>
               <SelectTrigger className="h-9 text-xs bg-[#1A1A1A] border-white/10" data-testid="players-view-select">
                 <SelectValue />
@@ -282,10 +404,20 @@ export default function PlayersPage() {
               </SelectContent>
             </Select>
           </div>
-          <div className="md:col-span-2 relative">
+          <div className="md:col-span-2">
+            <Select value={timeframe} onValueChange={setTimeframe}>
+              <SelectTrigger className="h-9 text-xs bg-[#1A1A1A] border-white/10" data-testid="players-timeframe-select">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {TIMEFRAMES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="md:col-span-1 relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
-              placeholder="Search name…"
+              placeholder="Search…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-7 h-9 text-xs bg-[#1A1A1A] border-white/10"
@@ -294,38 +426,47 @@ export default function PlayersPage() {
           </div>
         </div>
 
+        {!timeframeSupported && timeframe !== "season" && (
+          <div className="mb-3 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs" data-testid="players-timeframe-banner">
+            Timeframe filtering for "{TIMEFRAMES.find((t) => t.value === timeframe)?.label}" is rolling out — currently showing season totals while per-game stats backfill.
+          </div>
+        )}
+
         {/* Table */}
         <div className="surface overflow-x-auto" data-testid="players-table-wrap">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-white/10 bg-secondary/30">
                 <th className="p-2 w-10" />
-                <th className="p-2 text-left text-xs uppercase tracking-wider text-muted-foreground">Player</th>
-                <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">Pos</th>
-                <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">Team</th>
+                <SortHeader label="Player"  sortKey="name"     currentSort={sortBy} currentDir={sortDir} onSort={handleSort} align="left" />
+                <SortHeader label="Pos"     sortKey="position" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="Team"    sortKey="team"     currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">Owned</th>
-                <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">OWN%</th>
+                <SortHeader label="OWN%"     sortKey="league_pct" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="% Chg 7d" sortKey="pct_change" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="% Start"  sortKey="start_pct"  currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">News</th>
                 {STAT_COLS.map((c) => (
-                  <th key={c} className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">{c}</th>
+                  <SortHeader key={c.key} label={c.label} sortKey={c.sort} currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 ))}
-                <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">Status</th>
+                <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">Sched</th>
               </tr>
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={6 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+                <tr><td colSpan={9 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
               )}
               {!loading && players.length === 0 && (
-                <tr><td colSpan={6 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">No players match these filters.</td></tr>
+                <tr><td colSpan={9 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">No players match these filters.</td></tr>
               )}
               {!loading && players.map((p) => {
                 const stats = p.category_breakdown || p.stats || {};
-                const cell = (cat) => {
-                  if (cat === "PTS") return p.points ?? ((stats.G ?? 0) + (stats.A ?? 0));
-                  if (cat === "+/-") return p.plus_minus ?? stats["+/-"] ?? 0;
-                  if (cat === "G") return p.goals ?? stats.G ?? 0;
-                  if (cat === "A") return p.assists ?? stats.A ?? 0;
-                  return stats[cat] ?? p[cat?.toLowerCase()] ?? 0;
+                const cell = (key) => {
+                  if (key === "PTS") return p.points ?? ((stats.G ?? 0) + (stats.A ?? 0));
+                  if (key === "+/-") return p.plus_minus ?? stats["+/-"] ?? 0;
+                  if (key === "G") return p.goals ?? stats.G ?? 0;
+                  if (key === "A") return p.assists ?? stats.A ?? 0;
+                  return stats[key] ?? p[key?.toLowerCase()] ?? 0;
                 };
                 return (
                   <tr key={p._id} className="border-b border-white/5 hover:bg-secondary/10" data-testid={`players-row-${p._id}`}>
@@ -339,18 +480,32 @@ export default function PlayersPage() {
                     <td className="p-2 text-center text-xs text-muted-foreground">{p.team}</td>
                     <td className="p-2 text-center"><OwnedCell player={p} /></td>
                     <td className="p-2 text-center"><PctCell pct={p.league_pct} /></td>
+                    <td className="p-2 text-center"><ChangeCell delta={p.pct_change_7d} /></td>
+                    <td className="p-2 text-center"><StartPctCell pct={p.start_pct} /></td>
+                    <td className="p-2 text-center"><NewsSignal player={p} /></td>
                     {STAT_COLS.map((c) => (
-                      <td key={c} className={`p-2 text-center text-xs ${c === "PTS" ? "text-cyan-300 font-bold" : ""}`}>
-                        {cell(c)}
+                      <td key={c.key} className={`p-2 text-center text-xs ${c.key === "PTS" ? "text-cyan-300 font-bold" : ""}`}>
+                        {cell(c.key)}
                       </td>
                     ))}
-                    <td className="p-2 text-center text-[10px] space-x-1">
-                      {p.is_on_trade_block && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300">BLOCK</span>}
-                      {p.is_on_waivers && <span className="px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300">WAIV</span>}
-                      {p.injury_status && p.injury_status !== "Healthy" && (
-                        <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300">INJ</span>
-                      )}
-                      {p.minors_eligible && <span className="px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300">MINORS</span>}
+                    <td className="p-2 text-center">
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/players/${p._id}`)}
+                              className="text-muted-foreground hover:text-cyan-300"
+                              data-testid={`players-schedule-btn-${p._id}`}
+                            >
+                              <Calendar className="h-3.5 w-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="text-[11px]">
+                            View {p.team} upcoming schedule
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </td>
                   </tr>
                 );

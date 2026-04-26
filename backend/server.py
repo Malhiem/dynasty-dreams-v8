@@ -1991,14 +1991,17 @@ def _team_to_response(team: dict) -> TeamResponse:
 async def get_players(
     request: Request,
     search: Optional[str] = None,
-    position: Optional[str] = None,           # C, LW, RW, W (LW|RW), LHD, RHD, D (any defender), SKT (non-G), G
-    nhl_team: Optional[str] = None,           # filter by NHL team abbreviation
-    fantasy_team_id: Optional[str] = None,    # only players on this fantasy team
-    league_id: Optional[str] = None,          # required for ownership/watchlist enrichment + most filtered views
-    availability: str = "all",                # "all" | "free_agent" | "owned" | "waivers" | "trade_block" | "watchlist" | "watchlist_or_own"
+    position: Optional[str] = None,
+    nhl_team: Optional[str] = None,
+    fantasy_team_id: Optional[str] = None,
+    league_id: Optional[str] = None,
+    availability: str = "all",
     injured: Optional[bool] = None,
     minors_eligible: Optional[bool] = None,
-    exclude_team_id: Optional[str] = None,    # used by "All Except Own Team" view
+    exclude_team_id: Optional[str] = None,
+    timeframe: str = "season",  # season|today|7d|14d|30d|60d|90d (currently only season is computed; others fall back)
+    sort_by: Optional[str] = None,  # "points","goals","assists","plus_minus","name","league_pct","pct_change","start_pct"
+    sort_dir: str = "desc",
     page: int = 1,
     limit: int = 50,
 ):
@@ -2125,14 +2128,22 @@ async def get_players(
             query["_id"] = {"$nin": existing_nin}
 
     skip = (page - 1) * limit
-    cursor = db.players.find(query).sort("points", -1).skip(skip).limit(limit)
+    # Server-side sort. Default: points desc.
+    sort_field_map = {
+        "points": "points", "goals": "goals", "assists": "assists",
+        "plus_minus": "plus_minus", "name": "name", "team": "team",
+        "position": "position", "fpts": "points",
+    }
+    primary_sort = sort_field_map.get((sort_by or "").lower(), "points")
+    direction = -1 if (sort_dir or "desc").lower() != "asc" else 1
+    cursor = db.players.find(query).sort(primary_sort, direction).skip(skip).limit(limit)
     players = await cursor.to_list(limit)
     total = await db.players.count_documents(query)
 
     # League-wide ownership counts for league_pct (lazily computed only for the page)
+    page_counts: dict[str, int] = {}
     if league_id and players:
         page_pids = [str(p["_id"]) for p in players]
-        page_counts: dict[str, int] = {}
         async for row in db.teams.aggregate([
             {"$match": {"league_id": league_id, "roster": {"$in": page_pids}}},
             {"$project": {"matched": {"$setIntersection": ["$roster", page_pids]}}},
@@ -2150,7 +2161,42 @@ async def get_players(
         async for c in db.waiver_claims.find({"league_id": league_id, "status": "pending"}, {"player_id": 1}):
             wv_set.add(str(c["player_id"]))
 
+    # ── 7-day ownership delta (% Change) ──
+    # Pulls most-recent snapshot from `ownership_snapshots` taken ≥ 7 days ago.
+    # Returns null when history is unavailable so UI can render "—".
+    pct_change_map: dict[str, float] = {}
+    if players:
+        page_pids = [str(p["_id"]) for p in players]
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        async for snap in db.ownership_snapshots.find({
+            "player_id": {"$in": page_pids},
+            "snapshot_at": {"$lte": cutoff},
+        }).sort("snapshot_at", -1):
+            pid = str(snap["player_id"])
+            if pid in pct_change_map:
+                continue
+            pct_change_map[pid] = float(snap.get("global_pct") or 0)
+
+    # ── Player news signal (most recent news doc per player) ──
+    news_map: dict[str, dict] = {}
+    if players:
+        page_pids = [str(p["_id"]) for p in players]
+        async for n in db.player_news.find(
+            {"player_id": {"$in": page_pids}},
+            {"player_id": 1, "headline": 1, "url": 1, "published_at": 1},
+        ).sort("published_at", -1):
+            pid = str(n["player_id"])
+            if pid not in news_map:
+                news_map[pid] = {
+                    "headline": n.get("headline"),
+                    "url": n.get("url"),
+                    "published_at": (n.get("published_at").isoformat()
+                                     if hasattr(n.get("published_at"), "isoformat")
+                                     else n.get("published_at")),
+                }
+
     out = []
+    global_team_total = await db.teams.count_documents({})
     for player in players:
         pid = str(player["_id"])
         player["_id"] = pid
@@ -2162,15 +2208,66 @@ async def get_players(
         player["is_on_waivers"] = pid in wv_set
         player["is_in_watchlist"] = pid in watch_ids
         if league_id and league_total_teams:
-            count = page_counts.get(pid, 0) if 'page_counts' in locals() else 0
+            count = page_counts.get(pid, 0)
             player["league_pct"] = round(100 * count / league_total_teams, 1)
+        # Cross-DD ownership %
+        global_owned = await db.teams.count_documents({"roster": pid}) if global_team_total else 0
+        global_pct = round(100 * global_owned / global_team_total, 1) if global_team_total else 0.0
+        player["global_pct"] = global_pct
+        # % change vs 7d-ago snapshot
+        if pid in pct_change_map:
+            player["pct_change_7d"] = round(global_pct - pct_change_map[pid], 1)
+        else:
+            player["pct_change_7d"] = None
+        # % start: cheap proxy = % of teams owning player who DON'T have him on IR.
+        # Until per-team starting lineups are tracked, treat all owned as starting
+        # except those flagged on IR via injury_status. This produces meaningful
+        # variation between healthy stars and injured players.
+        if global_team_total:
+            if (player.get("injury_status") or "").upper() in {"IR", "OUT", "INJURED RESERVE"}:
+                player["start_pct"] = round(0.0, 1)
+            else:
+                player["start_pct"] = global_pct
+        # News
+        if pid in news_map:
+            n = news_map[pid]
+            player["news_headline"] = n.get("headline")
+            player["news_url"] = n.get("url")
+            player["news_published_at"] = n.get("published_at")
+            try:
+                pub = datetime.fromisoformat(str(n["published_at"]).replace("Z", "+00:00"))
+                # MongoDB strips tzinfo; treat naive datetimes as UTC.
+                if pub.tzinfo is None:
+                    pub = pub.replace(tzinfo=timezone.utc)
+                age_days = (datetime.now(timezone.utc) - pub).days
+            except Exception:
+                age_days = None
+            player["news_age_days"] = age_days
+            if age_days is None:
+                player["news_signal"] = None
+            elif age_days <= 7:
+                player["news_signal"] = "fresh"     # 0-7d  — green/full
+            elif age_days <= 21:
+                player["news_signal"] = "stale"     # 7-21d — orange/half
+            elif age_days <= 35:
+                player["news_signal"] = "cold"      # 21-35d — red/low
+            else:
+                player["news_signal"] = None
         out.append(player)
+
+    # Apply post-enrichment sort for fields that aren't on the player doc itself.
+    if (sort_by or "").lower() in {"league_pct", "global_pct", "pct_change", "start_pct"}:
+        key = {"pct_change": "pct_change_7d"}.get(sort_by.lower(), sort_by.lower())
+        out.sort(key=lambda x: (x.get(key) is None, x.get(key) or 0),
+                 reverse=(direction == -1))
 
     return {
         "players": out,
         "total": total,
         "page": page,
         "pages": (total + limit - 1) // limit,
+        "timeframe": timeframe,
+        "timeframe_supported": timeframe == "season",
     }
 
 
