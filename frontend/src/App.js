@@ -25,6 +25,7 @@ import DraftRoomPage from "@/pages/DraftRoomPage";
 import AuctionDraftPage from "@/pages/AuctionDraftPage";
 import CommissionerPage from "@/pages/CommissionerPage";
 import PlayerDetailPage from "@/pages/PlayerDetailPage";
+import ComparePage from "@/pages/ComparePage";
 import LiveScoringPage from "@/pages/LiveScoringPage";
 import TeamDetailPage from "@/pages/TeamDetailPage";
 
@@ -79,6 +80,7 @@ function App() {
           <Route path="/leagues/:id" element={<ProtectedRoute><LeagueDetailPage /></ProtectedRoute>} />
           <Route path="/players" element={<ProtectedRoute><PlayersPage /></ProtectedRoute>} />
           <Route path="/players/:id" element={<ProtectedRoute><PlayerDetailPage /></ProtectedRoute>} />
+          <Route path="/compare" element={<ProtectedRoute><ComparePage /></ProtectedRoute>} />
           <Route path="/drafts" element={<ProtectedRoute><DraftsPage /></ProtectedRoute>} />
           <Route path="/draft-room/:id" element={<ProtectedRoute><DraftRoomPage /></ProtectedRoute>} />
           <Route path="/auction-draft/:id" element={<ProtectedRoute><AuctionDraftPage /></ProtectedRoute>} />

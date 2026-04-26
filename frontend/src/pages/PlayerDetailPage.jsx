@@ -10,6 +10,7 @@ import { ArrowLeft, User, Trophy, Target, TrendingUp, Shield, Zap, Clock, Newspa
 import { cn } from "@/lib/utils";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import PlayerBioBar from "@/lovable/components/PlayerBioBar";
 
 const positionLabels = { C: "Center", LW: "Left Wing", RW: "Right Wing", D: "Defenseman", G: "Goalie" };
 const positionColors = {
@@ -93,7 +94,7 @@ export default function PlayerDetailPage() {
       setLoading(true);
       try {
         const [p, n, g] = await Promise.all([
-          api.get(`/players/${id}`),
+          api.get(`/players/${id}${leagueId ? `?league_id=${leagueId}` : ""}`),
           api.get(`/players/${id}/news?limit=20`),
           api.get(`/players/${id}/recent-games${leagueId ? `?league_id=${leagueId}&limit=10` : "?limit=10"}`),
         ]);
@@ -174,15 +175,30 @@ export default function PlayerDetailPage() {
                 </div>
                 {player.shoots && <p className="text-sm text-[#A1A1AA] mt-2">Shoots: {player.shoots === "L" ? "Left" : "Right"}</p>}
               </div>
-              <div className="text-right">
-                <p className="text-sm text-[#A1A1AA]">Fantasy Points</p>
-                <p className="text-4xl font-bold text-[#00D2FF]" data-testid="fantasy-points">
-                  {((player.goals || 0) * 3 + (player.assists || 0) * 2 + (player.plus_minus || 0)).toFixed(1)}
-                </p>
+              <div className="text-right flex items-start gap-3">
+                <Button
+                  variant="outline"
+                  className="text-white border-white/15 hover:border-[#00D2FF]"
+                  onClick={() => navigate(`/compare?a=${player._id}${leagueId ? `&league_id=${leagueId}` : ""}`)}
+                  data-testid="compare-player-btn"
+                >
+                  Compare
+                </Button>
+                <div>
+                  <p className="text-sm text-[#A1A1AA]">Fantasy Points</p>
+                  <p className="text-4xl font-bold text-[#00D2FF]" data-testid="fantasy-points">
+                    {player.fantasy_points != null
+                      ? player.fantasy_points.toFixed(1)
+                      : ((player.goals || 0) * 3 + (player.assists || 0) * 2 + (player.plus_minus || 0)).toFixed(1)}
+                  </p>
+                </div>
               </div>
             </div>
           </div>
         </Card>
+
+        {/* Bio bar */}
+        <PlayerBioBar player={player} />
 
         {/* Latest news strip — always visible above the tabs */}
         {news.length > 0 && (

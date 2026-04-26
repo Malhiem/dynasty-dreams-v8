@@ -486,12 +486,121 @@ async def get_players_ownership(payload: dict, request: Request):
 
 
 @router.get("/players/{player_id}")
-async def get_player(player_id: str):
+async def get_player(player_id: str, league_id: Optional[str] = None, request: Request = None):
+    """Player detail with optional bio/contract enrichment when ?league_id is
+    provided. Bio fields (height, weight, birth, draft) come from the NHL
+    public API and are cached for 24h via `_career_cache`."""
     db = _db()
     player = await db.players.find_one({"_id": ObjectId(player_id)})
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
     player["_id"] = str(player["_id"])
+
+    # ── Bio + draft (NHL API, 24h cached) ────────────────────────────────
+    nhl_id = player.get("nhl_id")
+    if nhl_id:
+        cached = _career_cache.get(nhl_id)
+        now_ts = datetime.now(timezone.utc).timestamp()
+        raw = None
+        if cached and (now_ts - cached[0]) < _CAREER_CACHE_TTL:
+            raw = cached[1]
+        else:
+            try:
+                from nhlpy import NHLClient
+                raw = NHLClient().stats.player_career_stats(player_id=int(nhl_id))
+                _career_cache[nhl_id] = (now_ts, raw)
+            except Exception:
+                raw = None
+        if raw:
+            def _default(v):
+                return v.get("default") if isinstance(v, dict) else v
+            player["height_inches"] = raw.get("heightInInches")
+            player["weight_pounds"] = raw.get("weightInPounds")
+            player["birth_date"] = raw.get("birthDate")
+            player["birth_city"] = _default(raw.get("birthCity"))
+            player["birth_state"] = _default(raw.get("birthStateProvince"))
+            player["birth_country"] = raw.get("birthCountry")
+            player["headshot"] = raw.get("headshot")
+            d = raw.get("draftDetails") or {}
+            player["draft_year"] = d.get("year")
+            player["draft_round"] = d.get("round")
+            player["draft_pick_in_round"] = d.get("pickInRound")
+            player["draft_overall"] = d.get("overallPick")
+            player["draft_team_abbr"] = d.get("teamAbbrev")
+            # NHL seasons = count of NHL regular-season rows
+            seasons = [s for s in (raw.get("seasonTotals") or [])
+                       if s.get("leagueAbbrev") == "NHL" and s.get("gameTypeId") == 2]
+            player["nhl_seasons"] = len({s.get("season") for s in seasons})
+
+    # ── Position eligibility (multi-position when available) ──────────────
+    pos = player.get("position") or ""
+    eligible = list({pos} | set(player.get("eligible_positions") or []))
+    if pos in {"LW", "RW", "C"}:
+        # NHL doesn't track multi-pos officially; fall back to primary only
+        eligible = [pos]
+    player["eligible_positions"] = eligible
+
+    # ── League-scoped enrichment ─────────────────────────────────────────
+    if league_id:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+        if league:
+            # Owner in THIS league
+            owning_team = await db.teams.find_one({"league_id": league_id, "roster": player_id})
+            player["owned_by_team_id"] = str(owning_team["_id"]) if owning_team else None
+            player["owned_by_team_name"] = owning_team.get("name") if owning_team else None
+            player["owned_by_owner_name"] = owning_team.get("owner_name") if owning_team else None
+
+            # Fantasy points + per-game using league config
+            scoring_cfg = await _scoring_cfg_for(league_id)
+            stats = {
+                "goals": player.get("goals", 0), "assists": player.get("assists", 0),
+                "points": player.get("points", 0), "plus_minus": player.get("plus_minus", 0),
+                "shots": player.get("shots", 0),
+                "ppg": player.get("power_play_goals", 0),
+                "ppp": player.get("power_play_points", 0),
+                "shg": player.get("short_handed_goals", 0),
+                "pim": player.get("penalty_minutes", 0),
+                "saves": player.get("saves", 0),
+                "goals_against": player.get("goals_against", 0),
+                "wins": player.get("wins", 0), "losses": player.get("losses", 0),
+                "shutouts": player.get("shutouts", 0),
+            }
+            is_goalie = (pos == "G")
+            fpts = _calc_fpts(stats, is_goalie, scoring_cfg)
+            player["fantasy_points"] = round(fpts, 2)
+            gp = max(1, player.get("games_played", 0) or 0)
+            player["fantasy_points_per_game"] = round(fpts / gp, 2) if gp else 0.0
+
+            # Minors eligibility — use league's stored criteria with a
+            # sensible default of "≤25 NHL career games OR ≤22 years old".
+            max_games = league.get("minors_max_career_games", 25)
+            max_age = league.get("minors_max_age", 22)
+            career_games = 0
+            if nhl_id and _career_cache.get(nhl_id):
+                career = _career_cache[nhl_id][1].get("careerTotals", {}).get("regularSeason") or {}
+                career_games = career.get("gamesPlayed", 0)
+            age = None
+            bd = player.get("birth_date")
+            if bd:
+                try:
+                    bd_dt = datetime.fromisoformat(bd)
+                    age = (datetime.now(timezone.utc).replace(tzinfo=None) - bd_dt).days // 365
+                except Exception:
+                    pass
+            player["minors_eligible"] = bool(
+                (career_games and career_games <= max_games) or
+                (age is not None and age <= max_age)
+            )
+            player["minors_criteria"] = {
+                "max_career_games": max_games,
+                "max_age": max_age,
+                "career_games": career_games,
+                "age": age,
+            }
+        else:
+            player["fantasy_points"] = None
+            player["fantasy_points_per_game"] = None
+
     return player
 
 

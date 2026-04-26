@@ -4525,7 +4525,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes
 
 _router_deps = {
     "db": db,
@@ -4547,6 +4547,7 @@ analytics_routes.setup(_router_deps)
 waivers_routes.setup(_router_deps)
 players_routes.setup(_router_deps)
 trades_routes.setup(_router_deps)
+comparisons_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -4554,6 +4555,7 @@ api_router.include_router(analytics_routes.router)
 api_router.include_router(waivers_routes.router)
 api_router.include_router(players_routes.router)
 api_router.include_router(trades_routes.router)
+api_router.include_router(comparisons_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")
