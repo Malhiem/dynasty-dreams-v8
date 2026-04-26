@@ -225,6 +225,28 @@ async def test_multi_party_trade_full_flow():
     a_team = await db.teams.find_one({"_id": ObjectId(A["team_id"])})
     b_team = await db.teams.find_one({"_id": ObjectId(B["team_id"])})
     c_team = await db.teams.find_one({"_id": ObjectId(C["team_id"])})
+
+    # ── 6. Verify aggregate "trade accepted" notifications were created — one
+    # per party, exactly once. Look for any 3-team trade_accepted notification
+    # delivered to each tri-test owner in the past 60 seconds.
+    from datetime import datetime, timezone, timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=60)
+    notif_count = 0
+    for u in users:
+        # Find owner_id for this user via teams record
+        team_doc = await db.teams.find_one({"_id": ObjectId(u["team_id"])})
+        owner_id = team_doc.get("owner_id") if team_doc else None
+        if not owner_id:
+            continue
+        n = await db.notifications.find_one({
+            "user_id": owner_id,
+            "type": "trade_accepted",
+            "title": {"$regex": "3-team trade accepted"},
+        })
+        if n:
+            notif_count += 1
+    assert notif_count == 3, f"Expected 3 trade_accepted notifications (one per party), got {notif_count}"
+
     client.close()
     assert C["player_id"] in (a_team.get("roster") or []), "A should have C's player"
     assert A["player_id"] in (b_team.get("roster") or []), "B should have A's player"

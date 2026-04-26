@@ -3743,6 +3743,34 @@ async def party_respond_to_trade(trade_id: str, input: TradePartyResponse, reque
             except Exception as e:
                 logger.exception("Multi-party trade auto-execute failed: %s", e)
 
+        # Aggregate "trade accepted" notification — fired exactly once when
+        # every non-proposer party has accepted. Notifies every participant
+        # so each owner sees a single "Your trade is complete" entry instead
+        # of N partial-accept events.
+        try:
+            party_names = [p["team_name"] for p in parties]
+            is_multi = len(parties) > 2
+            title = (
+                f"{len(parties)}-team trade accepted"
+                if is_multi else "Trade accepted"
+            )
+            body = (
+                f"All {len(parties)} teams accepted: "
+                + " ↔ ".join(party_names)
+            )
+            for p in parties:
+                if not p.get("owner_id"):
+                    continue
+                await create_notification(
+                    p["owner_id"],
+                    NotificationType.TRADE_ACCEPTED.value,
+                    title, body,
+                    trade["league_id"],
+                    "/transactions",
+                )
+        except Exception as e:
+            logger.warning("trade_accepted notification failed: %s", e)
+
     await broadcast_to_room(f"league_{trade['league_id']}", "trade_party_accepted", {
         "trade_id": trade_id, "accepter": parties[party_idx]["team_name"],
         "all_accepted": _all_non_proposer_accepted(refreshed),

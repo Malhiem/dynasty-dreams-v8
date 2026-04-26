@@ -574,6 +574,7 @@ const Team = () => {
           isTradeBuilderOpen={tradeBuilder.open}
           currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
           refreshKey={rosterReloadKey}
+          leagueId={league?.id}
           teamId={selectedTeamId as string}
         />
 

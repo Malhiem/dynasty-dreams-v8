@@ -586,6 +586,8 @@ interface PlayerRosterProps {
    * Used after drops, trade-block toggles, or other mutations so the table
    * reflects the latest server state without a full page reload. */
   refreshKey?: number;
+  /** League ID — required for fetching per-league ownership. */
+  leagueId?: string;
 }
 
 const PlayerRoster = ({
@@ -599,6 +601,7 @@ const PlayerRoster = ({
   currentTeamContext = "mine",
   teamId = "frostbite",
   refreshKey = 0,
+  leagueId,
 }: PlayerRosterProps) => {
   const location = useLocation();
   const isTeamRosterPage = location.pathname.startsWith("/team");
@@ -648,6 +651,23 @@ const PlayerRoster = ({
       .finally(() => { if (!cancelled) setLiveLoading(false); });
     return () => { cancelled = true; };
   }, [teamId, isRealTeamId, refreshKey]);
+
+  // ── Ownership map: { player_id: {league_pct, league_owned, ...} } ──
+  // Fetched once we know every roster player; bumps with refreshKey so adds
+  // and drops re-pull fresh ownership numbers.
+  const [ownershipMap, setOwnershipMap] = useState<Record<string, any>>({});
+  useEffect(() => {
+    if (!livePlayers || livePlayers.length === 0) { setOwnershipMap({}); return; }
+    const ids = Array.from(new Set(livePlayers.map((p: any) => String(p.id))));
+    let cancelled = false;
+    api.post("/players/ownership-bulk", { player_ids: ids, league_id: leagueId })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setOwnershipMap(data?.ownership || {});
+      })
+      .catch(() => { if (!cancelled) setOwnershipMap({}); });
+    return () => { cancelled = true; };
+  }, [livePlayers, leagueId, refreshKey]);
 
   const teamRoster = useMemo(() => {
     if (isRealTeamId && livePlayers) return livePlayers;
@@ -1259,6 +1279,7 @@ const PlayerRoster = ({
             onDrop={onDropPlayer}
             onMegaphone={onAddToTradeBlock}
             tradeBlockPlayerIds={tradeBlockPlayerIds}
+            ownershipMap={ownershipMap}
             onPlayerClick={handleOpenCard}
             getPlayerPoints={getPlayerPoints}
             getSectionTotal={getSectionTotal}
@@ -1352,6 +1373,7 @@ const StatsTable = ({
   onDrop,
   onMegaphone,
   tradeBlockPlayerIds = [],
+  ownershipMap = {},
   onPlayerClick,
   getPlayerPoints,
   getSectionTotal,
@@ -1365,6 +1387,7 @@ const StatsTable = ({
   sectionCounts,
   visibleCategories,
   showFpts = true,
+  showOwnership = true,
   showPositionEligibility = true,
 }: {
   grouped: Record<RosterSection, Player[]>;
@@ -1372,6 +1395,7 @@ const StatsTable = ({
   onDrop?: (p: Player) => void;
   onMegaphone?: (p: Player) => void;
   tradeBlockPlayerIds?: string[];
+  ownershipMap?: Record<string, any>;
   onPlayerClick: (p: Player) => void;
   getPlayerPoints: (p: Player) => number;
   getSectionTotal: (s: RosterSection) => number;
@@ -1380,11 +1404,12 @@ const StatsTable = ({
   commissionerMode?: boolean;
   visibleCategories?: string[];
   showFpts?: boolean;
+  showOwnership?: boolean;
   showPositionEligibility?: boolean;
 } & HighlightProps) => {
   const displayCategories = visibleCategories ?? rosterStatCategories;
   const statCols = displayCategories.length;
-  const colSpan = 4 + statCols + (showFpts ? 1 : 0) + 1;
+  const colSpan = 4 + statCols + (showFpts ? 1 : 0) + (showOwnership ? 1 : 0) + 1;
   const fptsColIndex = 4 + statCols;
   return (
     <div className="overflow-x-auto">
@@ -1406,6 +1431,16 @@ const StatsTable = ({
               </th>
             ))}
             {showFpts && <th className="text-right text-xs font-medium text-muted-foreground p-2 w-[52px]">FPTS</th>}
+            {showOwnership && (
+              <th className="text-center text-xs font-medium text-muted-foreground p-2 w-[64px]">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger><span>OWN%</span></TooltipTrigger>
+                    <TooltipContent><p>% of league teams that own this player</p></TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </th>
+            )}
             <th className="text-center text-xs font-medium text-muted-foreground p-2 w-[72px]">Actions</th>
           </tr>
         </thead>
@@ -1430,6 +1465,7 @@ const StatsTable = ({
                             </td>
                           ))}
                           {showFpts && <td className="p-2 text-right font-bold text-primary">{getPlayerPoints(player)}</td>}
+                          {showOwnership && <OwnershipCell player={player} ownership={ownershipMap[String(player.id)]} />}
                         </PlayerRow>
                       );
                     }
@@ -1464,6 +1500,7 @@ const StatsTable = ({
                           </td>
                         ))}
                         {showFpts && <td className="p-2 text-right font-bold text-primary">{getPlayerPoints(player)}</td>}
+                        {showOwnership && <OwnershipCell player={player} ownership={ownershipMap[String(player.id)]} />}
                       </PlayerRow>
                     ))}
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) && (
@@ -2090,5 +2127,34 @@ const DropButton = ({ player, onDrop }: { player: Player; onDrop: (p: Player) =>
     </Tooltip>
   </TooltipProvider>
 );
+
+const OwnershipCell = ({ player, ownership }: { player: Player; ownership?: any }) => {
+  if (!ownership || ownership.league_pct == null) {
+    return <td className="p-2 text-center text-[11px] text-muted-foreground" data-testid={`roster-own-cell-${player.id}`}>—</td>;
+  }
+  const pct = ownership.league_pct;
+  const tone = pct >= 75 ? "text-emerald-300" : pct >= 25 ? "text-cyan-300" : "text-amber-300";
+  return (
+    <td className="p-2 text-center" data-testid={`roster-own-cell-${player.id}`}>
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className={`text-xs font-semibold cursor-help ${tone}`}>
+              {pct}%
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-[11px]">
+            <div>Owned in {ownership.league_owned}/{ownership.league_total} league teams ({pct}%)</div>
+            {ownership.global_pct != null && (
+              <div className="text-muted-foreground">
+                {ownership.global_owned}/{ownership.global_total} ({ownership.global_pct}%) across DD
+              </div>
+            )}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    </td>
+  );
+};
 
 export default PlayerRoster;
