@@ -2195,6 +2195,24 @@ async def get_players(
                                      else n.get("published_at")),
                 }
 
+    # ── % Start: count of teams with player in their starting lineup
+    # (forward/defense/goalie sections). Falls back to ownership-minus-IR for
+    # teams that haven't persisted a lineup yet.
+    start_count_map: dict[str, int] = {}
+    if players:
+        page_pids = [str(p["_id"]) for p in players]
+        async for t in db.teams.find({"roster": {"$in": page_pids}}, {"roster": 1, "lineup": 1}):
+            lineup = t.get("lineup") or {}
+            for pid in (t.get("roster") or []):
+                if pid not in page_pids:
+                    continue
+                info = lineup.get(pid)
+                if info is None:
+                    # No lineup persisted: count as starting (legacy assumption)
+                    start_count_map[pid] = start_count_map.get(pid, 0) + 1
+                elif info.get("section") in ("forward", "defense", "goalie"):
+                    start_count_map[pid] = start_count_map.get(pid, 0) + 1
+
     out = []
     global_team_total = await db.teams.count_documents({})
     for player in players:
@@ -2219,15 +2237,15 @@ async def get_players(
             player["pct_change_7d"] = round(global_pct - pct_change_map[pid], 1)
         else:
             player["pct_change_7d"] = None
-        # % start: cheap proxy = % of teams owning player who DON'T have him on IR.
-        # Until per-team starting lineups are tracked, treat all owned as starting
-        # except those flagged on IR via injury_status. This produces meaningful
-        # variation between healthy stars and injured players.
+        # % start: count of teams starting this player (lineup-aware) divided
+        # by total teams across DD. Falls back to ownership when no team has
+        # persisted a lineup. IR-flagged players never count as starting.
         if global_team_total:
             if (player.get("injury_status") or "").upper() in {"IR", "OUT", "INJURED RESERVE"}:
                 player["start_pct"] = round(0.0, 1)
             else:
-                player["start_pct"] = global_pct
+                start_count = start_count_map.get(pid, 0)
+                player["start_pct"] = round(100 * start_count / global_team_total, 1)
         # News
         if pid in news_map:
             n = news_map[pid]
@@ -2261,13 +2279,61 @@ async def get_players(
         out.sort(key=lambda x: (x.get(key) is None, x.get(key) or 0),
                  reverse=(direction == -1))
 
+    # ── Timeframe-based stat overrides ──
+    # When timeframe ≠ "season" and we have player_game_logs persisted, replace
+    # season totals with the aggregated window totals. If no logs exist for any
+    # player in `out`, gracefully fall back to season totals and signal via
+    # `timeframe_supported=False` so the UI shows the explanatory banner.
+    timeframe_supported = (timeframe == "season")
+    if out and timeframe and timeframe != "season":
+        days_map = {"today": 1, "7d": 7, "14d": 14, "30d": 30, "60d": 60, "90d": 90}
+        days = days_map.get(timeframe)
+        if days is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+            page_pids = [p["_id"] for p in out]
+            agg = {}
+            async for row in db.player_game_logs.aggregate([
+                {"$match": {"player_id": {"$in": page_pids}, "date_dt": {"$gte": cutoff}}},
+                {"$group": {
+                    "_id": "$player_id",
+                    "G": {"$sum": "$goals"}, "A": {"$sum": "$assists"},
+                    "PTS": {"$sum": "$points"}, "PM": {"$sum": "$plus_minus"},
+                    "SOG": {"$sum": "$sog"}, "PPP": {"$sum": "$ppg"},
+                    "SHP": {"$sum": "$shg"}, "HIT": {"$sum": "$hits"},
+                    "BLK": {"$sum": "$blocks"}, "GP": {"$sum": 1},
+                }},
+            ]):
+                agg[str(row["_id"])] = row
+            if agg:
+                timeframe_supported = True
+                for p in out:
+                    a = agg.get(p["_id"])
+                    if not a:
+                        # No games this window → zero out so UI shows accurate stats
+                        p["goals"] = 0; p["assists"] = 0; p["points"] = 0
+                        p["plus_minus"] = 0
+                        p["category_breakdown"] = {
+                            "G": 0, "A": 0, "+/-": 0, "SOG": 0, "PPP": 0,
+                            "SHP": 0, "HIT": 0, "BLK": 0,
+                        }
+                        p["games_played_window"] = 0
+                        continue
+                    p["goals"] = a["G"]; p["assists"] = a["A"]; p["points"] = a["PTS"]
+                    p["plus_minus"] = a["PM"]
+                    p["category_breakdown"] = {
+                        "G": a["G"], "A": a["A"], "+/-": a["PM"],
+                        "SOG": a["SOG"], "PPP": a["PPP"], "SHP": a["SHP"],
+                        "HIT": a["HIT"], "BLK": a["BLK"],
+                    }
+                    p["games_played_window"] = a["GP"]
+
     return {
         "players": out,
         "total": total,
         "page": page,
         "pages": (total + limit - 1) // limit,
         "timeframe": timeframe,
-        "timeframe_supported": timeframe == "season",
+        "timeframe_supported": timeframe_supported,
     }
 
 
@@ -5106,6 +5172,58 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     )
 
     return {"message": f"Added {player['name']} to roster"}
+
+
+@api_router.post("/teams/{team_id}/lineup")
+async def save_team_lineup(team_id: str, payload: dict, request: Request):
+    """Persist a team's active-lineup mapping.
+
+    Body: {"lineup": {"<player_id>": {"section": "forward|defense|goalie|bench|ir|minors", "slot": "C|LW|RW|D|G|BN|IR|MIN"}}}
+
+    Sections drive the `% Start` calculation (only forward/defense/goalie count
+    as starting). Persisted on the team document so PlayerRoster's existing
+    Save Roster button can call this from any client.
+    """
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    is_owner = team.get("owner_id") == user["_id"]
+    is_commish = league and (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or (user.get("role") == "admin")
+    )
+    if not (is_owner or is_commish):
+        raise HTTPException(status_code=403, detail="Only the team owner or commissioner may edit lineups")
+
+    raw = payload.get("lineup") or {}
+    lineup: dict[str, dict] = {}
+    valid_sections = {"forward", "defense", "goalie", "bench", "ir", "minors"}
+    for pid, info in raw.items():
+        if not isinstance(info, dict):
+            continue
+        section = (info.get("section") or "bench").lower()
+        if section not in valid_sections:
+            section = "bench"
+        slot = info.get("slot") or section.upper()[:3]
+        lineup[str(pid)] = {"section": section, "slot": slot}
+
+    await db.teams.update_one(
+        {"_id": ObjectId(team_id)},
+        {"$set": {"lineup": lineup, "lineup_updated_at": datetime.now(timezone.utc)}},
+    )
+    return {"team_id": team_id, "lineup_size": len(lineup), "saved": True}
+
+
+@api_router.get("/teams/{team_id}/lineup")
+async def get_team_lineup(team_id: str, request: Request):
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return {"team_id": team_id, "lineup": team.get("lineup") or {}}
 
 
 @api_router.post("/players/ownership-bulk")

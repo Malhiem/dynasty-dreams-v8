@@ -445,7 +445,6 @@ export default function PlayersPage() {
                 <SortHeader label="OWN%"     sortKey="league_pct" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="% Chg 7d" sortKey="pct_change" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="% Start"  sortKey="start_pct"  currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
-                <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">News</th>
                 {STAT_COLS.map((c) => (
                   <SortHeader key={c.key} label={c.label} sortKey={c.sort} currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 ))}
@@ -454,10 +453,10 @@ export default function PlayersPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={9 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+                <tr><td colSpan={8 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
               )}
               {!loading && players.length === 0 && (
-                <tr><td colSpan={9 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">No players match these filters.</td></tr>
+                <tr><td colSpan={8 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">No players match these filters.</td></tr>
               )}
               {!loading && players.map((p) => {
                 const stats = p.category_breakdown || p.stats || {};
@@ -474,7 +473,10 @@ export default function PlayersPage() {
                       <StarToggle player={p} onToggle={toggleWatchlist} />
                     </td>
                     <td className="p-2">
-                      <Link to={`/players/${p._id}`} className="font-medium text-white hover:text-primary">{p.name}</Link>
+                      <div className="flex items-center gap-1.5">
+                        <Link to={`/players/${p._id}`} className="font-medium text-white hover:text-primary">{p.name}</Link>
+                        {p.news_signal && <NewsSignal player={p} />}
+                      </div>
                     </td>
                     <td className="p-2 text-center text-xs text-muted-foreground">{p.position}</td>
                     <td className="p-2 text-center text-xs text-muted-foreground">{p.team}</td>
@@ -482,7 +484,6 @@ export default function PlayersPage() {
                     <td className="p-2 text-center"><PctCell pct={p.league_pct} /></td>
                     <td className="p-2 text-center"><ChangeCell delta={p.pct_change_7d} /></td>
                     <td className="p-2 text-center"><StartPctCell pct={p.start_pct} /></td>
-                    <td className="p-2 text-center"><NewsSignal player={p} /></td>
                     {STAT_COLS.map((c) => (
                       <td key={c.key} className={`p-2 text-center text-xs ${c.key === "PTS" ? "text-cyan-300 font-bold" : ""}`}>
                         {cell(c.key)}

@@ -779,9 +779,24 @@ const PlayerRoster = ({
           action: isLegal
             ? {
                 label: "Save Roster",
-                onClick: () => {
+                onClick: async () => {
                   setSavedPlayers([...players]);
                   persistRoster(teamId, players);
+                  // Persist active lineup to backend so % Start reflects this team.
+                  // We map each player's local rosterSection (forward/defense/
+                  // goalie/bench/ir/minors) to the team's lineup map.
+                  if (isRealTeamId) {
+                    try {
+                      const lineup: Record<string, { section: string; slot: string }> = {};
+                      players.forEach((p: any) => {
+                        const section = (p.rosterSection || "bench").toString();
+                        lineup[String(p.id)] = { section, slot: p.position || section.toUpperCase().slice(0, 3) };
+                      });
+                      await api.post(`/teams/${teamId}/lineup`, { lineup });
+                    } catch (e) {
+                      console.warn("lineup save failed", e);
+                    }
+                  }
                   setHasUnsavedChanges(false);
                   toast.success("Roster saved successfully!");
                 },
