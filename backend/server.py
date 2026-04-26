@@ -4555,6 +4555,23 @@ api_router.include_router(waivers_routes.router)
 api_router.include_router(players_routes.router)
 api_router.include_router(trades_routes.router)
 
+
+@api_router.post("/admin/snapshot-ownership")
+async def admin_snapshot_ownership(request: Request):
+    """Site-admin trigger to capture an ownership snapshot RIGHT NOW.
+
+    Useful when site operators want the % Change column to populate before
+    the natural 24h tick fires. Auth: only the user with email ==
+    ADMIN_EMAIL can call this.
+    """
+    user = await get_current_user(request)
+    admin_email = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
+    if user.get("email") != admin_email:
+        raise HTTPException(status_code=403, detail="Site admin only")
+    from ownership_snapshot_worker import snapshot_once
+    return await snapshot_once(db)
+
+
 # Include router
 fastapi_app.include_router(api_router)
 
@@ -4629,11 +4646,25 @@ async def startup():
     except Exception as e:
         logger.warning(f"Could not start live scoring worker: {e}")
 
+    # Kick off daily ownership snapshot worker (writes one row per player
+    # per day to `ownership_snapshots`, used by /players → pct_change_7d).
+    try:
+        from ownership_snapshot_worker import ownership_snapshot_loop
+        loop = asyncio.get_event_loop()
+        fastapi_app.state.ownership_snapshot_task = loop.create_task(ownership_snapshot_loop(db))
+        logger.info("Ownership snapshot worker scheduled")
+    except Exception as e:
+        logger.warning(f"Could not start ownership snapshot worker: {e}")
+
+
 @fastapi_app.on_event("shutdown")
 async def shutdown():
     task = getattr(fastapi_app.state, "live_scoring_task", None)
     if task:
         task.cancel()
+    snap_task = getattr(fastapi_app.state, "ownership_snapshot_task", None)
+    if snap_task:
+        snap_task.cancel()
     client.close()
 
 # Wrap FastAPI with Socket.IO

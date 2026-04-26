@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
+import { View, Text, FlatList, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
+import TeamLogoUploader from '../components/TeamLogoUploader';
 
 export default function RosterScreen({ navigation }) {
   const { user } = useAuth();
@@ -30,8 +31,20 @@ export default function RosterScreen({ navigation }) {
   return (
     <SafeAreaView style={s.container}>
       <View style={s.header}>
-        <Text style={s.title}>{team?.name || 'My Roster'}</Text>
-        <Text style={s.subtitle}>{roster.length} players</Text>
+        {team ? (
+          <TeamLogoUploader
+            teamId={team.id}
+            name={team.name}
+            abbr={team.logo_abbr}
+            logo={team.logo_url}
+            size="lg"
+            onChange={(newLogo) => setTeam(prev => prev ? { ...prev, logo_url: newLogo } : prev)}
+          />
+        ) : null}
+        <View style={s.headerInfo}>
+          <Text style={s.title}>{team?.name || 'My Roster'}</Text>
+          <Text style={s.subtitle}>{roster.length} players</Text>
+        </View>
       </View>
       <FlatList
         data={roster}
@@ -59,7 +72,11 @@ export default function RosterScreen({ navigation }) {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0A0A0A' },
-  header: { padding: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)' },
+  header: {
+    padding: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.1)',
+    flexDirection: 'row', alignItems: 'center', gap: 16,
+  },
+  headerInfo: { flex: 1 },
   title: { fontSize: 24, fontWeight: '800', color: '#fff' },
   subtitle: { fontSize: 13, color: '#A1A1AA', marginTop: 4 },
   list: { padding: 8 },
