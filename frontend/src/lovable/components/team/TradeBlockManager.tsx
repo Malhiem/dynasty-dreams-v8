@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Input } from "@/components/ui/input";
-import { ArrowRightLeft, Loader2, Plus, X } from "lucide-react";
+import { ArrowRightLeft, Loader2, Plus, X, MessageSquare, Save } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import api from "@/lib/api";
 
@@ -23,6 +24,12 @@ export default function TradeBlockManager({ team, league, isOwnTeam }) {
   const [retention, setRetention] = useState(team?.salary_retention_pref || "no_preference");
   const [busy, setBusy] = useState(false);
   const [retentionSaving, setRetentionSaving] = useState(false);
+  // Public note shown to anyone viewing this team's trade block (max 200 chars).
+  const [note, setNote] = useState("");
+  const [savedNote, setSavedNote] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const noteRemaining = 200 - note.length;
+  const noteDirty = note !== savedNote;
 
   // Local set of player_ids on the block (for fast toggle highlight)
   const onBlockSet = useMemo(() => new Set(items.filter(i => i.item_type === "player").map(i => i.player_id)), [items]);
@@ -45,7 +52,35 @@ export default function TradeBlockManager({ team, league, isOwnTeam }) {
       }).catch(() => {});
     }
     setRetention(team?.salary_retention_pref || "no_preference");
+    // Load the team's public trade block note
+    if (team?.id) {
+      api.get(`/teams/${team.id}/trade-block-note`)
+        .then(({ data }) => {
+          const n = data?.note || "";
+          setNote(n);
+          setSavedNote(n);
+        })
+        .catch(() => {});
+    }
   }, [team?.id, league?.id]);
+
+  const saveNote = async () => {
+    if (!isOwnTeam || !team?.id || noteSaving) return;
+    setNoteSaving(true);
+    try {
+      const { data } = await api.put(`/teams/${team.id}/trade-block-note`, {
+        note: note.slice(0, 200),
+      });
+      setSavedNote(data?.note ?? note);
+      toast.success("Trade block note saved");
+    } catch (e) {
+      toast.error("Failed to save note", {
+        description: e?.response?.data?.detail || e?.message,
+      });
+    } finally {
+      setNoteSaving(false);
+    }
+  };
 
   const togglePlayer = async (player) => {
     if (!isOwnTeam || busy || !team?.id) return;
@@ -163,6 +198,67 @@ export default function TradeBlockManager({ team, league, isOwnTeam }) {
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Public trade block note (max 200 chars). Owner can edit; visitors
+            see it as a read-only message. Hidden entirely when there's no
+            note and the viewer doesn't own the team. */}
+        {(isOwnTeam || (savedNote && savedNote.length > 0)) && (
+          <div
+            className="rounded-md border border-border bg-secondary/30 p-3"
+            data-testid="trade-block-note-section"
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+                <MessageSquare className="h-3 w-3" />
+                Note from {isOwnTeam ? "you" : (team?.name || "owner")}
+              </div>
+              {isOwnTeam && (
+                <span className={`text-[10px] ${noteRemaining < 20 ? "text-amber-300" : "text-muted-foreground"}`}>
+                  {noteRemaining}/200
+                </span>
+              )}
+            </div>
+            {isOwnTeam ? (
+              <>
+                <Textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value.slice(0, 200))}
+                  placeholder="What are you looking for? (e.g., '2C with 30+ pts; willing to overpay for top-pair LD'). Visible to all league members."
+                  rows={2}
+                  className="text-xs resize-none bg-background/40"
+                  maxLength={200}
+                  data-testid="trade-block-note-input"
+                />
+                <div className="flex items-center justify-end gap-2 mt-2">
+                  {noteDirty && (
+                    <button
+                      type="button"
+                      onClick={() => setNote(savedNote)}
+                      className="text-[11px] text-muted-foreground hover:text-foreground"
+                      data-testid="trade-block-note-undo"
+                    >
+                      Undo
+                    </button>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={saveNote}
+                    disabled={!noteDirty || noteSaving}
+                    className="h-7 text-[11px]"
+                    data-testid="trade-block-note-save"
+                  >
+                    {noteSaving ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Save className="h-3 w-3 mr-1" />}
+                    Save Note
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-foreground/85 whitespace-pre-wrap" data-testid="trade-block-note-readonly">
+                {savedNote}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Current items */}
         {items.length === 0 ? (
           <div className="text-center py-6 text-sm text-muted-foreground border border-dashed border-border rounded-md" data-testid="trade-block-empty">

@@ -2,6 +2,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings, Megaphone } from "lucide-react";
+import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -669,6 +670,23 @@ const PlayerRoster = ({
     return () => { cancelled = true; };
   }, [livePlayers, leagueId, refreshKey]);
 
+  // ── News map: { player_id: {news_headline, news_summary, news_signal, ...} } ──
+  // Powers the inline news icon next to each player's name. The icon opens
+  // a small in-app modal (no external browser hop) from NewsSignalIcon.
+  const [newsMap, setNewsMap] = useState<Record<string, any>>({});
+  useEffect(() => {
+    if (!livePlayers || livePlayers.length === 0) { setNewsMap({}); return; }
+    const ids = Array.from(new Set(livePlayers.map((p: any) => String(p.id))));
+    let cancelled = false;
+    api.post("/players/news-bulk", { player_ids: ids })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setNewsMap(data?.news || {});
+      })
+      .catch(() => { if (!cancelled) setNewsMap({}); });
+    return () => { cancelled = true; };
+  }, [livePlayers, refreshKey]);
+
   const teamRoster = useMemo(() => {
     if (isRealTeamId && livePlayers) return livePlayers;
     // Use a numeric seed from teamId string (mock fallback for non-DB ids)
@@ -1295,6 +1313,7 @@ const PlayerRoster = ({
             onMegaphone={onAddToTradeBlock}
             tradeBlockPlayerIds={tradeBlockPlayerIds}
             ownershipMap={ownershipMap}
+            newsMap={newsMap}
             onPlayerClick={handleOpenCard}
             getPlayerPoints={getPlayerPoints}
             getSectionTotal={getSectionTotal}
@@ -1389,6 +1408,7 @@ const StatsTable = ({
   onMegaphone,
   tradeBlockPlayerIds = [],
   ownershipMap = {},
+  newsMap = {},
   onPlayerClick,
   getPlayerPoints,
   getSectionTotal,
@@ -1411,6 +1431,7 @@ const StatsTable = ({
   onMegaphone?: (p: Player) => void;
   tradeBlockPlayerIds?: string[];
   ownershipMap?: Record<string, any>;
+  newsMap?: Record<string, any>;
   onPlayerClick: (p: Player) => void;
   getPlayerPoints: (p: Player) => number;
   getSectionTotal: (s: RosterSection) => number;
@@ -1473,7 +1494,7 @@ const StatsTable = ({
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (player) {
                       return (
-                        <PlayerRow key={player.id} player={player} index={slotIdx} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
+                        <PlayerRow key={player.id} player={player} index={slotIdx} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
                           {displayCategories.map(cat => (
                             <td key={cat} className="p-2 text-center text-sm">
                               {player.categoryBreakdown[cat] ?? 0}
@@ -1508,7 +1529,7 @@ const StatsTable = ({
                 ) : (
                   <>
                     {sectionPlayers.map((player, index) => (
-                      <PlayerRow key={player.id} player={player} index={index} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
+                      <PlayerRow key={player.id} player={player} index={index} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
                         {displayCategories.map(cat => (
                           <td key={cat} className="p-2 text-center text-sm">
                             {player.categoryBreakdown[cat] ?? 0}
@@ -2000,6 +2021,7 @@ const PlayerRow = ({
   onDrop,
   onMegaphone,
   isOnTradeBlock = false,
+  newsInfo,
   onPlayerClick,
   children,
   isOwnTeam = true,
@@ -2015,6 +2037,7 @@ const PlayerRow = ({
   onDrop?: (p: Player) => void;
   onMegaphone?: (p: Player) => void;
   isOnTradeBlock?: boolean;
+  newsInfo?: any;
   onPlayerClick: (p: Player) => void;
   children: React.ReactNode;
   isOwnTeam?: boolean;
@@ -2040,7 +2063,10 @@ const PlayerRow = ({
             {player.team}
           </div>
           <div className="flex flex-col gap-0.5 min-w-0">
-            <button onClick={() => onPlayerClick(player)} className="font-medium text-sm text-foreground hover:text-primary transition-colors cursor-pointer truncate text-left">{player.name}</button>
+            <div className="flex items-center gap-1.5 min-w-0">
+              <button onClick={() => onPlayerClick(player)} className="font-medium text-sm text-foreground hover:text-primary transition-colors cursor-pointer truncate text-left">{player.name}</button>
+              {newsInfo && <NewsSignalIcon player={{ ...newsInfo, _id: player.id, name: player.name }} />}
+            </div>
             {showPositionEligibility && <PositionBadges player={player} />}
           </div>
         </div>

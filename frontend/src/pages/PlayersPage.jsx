@@ -9,12 +9,13 @@ import {
 } from "@/components/ui/select";
 import {
   Star, Search, ChevronLeft, ChevronRight, ArrowUp, ArrowDown,
-  ArrowUpDown, Calendar, FileText,
+  ArrowUpDown, Calendar,
 } from "lucide-react";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 
 const VIEWS = [
   { value: "available", label: "All Available Players (default)" },
@@ -204,50 +205,6 @@ function StartPctCell({ pct }) {
         </TooltipTrigger>
         <TooltipContent side="top" className="text-[11px]">
           Estimated % of leagues starting this player. Refines as active-lineup tracking is rolled out.
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
-}
-
-/** Document icon with a 3-bar signal strength based on news age band. */
-function NewsSignal({ player }) {
-  const signal = player.news_signal;
-  if (!signal) return <span className="text-muted-foreground text-xs">—</span>;
-  const palette = signal === "fresh"
-    ? { color: "text-emerald-400", bars: 3 }
-    : signal === "stale"
-      ? { color: "text-amber-300", bars: 2 }
-      : { color: "text-rose-400", bars: 1 };
-  const heights = [3, 6, 9];
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <a
-            href={player.news_url || "#"}
-            target="_blank" rel="noreferrer"
-            className={`inline-flex items-center gap-1 ${palette.color}`}
-            data-testid={`players-news-signal-${player._id}`}
-            onClick={(e) => { if (!player.news_url) e.preventDefault(); }}
-          >
-            <FileText className="h-3.5 w-3.5" />
-            <span className="inline-flex items-end gap-[1px] h-3">
-              {heights.map((h, i) => (
-                <span
-                  key={i}
-                  className={`w-[3px] rounded-sm ${i < palette.bars ? "bg-current" : "bg-current/25"}`}
-                  style={{ height: `${h}px` }}
-                />
-              ))}
-            </span>
-          </a>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="text-[11px] max-w-[280px]">
-          <div className="font-semibold">{player.news_headline}</div>
-          <div className="text-muted-foreground mt-1">
-            {player.news_age_days} days old · {signal === "fresh" ? "Recent" : signal === "stale" ? "Aging" : "Stale"}
-          </div>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
@@ -475,7 +432,7 @@ export default function PlayersPage() {
                     <td className="p-2">
                       <div className="flex items-center gap-1.5">
                         <Link to={`/players/${p._id}`} className="font-medium text-white hover:text-primary">{p.name}</Link>
-                        {p.news_signal && <NewsSignal player={p} />}
+                        {p.news_signal && <NewsSignalIcon player={p} />}
                       </div>
                     </td>
                     <td className="p-2 text-center text-xs text-muted-foreground">{p.position}</td>

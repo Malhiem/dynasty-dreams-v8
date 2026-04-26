@@ -2183,12 +2183,14 @@ async def get_players(
         page_pids = [str(p["_id"]) for p in players]
         async for n in db.player_news.find(
             {"player_id": {"$in": page_pids}},
-            {"player_id": 1, "headline": 1, "url": 1, "published_at": 1},
+            {"player_id": 1, "headline": 1, "summary": 1, "url": 1, "source": 1, "published_at": 1},
         ).sort("published_at", -1):
             pid = str(n["player_id"])
             if pid not in news_map:
                 news_map[pid] = {
                     "headline": n.get("headline"),
+                    "summary": n.get("summary"),
+                    "source": n.get("source"),
                     "url": n.get("url"),
                     "published_at": (n.get("published_at").isoformat()
                                      if hasattr(n.get("published_at"), "isoformat")
@@ -2250,6 +2252,8 @@ async def get_players(
         if pid in news_map:
             n = news_map[pid]
             player["news_headline"] = n.get("headline")
+            player["news_summary"] = n.get("summary")
+            player["news_source"] = n.get("source")
             player["news_url"] = n.get("url")
             player["news_published_at"] = n.get("published_at")
             try:
@@ -2342,6 +2346,65 @@ async def get_watchlist(request: Request, league_id: Optional[str] = None):
     user = await get_current_user(request)
     wl = await db.watchlists.find_one({"user_id": user["_id"], "league_id": league_id})
     return {"player_ids": (wl.get("player_ids") if wl else []) or []}
+
+
+@api_router.post("/players/news-bulk")
+async def get_player_news_bulk(payload: dict, request: Request):
+    """Bulk news-signal lookup. Body: {"player_ids": [...]}.
+    Returns a dict keyed by player_id with the most-recent news headline +
+    age + signal band (fresh/stale/cold) + summary so the roster table can
+    render the same modal-on-click news icon as the Players page.
+    """
+    pids = [str(x) for x in (payload.get("player_ids") or []) if x]
+    if not pids:
+        return {"news": {}}
+    out: dict[str, dict] = {}
+    now = datetime.now(timezone.utc)
+    async for n in db.player_news.find(
+        {"player_id": {"$in": pids}},
+        {"player_id": 1, "headline": 1, "summary": 1, "url": 1, "source": 1, "published_at": 1},
+    ).sort("published_at", -1):
+        pid = str(n["player_id"])
+        if pid in out:
+            continue
+        pub = n.get("published_at")
+        try:
+            if hasattr(pub, "isoformat"):
+                if pub.tzinfo is None:
+                    pub_aware = pub.replace(tzinfo=timezone.utc)
+                else:
+                    pub_aware = pub
+                age = (now - pub_aware).days
+                pub_iso = pub.isoformat()
+            else:
+                age = None
+                pub_iso = str(pub) if pub else None
+        except Exception:
+            age, pub_iso = None, None
+
+        if age is None:
+            signal = None
+        elif age <= 7:
+            signal = "fresh"
+        elif age <= 21:
+            signal = "stale"
+        elif age <= 35:
+            signal = "cold"
+        else:
+            signal = None
+
+        if signal is None:
+            continue
+        out[pid] = {
+            "news_headline": n.get("headline"),
+            "news_summary": n.get("summary"),
+            "news_source": n.get("source"),
+            "news_url": n.get("url"),
+            "news_published_at": pub_iso,
+            "news_age_days": age,
+            "news_signal": signal,
+        }
+    return {"news": out}
 
 
 @api_router.post("/watchlist/toggle")
@@ -3547,6 +3610,44 @@ async def remove_from_trade_block(item_id: str, request: Request):
 # ─── Trade Block: salary retention preference (per team) ────────
 class SalaryRetentionPrefUpdate(BaseModel):
     preference: str  # "willing_to_retain" | "no_preference" | "seeking_retention"
+
+
+@api_router.put("/teams/{team_id}/trade-block-note")
+async def set_trade_block_note(team_id: str, payload: dict, request: Request):
+    """Update the team's public trade block note (max 200 chars).
+
+    Visible to anyone viewing the team's trade block; only the team owner
+    can edit it.
+    """
+    user = await get_current_user(request)
+    note = (payload.get("note") or "").strip()
+    if len(note) > 200:
+        raise HTTPException(status_code=400, detail="Note must be 200 characters or fewer")
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if team.get("owner_id") != user["_id"]:
+        raise HTTPException(status_code=403, detail="Not your team")
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {
+            "trade_block_note": note,
+            "trade_block_note_updated_at": datetime.now(timezone.utc),
+        }},
+    )
+    return {"team_id": team_id, "note": note}
+
+
+@api_router.get("/teams/{team_id}/trade-block-note")
+async def get_trade_block_note(team_id: str):
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return {
+        "team_id": team_id,
+        "note": team.get("trade_block_note") or "",
+        "updated_at": team.get("trade_block_note_updated_at"),
+    }
 
 
 @api_router.put("/teams/{team_id}/trade-block-preference")
