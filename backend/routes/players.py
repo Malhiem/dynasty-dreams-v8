@@ -493,3 +493,415 @@ async def get_player(player_id: str):
         raise HTTPException(status_code=404, detail="Player not found")
     player["_id"] = str(player["_id"])
     return player
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Player Profile Detail Endpoints
+# ══════════════════════════════════════════════════════════════════════════
+# Each endpoint below powers a single tab/section of the player profile page.
+# All use the league's `scoring_configs` (skater_scoring + goalie_scoring) when
+# `league_id` is provided so fantasy points are computed against the user's
+# OWN league rules rather than a global default.
+
+
+def _calc_fpts(stats: dict, is_goalie: bool, scoring_cfg: Optional[dict]):
+    """Local fantasy-points calculator — uses the league's stored scoring_cfg
+    when supplied, otherwise falls back to the platform default. Mirrors
+    calculate_fantasy_points() in server.py without coupling to its internal
+    DEFAULT_*_SCORING constants (those are imported via _deps)."""
+    fn = _deps.get("calculate_fantasy_points")
+    if not fn:
+        return 0.0
+    payload = dict(stats)
+    payload["position"] = "G" if is_goalie else (payload.get("position") or "C")
+    payload["player_type"] = "goalie" if is_goalie else "skater"
+    return fn(payload, scoring_cfg)
+
+
+async def _scoring_cfg_for(league_id: Optional[str]) -> Optional[dict]:
+    if not league_id:
+        return None
+    db = _db()
+    return await db.scoring_configs.find_one({"league_id": league_id})
+
+
+@router.get("/players/{player_id}/news")
+async def get_player_news_history(player_id: str, limit: int = 20):
+    """All news items for this player, newest first."""
+    db = _db()
+    cursor = db.player_news.find({"player_id": player_id}).sort("published_at", -1).limit(limit)
+    out = []
+    async for n in cursor:
+        n["_id"] = str(n["_id"])
+        pub = n.get("published_at")
+        n["published_at"] = pub.isoformat() if hasattr(pub, "isoformat") else pub
+        out.append(n)
+    return {"player_id": player_id, "news": out}
+
+
+@router.get("/players/{player_id}/recent-games")
+async def get_player_recent_games(player_id: str, league_id: Optional[str] = None, limit: int = 10):
+    """Per-game performance: date, team, opponent, stat line, fantasy points
+    using the league's scoring config (or platform default when no league)."""
+    db = _db()
+    player = await db.players.find_one({"_id": ObjectId(player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    is_goalie = (player.get("position") == "G")
+
+    scoring_cfg = await _scoring_cfg_for(league_id)
+    cursor = db.player_game_logs.find({"player_id": player_id}).sort("date_dt", -1).limit(limit)
+    games = []
+    async for g in cursor:
+        # Resolve opponent — game logs don't always store it explicitly. We
+        # query the games collection by nhl_game_id to find both teams.
+        opponent = None
+        home_away = None
+        nhl_game_id = g.get("nhl_game_id")
+        if nhl_game_id:
+            game_doc = await db.games.find_one({"nhl_game_id": nhl_game_id})
+            if game_doc:
+                home = game_doc.get("home_team_abbr")
+                away = game_doc.get("away_team_abbr")
+                if g.get("team_abbr") == home:
+                    opponent = away
+                    home_away = "home"
+                else:
+                    opponent = home
+                    home_away = "away"
+
+        stats = {
+            "goals": g.get("goals", 0), "assists": g.get("assists", 0),
+            "points": g.get("points", 0), "plus_minus": g.get("plus_minus", 0),
+            "shots": g.get("sog", 0), "hits": g.get("hits", 0),
+            "blocks": g.get("blocks", 0), "pim": g.get("pim", 0),
+            "ppg": g.get("ppg", 0), "shg": g.get("shg", 0),
+            "ppp": g.get("ppp", 0), "shp": g.get("shp", 0),
+            "saves": g.get("saves", 0),
+            "goals_against": g.get("goals_against", 0),
+            "wins": g.get("wins", 0), "losses": g.get("losses", 0),
+            "shutouts": g.get("shutouts", 0),
+            "shots_against": g.get("shots_against", 0),
+        }
+        fpts = _calc_fpts(stats, is_goalie, scoring_cfg)
+
+        games.append({
+            "game_id": str(g["_id"]),
+            "nhl_game_id": nhl_game_id,
+            "date": str(g.get("date") or ""),
+            "team": g.get("team_abbr"),
+            "opponent": opponent,
+            "home_away": home_away,
+            "toi": g.get("toi"),
+            "position": g.get("position"),
+            "fantasy_points": fpts,
+            **stats,
+        })
+    return {"player_id": player_id, "is_goalie": is_goalie, "games": games}
+
+
+# Cache NHL career-stats fetches to avoid hammering the public API
+_career_cache: dict[int, tuple] = {}
+_CAREER_CACHE_TTL = 24 * 60 * 60  # 24h
+
+
+@router.get("/players/{player_id}/historical-stats")
+async def get_player_historical_stats(player_id: str, league_id: Optional[str] = None):
+    """Career season-by-season stats from the NHL public API (cached 24h),
+    annotated with fantasy points computed against the league's scoring
+    config when supplied. Even if the league didn't exist in those years,
+    the fantasy column is still populated — that's exactly the spec."""
+    db = _db()
+    logger = _deps.get("logger")
+    player = await db.players.find_one({"_id": ObjectId(player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    nhl_id = player.get("nhl_id")
+    if not nhl_id:
+        return {"player_id": player_id, "seasons": [], "career_totals": None,
+                "note": "No NHL ID associated with this player."}
+
+    is_goalie = (player.get("position") == "G")
+    scoring_cfg = await _scoring_cfg_for(league_id)
+
+    # Cache lookup
+    cached = _career_cache.get(nhl_id)
+    now_ts = datetime.now(timezone.utc).timestamp()
+    if cached and (now_ts - cached[0]) < _CAREER_CACHE_TTL:
+        raw = cached[1]
+    else:
+        try:
+            from nhlpy import NHLClient
+            client = NHLClient()
+            raw = client.stats.player_career_stats(player_id=int(nhl_id))
+            _career_cache[nhl_id] = (now_ts, raw)
+        except Exception as e:
+            if logger:
+                logger.warning("nhlpy career-stats failed for %s: %s", nhl_id, e)
+            return {"player_id": player_id, "seasons": [], "career_totals": None,
+                    "error": "Career stats unavailable from NHL API."}
+
+    season_totals = (raw or {}).get("seasonTotals") or []
+    # Filter to NHL regular-season only
+    nhl_reg = [s for s in season_totals
+               if s.get("leagueAbbrev") == "NHL" and s.get("gameTypeId") == 2]
+
+    seasons_out = []
+    for s in nhl_reg:
+        # season is stored as 20232024 → "2023-24"
+        season_int = s.get("season")
+        season_str = f"{str(season_int)[:4]}-{str(season_int)[6:]}" if season_int else None
+        team = s.get("teamName", {}).get("default") if isinstance(s.get("teamName"), dict) else (s.get("teamName") or s.get("teamCommonName") or "")
+        if is_goalie:
+            stats = {
+                "goals_against": s.get("goalsAgainst", 0),
+                "saves": s.get("saves", 0),
+                "wins": s.get("wins", 0),
+                "losses": s.get("losses", 0),
+                "shutouts": s.get("shutouts", 0),
+                "overtime_losses": s.get("otLosses", 0),
+            }
+            row = {
+                "season": season_str, "team": team,
+                "games_played": s.get("gamesPlayed", 0),
+                "wins": s.get("wins", 0), "losses": s.get("losses", 0),
+                "ot_losses": s.get("otLosses", 0),
+                "shutouts": s.get("shutouts", 0),
+                "goals_against_avg": s.get("goalsAgainstAvg", 0),
+                "save_pct": s.get("savePctg", 0),
+                "saves": s.get("saves", 0),
+                "shots_against": s.get("shotsAgainst", 0),
+            }
+        else:
+            stats = {
+                "goals": s.get("goals", 0), "assists": s.get("assists", 0),
+                "points": s.get("points", 0), "plus_minus": s.get("plusMinus", 0),
+                "shots": s.get("shots", 0),
+                "ppg": s.get("powerPlayGoals", 0), "shg": s.get("shorthandedGoals", 0),
+                "ppp": s.get("powerPlayPoints", 0),
+                "pim": s.get("pim", 0),
+            }
+            row = {
+                "season": season_str, "team": team,
+                "games_played": s.get("gamesPlayed", 0),
+                "goals": s.get("goals", 0), "assists": s.get("assists", 0),
+                "points": s.get("points", 0),
+                "plus_minus": s.get("plusMinus", 0),
+                "shots": s.get("shots", 0),
+                "shooting_pct": round((s.get("shootingPctg") or 0) * 100, 1),
+                "power_play_goals": s.get("powerPlayGoals", 0),
+                "power_play_points": s.get("powerPlayPoints", 0),
+                "short_handed_goals": s.get("shorthandedGoals", 0),
+                "game_winning_goals": s.get("gameWinningGoals", 0),
+                "pim": s.get("pim", 0),
+                "avg_toi": s.get("avgToi", ""),
+                "faceoff_win_pct": round((s.get("faceoffWinningPctg") or 0) * 100, 1),
+            }
+        row["fantasy_points"] = _calc_fpts(stats, is_goalie, scoring_cfg)
+        seasons_out.append(row)
+
+    seasons_out.sort(key=lambda r: r["season"] or "")
+    career = (raw or {}).get("careerTotals", {}).get("regularSeason") or {}
+    return {
+        "player_id": player_id,
+        "is_goalie": is_goalie,
+        "seasons": seasons_out,
+        "career_totals": career or None,
+    }
+
+
+@router.get("/players/{player_id}/recent-performance")
+async def get_player_recent_performance(player_id: str, league_id: Optional[str] = None):
+    """Aggregated stats over rolling windows: last 7d, prior 7d, last 14d,
+    last 30d. Fantasy points use the league's scoring config when supplied."""
+    db = _db()
+    player = await db.players.find_one({"_id": ObjectId(player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    is_goalie = (player.get("position") == "G")
+    scoring_cfg = await _scoring_cfg_for(league_id)
+    now = datetime.now(timezone.utc)
+
+    def _window(days_start: int, days_end: int):
+        return {
+            "$gte": now - timedelta(days=days_end),
+            "$lt": now - timedelta(days=days_start),
+        }
+
+    windows = {
+        "last_7d":  _window(0, 7),
+        "prev_7d":  _window(7, 14),
+        "last_14d": _window(0, 14),
+        "last_30d": _window(0, 30),
+    }
+
+    out: dict[str, dict] = {}
+    for label, rng in windows.items():
+        cursor = db.player_game_logs.find({
+            "player_id": player_id,
+            "date_dt": rng,
+        })
+        agg = {
+            "games_played": 0, "goals": 0, "assists": 0, "points": 0,
+            "plus_minus": 0, "shots": 0, "hits": 0, "blocks": 0,
+            "pim": 0, "ppg": 0, "shg": 0, "ppp": 0, "shp": 0,
+            "saves": 0, "goals_against": 0, "wins": 0, "losses": 0,
+            "shutouts": 0, "shots_against": 0,
+        }
+        async for g in cursor:
+            agg["games_played"] += 1
+            agg["goals"] += g.get("goals", 0)
+            agg["assists"] += g.get("assists", 0)
+            agg["points"] += g.get("points", 0)
+            agg["plus_minus"] += g.get("plus_minus", 0)
+            agg["shots"] += g.get("sog", 0)
+            agg["hits"] += g.get("hits", 0)
+            agg["blocks"] += g.get("blocks", 0)
+            agg["pim"] += g.get("pim", 0)
+            agg["ppg"] += g.get("ppg", 0)
+            agg["shg"] += g.get("shg", 0)
+            agg["saves"] += g.get("saves", 0)
+            agg["goals_against"] += g.get("goals_against", 0)
+            agg["wins"] += g.get("wins", 0)
+            agg["losses"] += g.get("losses", 0)
+            agg["shutouts"] += g.get("shutouts", 0)
+            agg["shots_against"] += g.get("shots_against", 0)
+        agg["fantasy_points"] = _calc_fpts(agg, is_goalie, scoring_cfg)
+        out[label] = agg
+
+    return {"player_id": player_id, "is_goalie": is_goalie, "windows": out}
+
+
+@router.get("/players/{player_id}/cross-league-ownership")
+async def get_player_cross_league_ownership(player_id: str, request: Request):
+    """List of the user's leagues, with which team (if any) owns this player
+    in each. Used by the Cross-League Ownership tab."""
+    db = _db()
+    user = await _get_user(request)
+    # Discover all leagues this user has a team in (or is commissioner of)
+    my_team_leagues = await db.teams.distinct("league_id", {"owner_id": user["_id"]})
+    commish_leagues = await db.leagues.distinct("_id", {"commissioner_id": user["_id"]})
+    league_ids = list({*my_team_leagues, *[str(lid) for lid in commish_leagues]})
+
+    if not league_ids:
+        return {"player_id": player_id, "leagues": []}
+
+    leagues = await db.leagues.find({"_id": {"$in": [ObjectId(lid) for lid in league_ids]}}).to_list(100)
+
+    rows = []
+    for lg in leagues:
+        lid = str(lg["_id"])
+        # Find which team in this league rosters the player
+        team = await db.teams.find_one({"league_id": lid, "roster": player_id})
+        my_team = await db.teams.find_one({"league_id": lid, "owner_id": user["_id"]})
+        rows.append({
+            "league_id": lid,
+            "league_name": lg.get("name"),
+            "scoring_format": lg.get("scoring_format"),
+            "owned_by_team_id": str(team["_id"]) if team else None,
+            "owned_by_team_name": team.get("name") if team else None,
+            "owned_by_owner_name": team.get("owner_name") if team else None,
+            "owned_by_me": bool(team and my_team and str(team["_id"]) == str(my_team["_id"])),
+            "is_free_agent": team is None,
+        })
+    rows.sort(key=lambda r: (not r["owned_by_me"], r["is_free_agent"], r["league_name"] or ""))
+    return {"player_id": player_id, "leagues": rows}
+
+
+@router.get("/players/{player_id}/transactions")
+async def get_player_transactions(player_id: str, league_id: Optional[str] = None, limit: int = 50):
+    """All fantasy transactions involving this player: drafts, adds, drops,
+    waiver wins, and trades. Filtered to one league when `league_id` given."""
+    db = _db()
+    query = {
+        "$or": [
+            {"metadata.player_id": player_id},
+            {"metadata.player_ids": player_id},
+        ],
+        "event_type": {"$in": [
+            "roster_add", "roster_drop", "trade_executed",
+            "waiver_won", "draft_pick",
+        ]},
+    }
+    if league_id:
+        query["league_id"] = league_id
+    cursor = db.activity_feed.find(query).sort("created_at", -1).limit(limit)
+    out = []
+    async for ev in cursor:
+        ev["_id"] = str(ev["_id"])
+        ts = ev.get("created_at")
+        ev["created_at"] = ts.isoformat() if hasattr(ts, "isoformat") else ts
+        out.append(ev)
+    return {"player_id": player_id, "transactions": out}
+
+
+@router.get("/players/{player_id}/usage")
+async def get_player_usage(player_id: str, league_id: str, request: Request):
+    """Per-week usage of this player in a specific league. For each completed
+    week's matchup, returns: which team rostered the player, what slot they
+    filled (active C/LW/RW/D/G or Bench/IR), and matchup result.
+
+    NOTE: persistent slot history requires team.lineup snapshots per week.
+    Today we approximate using the team's current `lineup` field (set by
+    `POST /api/roster/{team_id}/lineup`); historical weeks default to
+    "active — slot unknown" until weekly snapshotting ships.
+    """
+    db = _db()
+    user = await _get_user(request)
+
+    # Find the team in this league that rostered this player at any point
+    teams = await db.teams.find(
+        {"league_id": league_id, "roster": player_id},
+        {"_id": 1, "name": 1, "lineup": 1, "owner_id": 1},
+    ).to_list(50)
+
+    if not teams:
+        return {"player_id": player_id, "league_id": league_id, "weeks": []}
+
+    # All weekly matchups in this league
+    matchups = await db.matchups.find({"league_id": league_id}).sort("week", 1).to_list(200)
+    if not matchups:
+        return {"player_id": player_id, "league_id": league_id, "weeks": []}
+
+    weeks_out = []
+    for m in matchups:
+        team_id = None
+        team_name = None
+        for t in teams:
+            tid = str(t["_id"])
+            if m.get("home_team_id") == tid or m.get("away_team_id") == tid:
+                team_id = tid
+                team_name = t.get("name")
+                break
+        if not team_id:
+            continue
+        # Determine slot from current lineup (best available approximation)
+        owning = next((t for t in teams if str(t["_id"]) == team_id), None)
+        slot_info = (owning or {}).get("lineup", {}).get(player_id) or {}
+        section = slot_info.get("section") or "active"
+        slot = slot_info.get("slot")
+
+        is_home = m.get("home_team_id") == team_id
+        opp_name = m.get("away_team_name") if is_home else m.get("home_team_name")
+        my_score = m.get("home_score" if is_home else "away_score") or 0
+        opp_score = m.get("away_score" if is_home else "home_score") or 0
+        result = None
+        if (m.get("status") or "").lower() in ("completed", "final"):
+            if my_score > opp_score: result = "W"
+            elif my_score < opp_score: result = "L"
+            else: result = "T"
+
+        weeks_out.append({
+            "week": m.get("week"),
+            "team_id": team_id,
+            "team_name": team_name,
+            "opponent_name": opp_name,
+            "section": section,    # "forward"/"defense"/"goalie"/"bench"/"ir"/"active"
+            "slot": slot,          # "C", "LW", "RW", "D1", "G1", etc., or None
+            "is_active": section in ("forward", "defense", "goalie", "active"),
+            "result": result,
+            "score_for": my_score,
+            "score_against": opp_score,
+            "status": m.get("status"),
+        })
+    return {"player_id": player_id, "league_id": league_id, "weeks": weeks_out}
