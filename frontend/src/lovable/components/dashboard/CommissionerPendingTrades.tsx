@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,96 +20,77 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Shield, ChevronDown, ChevronUp, ArrowRightLeft, Eye, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
+import api from "@/lib/api";
 import TeamLink from "@/lovable/components/TeamLink";
+import { useActiveLeague } from "@/hooks/use-active-league";
 
-interface PendingTradeItem {
-  id: string;
-  from: string;
-  to: string;
-  summary: string;
-  details: {
-    sending: string[];
-    receiving: string[];
-  };
-  proposedDate: string;
-}
+/**
+ * CommissionerPendingTrades — fetches REAL pending trades from the backend
+ * (`/leagues/{id}/pending-trades`) and filters to those involving `teamId`.
+ * Renders null if the team has no open trades, so the commissioner panel
+ * collapses cleanly instead of showing fake placeholder data.
+ *
+ * The "View" and "Accept on behalf of" buttons remain (with audit-log toast)
+ * — the audit-log accept-on-behalf is intentionally a confirmation-only UX
+ * pending a backend endpoint for the actual commissioner override.
+ */
+const CommissionerPendingTrades = ({ teamId, teamName }: { teamId: string; teamName: string }) => {
+  const { league } = useActiveLeague();
+  const [allTrades, setAllTrades] = useState([]);
+  const [loaded, setLoaded] = useState(false);
 
-const MOCK_TEAM_PENDING_TRADES: Record<string, PendingTradeItem[]> = {
-  "ice-dragons": [
-    {
-      id: "CT-001",
-      from: "Ice Dragons",
-      to: "Team Frostbite",
-      summary: "N. MacKinnon for L. Draisaitl",
-      details: {
-        sending: ["Nathan MacKinnon (C) — $12.6M"],
-        receiving: ["Leon Draisaitl (C) — $11.2M", "2026 3rd Round Pick"],
-      },
-      proposedDate: "Mar 8, 2026",
-    },
-  ],
-  blazers: [
-    {
-      id: "CT-002",
-      from: "Blazers",
-      to: "Thunder",
-      summary: "A. Fox for C. Makar + 2027 2nd",
-      details: {
-        sending: ["Adam Fox (D) — $9.5M"],
-        receiving: ["Cale Makar (D) — $9.0M", "2027 2nd Round Pick"],
-      },
-      proposedDate: "Mar 7, 2026",
-    },
-    {
-      id: "CT-003",
-      from: "Phoenix",
-      to: "Blazers",
-      summary: "J. Robertson for B. Tkachuk",
-      details: {
-        sending: ["Jason Robertson (LW) — $7.75M"],
-        receiving: ["Brady Tkachuk (LW) — $8.2M"],
-      },
-      proposedDate: "Mar 6, 2026",
-    },
-  ],
-  thunder: [],
-  wolverines: [
-    {
-      id: "CT-004",
-      from: "Wolverines",
-      to: "Knights",
-      summary: "T. Seguin for M. Zibanejad",
-      details: {
-        sending: ["Tyler Seguin (C) — $9.85M"],
-        receiving: ["Mika Zibanejad (C) — $8.5M"],
-      },
-      proposedDate: "Mar 5, 2026",
-    },
-  ],
-};
-
-interface CommissionerPendingTradesProps {
-  teamId: string;
-  teamName: string;
-}
-
-const CommissionerPendingTrades = ({ teamId, teamName }: CommissionerPendingTradesProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [viewConfirmTradeId, setViewConfirmTradeId] = useState<string | null>(null);
   const [viewingTradeId, setViewingTradeId] = useState<string | null>(null);
   const [acceptConfirmTradeId, setAcceptConfirmTradeId] = useState<string | null>(null);
   const [acceptedTrades, setAcceptedTrades] = useState<Set<string>>(new Set());
-
   const [confirmedTrades, setConfirmedTrades] = useState<Set<string>>(new Set());
 
-  const trades = MOCK_TEAM_PENDING_TRADES[teamId] || [];
+  useEffect(() => {
+    if (!league?.id) return;
+    let cancelled = false;
+    api
+      .get(`/leagues/${league.id}/pending-trades`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setAllTrades(data?.pending_trades || []);
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [league?.id]);
 
-  const activeTrades = trades.filter((t) => !acceptedTrades.has(t.id));
+  // Filter to only trades involving THIS team (as proposer, target, or party).
+  const teamTrades = allTrades.filter((t) => {
+    if (t.proposer_team_id === teamId) return true;
+    if (t.target_team_id === teamId) return true;
+    if (Array.isArray(t.parties)) {
+      return t.parties.some((p) => p.team_id === teamId);
+    }
+    return false;
+  });
 
-  const handleViewConfirm = (tradeId: string) => {
-    setViewConfirmTradeId(tradeId);
+  const activeTrades = teamTrades.filter((t) => !acceptedTrades.has(t._id || t.id));
+
+  const summarize = (t) => {
+    const offered = (t.assets_offered || []).slice(0, 2).map((a) => a.player_name).filter(Boolean);
+    const requested = (t.assets_requested || []).slice(0, 2).map((a) => a.player_name).filter(Boolean);
+    if (!offered.length && !requested.length) return "Picks / FAAB";
+    return `${offered.join(", ") || "—"} for ${requested.join(", ") || "—"}`;
   };
 
+  const tradeDate = (t) => {
+    if (!t.submitted_at) return "—";
+    try {
+      return new Date(t.submitted_at).toLocaleDateString();
+    } catch {
+      return "—";
+    }
+  };
+
+  const handleViewConfirm = (tradeId: string) => setViewConfirmTradeId(tradeId);
   const handleViewApproved = () => {
     if (viewConfirmTradeId) {
       setConfirmedTrades((prev) => new Set([...prev, viewConfirmTradeId]));
@@ -121,30 +102,29 @@ const CommissionerPendingTrades = ({ teamId, teamName }: CommissionerPendingTrad
     setViewConfirmTradeId(null);
   };
 
-  const handleAcceptConfirm = (tradeId: string) => {
-    setAcceptConfirmTradeId(tradeId);
-  };
-
+  const handleAcceptConfirm = (tradeId: string) => setAcceptConfirmTradeId(tradeId);
   const handleAcceptApproved = () => {
     if (acceptConfirmTradeId) {
       setAcceptedTrades((prev) => new Set([...prev, acceptConfirmTradeId]));
-      const trade = trades.find((t) => t.id === acceptConfirmTradeId);
+      const trade = teamTrades.find((t) => (t._id || t.id) === acceptConfirmTradeId);
       toast.success("Trade accepted on behalf of " + teamName, {
-        description: `${trade?.summary} — logged in audit log.`,
+        description: `${trade ? summarize(trade) : ""} — logged in audit log.`,
       });
       setViewingTradeId(null);
     }
     setAcceptConfirmTradeId(null);
   };
 
-  if (trades.length === 0) return null;
+  // Don't render until we know the answer — and don't render at all when
+  // there are zero pending trades for this team.
+  if (!loaded || activeTrades.length === 0) return null;
 
-  const viewingTrade = trades.find((t) => t.id === viewingTradeId);
+  const viewingTrade = teamTrades.find((t) => (t._id || t.id) === viewingTradeId);
 
   return (
     <>
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
-        <Card className="border-primary/30 bg-primary/5">
+        <Card className="border-primary/30 bg-primary/5" data-testid="commissioner-pending-trades">
           <CollapsibleTrigger asChild>
             <CardHeader className="pb-3 cursor-pointer hover:bg-primary/10 transition-colors rounded-t-lg">
               <div className="flex items-center justify-between">
@@ -165,34 +145,34 @@ const CommissionerPendingTrades = ({ teamId, teamName }: CommissionerPendingTrad
           </CollapsibleTrigger>
           <CollapsibleContent>
             <CardContent className="space-y-3 pt-0">
-              {activeTrades.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-2">
-                  No pending trades remaining.
-                </p>
-              ) : (
-                activeTrades.map((trade) => (
+              {activeTrades.map((trade) => {
+                const tid = trade._id || trade.id;
+                const fromName = trade.proposer_team_name || "?";
+                const toName = trade.target_team_name || "?";
+                return (
                   <div
-                    key={trade.id}
+                    key={tid}
                     className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 border border-border/50"
+                    data-testid={`commissioner-pending-trade-${tid}`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 mb-1">
                         <ArrowRightLeft className="h-3.5 w-3.5 text-accent" />
-                        {confirmedTrades.has(trade.id) ? (
+                        {confirmedTrades.has(tid) ? (
                           <p className="text-sm font-medium truncate">
-                            <TeamLink name={trade.from} /> ↔ <TeamLink name={trade.to} />
+                            <TeamLink name={fromName} /> ↔ <TeamLink name={toName} />
                           </p>
                         ) : (
                           <p className="text-sm font-medium text-muted-foreground">
-                            Pending Trade #{trade.id}
+                            Pending Trade
                           </p>
                         )}
                       </div>
-                      {confirmedTrades.has(trade.id) ? (
+                      {confirmedTrades.has(tid) ? (
                         <>
-                          <p className="text-xs text-muted-foreground truncate">{trade.summary}</p>
+                          <p className="text-xs text-muted-foreground truncate">{summarize(trade)}</p>
                           <p className="text-[10px] text-muted-foreground mt-0.5">
-                            Proposed: {trade.proposedDate}
+                            Proposed: {tradeDate(trade)}
                           </p>
                         </>
                       ) : (
@@ -202,12 +182,12 @@ const CommissionerPendingTrades = ({ teamId, teamName }: CommissionerPendingTrad
                       )}
                     </div>
                     <div className="flex items-center gap-2 ml-3 shrink-0">
-                      {confirmedTrades.has(trade.id) && viewingTradeId === trade.id ? (
+                      {confirmedTrades.has(tid) && viewingTradeId === tid ? (
                         <Button
                           size="sm"
                           variant="gold"
                           className="text-xs h-7 px-3"
-                          onClick={() => handleAcceptConfirm(trade.id)}
+                          onClick={() => handleAcceptConfirm(tid)}
                         >
                           <CheckCircle2 className="h-3 w-3 mr-1" />
                           Accept
@@ -217,7 +197,9 @@ const CommissionerPendingTrades = ({ teamId, teamName }: CommissionerPendingTrad
                           size="sm"
                           variant="ice"
                           className="text-xs h-7 px-3"
-                          onClick={() => confirmedTrades.has(trade.id) ? setViewingTradeId(trade.id) : handleViewConfirm(trade.id)}
+                          onClick={() =>
+                            confirmedTrades.has(tid) ? setViewingTradeId(tid) : handleViewConfirm(tid)
+                          }
                         >
                           <Eye className="h-3 w-3 mr-1" />
                           View
@@ -225,36 +207,36 @@ const CommissionerPendingTrades = ({ teamId, teamName }: CommissionerPendingTrad
                       )}
                     </div>
                   </div>
-                ))
-              )}
+                );
+              })}
 
               {/* Expanded trade details */}
-              {viewingTrade && !acceptedTrades.has(viewingTrade.id) && (
+              {viewingTrade && !acceptedTrades.has(viewingTrade._id || viewingTrade.id) && (
                 <div className="mt-2 p-4 rounded-lg bg-card border border-border space-y-3">
                   <div className="flex items-center gap-2 mb-2">
                     <ArrowRightLeft className="h-4 w-4 text-primary" />
                     <span className="text-sm font-semibold">
-                      Trade Details: {viewingTrade.from} ↔ {viewingTrade.to}
+                      Trade Details: {viewingTrade.proposer_team_name} ↔ {viewingTrade.target_team_name}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        {viewingTrade.from} Sends
+                        {viewingTrade.proposer_team_name} Sends
                       </p>
-                      {viewingTrade.details.sending.map((item, i) => (
+                      {(viewingTrade.assets_offered || []).map((a, i) => (
                         <div key={i} className="text-sm px-2 py-1.5 rounded bg-destructive/10 border border-destructive/20">
-                          {item}
+                          {a.player_name || a.description || `${a.asset_type} asset`}
                         </div>
                       ))}
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                        {viewingTrade.from} Receives
+                        {viewingTrade.proposer_team_name} Receives
                       </p>
-                      {viewingTrade.details.receiving.map((item, i) => (
+                      {(viewingTrade.assets_requested || []).map((a, i) => (
                         <div key={i} className="text-sm px-2 py-1.5 rounded bg-emerald-500/10 border border-emerald-500/20">
-                          {item}
+                          {a.player_name || a.description || `${a.asset_type} asset`}
                         </div>
                       ))}
                     </div>
@@ -303,9 +285,6 @@ const CommissionerPendingTrades = ({ teamId, teamName }: CommissionerPendingTrad
               <span className="block">
                 You are about to <strong>accept this trade on behalf of {teamName}</strong>. This
                 action will be <strong>logged in the league audit log</strong> and cannot be undone.
-              </span>
-              <span className="block">
-                Trade: <strong>{trades.find((t) => t.id === acceptConfirmTradeId)?.summary}</strong>
               </span>
               <span className="block text-muted-foreground">
                 Are you sure you would like to proceed?

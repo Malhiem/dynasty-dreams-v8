@@ -13,7 +13,7 @@ import TeamLogo from "@/lovable/components/TeamLogo";
 import TeamLink from "@/lovable/components/TeamLink";
 
 interface MatchupPlayer {
-  id: number;
+  id: number | string;
   name: string;
   position: string;
   team: string;
@@ -21,6 +21,17 @@ interface MatchupPlayer {
   actual: number;
   status: "playing" | "done" | "upcoming";
   dailyScores: Record<string, number>; // date -> points
+  // Stat breakdown — populated for real (live-scoring) players. Used by
+  // the row's secondary line so users can see HOW the FPTS were earned
+  // (e.g., "1G 2A · 11 SOG · 3 GP" for skaters, "1W · 28 SVS · 2 GA" for G).
+  is_goalie?: boolean;
+  goals?: number;
+  assists?: number;
+  shots?: number;
+  saves?: number;
+  goals_against?: number;
+  wins?: number;
+  games?: number;
 }
 
 const matchupDays = ["Mon 2/17", "Tue 2/18", "Wed 2/19", "Thu 2/20", "Fri 2/21", "Sat 2/22", "Sun 2/23"];
@@ -40,19 +51,19 @@ const makeDailyScores = (total: number, status: string): Record<string, number> 
 };
 
 const DEFAULT_MY_PLAYERS: MatchupPlayer[] = [
-  { id: 1, name: "Connor McDavid", position: "C", team: "EDM", projected: 8.5, actual: 12.2, status: "done", dailyScores: { "Mon 2/17": 4.2, "Tue 2/18": 0, "Wed 2/19": 3.8, "Thu 2/20": 4.2 } },
-  { id: 2, name: "Nathan MacKinnon", position: "C", team: "COL", projected: 7.2, actual: 5.1, status: "playing", dailyScores: { "Mon 2/17": 2.1, "Tue 2/18": 1.5, "Wed 2/19": 1.5 } },
+  { id: 1, name: "Connor McDavid", position: "C", team: "EDM", projected: 8.5, actual: 12.2, status: "done", dailyScores: { "Mon 2/17": 4.2, "Tue 2/18": 0, "Wed 2/19": 3.8, "Thu 2/20": 4.2 }, goals: 2, assists: 4, shots: 9, games: 3 },
+  { id: 2, name: "Nathan MacKinnon", position: "C", team: "COL", projected: 7.2, actual: 5.1, status: "playing", dailyScores: { "Mon 2/17": 2.1, "Tue 2/18": 1.5, "Wed 2/19": 1.5 }, goals: 1, assists: 1, shots: 6, games: 3 },
   { id: 3, name: "Cale Makar", position: "D", team: "COL", projected: 5.8, actual: 0, status: "upcoming", dailyScores: {} },
-  { id: 4, name: "Nikita Kucherov", position: "RW", team: "TBL", projected: 6.9, actual: 8.4, status: "done", dailyScores: { "Mon 2/17": 0, "Tue 2/18": 5.2, "Wed 2/19": 0, "Thu 2/20": 3.2 } },
-  { id: 5, name: "Igor Shesterkin", position: "G", team: "NYR", projected: 4.2, actual: 0, status: "upcoming", dailyScores: {} },
+  { id: 4, name: "Nikita Kucherov", position: "RW", team: "TBL", projected: 6.9, actual: 8.4, status: "done", dailyScores: { "Mon 2/17": 0, "Tue 2/18": 5.2, "Wed 2/19": 0, "Thu 2/20": 3.2 }, goals: 1, assists: 3, shots: 7, games: 2 },
+  { id: 5, name: "Igor Shesterkin", position: "G", team: "NYR", projected: 4.2, actual: 0, status: "upcoming", dailyScores: {}, is_goalie: true },
 ];
 
 const DEFAULT_OPP_PLAYERS: MatchupPlayer[] = [
-  { id: 1, name: "Leon Draisaitl", position: "C", team: "EDM", projected: 7.8, actual: 6.2, status: "done", dailyScores: { "Mon 2/17": 3.1, "Tue 2/18": 0, "Wed 2/19": 1.8, "Thu 2/20": 1.3 } },
-  { id: 2, name: "David Pastrnak", position: "RW", team: "BOS", projected: 6.5, actual: 7.8, status: "playing", dailyScores: { "Mon 2/17": 0, "Tue 2/18": 4.6, "Wed 2/19": 3.2 } },
+  { id: 1, name: "Leon Draisaitl", position: "C", team: "EDM", projected: 7.8, actual: 6.2, status: "done", dailyScores: { "Mon 2/17": 3.1, "Tue 2/18": 0, "Wed 2/19": 1.8, "Thu 2/20": 1.3 }, goals: 1, assists: 2, shots: 5, games: 3 },
+  { id: 2, name: "David Pastrnak", position: "RW", team: "BOS", projected: 6.5, actual: 7.8, status: "playing", dailyScores: { "Mon 2/17": 0, "Tue 2/18": 4.6, "Wed 2/19": 3.2 }, goals: 2, assists: 1, shots: 8, games: 2 },
   { id: 3, name: "Quinn Hughes", position: "D", team: "VAN", projected: 5.2, actual: 0, status: "upcoming", dailyScores: {} },
-  { id: 4, name: "Kirill Kaprizov", position: "LW", team: "MIN", projected: 6.1, actual: 4.5, status: "done", dailyScores: { "Mon 2/17": 2.2, "Tue 2/18": 0, "Wed 2/19": 0, "Thu 2/20": 2.3 } },
-  { id: 5, name: "Andrei Vasilevskiy", position: "G", team: "TBL", projected: 3.8, actual: 0, status: "upcoming", dailyScores: {} },
+  { id: 4, name: "Kirill Kaprizov", position: "LW", team: "MIN", projected: 6.1, actual: 4.5, status: "done", dailyScores: { "Mon 2/17": 2.2, "Tue 2/18": 0, "Wed 2/19": 0, "Thu 2/20": 2.3 }, goals: 1, assists: 1, shots: 4, games: 2 },
+  { id: 5, name: "Andrei Vasilevskiy", position: "G", team: "TBL", projected: 3.8, actual: 0, status: "upcoming", dailyScores: {}, is_goalie: true },
 ];
 
 type ViewMode = "totals" | "daily";
@@ -107,6 +118,14 @@ const Matchup = () => {
       actual: p.fpts,
       status: p.games > 0 ? "done" : "upcoming",
       dailyScores: { [matchupDays[3]]: p.fpts },
+      is_goalie: !!p.is_goalie,
+      goals: p.goals || 0,
+      assists: p.assists || 0,
+      shots: p.shots || 0,
+      saves: p.saves || 0,
+      goals_against: p.goals_against || 0,
+      wins: p.wins || 0,
+      games: p.games || 0,
     }));
   };
 
@@ -307,18 +326,46 @@ const Matchup = () => {
   );
 };
 
+const formatStatLine = (player: MatchupPlayer): string | null => {
+  // Goalies → wins/saves/GA
+  if (player.is_goalie) {
+    if (!player.games) return null;
+    const w = player.wins ?? 0;
+    const sv = player.saves ?? 0;
+    const ga = player.goals_against ?? 0;
+    return `${w}W · ${sv} SVS · ${ga} GA`;
+  }
+  // Skaters → goals/assists/shots
+  if (!player.games && !player.goals && !player.assists && !player.shots) {
+    return null;
+  }
+  const g = player.goals ?? 0;
+  const a = player.assists ?? 0;
+  const sog = player.shots ?? 0;
+  const gp = player.games ?? 0;
+  const parts: string[] = [];
+  parts.push(`${g}G ${a}A`);
+  if (sog) parts.push(`${sog} SOG`);
+  if (gp) parts.push(`${gp} GP`);
+  return parts.join(" · ");
+};
+
 const PlayerRow = ({ player, displayScore, viewMode, isMyTeam }: { player: MatchupPlayer; displayScore: number; viewMode: ViewMode; isMyTeam?: boolean }) => {
   const isOverperforming = player.actual > player.projected;
   const isUnderperforming = player.actual < player.projected && player.actual > 0;
+  const statLine = formatStatLine(player);
 
   return (
-    <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors">
-      <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center text-xs font-bold">
+    <div
+      className="flex items-center justify-between p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
+      data-testid={`matchup-player-row-${player.id}`}
+    >
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center text-xs font-bold shrink-0">
           {player.team}
         </div>
-        <div>
-          <p className="font-medium">{player.name}</p>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium truncate">{player.name}</p>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>{player.position}</span>
             <span>•</span>
@@ -332,16 +379,24 @@ const PlayerRow = ({ player, displayScore, viewMode, isMyTeam }: { player: Match
               {player.status === "upcoming" && "7:00 PM"}
             </span>
           </div>
+          {statLine && (
+            <p
+              className="text-[11px] text-muted-foreground/90 mt-0.5 font-mono tabular-nums"
+              data-testid={`matchup-player-stats-${player.id}`}
+            >
+              {statLine}
+            </p>
+          )}
         </div>
       </div>
-      
-      <div className="flex items-center gap-3">
+
+      <div className="flex items-center gap-3 shrink-0">
         <div className="text-right">
-          <p className="font-semibold text-lg">
+          <p className="font-semibold text-lg tabular-nums">
             {displayScore > 0 ? displayScore.toFixed(1) : "-"}
           </p>
           {viewMode === "totals" && (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground tabular-nums">
               Proj: {player.projected.toFixed(1)}
             </p>
           )}
