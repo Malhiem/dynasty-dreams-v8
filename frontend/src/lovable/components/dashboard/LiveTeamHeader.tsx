@@ -6,6 +6,7 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowRight, Flame, Radio } from "lucide-react";
+import TeamLogo from "@/lovable/components/TeamLogo";
 
 /**
  * Live header that sits atop the Lovable Team page.
@@ -49,23 +50,32 @@ export default function LiveTeamHeader() {
       className="surface p-5 mb-6 border border-[#00D2FF]/30 bg-gradient-to-br from-[#00D2FF]/5 to-transparent"
     >
       <div className="flex items-start justify-between flex-wrap gap-4">
-        <div className="flex-1 min-w-[240px]">
-          <div className="flex items-center gap-2 mb-2">
-            <Radio size={14} className="text-[#00D2FF] animate-pulse" />
-            <span className="text-[10px] uppercase tracking-widest text-[#00D2FF]">LIVE · {league?.name}</span>
-          </div>
-          <Link
-            to={`/teams/${myTeam.id}`}
-            className="font-heading text-3xl font-bold text-white tracking-tight hover:text-[#00D2FF] transition-colors block"
-          >
-            {myTeam.name}
-          </Link>
-          <div className="text-[#A1A1AA] text-sm mt-1">
-            Record <span className="text-white">{myTeam.wins || 0}–{myTeam.losses || 0}–{myTeam.ties || 0}</span>
-            {' · '}
-            Roster <span className="text-white">{(myTeam.roster || []).length} players</span>
-            {' · '}
-            Rank <span className="text-white">#{week?.rank || '—'}/{week?.total_teams || leagueTeams?.length || '?'}</span>
+        <div className="flex items-start gap-4 flex-1 min-w-[240px]">
+          <TeamLogo
+            logo={myTeam.logo_url}
+            name={myTeam.name}
+            abbr={myTeam.logo_abbr}
+            size="lg"
+            className="rounded-full mt-1"
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2">
+              <Radio size={14} className="text-[#00D2FF] animate-pulse" />
+              <span className="text-[10px] uppercase tracking-widest text-[#00D2FF]">LIVE · {league?.name}</span>
+            </div>
+            <Link
+              to={`/teams/${myTeam.id}`}
+              className="font-heading text-3xl font-bold text-white tracking-tight hover:text-[#00D2FF] transition-colors block"
+            >
+              {myTeam.name}
+            </Link>
+            <div className="text-[#A1A1AA] text-sm mt-1">
+              Record <span className="text-white">{myTeam.wins || 0}–{myTeam.losses || 0}–{myTeam.ties || 0}</span>
+              {' · '}
+              Roster <span className="text-white">{(myTeam.roster || []).length} players</span>
+              {' · '}
+              Rank <span className="text-white">#{week?.rank || '—'}/{week?.total_teams || leagueTeams?.length || '?'}</span>
+            </div>
           </div>
         </div>
 

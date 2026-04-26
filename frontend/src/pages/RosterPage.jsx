@@ -10,6 +10,8 @@ import { Users, Plus, X, Search, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import TeamLogo from "@/lovable/components/TeamLogo";
+import TeamLogoUploader from "@/lovable/components/TeamLogoUploader";
 
 const positionColors = {
   C: "bg-blue-600/80 text-blue-100",
@@ -94,12 +96,26 @@ export default function RosterPage() {
     <AppLayout>
       <div className="space-y-6" data-testid="roster-page">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-              <Users className="h-6 w-6 text-[#00D2FF]" />
-              {team ? team.name : "My Roster"}
-            </h1>
-            <p className="text-[#A1A1AA]">{league?.name || "No league"} · {roster.length} players</p>
+          <div className="flex items-center gap-4">
+            {team ? (
+              <TeamLogoUploader
+                teamId={team.id}
+                name={team.name}
+                abbr={team.logo_abbr}
+                logo={team.logo_url}
+                size="lg"
+                onChange={(newLogo) => setTeam(prev => prev ? { ...prev, logo_url: newLogo } : prev)}
+              />
+            ) : (
+              <TeamLogo name="My Roster" size="lg" />
+            )}
+            <div>
+              <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+                <Users className="h-6 w-6 text-[#00D2FF]" />
+                {team ? team.name : "My Roster"}
+              </h1>
+              <p className="text-[#A1A1AA]">{league?.name || "No league"} · {roster.length} players</p>
+            </div>
           </div>
           <Button className="bg-[#00D2FF] text-black hover:bg-[#33DBFF]" onClick={() => setAddModalOpen(true)} data-testid="add-player-btn">
             <Plus className="h-4 w-4 mr-2" /> Add Player

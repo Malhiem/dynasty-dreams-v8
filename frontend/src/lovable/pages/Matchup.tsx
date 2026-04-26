@@ -180,7 +180,7 @@ const Matchup = () => {
         <div className="stat-card p-8">
           <div className="flex items-center justify-between">
             <div className="text-center flex-1">
-              <TeamLogo name={myTeam?.name || "—"} abbr={myTeam?.logo_abbr || "—"} size="lg" className="mx-auto mb-3 rounded-full" />
+              <TeamLogo logo={myTeam?.logo_url} name={myTeam?.name || "—"} abbr={myTeam?.logo_abbr || "—"} size="lg" className="mx-auto mb-3 rounded-full" />
               <h2 className="text-xl font-bold"><TeamLink name={myTeam?.name || "—"} id={myTeam?.id} /></h2>
               <p className="text-muted-foreground text-sm">
                 {myTeam ? `${myTeam.wins || 0}-${myTeam.losses || 0}-${myTeam.ties || 0}` : ''}
@@ -220,7 +220,7 @@ const Matchup = () => {
             </div>
 
             <div className="text-center flex-1">
-              <TeamLogo name={opponentTeam?.name || "—"} abbr={opponentTeam?.logo_abbr || "—"} size="lg" className="mx-auto mb-3 rounded-full" />
+              <TeamLogo logo={opponentTeam?.logo_url} name={opponentTeam?.name || "—"} abbr={opponentTeam?.logo_abbr || "—"} size="lg" className="mx-auto mb-3 rounded-full" />
               <h2 className="text-xl font-bold"><TeamLink name={opponentTeam?.name || "—"} id={opponentTeam?.id} /></h2>
               <p className="text-muted-foreground text-sm">
                 {opponentTeam ? `${opponentTeam.wins || 0}-${opponentTeam.losses || 0}-${opponentTeam.ties || 0}` : ''}
@@ -271,7 +271,7 @@ const Matchup = () => {
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <div className="h-6 w-6 rounded bg-primary/20 flex items-center justify-center text-xs font-bold text-primary">{myTeam?.logo_abbr || 'ME'}</div>
+                <TeamLogo logo={myTeam?.logo_url} name={myTeam?.name || 'ME'} abbr={myTeam?.logo_abbr || 'ME'} size="xs" />
                 {myTeam?.name || 'My Lineup'}
               </CardTitle>
             </CardHeader>
@@ -288,7 +288,7 @@ const Matchup = () => {
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <div className="h-6 w-6 rounded bg-secondary flex items-center justify-center text-xs font-bold text-muted-foreground">{opponentTeam?.logo_abbr || 'OPP'}</div>
+                <TeamLogo logo={opponentTeam?.logo_url} name={opponentTeam?.name || 'OPP'} abbr={opponentTeam?.logo_abbr || 'OPP'} size="xs" />
                 {opponentTeam?.name || 'Opponent Lineup'}
               </CardTitle>
             </CardHeader>

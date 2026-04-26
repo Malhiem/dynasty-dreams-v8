@@ -14,6 +14,12 @@ import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useParams } from "react-router-dom";
 import { useDraftSocket } from "@/hooks/use-socket";
+import TeamLogo from "@/lovable/components/TeamLogo";
+
+const teamByAbbr = (teams, abbr) => {
+  if (!abbr || !teams?.length) return null;
+  return teams.find(t => (t.logo_abbr || (t.name || "").slice(0,3).toUpperCase()) === abbr) || null;
+};
 
 const positionColors = {
   C: "bg-blue-600/80 text-blue-100 border-blue-500/50",
@@ -35,6 +41,7 @@ export default function DraftRoomPage() {
 
   const [draft, setDraft] = useState(null);
   const [players, setPlayers] = useState([]);
+  const [teams, setTeams] = useState([]);
   const [shortlist, setShortlist] = useState(new Set());
   const [queue, setQueue] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
@@ -54,6 +61,13 @@ export default function DraftRoomPage() {
       setChatMessages(data.chat_messages || []);
       if (data.time_per_pick) setPickTimeLeft(data.time_per_pick);
       setTimerPaused(data.timer_paused || false);
+      // Fetch league teams so we can render team logos by abbr
+      if (data.league_id) {
+        try {
+          const { data: t } = await api.get(`/teams?league_id=${data.league_id}`);
+          setTeams(t || []);
+        } catch (e) { /* ignore */ }
+      }
     } catch (e) {
       console.error("Failed to fetch draft", e);
     }
@@ -281,7 +295,22 @@ export default function DraftRoomPage() {
                   </div>
                   <div className="bg-[#1A1A1A] rounded-lg p-3 text-center space-y-1">
                     <p className="text-[10px] uppercase tracking-wider text-[#A1A1AA]">On the Clock</p>
-                    <p className="text-lg font-bold text-white" data-testid="on-the-clock">{onTheClockTeam}</p>
+                    <div className="flex items-center justify-center gap-2">
+                      {(() => {
+                        const t = teamByAbbr(teams, onTheClockTeam);
+                        return (
+                          <TeamLogo
+                            logo={t?.logo_url}
+                            name={t?.name || onTheClockTeam}
+                            abbr={onTheClockTeam}
+                            size="sm"
+                          />
+                        );
+                      })()}
+                      <p className="text-lg font-bold text-white" data-testid="on-the-clock">
+                        {teamByAbbr(teams, onTheClockTeam)?.name || onTheClockTeam}
+                      </p>
+                    </div>
                     <p className="text-xs text-[#A1A1AA]">Round {currentRound}, Pick {currentPickInRound} (#{currentPick} overall)</p>
                   </div>
                   {!isEarlyStart && (

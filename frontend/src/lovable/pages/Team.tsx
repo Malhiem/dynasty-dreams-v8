@@ -13,6 +13,7 @@ import CommissionerPendingTrades from "@/lovable/components/dashboard/Commission
 import StatCard from "@/lovable/components/dashboard/StatCard";
 import { Trophy, TrendingUp, Users, Shield, ArrowRightLeft, X, AlertTriangle, DollarSign, UserMinus, UserPlus } from "lucide-react";
 import TeamLogo from "@/lovable/components/TeamLogo";
+import TeamLogoUploader from "@/lovable/components/TeamLogoUploader";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { useActiveLeague } from "@/hooks/use-active-league";
@@ -43,7 +44,7 @@ interface TradeAssetState {
 
 const Team = () => {
   const [searchParams] = useSearchParams();
-  const { league, leagueTeams, myTeam } = useActiveLeague();
+  const { league, leagueTeams, myTeam, reloadTeams } = useActiveLeague();
 
   // Shape real teams into the { id, name, abbr, owner } format the Lovable UI expects
   const allTeams = useMemo(() => {
@@ -51,6 +52,7 @@ const Team = () => {
       id: t.id,
       name: t.name,
       abbr: t.logo_abbr || t.name?.slice(0, 3).toUpperCase() || "TBD",
+      logo_url: t.logo_url || null,
       owner: t.owner_name || "—",
       wins: t.wins || 0,
       losses: t.losses || 0,
@@ -475,7 +477,18 @@ const Team = () => {
         <LiveTeamHeader />
         <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
           <div className="flex items-center gap-4">
-            <TeamLogo name={selectedTeam.name} abbr={selectedTeam.abbr} size="lg" />
+            {(isOwnTeam || commissionerMode) ? (
+              <TeamLogoUploader
+                teamId={selectedTeam.id}
+                name={selectedTeam.name}
+                abbr={selectedTeam.abbr}
+                logo={selectedTeam.logo_url}
+                size="lg"
+                onChange={() => reloadTeams?.()}
+              />
+            ) : (
+              <TeamLogo logo={selectedTeam.logo_url || undefined} name={selectedTeam.name} abbr={selectedTeam.abbr} size="lg" />
+            )}
             <div>
               <h1 className="text-2xl font-bold">
                 <span className="text-gradient-ice">{selectedTeam.name}</span>

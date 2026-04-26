@@ -29,6 +29,9 @@ interface StandingsTeam {
   rank: number;
   prevRank: number;
   name: string;
+  teamId?: string;
+  logo_url?: string | null;
+  logo_abbr?: string;
   wins: number;
   losses: number;
   ties: number;
@@ -304,7 +307,7 @@ const StandingsTable = ({
                 </td>
                 <td className="py-2.5 pl-2">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <TeamLogo name={team.name} size="xs" />
+                    <TeamLogo logo={team.logo_url} name={team.name} abbr={team.logo_abbr} size="xs" />
                     <span
                       className={`font-medium cursor-pointer hover:underline ${team.isUser ? "text-primary" : "text-foreground"}`}
                       onClick={() => {
@@ -610,6 +613,8 @@ const StandingsPage = () => {
         prevRank: idx + 1,
         name: t.name,
         teamId: t.id,
+        logo_url: t.logo_url || null,
+        logo_abbr: t.logo_abbr || (t.name || "").slice(0,3).toUpperCase(),
         wins: t.wins || 0,
         losses: t.losses || 0,
         ties: t.ties || 0,

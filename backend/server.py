@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, Query, UploadFile, File
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -248,6 +248,7 @@ class TeamResponse(BaseModel):
     roster: List[str] = []
     live_points: float = 0.0
     logo_abbr: Optional[str] = None
+    logo_url: Optional[str] = None
     championship_won_at: Optional[datetime] = None
     division_winner_at: Optional[datetime] = None
     conference_winner_at: Optional[datetime] = None
@@ -1979,6 +1980,7 @@ def _team_to_response(team: dict) -> TeamResponse:
         roster=team.get("roster", []),
         live_points=round(team.get("live_points", 0.0) or 0.0, 2),
         logo_abbr=abbr,
+        logo_url=team.get("logo_url"),
         championship_won_at=team.get("championship_won_at"),
         division_winner_at=team.get("division_winner_at"),
         conference_winner_at=team.get("conference_winner_at"),
@@ -3648,6 +3650,88 @@ async def get_trade_block_note(team_id: str):
         "note": team.get("trade_block_note") or "",
         "updated_at": team.get("trade_block_note_updated_at"),
     }
+
+
+# --- Team logo upload/delete --------------------------------------------------
+# Logos are stored as base64 data URLs in MongoDB so they survive container
+# restarts and are immediately available cross-device. PIL is used to enforce
+# a normalized 256x256 PNG output regardless of input format/size.
+MAX_LOGO_BYTES = 1 * 1024 * 1024  # 1 MB raw upload
+ALLOWED_LOGO_MIME = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}
+LOGO_OUTPUT_SIZE = (256, 256)
+
+
+@api_router.post("/teams/{team_id}/logo")
+async def upload_team_logo(team_id: str, request: Request, file: UploadFile = File(...)):
+    """Upload (or replace) a team logo.
+
+    - Max raw upload size: 1 MB
+    - Allowed types: PNG, JPEG, WEBP, GIF
+    - Server resizes to 256x256 PNG and stores as base64 data URL.
+    - Only the team owner (or a commissioner) may upload.
+    """
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    is_commish = bool(league and league.get("commissioner_id") == user["_id"])
+    if team.get("owner_id") != user["_id"] and not is_commish:
+        raise HTTPException(status_code=403, detail="Not authorized to edit this team")
+
+    if file.content_type not in ALLOWED_LOGO_MIME:
+        raise HTTPException(status_code=400, detail="Unsupported image type. Use PNG, JPEG, WEBP, or GIF.")
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(raw) > MAX_LOGO_BYTES:
+        raise HTTPException(status_code=400, detail="Image too large. Max size is 1 MB.")
+
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+        # Convert to RGBA so PNG output preserves transparency where present
+        if img.mode not in ("RGBA", "RGB"):
+            img = img.convert("RGBA")
+        img.thumbnail(LOGO_OUTPUT_SIZE, Image.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format="PNG", optimize=True)
+        encoded = base64.b64encode(out.getvalue()).decode("ascii")
+        data_url = f"data:image/png;base64,{encoded}"
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("logo processing failed")
+        raise HTTPException(status_code=400, detail=f"Could not process image: {exc}")
+
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {
+            "logo_url": data_url,
+            "logo_updated_at": datetime.now(timezone.utc),
+        }},
+    )
+    return {"team_id": team_id, "logo_url": data_url}
+
+
+@api_router.delete("/teams/{team_id}/logo")
+async def delete_team_logo(team_id: str, request: Request):
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    is_commish = bool(league and league.get("commissioner_id") == user["_id"])
+    if team.get("owner_id") != user["_id"] and not is_commish:
+        raise HTTPException(status_code=403, detail="Not authorized to edit this team")
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {"$unset": {"logo_url": "", "logo_updated_at": ""}},
+    )
+    return {"team_id": team_id, "logo_url": None}
 
 
 @api_router.put("/teams/{team_id}/trade-block-preference")

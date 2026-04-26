@@ -19,6 +19,7 @@ export function useActiveLeague() {
   const [league, setLeague] = useState(null);
   const [myTeam, setMyTeam] = useState(null);
   const [leagueTeams, setLeagueTeams] = useState([]);
+  const [teamsReloadKey, setTeamsReloadKey] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,12 +66,14 @@ export function useActiveLeague() {
     };
     load();
     return () => { cancelled = true; };
-  }, [leagueId]);
+  }, [leagueId, teamsReloadKey]);
 
   const switchLeague = (id) => {
     try { localStorage.setItem(STORAGE_KEY, id); } catch (e) { /* noop */ }
     setLeagueId(id);
   };
 
-  return { loading, myLeagues, leagueId, league, leagueTeams, myTeam, switchLeague };
+  const reloadTeams = () => setTeamsReloadKey(k => k + 1);
+
+  return { loading, myLeagues, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams };
 }
