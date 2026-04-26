@@ -326,7 +326,7 @@ const Analytics = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div style={{width:"100%", minHeight:350}}><ResponsiveContainer width="100%" height={350}>
+              <div style={{width:"100%", height:350}}><ResponsiveContainer width="100%" height="100%">
                 <LineChart data={weeklyData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 30%, 20%)" />
                   <XAxis 
@@ -399,7 +399,7 @@ const Analytics = () => {
               </Select>
             </CardHeader>
             <CardContent>
-              <div style={{width:"100%", minHeight:350}}><ResponsiveContainer width="100%" height={350}>
+              <div style={{width:"100%", height:350}}><ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={getPieData()}
@@ -517,7 +517,7 @@ const Analytics = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div style={{width:"100%", minHeight:400}}><ResponsiveContainer width="100%" height={400}>
+                  <div style={{width:"100%", height:400}}><ResponsiveContainer width="100%" height="100%">
                     <BarChart data={yoyChartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 30%, 20%)" />
                       <XAxis
@@ -600,7 +600,7 @@ const Analytics = () => {
                     ))}
                   </div>
 
-                  <div style={{width:"100%", minHeight:400}}><ResponsiveContainer width="100%" height={400}>
+                  <div style={{width:"100%", height:400}}><ResponsiveContainer width="100%" height="100%">
                     <LineChart data={comparisonChartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 30%, 20%)" />
                       <XAxis
