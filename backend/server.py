@@ -1989,37 +1989,220 @@ def _team_to_response(team: dict) -> TeamResponse:
 # NHL Players Endpoints
 @api_router.get("/players")
 async def get_players(
+    request: Request,
     search: Optional[str] = None,
-    position: Optional[str] = None,
-    team: Optional[str] = None,
+    position: Optional[str] = None,           # C, LW, RW, W (LW|RW), LHD, RHD, D (any defender), SKT (non-G), G
+    nhl_team: Optional[str] = None,           # filter by NHL team abbreviation
+    fantasy_team_id: Optional[str] = None,    # only players on this fantasy team
+    league_id: Optional[str] = None,          # required for ownership/watchlist enrichment + most filtered views
+    availability: str = "all",                # "all" | "free_agent" | "owned" | "waivers" | "trade_block" | "watchlist" | "watchlist_or_own"
+    injured: Optional[bool] = None,
+    minors_eligible: Optional[bool] = None,
+    exclude_team_id: Optional[str] = None,    # used by "All Except Own Team" view
     page: int = 1,
-    limit: int = 50
+    limit: int = 50,
 ):
-    query = {}
+    """Players page query endpoint with extensive filtering.
+    Returns each player enriched with `owned_by_team_*`, `is_on_waivers`,
+    `is_on_trade_block`, `is_in_watchlist`, `league_pct` (when league_id given).
+    """
+    query: dict = {}
     if search:
         query["$or"] = [
             {"name": {"$regex": search, "$options": "i"}},
-            {"team": {"$regex": search, "$options": "i"}}
+            {"team": {"$regex": search, "$options": "i"}},
         ]
+    if nhl_team:
+        query["team"] = nhl_team
+
+    # Position grouping
     if position:
-        query["position"] = position
-    if team:
-        query["team"] = team
-    
+        pos = position.upper()
+        if pos in {"W", "WING"}:
+            query["position"] = {"$in": ["LW", "RW"]}
+        elif pos == "D":
+            query["position"] = {"$in": ["D", "LHD", "RHD"]}
+        elif pos == "SKT":
+            query["position"] = {"$ne": "G"}
+        else:
+            query["position"] = pos
+
+    if injured is True:
+        query["injury_status"] = {"$nin": [None, "", "Healthy", "ACTIVE"]}
+    elif injured is False:
+        query["$and"] = (query.get("$and") or []) + [{
+            "$or": [
+                {"injury_status": {"$exists": False}},
+                {"injury_status": {"$in": [None, "", "Healthy", "ACTIVE"]}},
+            ]
+        }]
+
+    if minors_eligible is True:
+        query["minors_eligible"] = True
+    elif minors_eligible is False:
+        query["minors_eligible"] = {"$ne": True}
+
+    # Build league-scoped ownership map (player_id -> {team_id, team_name, team_abbr})
+    owned_by: dict[str, dict] = {}
+    league_total_teams = 0
+    if league_id:
+        teams = await db.teams.find({"league_id": league_id}).to_list(100)
+        league_total_teams = len(teams)
+        for t in teams:
+            for pid in (t.get("roster") or []):
+                owned_by[str(pid)] = {
+                    "team_id": str(t["_id"]),
+                    "team_name": t.get("name"),
+                    "team_abbr": t.get("logo_abbr") or (t.get("name") or "")[:3].upper(),
+                }
+
+    # Watchlist for current user (best-effort)
+    watch_ids: set[str] = set()
+    user = None
+    try:
+        user = await get_current_user(request)
+    except Exception:
+        user = None
+    if user and league_id:
+        wl = await db.watchlists.find_one({"user_id": user["_id"], "league_id": league_id})
+        if wl:
+            watch_ids = set(wl.get("player_ids") or [])
+
+    # Apply availability filters by intersecting query with owned-by map
+    owned_pids = set(owned_by.keys())
+    if availability == "free_agent":
+        if league_id:
+            query["_id"] = {"$nin": [ObjectId(p) for p in owned_pids]}
+    elif availability == "owned":
+        if league_id and owned_pids:
+            query["_id"] = {"$in": [ObjectId(p) for p in owned_pids]}
+        elif league_id:
+            query["_id"] = {"$in": []}
+    elif availability == "watchlist":
+        if watch_ids:
+            query["_id"] = {"$in": [ObjectId(p) for p in watch_ids]}
+        else:
+            query["_id"] = {"$in": []}
+    elif availability == "watchlist_or_own":
+        # Watch list ∪ own team's roster
+        own_team_pids: set[str] = set()
+        if user and league_id:
+            own_team = await db.teams.find_one({"league_id": league_id, "owner_id": user["_id"]})
+            if own_team:
+                own_team_pids = set(own_team.get("roster") or [])
+        union_ids = list(watch_ids | own_team_pids)
+        query["_id"] = {"$in": [ObjectId(p) for p in union_ids]} if union_ids else {"$in": []}
+    elif availability == "trade_block":
+        if league_id:
+            tb_items = await db.trade_block_items.find({"league_id": league_id, "player_id": {"$ne": None}}).to_list(1000)
+            tb_pids = [str(i["player_id"]) for i in tb_items]
+            query["_id"] = {"$in": [ObjectId(p) for p in tb_pids]} if tb_pids else {"$in": []}
+    elif availability == "waivers":
+        if league_id:
+            wclaims = await db.waiver_claims.find({"league_id": league_id, "status": "pending"}).to_list(1000)
+            w_pids = list({str(c["player_id"]) for c in wclaims})
+            query["_id"] = {"$in": [ObjectId(p) for p in w_pids]} if w_pids else {"$in": []}
+
+    if fantasy_team_id and league_id:
+        ft = await db.teams.find_one({"_id": ObjectId(fantasy_team_id)})
+        ft_pids = (ft.get("roster") or []) if ft else []
+        # Intersect with any existing _id filter
+        existing = query.get("_id")
+        wanted = [ObjectId(p) for p in ft_pids]
+        if isinstance(existing, dict) and "$in" in existing:
+            wanted = [oid for oid in wanted if oid in existing["$in"]]
+        query["_id"] = {"$in": wanted}
+
+    if exclude_team_id and league_id:
+        ex_team = await db.teams.find_one({"_id": ObjectId(exclude_team_id)})
+        ex_pids = (ex_team.get("roster") or []) if ex_team else []
+        if ex_pids:
+            existing_nin = []
+            existing_id = query.get("_id")
+            if isinstance(existing_id, dict) and "$nin" in existing_id:
+                existing_nin = list(existing_id["$nin"])
+            existing_nin.extend([ObjectId(p) for p in ex_pids])
+            query["_id"] = {"$nin": existing_nin}
+
     skip = (page - 1) * limit
-    players = await db.players.find(query).skip(skip).limit(limit).to_list(limit)
+    cursor = db.players.find(query).sort("points", -1).skip(skip).limit(limit)
+    players = await cursor.to_list(limit)
     total = await db.players.count_documents(query)
-    
-    # Convert ObjectId to string
+
+    # League-wide ownership counts for league_pct (lazily computed only for the page)
+    if league_id and players:
+        page_pids = [str(p["_id"]) for p in players]
+        page_counts: dict[str, int] = {}
+        async for row in db.teams.aggregate([
+            {"$match": {"league_id": league_id, "roster": {"$in": page_pids}}},
+            {"$project": {"matched": {"$setIntersection": ["$roster", page_pids]}}},
+            {"$unwind": "$matched"},
+            {"$group": {"_id": "$matched", "count": {"$sum": 1}}},
+        ]):
+            page_counts[str(row["_id"])] = int(row["count"])
+
+    # Trade-block + waivers sets (cheap once)
+    tb_set: set[str] = set()
+    wv_set: set[str] = set()
+    if league_id:
+        async for it in db.trade_block_items.find({"league_id": league_id, "player_id": {"$ne": None}}, {"player_id": 1}):
+            tb_set.add(str(it["player_id"]))
+        async for c in db.waiver_claims.find({"league_id": league_id, "status": "pending"}, {"player_id": 1}):
+            wv_set.add(str(c["player_id"]))
+
+    out = []
     for player in players:
-        player["_id"] = str(player["_id"])
-    
+        pid = str(player["_id"])
+        player["_id"] = pid
+        info = owned_by.get(pid)
+        player["owned_by_team_id"] = info.get("team_id") if info else None
+        player["owned_by_team_name"] = info.get("team_name") if info else None
+        player["owned_by_team_abbr"] = info.get("team_abbr") if info else None
+        player["is_on_trade_block"] = pid in tb_set
+        player["is_on_waivers"] = pid in wv_set
+        player["is_in_watchlist"] = pid in watch_ids
+        if league_id and league_total_teams:
+            count = page_counts.get(pid, 0) if 'page_counts' in locals() else 0
+            player["league_pct"] = round(100 * count / league_total_teams, 1)
+        out.append(player)
+
     return {
-        "players": players,
+        "players": out,
         "total": total,
         "page": page,
-        "pages": (total + limit - 1) // limit
+        "pages": (total + limit - 1) // limit,
     }
+
+
+@api_router.get("/watchlist")
+async def get_watchlist(request: Request, league_id: Optional[str] = None):
+    user = await get_current_user(request)
+    wl = await db.watchlists.find_one({"user_id": user["_id"], "league_id": league_id})
+    return {"player_ids": (wl.get("player_ids") if wl else []) or []}
+
+
+@api_router.post("/watchlist/toggle")
+async def toggle_watchlist(payload: dict, request: Request):
+    user = await get_current_user(request)
+    pid = str(payload.get("player_id") or "")
+    league_id = payload.get("league_id")
+    if not pid:
+        raise HTTPException(status_code=400, detail="player_id required")
+    wl = await db.watchlists.find_one({"user_id": user["_id"], "league_id": league_id})
+    ids = set((wl.get("player_ids") if wl else []) or [])
+    added = pid not in ids
+    if added:
+        ids.add(pid)
+    else:
+        ids.discard(pid)
+    await db.watchlists.update_one(
+        {"user_id": user["_id"], "league_id": league_id},
+        {"$set": {"user_id": user["_id"], "league_id": league_id,
+                  "player_ids": list(ids),
+                  "updated_at": datetime.now(timezone.utc)}},
+        upsert=True,
+    )
+    return {"player_id": pid, "added": added, "in_watchlist": added}
 
 @api_router.get("/players/{player_id}")
 async def get_player(player_id: str):

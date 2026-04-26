@@ -18,10 +18,10 @@ export function PlayerCardChip({ player, ownership }) {
   const leaguePct = ownership?.league_pct;
   const globalPct = ownership?.global_pct;
   const leagueText = ownership && leaguePct != null
-    ? `Owned in ${ownership.league_owned}/${ownership.league_total} league teams (${leaguePct}%)`
+    ? `${leaguePct}% owned in league`
     : null;
   const globalText = ownership && globalPct != null
-    ? `${ownership.global_owned}/${ownership.global_total} (${globalPct}%) across DD`
+    ? `${globalPct}% across DD`
     : null;
 
   return (

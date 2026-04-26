@@ -2144,10 +2144,10 @@ const OwnershipCell = ({ player, ownership }: { player: Player; ownership?: any 
             </span>
           </TooltipTrigger>
           <TooltipContent side="top" className="text-[11px]">
-            <div>Owned in {ownership.league_owned}/{ownership.league_total} league teams ({pct}%)</div>
+            <div>{pct}% owned in league</div>
             {ownership.global_pct != null && (
               <div className="text-muted-foreground">
-                {ownership.global_owned}/{ownership.global_total} ({ownership.global_pct}%) across DD
+                {ownership.global_pct}% across DD
               </div>
             )}
           </TooltipContent>
