@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, useNavigate } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import api from "@/lib/api";
 import PlayerRoster from "@/lovable/components/dashboard/PlayerRoster";
@@ -144,6 +144,7 @@ const RosterStatusTile = ({ teamId }: { teamId: string }) => {
 
 const Team = () => {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const { league, leagueTeams, myTeam, reloadTeams } = useActiveLeague();
 
   // Shape real teams into the { id, name, abbr, owner } format the Lovable UI expects
@@ -363,10 +364,59 @@ const Team = () => {
               onClick={async () => {
                 try {
                   await api.post(`/roster/${selectedTeamId}/drop`, { player_id: playerId });
-                  toast.success(`${playerName} dropped to free agency`, {
-                    description: "League will process per waiver rules.",
-                  });
                   setRosterReloadKey((k) => k + 1);
+
+                  // If a roster slot is now open, surface a sticky toast with
+                  // an "Add Player" CTA that takes the user to the free agent
+                  // pool. Toast persists (duration: Infinity) until dismissed.
+                  const maxRoster = Number((league as any)?.roster_spots ?? 25);
+                  const newRosterCount = Math.max(0, (selectedTeam?.roster_count ?? 1) - 1);
+                  const openSlots = Math.max(0, maxRoster - newRosterCount);
+
+                  if (openSlots > 0) {
+                    toast.custom(
+                      (st) => (
+                        <div
+                          className="w-[360px] rounded-md border border-primary/40 bg-card p-4 shadow-xl"
+                          data-testid="drop-add-player-toast"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="h-9 w-9 rounded-md bg-emerald-500/15 text-emerald-400 flex items-center justify-center font-bold shrink-0">
+                              ✓
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold">
+                                Dropped {playerName}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {openSlots} roster spot{openSlots === 1 ? "" : "s"} now open. Add a free agent to fill it.
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 mt-3">
+                            <button
+                              className="flex-1 h-8 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90"
+                              data-testid="drop-toast-add-player-btn"
+                              onClick={() => {
+                                toast.dismiss(st);
+                                navigate("/waivers");
+                              }}
+                            >+ Add Player</button>
+                            <button
+                              className="h-8 px-3 rounded-md border border-border hover:bg-secondary text-xs text-muted-foreground"
+                              data-testid="drop-toast-dismiss"
+                              onClick={() => toast.dismiss(st)}
+                            >Dismiss</button>
+                          </div>
+                        </div>
+                      ),
+                      { id: `drop-add-${playerId}`, duration: Infinity },
+                    );
+                  } else {
+                    toast.success(`${playerName} dropped to free agency`, {
+                      description: "League will process per waiver rules.",
+                    });
+                  }
                 } catch (e: any) {
                   toast.error("Drop failed", {
                     description: e?.response?.data?.detail || e?.message || "Unknown error",
