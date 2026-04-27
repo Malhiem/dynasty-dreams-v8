@@ -632,44 +632,150 @@ export default function LeagueDetailPage() {
             </div>
           ) : (
             <div className="surface divide-y divide-white/5" data-testid="league-transactions-list">
-              {transactions.map(tx => {
+              {(() => {
                 const ICON = {
                   roster_add: { icon: '+', color: 'text-emerald-400 bg-emerald-500/15', label: 'ADD' },
                   roster_drop: { icon: '−', color: 'text-rose-400 bg-rose-500/15', label: 'DROP' },
                   waiver_won: { icon: '★', color: 'text-violet-400 bg-violet-500/15', label: 'WAIVER' },
+                  waiver_lost: { icon: '✕', color: 'text-zinc-400 bg-white/5', label: 'WAIVER LOST' },
                   trade_executed: { icon: '⇄', color: 'text-[#00D2FF] bg-[#00D2FF]/15', label: 'TRADE' },
-                }[tx.type] || { icon: '·', color: 'text-[#A1A1AA] bg-white/5', label: 'TXN' };
-                return (
-                  <div
-                    key={tx.id}
-                    className="px-4 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition-colors"
-                    data-testid={`league-transaction-${tx.id}`}
-                  >
-                    <div className={`h-8 w-8 rounded-md flex items-center justify-center text-base font-black shrink-0 ${ICON.color}`}>
-                      {ICON.icon}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`text-[10px] font-bold tracking-wider ${ICON.color.split(' ')[0]}`}>
-                          {ICON.label}
-                        </span>
-                        {tx.team_name && (
-                          <Link to={`/teams/${tx.team_id}`} className="text-sm font-semibold text-white hover:underline truncate">
-                            {tx.team_name}
-                          </Link>
-                        )}
-                        {tx.bid_amount != null && (
-                          <span className="text-[10px] text-violet-400 font-bold">${tx.bid_amount} FAAB</span>
-                        )}
+                };
+                const fmtTime = (iso) => {
+                  if (!iso) return '';
+                  const d = new Date(iso);
+                  return d.toLocaleString(undefined, {
+                    month: 'short', day: 'numeric',
+                    hour: 'numeric', minute: '2-digit',
+                  });
+                };
+                // Group consecutive same-team add/drop transactions within a 5-minute window.
+                // Trades and waiver claims always render as their own row.
+                const FIVE_MIN_MS = 5 * 60 * 1000;
+                const GROUPABLE = new Set(['roster_add', 'roster_drop']);
+                const groups = [];
+                for (const tx of transactions) {
+                  const last = groups[groups.length - 1];
+                  const ts = tx.created_at ? new Date(tx.created_at).getTime() : 0;
+                  const sameTeam = last && last.team_id && tx.team_id && last.team_id === tx.team_id;
+                  const inWindow = last && Math.abs((last.firstTs || 0) - ts) <= FIVE_MIN_MS;
+                  const groupable = GROUPABLE.has(tx.type) && last && last.allGroupable;
+                  if (last && groupable && sameTeam && inWindow) {
+                    last.entries.push(tx);
+                    last.lastTs = ts;
+                  } else {
+                    groups.push({
+                      entries: [tx],
+                      team_id: tx.team_id,
+                      team_name: tx.team_name,
+                      firstTs: ts,
+                      lastTs: ts,
+                      allGroupable: GROUPABLE.has(tx.type),
+                    });
+                  }
+                }
+                return groups.map((g, gi) => {
+                  if (g.entries.length === 1) {
+                    const tx = g.entries[0];
+                    const I = ICON[tx.type] || { icon: '·', color: 'text-[#A1A1AA] bg-white/5', label: 'TXN' };
+                    return (
+                      <div
+                        key={tx.id}
+                        className="px-4 py-3 flex items-center gap-3 hover:bg-white/[0.02] transition-colors"
+                        data-testid={`league-transaction-${tx.id}`}
+                      >
+                        <div className={`h-8 w-8 rounded-md flex items-center justify-center text-base font-black shrink-0 ${I.color}`}>
+                          {I.icon}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-[10px] font-bold tracking-wider ${I.color.split(' ')[0]}`}>
+                              {I.label}
+                            </span>
+                            {tx.team_name && (
+                              <Link to={`/teams/${tx.team_id}`} className="text-sm font-semibold text-white hover:underline truncate">
+                                {tx.team_name}
+                              </Link>
+                            )}
+                            {tx.bid_amount != null && (
+                              <span className="text-[10px] text-violet-400 font-bold">${tx.bid_amount} FAAB</span>
+                            )}
+                          </div>
+                          <div className="text-xs text-[#A1A1AA] truncate mt-0.5">{tx.description}</div>
+                        </div>
+                        <div
+                          className="text-[10px] text-[#52525B] shrink-0 tabular-nums text-right whitespace-nowrap"
+                          data-testid={`league-transaction-time-${tx.id}`}
+                        >
+                          {fmtTime(tx.created_at)}
+                        </div>
                       </div>
-                      <div className="text-xs text-[#A1A1AA] truncate mt-0.5">{tx.description}</div>
+                    );
+                  }
+                  // Grouped row — multiple adds/drops by the same team within 5 minutes
+                  const adds = g.entries.filter(e => e.type === 'roster_add').length;
+                  const drops = g.entries.filter(e => e.type === 'roster_drop').length;
+                  return (
+                    <div
+                      key={`group-${gi}-${g.firstTs}`}
+                      className="px-4 py-3 hover:bg-white/[0.02] transition-colors"
+                      data-testid={`league-transaction-group-${gi}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-md flex items-center justify-center text-base font-black shrink-0 text-[#00D2FF] bg-[#00D2FF]/15">
+                          ⇅
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[10px] font-bold tracking-wider text-[#00D2FF]">
+                              ROSTER MOVES
+                            </span>
+                            {g.team_name && (
+                              <Link to={`/teams/${g.team_id}`} className="text-sm font-semibold text-white hover:underline truncate">
+                                {g.team_name}
+                              </Link>
+                            )}
+                            <span className="text-[10px] text-[#A1A1AA]">
+                              {adds > 0 && `${adds} add${adds === 1 ? '' : 's'}`}
+                              {adds > 0 && drops > 0 && ' · '}
+                              {drops > 0 && `${drops} drop${drops === 1 ? '' : 's'}`}
+                              {' · '}{g.entries.length} moves in {Math.max(1, Math.round((g.firstTs - g.lastTs) / 60000))} min window
+                            </span>
+                          </div>
+                        </div>
+                        <div
+                          className="text-[10px] text-[#52525B] shrink-0 tabular-nums text-right whitespace-nowrap"
+                          data-testid={`league-transaction-group-time-${gi}`}
+                        >
+                          {fmtTime(g.entries[0].created_at)}
+                          {g.entries.length > 1 && (
+                            <div className="text-[9px] opacity-70">↳ {fmtTime(g.entries[g.entries.length - 1].created_at)}</div>
+                          )}
+                        </div>
+                      </div>
+                      <ul className="ml-11 mt-2 space-y-0.5" data-testid={`league-transaction-group-${gi}-items`}>
+                        {g.entries.map((tx) => {
+                          const I = ICON[tx.type] || { icon: '·', color: 'text-[#A1A1AA] bg-white/5', label: 'TXN' };
+                          return (
+                            <li
+                              key={tx.id}
+                              className="flex items-center gap-2 text-xs text-[#A1A1AA]"
+                              data-testid={`league-transaction-${tx.id}`}
+                            >
+                              <span className={`text-[9px] font-bold tracking-wider w-9 ${I.color.split(' ')[0]}`}>
+                                {I.label}
+                              </span>
+                              <span className="truncate flex-1">{tx.description}</span>
+                              <span className="text-[9px] text-[#52525B] tabular-nums shrink-0">
+                                {fmtTime(tx.created_at)}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
                     </div>
-                    <div className="text-[10px] text-[#52525B] shrink-0 tabular-nums">
-                      {tx.created_at ? new Date(tx.created_at).toLocaleDateString() : ''}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           )}
         </div>
