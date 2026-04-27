@@ -80,6 +80,12 @@ const Matchup = () => {
   const [myLive, setMyLive] = useState(null);
   const [oppLive, setOppLive] = useState(null);
 
+  // ── Inter-matchup viewer ───────────────────────────────────────
+  // When a user clicks a side-rail matchup card, we override the focus from
+  // their own matchup to the selected one. Clicking again or hitting "Back to
+  // my matchup" resets to null.
+  const [viewingMatchup, setViewingMatchup] = useState<any>(null);
+
   useEffect(() => {
     if (!league?.id) return;
     let cancelled = false;
@@ -93,16 +99,39 @@ const Matchup = () => {
     return matchup.matchups.find(m => m.home_team_id === myTeam.id || m.away_team_id === myTeam.id);
   }, [matchup, myTeam]);
 
+  // Active matchup = either the viewed-other matchup or my own. We resolve
+  // home/away IDs from `viewingMatchup` (raw side-rail payload) when set.
+  const activeHomeTeamId = viewingMatchup
+    ? viewingMatchup.home?.team_id
+    : (myMatchup?.home_team_id === myTeam?.id ? myTeam?.id : myMatchup?.home_team_id);
+  const activeAwayTeamId = viewingMatchup
+    ? viewingMatchup.away?.team_id
+    : (myMatchup?.home_team_id === myTeam?.id ? myMatchup?.away_team_id : myTeam?.id);
+
+  // For the legacy flow, "my team" = the team in the active home/away pair
+  // that the user actually owns (when viewing my own matchup) OR the home
+  // team (when viewing someone else's matchup).
+  const focusedMyTeam = useMemo(() => {
+    if (viewingMatchup) {
+      return leagueTeams.find(t => t.id === activeHomeTeamId) || null;
+    }
+    return myTeam;
+  }, [viewingMatchup, leagueTeams, activeHomeTeamId, myTeam]);
+
   const opponentTeam = useMemo(() => {
+    if (viewingMatchup) {
+      return leagueTeams.find(t => t.id === activeAwayTeamId) || null;
+    }
     if (!myMatchup || !myTeam) return leagueTeams.find(t => t.id !== myTeam?.id) || null;
     const oppId = myMatchup.home_team_id === myTeam.id ? myMatchup.away_team_id : myMatchup.home_team_id;
     return leagueTeams.find(t => t.id === oppId) || null;
-  }, [myMatchup, myTeam, leagueTeams]);
+  }, [viewingMatchup, activeAwayTeamId, leagueTeams, myMatchup, myTeam]);
 
   useEffect(() => {
-    if (!myTeam?.id) return;
-    api.get(`/live-scoring/team/${myTeam.id}`).then(({data}) => setMyLive(data)).catch(() => {});
-  }, [myTeam]);
+    const tid = focusedMyTeam?.id;
+    if (!tid) return;
+    api.get(`/live-scoring/team/${tid}`).then(({data}) => setMyLive(data)).catch(() => {});
+  }, [focusedMyTeam]);
 
   useEffect(() => {
     if (!opponentTeam?.id) return;
@@ -185,6 +214,37 @@ const Matchup = () => {
         </div>
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1 space-y-6 min-w-0">
+
+        {/* "Viewing other matchup" banner — shows when user has clicked a
+            League Live card. Reset clears it back to their own matchup. */}
+        {viewingMatchup && (
+          <div
+            className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg border border-primary/40 bg-primary/10"
+            data-testid="viewing-other-matchup-banner"
+          >
+            <p className="text-sm">
+              <span className="text-[10px] uppercase tracking-widest text-primary font-bold mr-2">
+                Viewing
+              </span>
+              <span className="font-semibold">
+                {viewingMatchup.away?.team_name}
+              </span>
+              <span className="text-muted-foreground mx-1">@</span>
+              <span className="font-semibold">
+                {viewingMatchup.home?.team_name}
+              </span>
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setViewingMatchup(null)}
+              data-testid="back-to-my-matchup-btn"
+            >
+              ← Back to my matchup
+            </Button>
+          </div>
+        )}
+
         {/* View Toggle */}
         <div className="flex items-center justify-between">
           <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
@@ -351,6 +411,8 @@ const Matchup = () => {
               leagueId={league.id}
               myMatchupId={myMatchup?.id}
               currentWeek={matchup?.week}
+              viewingMatchupId={viewingMatchup?.matchup_id}
+              onSelectMatchup={(m) => setViewingMatchup(m)}
             />
           )}
         </div>

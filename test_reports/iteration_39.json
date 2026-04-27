@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 39 verified end-to-end: backend salary-cap enforcement on /api/roster/{id}/add (over-cap denial with 'salary cap' detail), live /compliance.salary_used recompute for Zarek's Frozen team ($86M used / $88M cap), drop-then-recompute lowers salary_used; web /team page hides View-full-roster link + league switcher, sidebar shows 'Active league - Ice Kings Head-to-Head' above League Hub, TeamSalaryCap card renders REAL data ($86.0M used / $88.0M cap, $2.0M remaining) instead of old hardcoded $92.5M; web /matchup page side-rail cards are clickable, banner 'Viewing Top Shelf Titans @ Ice Breakers · Back to my matchup' appears, main player list refreshes to viewed teams, Back-to-my-matchup resets state. 18/18 targeted backend tests pass (1 pre-existing skip on roster round-trip).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/matchup viewing-other-matchup state",
+        "issues": [
+          "When viewing another matchup via the side-rail card, the top scoreboard still shows the user's own team logos/names (ZF Zarek's Frozen vs TST Top Shelf Titans) while the player lists and banner correctly show the viewed matchup (Top Shelf Titans @ Ice Breakers). The team-name labels above the player lists also remain 'ZF Zarek's Frozen' even though the players shown are Ice Breakers'. Banner + player swap work, but the scoreboard header (team logos, ZF/TST chips, VS score, projections) does not fully re-render for the viewed matchup. Cosmetic — core feature works.",
+          "Pre-existing: a global 'No available roster move can resolve violations' alert toast appears top-right on /team (carried over from iteration 38, not new)."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_salary_cap_enforcement.py",
+    "/app/backend/tests/test_smart_drop_paywall.py",
+    "/app/backend/tests/test_iteration37_waiver_suggest.py",
+    "/app/backend/tests/test_compare_paywall.py",
+    "/app/test_reports/pytest/iteration39_results.xml"
+  ],
+  "action_items": [
+    "(Optional polish) /matchup: when viewingMatchup is set, also re-render the top scoreboard (team logos, names, scores, projections, week label, win-prob bar) to match the viewed matchup — currently only the banner + player lists update. Banner correctly says 'Viewing Top Shelf Titans @ Ice Breakers' while header still shows 'Zarek's Frozen vs Top Shelf Titans' and stale 137.5 vs 101.0 numbers."
+  ],
+  "critical_code_review_comments": [
+    "TeamSalaryCap.tsx fetches /compliance and renders accurately ($86.0M/$88.0M for Zarek). Cap-disabled and over-cap empty/warning states should be exercised in a future iteration with a non-cap-enabled league + a deliberately over-cap team to fully cover branches.",
+    "MatchupSideRail.tsx + Matchup.tsx implement viewingMatchup correctly via onSelectMatchup prop, but the top scoreboard inside Matchup.tsx still derives from myMatchup instead of (viewingMatchup || myMatchup). Consider extracting an 'activeMatchup' selector and using it everywhere on the page for consistency.",
+    "test_salary_cap_enforcement.py has a third test that re-adds the dropped player in a finally block — this works for happy path but if the re-add fails (e.g., over-cap because synthesized salary changed), the team state will be left short by one player. Acceptable for now but flag for future hardening."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! ; admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "None — relied on data already seeded by main agent (Ice Kings cap @ $88M, Zarek $86M used).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 39 items 1, 2, 3, 4, 7 all verified passing. Items 5 (server.py modularization) and 6 (Expo push notifications) explicitly DEFERRED by main agent — do not test. Targeted backend tests in /app/backend/tests: test_salary_cap_enforcement.py (3), test_smart_drop_paywall.py (3), test_iteration37_waiver_suggest.py (7, 1 skipped), test_compare_paywall.py (6) — all pass. Frontend testids stable: live-team-full-roster-link (absent ✓), live-team-league-switcher (absent ✓), sidebar-active-league-name, team-salary-cap-card, matchup-side-rail-card-{id}, viewing-other-matchup-banner, back-to-my-matchup-btn. The only outstanding observation is cosmetic: the /matchup top scoreboard does not re-render for the viewed matchup (banner + player list do).",
+  "rca of the issue": "N/A — no bugs blocking iteration acceptance. Minor design observation in /matchup top scoreboard logged as optional polish."
+}

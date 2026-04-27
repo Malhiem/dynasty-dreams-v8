@@ -137,6 +137,15 @@ export function AppSidebar() {
 
       <SidebarContent className="px-2">
         {renderGroup("User", userItems)}
+        {!collapsed && league?.name && (
+          <div
+            data-testid="sidebar-active-league-name"
+            className="mx-2 mt-2 mb-1 px-3 py-2 rounded-md border border-[#00D2FF]/25 bg-[#00D2FF]/5"
+          >
+            <p className="text-[9px] uppercase tracking-widest text-[#71717A]">Active league</p>
+            <p className="text-sm font-bold text-white truncate">{league.name}</p>
+          </div>
+        )}
         {renderGroup("League Hub", dynamicLeagueHub)}
         {renderGroup("Social", socialItemsWithBadge)}
         {renderGroup("Team Management", managementItems)}

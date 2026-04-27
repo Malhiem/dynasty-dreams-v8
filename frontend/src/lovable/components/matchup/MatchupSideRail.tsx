@@ -39,7 +39,7 @@ function ContributorRow({ c }) {
   );
 }
 
-export function MatchupSideRail({ leagueId, myMatchupId, currentWeek }) {
+export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMatchup, viewingMatchupId }) {
   const [matchups, setMatchups] = useState([]);
 
   useEffect(() => {
@@ -97,6 +97,7 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek }) {
         const probAway = winProb(a, h);
         const probHome = 1 - probAway;
         const totalGamesLeft = (m.away.games_remaining || 0) + (m.home.games_remaining || 0);
+        const isViewing = viewingMatchupId === m.matchup_id;
 
         const sides = [
           { ...m.away, prob: probAway, side: "away" },
@@ -107,7 +108,11 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek }) {
           <Card
             key={m.matchup_id}
             data-testid={`matchup-side-rail-card-${m.matchup_id}`}
-            className="p-3 bg-card/80 hover:bg-card transition-colors space-y-2"
+            onClick={() => onSelectMatchup?.(m)}
+            className={`p-3 transition-colors space-y-2 ${
+              onSelectMatchup ? "cursor-pointer hover:bg-card hover:border-primary/40" : ""
+            } ${isViewing ? "bg-primary/10 border-primary/50 ring-1 ring-primary/30" : "bg-card/80"}`}
+            data-viewing={isViewing ? "true" : "false"}
           >
             {sides.map((row, idx) => (
               <div key={row.team_id} className="space-y-1">

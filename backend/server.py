@@ -4296,7 +4296,10 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     max_roster = league.get("roster_spots", 20)
     current_roster = team.get("roster", [])
     if len(current_roster) >= max_roster:
-        raise HTTPException(status_code=400, detail=f"Roster full ({max_roster} players max)")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Roster full ({len(current_roster)}/{max_roster}). Drop a player before adding.",
+        )
 
     # Validate player
     player = await db.players.find_one({"_id": ObjectId(input.player_id)})
@@ -4306,10 +4309,92 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     if input.player_id in current_roster:
         raise HTTPException(status_code=400, detail="Player already on roster")
 
+    # ── Illegal roster pre-check ────────────────────────────────────
+    # If the league has an IR-compliance mode that locks adds when the team
+    # is non-compliant (e.g. healthy player on IR, minors-ineligible player
+    # on minors), block the add until the violations are resolved.
+    ir_mode = (league.get("injury_reserve_compliance_mode") or "none").lower()
+    if ir_mode in ("lock_adds", "lock_adds_trades", "lock_all", "illegal_roster"):
+        lineup = team.get("lineup") or {}
+        if lineup:
+            lookup_obj_ids = []
+            for pid in current_roster:
+                try:
+                    lookup_obj_ids.append(ObjectId(pid))
+                except Exception:
+                    pass
+            existing = await db.players.find(
+                {"_id": {"$in": lookup_obj_ids}},
+                {"name": 1, "games_played": 1, "birth_date": 1,
+                 "injury_status": 1, "status": 1},
+            ).to_list(200) if lookup_obj_ids else []
+            illegal_msgs: list[str] = []
+            for p in existing:
+                pid = str(p["_id"])
+                slot = lineup.get(pid)
+                if not slot:
+                    continue
+                section = (slot.get("section") or "").lower()
+                if section == "ir":
+                    inj = (p.get("injury_status") or p.get("status") or "").lower()
+                    if not inj or inj in ("healthy", "active", "ok"):
+                        illegal_msgs.append(f"{p.get('name')} is on IR but healthy")
+            if illegal_msgs:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Add denied: illegal roster — {'; '.join(illegal_msgs[:3])}. "
+                        f"League IR rule: {ir_mode.replace('_', ' ')}."
+                    ),
+                )
+
+    # ── Salary cap pre-check ────────────────────────────────────────
+    # Recompute salary_used from the current roster (using the same
+    # synthesis formula as /roster/{id}/detail). This keeps the cap honest
+    # and matches what the user sees on the roster page row-by-row.
+    cap_enabled = bool(league.get("salary_cap_enabled"))
+    salary_cap = league.get("salary_cap")
+    if cap_enabled and salary_cap:
+        config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
+        new_player_salary = _synthesize_player_salary(player, config)
+        roster_obj_ids = []
+        for pid in current_roster:
+            try:
+                roster_obj_ids.append(ObjectId(pid))
+            except Exception:
+                pass
+        rostered_players = []
+        if roster_obj_ids:
+            rostered_players = await db.players.find(
+                {"_id": {"$in": roster_obj_ids}},
+                {"contract": 1, "salary": 1, "cap_hit": 1, "position": 1,
+                 "player_type": 1, "points": 1, "games_played": 1,
+                 "goals": 1, "assists": 1, "shots": 1, "saves": 1,
+                 "wins": 1, "goals_against": 1, "shutouts": 1, "plus_minus": 1,
+                 "penalty_minutes": 1, "power_play_points": 1},
+            ).to_list(200)
+        current_used = sum(_synthesize_player_salary(p, config) for p in rostered_players)
+        retentions = team.get("salary_retentions") or []
+        retention_total = sum(float(r.get("amount") or 0.0) for r in retentions)
+        projected_used = current_used + new_player_salary + retention_total
+        if projected_used > float(salary_cap):
+            over_by = projected_used - float(salary_cap)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Add denied: over the salary cap by ${over_by:,.0f}. "
+                    f"Adding {player['name']} (${new_player_salary:,.0f}) would put you at "
+                    f"${projected_used:,.0f} vs ${float(salary_cap):,.0f} cap."
+                ),
+            )
+
     await db.teams.update_one(
         {"_id": ObjectId(team_id)},
         {"$push": {"roster": input.player_id}}
     )
+
+    # Refresh salary_used so the compliance + UI numbers track immediately.
+    await _recompute_team_salary_used(team_id)
 
     await log_activity(
         team["league_id"], "roster_add",
@@ -4323,6 +4408,89 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     )
 
     return {"message": f"Added {player['name']} to roster"}
+
+
+async def _recompute_team_salary_used(team_id: str) -> float:
+    """Sum the synthesized cap hit (mirroring `/roster/{id}/detail` formula)
+    across every player on the team's roster + any salary_retentions the team
+    is paying for other teams' players. Persists the result to
+    `team.salary_used` so subsequent /compliance + /roster reads return the
+    live number.
+
+    Salary synthesis lives in `_synthesize_player_salary` so the same dollar
+    amount appears on the roster row UI and in the cap calculation.
+    """
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        return 0.0
+    roster_obj_ids = []
+    for pid in (team.get("roster") or []):
+        try:
+            roster_obj_ids.append(ObjectId(pid))
+        except Exception:
+            pass
+    rostered_players = []
+    if roster_obj_ids:
+        rostered_players = await db.players.find(
+            {"_id": {"$in": roster_obj_ids}},
+            {"contract": 1, "salary": 1, "cap_hit": 1, "position": 1,
+             "player_type": 1, "points": 1, "games_played": 1,
+             "goals": 1, "assists": 1, "shots": 1, "saves": 1,
+             "wins": 1, "goals_against": 1, "shutouts": 1, "plus_minus": 1,
+             "penalty_minutes": 1, "power_play_points": 1},
+        ).to_list(200)
+
+    # Use scoring config of the league this team belongs to for goalie tier
+    config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
+    used = sum(_synthesize_player_salary(p, config) for p in rostered_players)
+    retentions = team.get("salary_retentions") or []
+    used += sum(float(r.get("amount") or 0.0) for r in retentions)
+    await db.teams.update_one(
+        {"_id": ObjectId(team_id)},
+        {"$set": {"salary_used": float(used)}},
+    )
+    return float(used)
+
+
+def _synthesize_player_salary(p: dict, config: Optional[dict] = None) -> float:
+    """Single source of truth for player salary synthesis.
+
+    Mirrors the tiered formula used in `/roster/{id}/detail` so the cap usage
+    on the team page matches the per-row salary chip exactly.
+    """
+    # Honour any explicit salary stored on the player document first
+    explicit = (
+        (p.get("contract") or {}).get("aav")
+        or (p.get("contract") or {}).get("salary")
+        or p.get("salary")
+        or p.get("cap_hit")
+    )
+    if explicit:
+        return float(explicit)
+
+    is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
+    points = int(p.get("points") or 0)
+    fpts_season = float(calculate_fantasy_points(p, config) or 0.0)
+    if is_g:
+        if fpts_season >= 300:
+            salary = 9_500_000
+        elif fpts_season >= 180:
+            salary = 6_000_000
+        elif fpts_season >= 100:
+            salary = 3_500_000
+        else:
+            salary = 1_200_000
+    elif points >= 100:
+        salary = 11_000_000 + min(2_500_000, (points - 100) * 70_000)
+    elif points >= 60:
+        salary = 6_000_000 + (points - 60) * 100_000
+    elif points >= 30:
+        salary = 3_000_000 + (points - 30) * 90_000
+    elif points >= 10:
+        salary = 1_500_000 + (points - 10) * 75_000
+    else:
+        salary = 950_000 + points * 40_000
+    return float(min(13_500_000, max(775_000, salary)))
 
 
 @api_router.post("/teams/{team_id}/lineup")
@@ -4409,6 +4577,13 @@ async def get_team_compliance(team_id: str):
 
     salary_used = float(team.get("salary_used") or 0.0)
     salary_cap = (league or {}).get("salary_cap")
+    # Live-recompute salary_used so a stale team.salary_used (from before the
+    # roster /add /drop endpoints maintained it) doesn't mask an over-cap state.
+    if (league or {}).get("salary_cap_enabled") and salary_cap:
+        try:
+            salary_used = await _recompute_team_salary_used(team_id)
+        except Exception:
+            pass
     if (league or {}).get("salary_cap_enabled") and salary_cap and salary_used > salary_cap:
         reasons.append({
             "code": "over_salary_cap",
@@ -4531,6 +4706,9 @@ async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
         {"_id": ObjectId(team_id)},
         {"$pull": {"roster": input.player_id}}
     )
+
+    # Refresh salary_used so the compliance + UI numbers track immediately.
+    await _recompute_team_salary_used(team_id)
 
     player = await db.players.find_one({"_id": ObjectId(input.player_id)})
     name = player["name"] if player else "Unknown"

@@ -122,25 +122,9 @@ export default function LiveTeamHeader() {
       )}
 
       <div className="mt-4 flex items-center justify-between flex-wrap gap-2">
-        {myLeagues?.length > 1 && (
-          <Select value={leagueId || undefined} onValueChange={switchLeague}>
-            <SelectTrigger className="w-[240px] h-9 text-sm" data-testid="live-team-league-switcher">
-              <SelectValue placeholder="Pick a league" />
-            </SelectTrigger>
-            <SelectContent>
-              {myLeagues.map(l => (
-                <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <Link
-          to={`/teams/${myTeam.id}`}
-          data-testid="live-team-full-roster-link"
-          className="ml-auto text-[#00D2FF] text-sm font-semibold flex items-center gap-1 hover:gap-2 transition-all"
-        >
-          View full roster <ArrowRight size={14} />
-        </Link>
+        {/* League switcher + "View full roster" CTA removed — user is already
+            inside the league page (/team) so both controls were redundant
+            and confusing. */}
       </div>
     </div>
   );

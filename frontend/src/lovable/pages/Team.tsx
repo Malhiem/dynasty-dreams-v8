@@ -824,7 +824,7 @@ const Team = () => {
           teamId={selectedTeamId as string}
         />
 
-        <TeamSalaryCap />
+        <TeamSalaryCap teamId={selectedTeamId || undefined} refreshKey={rosterReloadKey} />
         <TeamDraftPicks
           onTradePick={isOwnTeam ? handleAddPickToTrade : handleTradePickFromOtherTeam}
           isOwnTeam={!!isOwnTeam}
