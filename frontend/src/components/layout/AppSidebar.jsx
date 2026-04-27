@@ -30,9 +30,11 @@ const leagueHubStatic = [
 
 const socialItems = [
   { title: "Trade Block", url: "/trade-block", icon: ArrowRightLeft },
+  { title: "Chat", url: "/chat", icon: MessageSquare },
 ];
 
 const managementItems = [
+  { title: "Rosters", url: "/roster", icon: Users },
   { title: "Salary Cap", url: "/salary-cap", icon: DollarSign },
   { title: "Waivers / Players", url: "/waivers", icon: Clock },
   { title: "Depth Chart", url: "/depth-chart", icon: Network },
@@ -121,7 +123,7 @@ export function AppSidebar() {
         {renderGroup("User", userItems)}
         {renderGroup("League Hub", dynamicLeagueHub)}
         {renderGroup("Social", socialItems)}
-        {renderGroup("Management", managementItems)}
+        {renderGroup("Team Management", managementItems)}
         {renderGroup("Draft", draftItems)}
       </SidebarContent>
 
