@@ -23,6 +23,8 @@ import NotificationsScreen from '../screens/NotificationsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import MatchupScreen from '../screens/MatchupScreen';
 import ChatScreen from '../screens/ChatScreen';
+import TradeAnalyzerScreen from '../screens/TradeAnalyzerScreen';
+import ProjectionsScreen from '../screens/ProjectionsScreen';
 import { useChatUnread } from '../hooks/useChatUnread';
 
 const Tab = createBottomTabNavigator();
@@ -80,6 +82,8 @@ function LeagueStack() {
       <Stack.Screen name="TradeBlock" component={TradeBlockScreen} />
       <Stack.Screen name="Waivers" component={WaiversScreen} />
       <Stack.Screen name="SalaryCap" component={SalaryCapScreen} />
+      <Stack.Screen name="TradeAnalyzer" component={TradeAnalyzerScreen} options={{ title: 'Trade Analyzer' }} />
+      <Stack.Screen name="Projections" component={ProjectionsScreen} options={{ title: 'Projections' }} />
     </Stack.Navigator>
   );
 }

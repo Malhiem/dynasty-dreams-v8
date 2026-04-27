@@ -74,16 +74,32 @@ async def get_waiver_players(
 
 @router.get("/waivers/suggest")
 async def suggest_free_agent(
+    request: Request,
     league_id: str, position: Optional[str] = None, limit: int = 1,
 ):
     """Suggest the top-N free agents for the given position. Used by the
     smart drop toast on Team page — pre-loads the best replacement so the
     user can pick up a free agent in one click.
 
+    **Pro paywall**: This is a Pro-only feature ($2.50/mo). Non-Pro users
+    receive `402 {detail: {code: "upgrade_required", feature: "smart_drop_suggest"}}`
+    so the frontend can render an upsell chip in place of the suggestion.
+
     Excludes players already rostered in this league. Returns players sorted
     by FPTS (computed against the league's scoring config) descending.
     """
     db = _db()
+    user = await _get_user(request)
+    if not bool(user.get("is_pro")):
+        raise HTTPException(
+            status_code=402,
+            detail={
+                "code": "upgrade_required",
+                "feature": "smart_drop_suggest",
+                "message": "Smart drop suggestions are a Pro feature ($2.50/mo).",
+            },
+        )
+
     # Build set of player_ids already rostered in this league
     teams = await db.teams.find({"league_id": league_id}, {"roster": 1}).to_list(50)
     rostered_ids = set()

@@ -448,7 +448,31 @@ const OverviewTab = ({
   next5Games: PlayerGame[];
   scoringConfig?: any;
   onSeeMoreNews?: () => void;
-}) => (
+}) => {
+  // Derive the displayed stat categories from the league scoring config when
+  // available so the Last 10 Games + Season Stats columns reflect what the
+  // league actually scores (e.g. SHP / GWG / FOW). Falls back to the default
+  // 8-category set used by Season Stats.
+  const isGoalieOv = (player as any).position === "G" || (player as any).player_type === "goalie";
+  const cfgKeyToCat: Record<string, string> = {
+    goals: "G", assists: "A", power_play_points: "PPP", short_handed_points: "SHP",
+    power_play_goals: "PPG", short_handed_goals: "SHG", game_winning_goals: "GWG",
+    shots: "SOG", hits: "HIT", blocked_shots: "BLK", penalty_minutes: "PIM",
+    plus_minus: "+/-", faceoff_wins: "FOW",
+    wins: "W", losses: "L", saves: "SV", goals_against: "GA", shutouts: "SO",
+    overtime_losses: "OTL",
+  };
+  const liveCategories: string[] = (() => {
+    const cfg = (isGoalieOv ? scoringConfig?.goalie_scoring : scoringConfig?.skater_scoring) || null;
+    if (!cfg) return categories;
+    const out: string[] = [];
+    Object.entries(cfg).forEach(([k, v]) => {
+      const cat = cfgKeyToCat[k];
+      if (cat && typeof v === "number" && v !== 0 && !out.includes(cat)) out.push(cat);
+    });
+    return out.length > 0 ? out : categories;
+  })();
+  return (
   <div className="space-y-6">
     {/* Season Stat Line — moved to top per UX request */}
     <div>
@@ -573,10 +597,9 @@ const OverviewTab = ({
       );
     })()}
 
-    {/* Last 10 Games — full category table matching roster column order
-         (POS · Date · OPP · FPTS · G · A · PPP · SHP · SOG · HIT · BLK · PIM · +/-)
-         minus FP/G per UX request. Categories pulled from the same `categories`
-         constant used by Season Stats so the columns track league scoring. */}
+    {/* Last 10 Games — full category table matching league scoring categories
+         dynamically (POS · Date · OPP · FPTS · {league cats}). Falls back to
+         the default 8-category set when no scoringConfig is provided. */}
     <div data-testid="player-card-last10">
       <h4 className="text-sm font-semibold mb-3">Last 10 Games</h4>
       <div className="overflow-x-auto">
@@ -586,7 +609,7 @@ const OverviewTab = ({
               <th className="text-left p-2 text-xs text-muted-foreground">Date</th>
               <th className="text-center p-2 text-xs text-muted-foreground">OPP</th>
               <th className="text-right p-2 text-xs text-muted-foreground">FPTS</th>
-              {categories.map((cat) => (
+              {liveCategories.map((cat) => (
                 <th key={cat} className="text-center p-2 text-xs text-muted-foreground">{cat}</th>
               ))}
             </tr>
@@ -594,7 +617,7 @@ const OverviewTab = ({
           <tbody>
             {last10Games.length === 0 && (
               <tr>
-                <td colSpan={3 + categories.length} className="p-4 text-center text-xs text-muted-foreground italic">
+                <td colSpan={3 + liveCategories.length} className="p-4 text-center text-xs text-muted-foreground italic">
                   No games played yet this season.
                 </td>
               </tr>
@@ -603,9 +626,11 @@ const OverviewTab = ({
               const valFor = (cat: string) => {
                 const map: Record<string, any> = {
                   G: g.goals, A: g.assists,
-                  PPP: g.ppp, SHP: g.shp,
+                  PPP: g.ppp, SHP: g.shp, PPG: g.ppg, SHG: g.shg, GWG: g.gwg,
                   SOG: g.sog, HIT: g.hits, BLK: g.blocks,
-                  PIM: g.pim, "+/-": g.plus_minus,
+                  PIM: g.pim, "+/-": g.plus_minus, FOW: g.fow,
+                  W: g.wins, L: g.losses, SV: g.saves, GA: g.goals_against,
+                  SO: g.shutouts, OTL: g.otl,
                 };
                 const v = map[cat];
                 return v == null ? "—" : v;
@@ -621,7 +646,7 @@ const OverviewTab = ({
                   <td className="p-2 text-right font-semibold text-primary tabular-nums" data-testid={`last10-fpts-${i}`}>
                     {typeof g.fpts === "number" ? g.fpts.toFixed(1) : "—"}
                   </td>
-                  {categories.map((cat) => (
+                  {liveCategories.map((cat) => (
                     <td key={cat} className="p-2 text-center tabular-nums" data-testid={`last10-${cat}-${i}`}>
                       {valFor(cat)}
                     </td>
@@ -653,7 +678,8 @@ const OverviewTab = ({
       </div>
     </div>
   </div>
-);
+  );
+};
 
 // ── Season Stats Tab ───────────────────────────────────
 
@@ -978,6 +1004,65 @@ const FantasyTransactionsTab = ({ name }: { name: string }) => {
           </Badge>
         </div>
       ))}
+    </div>
+  );
+};
+
+// ── News Tab ───────────────────────────────────────────
+//
+// Lists the player's news for the **current year only** (per UX request —
+// older items are hidden so commissioners don't have to scroll past stale
+// blurbs). News items missing a `date` are kept (we can't filter what we
+// can't parse).
+
+const NewsTab = ({ news }: { news: any[] }) => {
+  const currentYear = new Date().getFullYear();
+  const filtered = (news || []).filter((n: any) => {
+    if (!n?.date) return true;
+    const parsed = new Date(n.date);
+    if (isNaN(parsed.getTime())) {
+      // Fallback: try to extract a 4-digit year from a free-form string
+      const m = String(n.date).match(/\b(20\d{2})\b/);
+      return m ? Number(m[1]) === currentYear : true;
+    }
+    return parsed.getFullYear() === currentYear;
+  });
+  return (
+    <div className="space-y-3" data-testid="player-card-news-tab">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-semibold flex items-center gap-2">
+          <Newspaper className="h-4 w-4 text-primary" />
+          News &mdash; {currentYear}
+        </h4>
+        <span className="text-[10px] text-muted-foreground">
+          {filtered.length} item{filtered.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      {filtered.length === 0 ? (
+        <div className="p-3 rounded-lg bg-secondary/20 border border-border/50 text-xs text-muted-foreground italic">
+          No news items for {currentYear}.
+        </div>
+      ) : (
+        filtered.map((n: any, i: number) => (
+          <div
+            key={i}
+            className="p-3 rounded-lg bg-secondary/20 border border-border/50"
+            data-testid={`news-tab-item-${i}`}
+          >
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-sm font-medium">{n.title || n.headline}</span>
+              <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {n.date}
+                {n.time ? ` · ${n.time}` : ""}
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">{n.snippet || n.summary}</p>
+            {n.source && (
+              <span className="text-[10px] text-primary mt-1 inline-block">{n.source}</span>
+            )}
+          </div>
+        ))
+      )}
     </div>
   );
 };

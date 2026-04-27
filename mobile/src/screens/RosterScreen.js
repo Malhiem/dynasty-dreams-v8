@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
+import { View, Text, FlatList, StyleSheet, SafeAreaView, RefreshControl, TouchableOpacity } from 'react-native';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 import TeamLogoUploader from '../components/TeamLogoUploader';
@@ -46,6 +46,23 @@ export default function RosterScreen({ navigation }) {
           <Text style={s.subtitle}>{roster.length} players</Text>
         </View>
       </View>
+
+      <View style={s.proStrip}>
+        <TouchableOpacity
+          testID="goto-trade-analyzer"
+          style={[s.proBtn, { borderColor: '#00D2FF' }]}
+          onPress={() => navigation.navigate('TradeAnalyzer', { leagueId: team?.league_id })}
+        >
+          <Text style={[s.proBtnText, { color: '#00D2FF' }]}>⚖ Trade Analyzer</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID="goto-projections"
+          style={[s.proBtn, { borderColor: '#FFB020' }]}
+          onPress={() => navigation.navigate('Projections', { leagueId: team?.league_id })}
+        >
+          <Text style={[s.proBtnText, { color: '#FFB020' }]}>📈 Projections</Text>
+        </TouchableOpacity>
+      </View>
       <FlatList
         data={roster}
         keyExtractor={item => item.player_id}
@@ -89,6 +106,9 @@ const s = StyleSheet.create({
   fptsCol: { alignItems: 'center' },
   fptsVal: { color: '#00D2FF', fontSize: 16, fontWeight: '800' },
   fptsLabel: { color: '#A1A1AA', fontSize: 9, letterSpacing: 1 },
+  proStrip: { flexDirection: 'row', gap: 8, padding: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
+  proBtn: { flex: 1, borderWidth: 1, borderRadius: 10, paddingVertical: 8, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)' },
+  proBtnText: { fontSize: 12, fontWeight: '700' },
   empty: { alignItems: 'center', paddingTop: 60 },
   emptyText: { color: '#A1A1AA' },
 });

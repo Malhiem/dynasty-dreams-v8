@@ -39,10 +39,38 @@ def auth_session(api_client):
     return api_client
 
 
+@pytest.fixture(scope="module")
+def pro_auth_session(auth_session):
+    """Authenticated session that also has Pro privileges. /waivers/suggest
+    is now Pro-paywalled — these tests need Pro access. Toggles Pro on for
+    the test user (admin), yields, then reverts on teardown."""
+    sess = auth_session
+    # admin client to flip Pro flag
+    admin = requests.Session()
+    admin.headers.update({"Content-Type": "application/json"})
+    admin_login = admin.post(f"{BASE_URL}/api/auth/login", json={
+        "email": "admin@dynastydreams.com", "password": "Admin123!",
+    })
+    if admin_login.status_code != 200:
+        pytest.skip(f"Admin auth failed: {admin_login.status_code}")
+    admin_token = admin_login.json().get("access_token") or admin_login.json().get("token")
+    admin.headers["Authorization"] = f"Bearer {admin_token}"
+
+    me = sess.get(f"{BASE_URL}/api/auth/me")
+    user_id = me.json().get("id") or me.json().get("_id")
+
+    admin.post(f"{BASE_URL}/api/admin/users/{user_id}/pro", json={"is_pro": True})
+    try:
+        yield sess
+    finally:
+        admin.post(f"{BASE_URL}/api/admin/users/{user_id}/pro", json={"is_pro": False})
+
+
 # === Waivers suggest ===
 
 class TestWaiversSuggest:
-    def test_suggest_goalie_top_1(self, api_client):
+    def test_suggest_goalie_top_1(self, pro_auth_session):
+        api_client = pro_auth_session
         r = api_client.get(f"{BASE_URL}/api/waivers/suggest", params={
             "league_id": LEAGUE_ID, "position": "G", "limit": 1,
         })
@@ -60,7 +88,8 @@ class TestWaiversSuggest:
         assert "fpg" in s  # may be None if 0 GP
         assert "games_played" in s
 
-    def test_suggest_center_top_3_sorted_desc(self, api_client):
+    def test_suggest_center_top_3_sorted_desc(self, pro_auth_session):
+        api_client = pro_auth_session
         r = api_client.get(f"{BASE_URL}/api/waivers/suggest", params={
             "league_id": LEAGUE_ID, "position": "C", "limit": 3,
         })
@@ -75,7 +104,8 @@ class TestWaiversSuggest:
         fpts = [s["fantasy_points"] for s in sugg]
         assert fpts == sorted(fpts, reverse=True), f"Not sorted desc: {fpts}"
 
-    def test_suggest_excludes_rostered(self, api_client):
+    def test_suggest_excludes_rostered(self, pro_auth_session):
+        api_client = pro_auth_session
         # Get all rostered player ids in the league
         teams_resp = api_client.get(f"{BASE_URL}/api/teams", params={"league_id": LEAGUE_ID})
         if teams_resp.status_code != 200:
@@ -94,14 +124,16 @@ class TestWaiversSuggest:
         for s in r.json()["suggestions"]:
             assert s["id"] not in rostered, f"Rostered player {s['name']} ({s['id']}) returned as free agent"
 
-    def test_suggest_default_limit_is_1(self, api_client):
+    def test_suggest_default_limit_is_1(self, pro_auth_session):
+        api_client = pro_auth_session
         r = api_client.get(f"{BASE_URL}/api/waivers/suggest", params={
             "league_id": LEAGUE_ID, "position": "LW",
         })
         assert r.status_code == 200
         assert len(r.json()["suggestions"]) == 1
 
-    def test_suggest_no_position_returns_top_overall(self, api_client):
+    def test_suggest_no_position_returns_top_overall(self, pro_auth_session):
+        api_client = pro_auth_session
         r = api_client.get(f"{BASE_URL}/api/waivers/suggest", params={
             "league_id": LEAGUE_ID, "limit": 2,
         })
@@ -138,7 +170,8 @@ class TestScoringConfig:
 # === Roster drop/add regression ===
 
 class TestRosterDropAddRegression:
-    def test_drop_then_add_player_round_trip(self, auth_session):
+    def test_drop_then_add_player_round_trip(self, pro_auth_session):
+        auth_session = pro_auth_session
         # Pick a free agent to add, then drop, to keep team state intact.
         sug = auth_session.get(f"{BASE_URL}/api/waivers/suggest", params={
             "league_id": LEAGUE_ID, "position": "C", "limit": 1,
