@@ -4646,7 +4646,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes
 
 _router_deps = {
     "db": db,
@@ -4686,6 +4686,7 @@ trades_routes.setup(_router_deps)
 comparisons_routes.setup(_router_deps)
 chat_routes.setup(_router_deps)
 auth_routes.setup(_router_deps)
+trade_analyzer_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -4696,6 +4697,7 @@ api_router.include_router(trades_routes.router)
 api_router.include_router(comparisons_routes.router)
 api_router.include_router(chat_routes.router)
 api_router.include_router(auth_routes.router)
+api_router.include_router(trade_analyzer_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")

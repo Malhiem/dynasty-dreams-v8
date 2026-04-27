@@ -146,7 +146,7 @@ function PaywallModal({ remaining, onClose }) {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="text-center py-4 border-y border-white/10">
-            <p className="text-5xl font-bold text-[#FFB020]">$4.99<span className="text-base text-[#A1A1AA] font-normal">/mo</span></p>
+            <p className="text-5xl font-bold text-[#FFB020]">$2.50<span className="text-base text-[#A1A1AA] font-normal">/mo</span></p>
             <p className="text-xs text-[#A1A1AA] mt-1">Cancel anytime · 7-day free trial</p>
           </div>
           <ul className="space-y-2 text-sm text-white">

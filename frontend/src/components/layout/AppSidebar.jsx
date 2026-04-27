@@ -1,7 +1,7 @@
 import {
   Home, Users, MessageSquare, Newspaper, ArrowRightLeft, Trophy, DollarSign,
   Star, Clock, Settings, BarChart3, CreditCard, History, Medal, UserSearch,
-  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle, Flag, Search, Network
+  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle, Flag, Search, Network, Scale
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
@@ -40,6 +40,7 @@ const managementItems = [
   { title: "Waivers / Players", url: "/waivers", icon: Clock },
   { title: "Depth Chart", url: "/depth-chart", icon: Network },
   { title: "Analytics", url: "/analytics", icon: BarChart3 },
+  { title: "Trade Analyzer", url: "/trade-analyzer", icon: Scale },
 ];
 
 const draftItems = [

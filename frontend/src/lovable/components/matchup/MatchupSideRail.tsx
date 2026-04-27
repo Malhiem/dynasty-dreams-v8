@@ -3,16 +3,14 @@ import { useEffect, useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Radio, ChevronRight } from "lucide-react";
+import { Radio, ChevronRight, Clock, TrendingUp } from "lucide-react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 
 /**
- * Live mini-cards for every other matchup in the league this week. Shows
- * away/home logo + score + a simple win-probability bar derived from current
- * fantasy points (with a Bayesian smoothing of 25 to soften early-week gaps).
- *
- * Auto-refreshes every 30s.
+ * League Live side-rail. Pulls enriched matchup data from
+ * `/api/leagues/{id}/matchup-side-rail` (top-3 contributors per side, projected
+ * delta, games-remaining-this-week). Refreshes every 30s.
  */
 
 const POLL_MS = 30_000;
@@ -28,21 +26,31 @@ function teamInitials(name = "") {
   return name.split(/\s+/).slice(0, 2).map((s) => s[0]?.toUpperCase()).join("");
 }
 
+function ContributorRow({ c }) {
+  return (
+    <div className="flex items-center justify-between text-[10px] text-muted-foreground"
+      data-testid={`side-rail-contrib-${c.player_id}`}>
+      <span className="truncate">
+        <span className="text-foreground font-medium">{c.name}</span>
+        <span className="ml-1">{c.position}</span>
+      </span>
+      <span className="tabular-nums text-foreground">{c.fpts.toFixed(1)}</span>
+    </div>
+  );
+}
+
 export function MatchupSideRail({ leagueId, myMatchupId, currentWeek }) {
   const [matchups, setMatchups] = useState([]);
-  const [scoresByTeam, setScoresByTeam] = useState({});
-  const [teamLogos, setTeamLogos] = useState({});
 
-  // 1) Pull current-week matchups
   useEffect(() => {
     if (!leagueId) return undefined;
     let cancelled = false;
     const load = async () => {
       try {
-        const { data } = await api.get(`/matchups/${leagueId}/current-week`);
+        const { data } = await api.get(`/leagues/${leagueId}/matchup-side-rail`);
         if (cancelled) return;
         setMatchups(data?.matchups || []);
-      } catch (e) {
+      } catch {
         // best-effort
       }
     };
@@ -51,60 +59,17 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek }) {
     return () => { cancelled = true; clearInterval(id); };
   }, [leagueId]);
 
-  // 2) Resolve team logos in one shot
-  useEffect(() => {
-    if (!leagueId) return undefined;
-    let cancelled = false;
-    api.get(`/teams?league_id=${leagueId}`).then(({ data }) => {
-      if (cancelled) return;
-      const logos = {};
-      const list = Array.isArray(data) ? data : (data?.teams || []);
-      for (const t of list) {
-        const id = t.id || t._id;
-        if (id) logos[id] = { name: t.name, logo: t.logo_url };
-      }
-      setTeamLogos(logos);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [leagueId]);
-
-  // 3) Pull live FPTS per team in this matchup set
-  useEffect(() => {
-    if (!matchups.length) return undefined;
-    let cancelled = false;
-    const tids = new Set();
-    for (const m of matchups) {
-      tids.add(m.home_team_id);
-      tids.add(m.away_team_id);
-    }
-    const load = async () => {
-      const next = {};
-      await Promise.all(Array.from(tids).map(async (tid) => {
-        try {
-          const { data } = await api.get(`/live-scoring/team/${tid}`);
-          next[tid] = Number(data?.live_points || data?.total_fpts || 0);
-        } catch {
-          next[tid] = 0;
-        }
-      }));
-      if (!cancelled) setScoresByTeam(next);
-    };
-    load();
-    const id = setInterval(load, POLL_MS);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [matchups]);
-
   const otherMatchups = useMemo(
-    () => matchups.filter((m) => !myMatchupId || m.id !== myMatchupId),
+    () => matchups.filter((m) => !myMatchupId || m.matchup_id !== myMatchupId),
     [matchups, myMatchupId],
   );
 
   return (
-    <aside className="w-full lg:w-[300px] shrink-0 space-y-3" data-testid="matchup-side-rail">
+    <aside className="w-full lg:w-[320px] shrink-0 space-y-3" data-testid="matchup-side-rail">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold flex items-center gap-1.5">
           <Radio className="h-3.5 w-3.5 text-primary" />
-          Other Matchups
+          League Live
           {currentWeek != null && (
             <span className="text-[10px] text-muted-foreground font-normal ml-1">
               · Week {currentWeek}
@@ -116,7 +81,7 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek }) {
           data-testid="matchup-live-link"
           className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
         >
-          League Live <ChevronRight className="h-3 w-3" />
+          Full View <ChevronRight className="h-3 w-3" />
         </Link>
       </div>
 
@@ -127,60 +92,93 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek }) {
       )}
 
       {otherMatchups.map((m) => {
-        const a = scoresByTeam[m.away_team_id] ?? 0;
-        const h = scoresByTeam[m.home_team_id] ?? 0;
+        const a = m.away.current_fpts ?? 0;
+        const h = m.home.current_fpts ?? 0;
         const probAway = winProb(a, h);
         const probHome = 1 - probAway;
-        const aMeta = teamLogos[m.away_team_id] || { name: m.away_team_name };
-        const hMeta = teamLogos[m.home_team_id] || { name: m.home_team_name };
+        const totalGamesLeft = (m.away.games_remaining || 0) + (m.home.games_remaining || 0);
+
+        const sides = [
+          { ...m.away, prob: probAway, side: "away" },
+          { ...m.home, prob: probHome, side: "home" },
+        ];
+
         return (
           <Card
-            key={m.id}
-            data-testid={`matchup-side-rail-card-${m.id}`}
+            key={m.matchup_id}
+            data-testid={`matchup-side-rail-card-${m.matchup_id}`}
             className="p-3 bg-card/80 hover:bg-card transition-colors space-y-2"
           >
-            {[{
-              tid: m.away_team_id, name: aMeta.name || m.away_team_name, logo: aMeta.logo,
-              score: a, prob: probAway,
-            }, {
-              tid: m.home_team_id, name: hMeta.name || m.home_team_name, logo: hMeta.logo,
-              score: h, prob: probHome,
-            }].map((row, idx) => (
-              <div key={row.tid} className="flex items-center gap-2">
-                <Avatar className="h-6 w-6 shrink-0">
-                  {row.logo ? <AvatarImage src={row.logo} alt={row.name} /> : null}
-                  <AvatarFallback className="text-[10px] bg-secondary">
-                    {teamInitials(row.name)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="text-[12px] font-medium truncate">{row.name}</span>
-                    <span className="text-[12px] font-semibold tabular-nums">
-                      {row.score.toFixed(1)}
-                    </span>
-                  </div>
-                  <div className="h-1 mt-0.5 rounded-full bg-secondary overflow-hidden">
-                    <div
-                      className={`h-full rounded-full ${
-                        row.prob >= 0.5 ? "bg-emerald-500" : "bg-rose-500"
-                      }`}
-                      style={{ width: `${(row.prob * 100).toFixed(0)}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between mt-0.5">
-                    <span className="text-[10px] text-muted-foreground">
-                      Win prob {(row.prob * 100).toFixed(0)}%
-                    </span>
-                    {idx === 0 && (a + h) > 0 && (
-                      <Badge variant="outline" className="h-3.5 text-[9px] px-1 border-primary/30 text-primary">
-                        LIVE
-                      </Badge>
-                    )}
+            {sides.map((row, idx) => (
+              <div key={row.team_id} className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Avatar className="h-6 w-6 shrink-0">
+                    {row.team_logo ? <AvatarImage src={row.team_logo} alt={row.team_name} /> : null}
+                    <AvatarFallback className="text-[10px] bg-secondary">
+                      {teamInitials(row.team_name)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="text-[12px] font-medium truncate">{row.team_name}</span>
+                      <span className="text-[12px] font-semibold tabular-nums">
+                        {row.current_fpts.toFixed(1)}
+                      </span>
+                    </div>
+                    <div className="h-1 mt-0.5 rounded-full bg-secondary overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${row.prob >= 0.5 ? "bg-emerald-500" : "bg-rose-500"}`}
+                        style={{ width: `${(row.prob * 100).toFixed(0)}%` }}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between mt-0.5 gap-2">
+                      <span className="text-[10px] text-muted-foreground">
+                        Win prob {(row.prob * 100).toFixed(0)}%
+                      </span>
+                      <span className="text-[10px] text-muted-foreground tabular-nums flex items-center gap-1"
+                        data-testid={`side-rail-proj-${row.team_id}`}>
+                        <TrendingUp className="h-2.5 w-2.5 text-emerald-400" />
+                        Proj {row.projected_final.toFixed(1)}
+                        {row.projected_delta > 0 && (
+                          <span className="text-emerald-400">(+{row.projected_delta.toFixed(1)})</span>
+                        )}
+                      </span>
+                    </div>
                   </div>
                 </div>
+
+                {/* Top-3 contributors */}
+                {row.top_contributors && row.top_contributors.length > 0 && (
+                  <div className="ml-8 mr-1 space-y-0.5"
+                    data-testid={`side-rail-contributors-${row.team_id}`}>
+                    {row.top_contributors.slice(0, 3).map((c) => (
+                      <ContributorRow key={c.player_id} c={c} />
+                    ))}
+                  </div>
+                )}
+
+                {idx === 0 && (a + h) > 0 && (
+                  <div className="ml-8 mr-1 flex items-center justify-end -mt-0.5">
+                    <Badge variant="outline" className="h-3.5 text-[9px] px-1 border-primary/30 text-primary">
+                      LIVE
+                    </Badge>
+                  </div>
+                )}
               </div>
             ))}
+
+            {/* Footer row: games remaining */}
+            {totalGamesLeft > 0 && (
+              <div className="pt-1 border-t border-white/5 flex items-center justify-between text-[10px] text-muted-foreground"
+                data-testid={`side-rail-games-remaining-${m.matchup_id}`}>
+                <span className="flex items-center gap-1">
+                  <Clock className="h-2.5 w-2.5" /> {totalGamesLeft} game{totalGamesLeft === 1 ? "" : "s"} remaining
+                </span>
+                <span className="tabular-nums">
+                  {m.away.games_remaining}v{m.home.games_remaining}
+                </span>
+              </div>
+            )}
           </Card>
         );
       })}

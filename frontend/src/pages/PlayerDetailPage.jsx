@@ -87,6 +87,7 @@ export default function PlayerDetailPage() {
   const [crossLeague, setCrossLeague] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [usage, setUsage] = useState([]);
+  const [projections, setProjections] = useState(null);
 
   useEffect(() => {
     if (!id) return;
@@ -125,6 +126,10 @@ export default function PlayerDetailPage() {
     if (tab === "transactions" && transactions.length === 0) {
       api.get(`/players/${id}/transactions${leagueId ? `?league_id=${leagueId}` : ""}`)
          .then(({ data }) => setTransactions(data?.transactions || [])).catch(() => {});
+    }
+    if (tab === "projections" && !projections) {
+      api.get(`/players/${id}/projections${leagueId ? `?league_id=${leagueId}` : ""}`)
+         .then(({ data }) => setProjections(data)).catch(() => {});
     }
     // Player Usage on Overview — auto-load alongside the page
     if (leagueId && usage.length === 0 && tab === "overview") {
@@ -240,6 +245,7 @@ export default function PlayerDetailPage() {
             <TabsTrigger value="overview" data-testid="tab-overview">Overview</TabsTrigger>
             <TabsTrigger value="stats" data-testid="tab-stats">Stats</TabsTrigger>
             <TabsTrigger value="performance" data-testid="tab-performance">Recent Performance</TabsTrigger>
+            <TabsTrigger value="projections" data-testid="tab-projections">Projections</TabsTrigger>
             <TabsTrigger value="cross-league" data-testid="tab-cross-league">Cross-League Ownership</TabsTrigger>
             <TabsTrigger value="transactions" data-testid="tab-transactions">Fantasy Transactions</TabsTrigger>
             <TabsTrigger value="news" data-testid="tab-news">News</TabsTrigger>
@@ -542,6 +548,54 @@ export default function PlayerDetailPage() {
                 <p className="text-sm text-[#A1A1AA] col-span-full py-6">Loading windows…</p>
               )}
             </div>
+          </TabsContent>
+
+          {/* PROJECTIONS — ROS + weekly */}
+          <TabsContent value="projections">
+            <Card className="border-white/10" data-testid="player-projections">
+              <CardHeader>
+                <CardTitle className="text-white text-base flex items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-[#00D2FF]" /> Player Projections
+                </CardTitle>
+                <p className="text-xs text-[#A1A1AA]">
+                  Deterministic projection blending season FPG (60%) and last-14-day FPG (40%). Scored against {leagueId ? "this league's rules" : "platform default scoring"}.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {!projections ? (
+                  <p className="text-sm text-[#A1A1AA] py-6">Loading projections…</p>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Card className="border-[#00D2FF]/20" data-testid="projection-ros">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-xs uppercase tracking-wider text-[#A1A1AA]">Rest of Season</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-2">
+                        <p className="text-4xl font-bold text-[#00D2FF] tabular-nums">{projections.projected_ros_fpts.toFixed(1)}</p>
+                        <p className="text-xs text-[#A1A1AA]">FPTS over {projections.games_remaining} games remaining</p>
+                        <div className="grid grid-cols-2 gap-2 pt-3 border-t border-white/5 text-xs text-[#A1A1AA]">
+                          <div><span className="text-white">{projections.blended_fpg.toFixed(2)}</span> Blended FPG</div>
+                          <div className="capitalize">Source: <span className="text-white">{projections.source.replace("_", " ")}</span></div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="border-[#FFB020]/20" data-testid="projection-week">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-xs uppercase tracking-wider text-[#A1A1AA]">Next Week</CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-2">
+                        <p className="text-4xl font-bold text-[#FFB020] tabular-nums">{projections.projected_week_fpts.toFixed(1)}</p>
+                        <p className="text-xs text-[#A1A1AA]">FPTS over ~{projections.games_per_week_assumed} games</p>
+                        <div className="grid grid-cols-2 gap-2 pt-3 border-t border-white/5 text-xs text-[#A1A1AA]">
+                          <div><span className="text-white">{projections.season_fpg.toFixed(2)}</span> Season FPG</div>
+                          <div><span className="text-white">{projections.recent_fpg.toFixed(2)}</span> Last-14d FPG</div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* CROSS-LEAGUE OWNERSHIP */}
