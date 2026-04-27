@@ -4349,6 +4349,140 @@ async def get_team_lineup(team_id: str, request: Request):
     return {"team_id": team_id, "lineup": team.get("lineup") or {}}
 
 
+@api_router.get("/teams/{team_id}/compliance")
+async def get_team_compliance(team_id: str):
+    """Return roster compliance status and reasons.
+
+    Reasons checked:
+      - roster_size_exceeded: roster_count > league.roster_spots
+      - over_salary_cap: salary_used > league.salary_cap (if enabled)
+      - healthy_on_ir: a player in lineup section 'ir' has no active injury status
+      - minor_ineligible_in_minors: a player in section 'minors' is NOT minors-eligible
+
+    Includes the league's `injury_reserve_compliance_mode` so the UI can drive
+    its system response (lock waivers, lock adds, drop player automatically, etc).
+    """
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+
+    reasons: list[dict] = []
+    roster_ids = team.get("roster") or []
+    roster_count = len(roster_ids)
+    max_roster = int((league or {}).get("roster_spots") or 25)
+
+    if roster_count > max_roster:
+        reasons.append({
+            "code": "too_many_players",
+            "label": "Too many players on the roster",
+            "detail": f"{roster_count} on roster vs limit {max_roster}",
+        })
+
+    salary_used = float(team.get("salary_used") or 0.0)
+    salary_cap = (league or {}).get("salary_cap")
+    if (league or {}).get("salary_cap_enabled") and salary_cap and salary_used > salary_cap:
+        reasons.append({
+            "code": "over_salary_cap",
+            "label": "Over the salary cap",
+            "detail": f"${salary_used:,.0f} used vs ${salary_cap:,.0f} cap",
+        })
+
+    # Lineup-derived checks
+    lineup = team.get("lineup") or {}
+    if lineup and roster_ids:
+        try:
+            obj_ids = [ObjectId(pid) for pid in roster_ids]
+        except Exception:
+            obj_ids = []
+        players = await db.players.find(
+            {"_id": {"$in": obj_ids}},
+            {"name": 1, "position": 1, "games_played": 1, "birth_date": 1,
+             "injury_status": 1, "injury_type": 1, "status": 1},
+        ).to_list(200)
+        max_age = int((league or {}).get("minors_max_age") or 22)
+        max_games = int((league or {}).get("minors_max_career_games") or 25)
+
+        def _age_of(p):
+            bd = p.get("birth_date")
+            if not bd:
+                return None
+            try:
+                bd_dt = datetime.fromisoformat(bd.split("T")[0]) if isinstance(bd, str) else bd
+                return (datetime.now(timezone.utc).replace(tzinfo=None) - bd_dt).days // 365
+            except Exception:
+                return None
+
+        for p in players:
+            pid = str(p["_id"])
+            slot_info = lineup.get(pid)
+            if not slot_info:
+                continue
+            section = (slot_info.get("section") or "").lower()
+            if section == "ir":
+                injury = (p.get("injury_status") or p.get("status") or "").lower()
+                if not injury or injury in ("healthy", "active", "ok"):
+                    reasons.append({
+                        "code": "healthy_on_ir",
+                        "label": "Healthy player on IR",
+                        "detail": f"{p.get('name')} is on IR but has no injury status",
+                        "player_id": pid,
+                        "player_name": p.get("name"),
+                    })
+            elif section == "minors":
+                gp = int(p.get("games_played") or 0)
+                age = _age_of(p)
+                eligible = (gp <= max_games) or (age is not None and age <= max_age)
+                if not eligible:
+                    reasons.append({
+                        "code": "minor_ineligible",
+                        "label": "Minor league player ineligible to be on minors",
+                        "detail": f"{p.get('name')} ({age}y, {gp} GP) exceeds league minors caps ({max_age}y / {max_games} GP)",
+                        "player_id": pid,
+                        "player_name": p.get("name"),
+                    })
+
+    compliant = len(reasons) == 0
+    return {
+        "team_id": team_id,
+        "compliant": compliant,
+        "reasons": reasons,
+        "roster_count": roster_count,
+        "max_roster": max_roster,
+        "salary_used": salary_used,
+        "salary_cap": salary_cap,
+        "salary_cap_enabled": bool((league or {}).get("salary_cap_enabled")),
+        "injury_reserve_compliance_mode": (league or {}).get("injury_reserve_compliance_mode") or "none",
+    }
+
+
+@api_router.put("/leagues/{league_id}/injury-reserve-compliance-mode")
+async def set_injury_reserve_compliance_mode(league_id: str, payload: dict, request: Request):
+    """Commissioner-only setter for league-wide IR compliance enforcement.
+
+    Mode values:
+      none, lock_all, lock_waivers, lock_adds, lock_adds_trades,
+      illegal_roster, drop_player
+    """
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league.get("commissioner_id") != user["_id"] and user["_id"] not in (league.get("co_commissioners") or []):
+        raise HTTPException(status_code=403, detail="Only the commissioner may change this setting")
+
+    mode = (payload.get("mode") or "none").lower()
+    valid = {"none", "lock_all", "lock_waivers", "lock_adds",
+             "lock_adds_trades", "illegal_roster", "drop_player"}
+    if mode not in valid:
+        raise HTTPException(status_code=400, detail=f"Invalid mode. Valid: {sorted(valid)}")
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {"injury_reserve_compliance_mode": mode}},
+    )
+    return {"league_id": league_id, "injury_reserve_compliance_mode": mode}
+
+
 # ownership-bulk extracted to routes/players.py
 
 

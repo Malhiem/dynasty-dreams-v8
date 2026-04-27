@@ -787,6 +787,24 @@ const CommissionerSettings = () => {
   const [privacyLoading, setPrivacyLoading] = useState<boolean>(false);
   const [recalcing, setRecalcing] = useState<boolean>(false);
 
+  // ─── Injury Reserve Compliance Options ──────────────────────────
+  const [irComplianceMode, setIrComplianceModeState] = useState<string>("none");
+  useEffect(() => {
+    if ((activeLeague as any)?.injury_reserve_compliance_mode) {
+      setIrComplianceModeState((activeLeague as any).injury_reserve_compliance_mode);
+    }
+  }, [activeLeague?.id]);
+  const setIrComplianceMode = async (mode: string) => {
+    if (!activeLeague?.id) return;
+    setIrComplianceModeState(mode);
+    try {
+      await api.put(`/leagues/${activeLeague.id}/injury-reserve-compliance-mode`, { mode });
+      toast.success("Injury Reserve compliance mode updated");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save");
+    }
+  };
+
   useEffect(() => {
     setIsPrivate(!!activeLeague?.is_private);
   }, [activeLeague?.id, activeLeague?.is_private]);
@@ -1004,6 +1022,16 @@ const CommissionerSettings = () => {
   };
 
   const addCustomInjury = () => {
+    // Prevent duplicate type+timeline combinations
+    const exists = customInjuries.some(
+      (i) => i.type === newInjuryType && i.timeline === newInjuryTimeline
+    );
+    if (exists) {
+      toast.error(
+        `${newInjuryType} · ${newInjuryTimeline} is already in the list. Remove the existing entry to re-add it.`
+      );
+      return;
+    }
     setCustomInjuries(prev => [...prev, { type: newInjuryType, timeline: newInjuryTimeline, irEligible: true }]);
   };
 
@@ -2047,7 +2075,7 @@ const CommissionerSettings = () => {
                     <div className="space-y-2 flex-1">
                       <Label className="text-xs">Injury Type</Label>
                       <Select value={newInjuryType} onValueChange={setNewInjuryType}>
-                        <SelectTrigger className="bg-secondary border-border">
+                        <SelectTrigger className="bg-secondary border-border" data-testid="injury-type-select">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -2061,7 +2089,7 @@ const CommissionerSettings = () => {
                     <div className="space-y-2 flex-1">
                       <Label className="text-xs">Timeline</Label>
                       <Select value={newInjuryTimeline} onValueChange={setNewInjuryTimeline}>
-                        <SelectTrigger className="bg-secondary border-border">
+                        <SelectTrigger className="bg-secondary border-border" data-testid="injury-timeline-select">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -2072,11 +2100,52 @@ const CommissionerSettings = () => {
                         </SelectContent>
                       </Select>
                     </div>
-                    <Button onClick={addCustomInjury} size="icon" variant="outline">
+                    <Button
+                      onClick={addCustomInjury}
+                      size="icon"
+                      variant="outline"
+                      data-testid="add-custom-injury-btn"
+                      disabled={customInjuries.some(
+                        (i) => i.type === newInjuryType && i.timeline === newInjuryTimeline
+                      )}
+                    >
                       <Plus className="h-4 w-4" />
                     </Button>
                   </div>
+                  {customInjuries.some(
+                    (i) => i.type === newInjuryType && i.timeline === newInjuryTimeline
+                  ) && (
+                    <p className="text-xs text-amber-400" data-testid="injury-duplicate-warning">
+                      "{newInjuryType} · {newInjuryTimeline}" is already in the list.
+                    </p>
+                  )}
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card border-border" data-testid="ir-compliance-options-card">
+              <CardHeader>
+                <CardTitle>Injury Reserve Compliance Options</CardTitle>
+                <CardDescription>What happens when a team's roster becomes IR-non-compliant</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Select value={irComplianceMode} onValueChange={setIrComplianceMode}>
+                  <SelectTrigger className="bg-secondary border-border" data-testid="ir-compliance-mode-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None — no system action</SelectItem>
+                    <SelectItem value="lock_all">Lock All Transactions</SelectItem>
+                    <SelectItem value="lock_waivers">Lock Waiver Claims</SelectItem>
+                    <SelectItem value="lock_adds">Lock Adding Players</SelectItem>
+                    <SelectItem value="lock_adds_trades">Lock Adding Players and Trades</SelectItem>
+                    <SelectItem value="illegal_roster">Illegal Roster (visual flag only)</SelectItem>
+                    <SelectItem value="drop_player">Drop Player Automatically</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Drives the system response surfaced on every team's "Roster Status" tile.
+                </p>
               </CardContent>
             </Card>
 

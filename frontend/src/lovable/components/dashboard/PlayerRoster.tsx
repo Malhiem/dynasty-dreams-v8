@@ -78,6 +78,7 @@ interface Player {
   secondaryPositions: PositionEligibility[]; // progress toward new positions
   team: string;
   points: number;
+  gamesPlayed: number;
   dynastyValue: number;
   trend: "up" | "down" | "stable";
   age: number;
@@ -631,6 +632,7 @@ const PlayerRoster = ({
           secondaryPositions: [],
           team: p.team || "",
           points: Math.round(p.fantasy_points || 0),
+          gamesPlayed: Number(p.games_played || p.gp || 0),
           dynastyValue: p.dynastyValue || 1000,
           trend: (p.trend || "stable") as "up" | "down" | "stable",
           age: p.age || 27,
@@ -1445,8 +1447,13 @@ const StatsTable = ({
 } & HighlightProps) => {
   const displayCategories = visibleCategories ?? rosterStatCategories;
   const statCols = displayCategories.length;
-  const colSpan = 4 + statCols + (showFpts ? 1 : 0) + (showOwnership ? 1 : 0) + 1;
-  const fptsColIndex = 4 + statCols;
+  // Columns: POS, Player, Age, Cap [+ FPTS, FP/G when showFpts] + statCols + OWN%? + Actions
+  const colSpan = 4 + (showFpts ? 2 : 0) + statCols + (showOwnership ? 1 : 0) + 1;
+  const fptsColIndex = showFpts ? 4 : 4 + statCols;
+  const fpgOf = (p: Player) => {
+    const gp = p.gamesPlayed || 0;
+    return gp > 0 ? (getPlayerPoints(p) / gp).toFixed(2) : "—";
+  };
   return (
     <div className="overflow-x-auto">
       <table className="w-full table-fixed">
@@ -1456,6 +1463,17 @@ const StatsTable = ({
             <th className="text-left text-xs font-medium text-muted-foreground p-3 w-[220px]">Player</th>
             <th className="text-center text-xs font-medium text-muted-foreground p-2 w-[40px]">Age</th>
             <th className="text-right text-xs font-medium text-muted-foreground p-2 w-[64px]">Cap</th>
+            {showFpts && <th className="text-right text-xs font-medium text-muted-foreground p-2 w-[52px]" data-testid="roster-col-fpts">FPTS</th>}
+            {showFpts && (
+              <th className="text-right text-xs font-medium text-muted-foreground p-2 w-[52px]" data-testid="roster-col-fpg">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger><span>FP/G</span></TooltipTrigger>
+                    <TooltipContent><p>Fantasy points per game played</p></TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </th>
+            )}
             {displayCategories.map(cat => (
               <th key={cat} className="text-center text-xs font-medium text-muted-foreground p-2 w-[48px]">
                 <TooltipProvider>
@@ -1466,7 +1484,6 @@ const StatsTable = ({
                 </TooltipProvider>
               </th>
             ))}
-            {showFpts && <th className="text-right text-xs font-medium text-muted-foreground p-2 w-[52px]">FPTS</th>}
             {showOwnership && (
               <th className="text-center text-xs font-medium text-muted-foreground p-2 w-[64px]">
                 <TooltipProvider>
@@ -1495,12 +1512,13 @@ const StatsTable = ({
                     if (player) {
                       return (
                         <PlayerRow key={player.id} player={player} index={slotIdx} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
+                          {showFpts && <td className="p-2 text-right font-bold text-primary" data-testid={`row-fpts-${player.id}`}>{getPlayerPoints(player)}</td>}
+                          {showFpts && <td className="p-2 text-right text-muted-foreground tabular-nums" data-testid={`row-fpg-${player.id}`}>{fpgOf(player)}</td>}
                           {displayCategories.map(cat => (
                             <td key={cat} className="p-2 text-center text-sm">
                               {player.categoryBreakdown[cat] ?? 0}
                             </td>
                           ))}
-                          {showFpts && <td className="p-2 text-right font-bold text-primary">{getPlayerPoints(player)}</td>}
                           {showOwnership && <OwnershipCell player={player} ownership={ownershipMap[String(player.id)]} />}
                         </PlayerRow>
                       );
@@ -1530,12 +1548,13 @@ const StatsTable = ({
                   <>
                     {sectionPlayers.map((player, index) => (
                       <PlayerRow key={player.id} player={player} index={index} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
+                        {showFpts && <td className="p-2 text-right font-bold text-primary" data-testid={`row-fpts-${player.id}`}>{getPlayerPoints(player)}</td>}
+                        {showFpts && <td className="p-2 text-right text-muted-foreground tabular-nums" data-testid={`row-fpg-${player.id}`}>{fpgOf(player)}</td>}
                         {displayCategories.map(cat => (
                           <td key={cat} className="p-2 text-center text-sm">
                             {player.categoryBreakdown[cat] ?? 0}
                           </td>
                         ))}
-                        {showFpts && <td className="p-2 text-right font-bold text-primary">{getPlayerPoints(player)}</td>}
                         {showOwnership && <OwnershipCell player={player} ownership={ownershipMap[String(player.id)]} />}
                       </PlayerRow>
                     ))}

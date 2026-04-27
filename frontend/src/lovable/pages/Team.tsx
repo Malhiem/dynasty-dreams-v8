@@ -11,7 +11,11 @@ import TeamDraftPicks from "@/lovable/components/dashboard/TeamDraftPicks";
 import TeamSalaryCap from "@/lovable/components/dashboard/TeamSalaryCap";
 import CommissionerPendingTrades from "@/lovable/components/dashboard/CommissionerPendingTrades";
 import StatCard from "@/lovable/components/dashboard/StatCard";
-import { Trophy, TrendingUp, Users, Shield, ArrowRightLeft, X, AlertTriangle, DollarSign, UserMinus, UserPlus } from "lucide-react";
+import { Trophy, TrendingUp, Users, Shield, ArrowRightLeft, X, AlertTriangle, DollarSign, UserMinus, UserPlus, CheckCircle2, ChevronDown } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 import TeamLogo from "@/lovable/components/TeamLogo";
 import TeamLogoUploader from "@/lovable/components/TeamLogoUploader";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -41,6 +45,102 @@ interface TradeAssetState {
   retainSalary: boolean;
   retainedPercentage: number;
 }
+
+const COMPLIANCE_MODE_LABEL: Record<string, string> = {
+  none: "No system action",
+  lock_all: "Lock all transactions",
+  lock_waivers: "Lock waiver claims",
+  lock_adds: "Lock adding players",
+  lock_adds_trades: "Lock adds + trades",
+  illegal_roster: "Marked illegal roster",
+  drop_player: "Auto-drop offending player",
+};
+
+const RosterStatusTile = ({ teamId }: { teamId: string }) => {
+  const [data, setData] = useState<any>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.get(`/teams/${teamId}/compliance`).then(({ data }) => { if (!cancelled) setData(data); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [teamId]);
+
+  const compliant = !!data?.compliant;
+  const reasons = data?.reasons || [];
+  const mode = (data?.injury_reserve_compliance_mode || "none") as keyof typeof COMPLIANCE_MODE_LABEL;
+  const Icon = compliant ? CheckCircle2 : AlertTriangle;
+  const tone = compliant ? "text-emerald-400" : "text-amber-400";
+  const bg = compliant ? "bg-emerald-500/15" : "bg-amber-500/15";
+
+  if (!data) {
+    return (
+      <div className="stat-card group hover:border-primary/30 transition-all duration-300" data-testid="roster-status-tile-loading">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-secondary text-muted-foreground">
+            <Shield className="h-5 w-5" />
+          </div>
+        </div>
+        <p className="text-sm text-muted-foreground mb-1">Roster Status</p>
+        <p className="text-2xl font-bold text-muted-foreground">…</p>
+      </div>
+    );
+  }
+  if (compliant) {
+    return (
+      <div className="stat-card group hover:border-primary/30 transition-all duration-300" data-testid="roster-status-tile">
+        <div className="flex items-start justify-between mb-4">
+          <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${bg} ${tone}`}>
+            <Icon className="h-5 w-5" />
+          </div>
+        </div>
+        <p className="text-sm text-muted-foreground mb-1">Roster Status</p>
+        <p className="text-2xl font-bold text-emerald-400" data-testid="roster-status-value">Compliant</p>
+        <p className="text-xs text-muted-foreground mt-1" data-testid="roster-status-subtitle">
+          {data.roster_count}/{data.max_roster} · all rules met
+        </p>
+      </div>
+    );
+  }
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="stat-card group hover:border-primary/30 transition-all duration-300 text-left cursor-pointer w-full"
+          data-testid="roster-status-tile-illegal"
+        >
+          <div className="flex items-start justify-between mb-4">
+            <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${bg} ${tone}`}>
+              <Icon className="h-5 w-5" />
+            </div>
+            <ChevronDown className="h-4 w-4 text-muted-foreground" />
+          </div>
+          <p className="text-sm text-muted-foreground mb-1">Roster Status</p>
+          <p className="text-2xl font-bold text-amber-400" data-testid="roster-status-value">Illegal</p>
+          <p className="text-xs text-muted-foreground mt-1" data-testid="roster-status-subtitle">
+            {reasons.length} issue{reasons.length === 1 ? "" : "s"} · click for details
+          </p>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80" data-testid="roster-status-dropdown">
+        <DropdownMenuLabel className="text-amber-400">Roster compliance issues</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {reasons.map((r: any, i: number) => (
+          <DropdownMenuItem key={i} className="flex flex-col items-start gap-0.5 py-2" data-testid={`roster-reason-${r.code}`}>
+            <span className="text-sm font-medium">{r.label}</span>
+            <span className="text-[11px] text-muted-foreground">{r.detail}</span>
+          </DropdownMenuItem>
+        ))}
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">
+          League IR enforcement
+        </DropdownMenuLabel>
+        <DropdownMenuItem className="text-xs flex items-center gap-2" data-testid="ir-compliance-mode-display">
+          <Badge variant="outline" className="text-[10px]">{mode}</Badge>
+          <span className="text-muted-foreground">{COMPLIANCE_MODE_LABEL[mode] || "—"}</span>
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+};
 
 const Team = () => {
   const [searchParams] = useSearchParams();
@@ -567,10 +667,11 @@ const Team = () => {
           </div>
         )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3" data-testid="team-overview-tiles">
           <StatCard title="League Rank" value={rank} subtitle={`of ${allTeams.length} teams`} icon={Trophy} highlight />
           <StatCard title="Total Points" value={String(pointsTotal)} subtitle="Season + live" icon={TrendingUp} />
           <StatCard title="Roster Size" value={String(selectedTeam.roster_count)} subtitle={`${Math.max(0, 25 - selectedTeam.roster_count)} spots open`} icon={Users} />
+          <RosterStatusTile teamId={selectedTeamId} key={`compliance-${selectedTeamId}-${rosterReloadKey}`} />
         </div>
 
         {commissionerMode && !isOwnTeam && (
