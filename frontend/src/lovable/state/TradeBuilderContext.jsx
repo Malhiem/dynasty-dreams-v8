@@ -208,19 +208,9 @@ export function TradeBuilderProvider({ children }) {
       return false;
     }
 
-    // Pull conditions + pick upgrades from the shared editors
-    const rawConditions = (typeof window !== "undefined" && window.__getTradeConditions?.()) || [];
-    const conditions = rawConditions.map((c) => ({
-      subject_type: c.subject_type || "player",
-      subject: c.subject || "offered",
-      player_id: c.player_id || undefined,
-      team_id: c.team_id || undefined,
-      metric: c.metric,
-      operator: c.operator || "gte",
-      threshold: Number(c.threshold || 0),
-      description: c.description,
-    }));
+    // Pull pick upgrades from the editor (window-bridge contract)
     const pickUpgrades = (typeof window !== "undefined" && window.__getPickUpgrades?.()) || [];
+    const conditions = [];
 
     const isMulti = state.partners.length > 2;
 
@@ -333,7 +323,7 @@ export function TradeBuilderProvider({ children }) {
           pick_upgrades: pickUpgrades,
           message: state.message || `Proposal to ${target.name}`,
         });
-        const label = (conditions.length > 0 || pickUpgrades.length > 0) ? "Conditional trade proposed" : "Trade proposed";
+        const label = pickUpgrades.length > 0 ? "Conditional trade proposed" : "Trade proposed";
         toast.success(label, { description: `Sent to ${target.name}` });
         closeBuilder();
         return true;

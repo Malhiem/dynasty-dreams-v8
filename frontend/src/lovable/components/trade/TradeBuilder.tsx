@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
-import { TradeConditionsEditor } from "./TradeConditionsEditor";
 import { PickUpgradeEditor } from "./PickUpgradeEditor";
 import {
   Select,
@@ -586,47 +585,36 @@ export const TradeBuilder = ({
             </div>
           )}
 
-          {/* Conditional Trade section */}
+          {/* Conditional Pick clauses */}
           <div className="px-4 py-3 border-t border-border bg-secondary/10">
             <div className="flex items-center justify-between mb-2">
-              <h4 className="text-xs font-semibold text-foreground">Conditional Triggers</h4>
+              <h4 className="text-xs font-semibold text-foreground">Conditional Trade</h4>
               <div className="flex items-center gap-1">
                 <Button
                   size="sm"
                   variant="outline"
                   className="text-[11px] h-7"
-                  onClick={() => (window as any).__addTradeCondition?.("player")}
-                  data-testid="add-trade-condition-btn"
-                >
-                  + Player stat
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-[11px] h-7"
-                  onClick={() => (window as any).__addTradeCondition?.("team")}
-                  data-testid="add-team-condition-btn"
-                >
-                  + Team result
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="text-[11px] h-7"
-                  onClick={() => (window as any).__addPickUpgrade?.()}
+                  onClick={() => (window as any).__addPickUpgrade?.("upgrade")}
                   data-testid="add-pick-upgrade-btn"
                 >
                   + Pick upgrade
                 </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[11px] h-7"
+                  onClick={() => (window as any).__addPickUpgrade?.("downgrade")}
+                  data-testid="add-pick-downgrade-btn"
+                >
+                  + Pick downgrade
+                </Button>
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground mb-2">
-              Trade executes only when all conditions are satisfied. Pick upgrades rewrite a draft pick already in the trade when its trigger fires (e.g. "if my team wins the championship, the 2nd round pick becomes a 1st").
+              Lock a pick rewrite behind a player- or team-performance trigger
+              (e.g., "if my team wins the championship, the 2nd round pick becomes a 1st").
             </p>
-            <TradeConditionsEditor />
-            <div className="mt-2">
-              <PickUpgradeEditor />
-            </div>
+            <PickUpgradeEditor />
           </div>
         </div>
       )}
