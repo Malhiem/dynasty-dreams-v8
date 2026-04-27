@@ -342,7 +342,10 @@ const sectionConfig: Record<RosterSection, { label: string; color: string; borde
   ir: { label: "Injury Reserve", color: "bg-destructive/10", borderColor: "border-l-destructive", maxSlots: 3 },
   minors: { label: "Minors Pool", color: "bg-purple-500/10", borderColor: "border-l-purple-500", maxSlots: 5 },
   goalies: { label: "Goalies", color: "bg-teal-500/10", borderColor: "border-l-teal-500", maxSlots: 4 },
-  goalies_minors: { label: "Goalies — Minors Pool", color: "bg-teal-500/5", borderColor: "border-l-teal-700", maxSlots: 3 },
+  // Goalies minors max defaults to the same value as the skater minors pool
+  // unless the league commissioner configures `goalies_minors_slots` separately
+  // (see useLeagueRosterConfig — overrides applied at runtime via mergedSectionConfig).
+  goalies_minors: { label: "Goalies — Minors Pool", color: "bg-teal-500/5", borderColor: "border-l-teal-700", maxSlots: 5 },
 };
 
 // ── Ineligibility Checks ──────────────────────────────
@@ -706,7 +709,12 @@ const PlayerRoster = ({
   }, [livePlayers, refreshKey]);
 
   const teamRoster = useMemo(() => {
-    if (isRealTeamId && livePlayers) return livePlayers;
+    if (isRealTeamId) {
+      // For real (DB) team IDs, NEVER fall back to the mock player pool
+      // (that's why Vasilevskiy/Saros toasted as "ineligible" even though
+      // they aren't on the user's roster). Wait until livePlayers resolves.
+      return livePlayers || [];
+    }
     // Use a numeric seed from teamId string (mock fallback for non-DB ids)
     let seed = 0;
     for (let i = 0; i < teamId.length; i++) seed += teamId.charCodeAt(i) * (i + 1);
@@ -749,6 +757,7 @@ const PlayerRoster = ({
     setSavedPlayers(loaded);
     setHasUnsavedChanges(false);
     setHighlightedPlayerId(null);
+    toastShownRef.current = false; // reset toast guard so new team's ineligibility re-evaluates
   }, [teamRoster, teamId, loadSavedRoster]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [emergencyChangesUsed, setEmergencyChangesUsed] = useState(() => {
@@ -778,6 +787,11 @@ const PlayerRoster = ({
   // ── Ineligibility toast notifications on mount ──
   useEffect(() => {
     if (toastShownRef.current) return;
+    // For real teams, wait until livePlayers loads so we don't toast about
+    // mock-pool players (e.g. Vasilevskiy/Saros) that aren't on the actual
+    // roster.
+    if (isRealTeamId && (liveLoading || livePlayers === null)) return;
+    if (players.length === 0) return;
     const ineligible = players.filter(p => checkIneligibility(p).isIneligible);
     if (ineligible.length > 0) {
       ineligible.forEach(p => {
@@ -794,7 +808,7 @@ const PlayerRoster = ({
       }
       toastShownRef.current = true;
     }
-  }, []); // only on mount
+  }, [livePlayers, liveLoading, isRealTeamId, players, isTeamRosterPage]);
 
   // ── Show save/undo toast when unsaved changes exist ──
   useEffect(() => {

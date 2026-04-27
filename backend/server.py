@@ -2652,12 +2652,25 @@ async def create_contract(input: ContractCreate, request: Request):
 
 
 async def get_team_cap_used(team_id: str, league_id: str):
+    """Returns the team's active cap usage. Source of truth:
+    1. Sum of `db.contracts.aav` if any active contracts exist (legacy / commissioner-managed).
+    2. Otherwise the synthesized per-player salary used everywhere else
+       (`_synthesize_player_salary`, kept consistent with the roster page,
+       compliance check, and `/roster/{id}/detail`).
+    """
     pipeline = [
         {"$match": {"team_id": team_id, "league_id": league_id, "status": "active"}},
         {"$group": {"_id": None, "total": {"$sum": "$aav"}}}
     ]
     result = await db.contracts.aggregate(pipeline).to_list(1)
-    return result[0]["total"] if result else 0.0
+    if result and result[0]["total"]:
+        return result[0]["total"]
+    # Fallback: live recompute from synthesized roster salaries so
+    # `/salary-cap/{league_id}` matches `/teams/{id}/compliance` exactly.
+    try:
+        return await _recompute_team_salary_used(team_id)
+    except Exception:
+        return 0.0
 
 
 @api_router.get("/contracts")
@@ -2710,7 +2723,7 @@ async def get_salary_cap_overview(league_id: str):
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
 
-    cap = league.get("salary_cap") or 82500000
+    cap = league.get("salary_cap") or 88_000_000  # Default $88M if league hasn't configured one
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
 
     team_caps = []
@@ -4370,8 +4383,11 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
                 {"contract": 1, "salary": 1, "cap_hit": 1, "position": 1,
                  "player_type": 1, "points": 1, "games_played": 1,
                  "goals": 1, "assists": 1, "shots": 1, "saves": 1,
-                 "wins": 1, "goals_against": 1, "shutouts": 1, "plus_minus": 1,
-                 "penalty_minutes": 1, "power_play_points": 1},
+                 "wins": 1, "losses": 1, "overtime_losses": 1,
+                 "goals_against": 1, "shutouts": 1, "plus_minus": 1,
+                 "penalty_minutes": 1, "power_play_points": 1,
+                 "power_play_goals": 1, "short_handed_goals": 1,
+                 "short_handed_points": 1, "game_winning_goals": 1},
             ).to_list(200)
         current_used = sum(_synthesize_player_salary(p, config) for p in rostered_players)
         retentions = team.get("salary_retentions") or []
@@ -4436,8 +4452,11 @@ async def _recompute_team_salary_used(team_id: str) -> float:
             {"contract": 1, "salary": 1, "cap_hit": 1, "position": 1,
              "player_type": 1, "points": 1, "games_played": 1,
              "goals": 1, "assists": 1, "shots": 1, "saves": 1,
-             "wins": 1, "goals_against": 1, "shutouts": 1, "plus_minus": 1,
-             "penalty_minutes": 1, "power_play_points": 1},
+             "wins": 1, "losses": 1, "overtime_losses": 1,
+             "goals_against": 1, "shutouts": 1, "plus_minus": 1,
+             "penalty_minutes": 1, "power_play_points": 1,
+             "power_play_goals": 1, "short_handed_goals": 1,
+             "short_handed_points": 1, "game_winning_goals": 1},
         ).to_list(200)
 
     # Use scoring config of the league this team belongs to for goalie tier
@@ -5054,25 +5073,73 @@ async def stripe_webhook(request: Request):
 # Standings
 @api_router.get("/leagues/{league_id}/standings")
 async def get_standings(league_id: str):
+    """Standings with live cap remaining + REAL last-5 W/L/T sequence
+    pulled from `db.matchups`. The frontend Sparkline reads `last_5` to
+    paint the 5 dots in the actual order the team played.
+    """
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
-    
+
+    # League-level cap context
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    cap_enabled = bool((league or {}).get("salary_cap_enabled"))
+    league_cap = float((league or {}).get("salary_cap") or 0.0)
+
     # Sort by wins, then points_for
     teams.sort(key=lambda t: (t.get("wins", 0), t.get("points_for", 0)), reverse=True)
-    
+
     standings = []
     for i, team in enumerate(teams):
+        tid = str(team["_id"])
+
+        # Live cap usage (matches /compliance + /salary-cap)
+        cap_used = 0.0
+        cap_remaining: Optional[float] = None
+        if cap_enabled and league_cap > 0:
+            try:
+                cap_used = await _recompute_team_salary_used(tid)
+                cap_remaining = league_cap - cap_used
+            except Exception:
+                cap_used = float(team.get("salary_used") or 0.0)
+                cap_remaining = league_cap - cap_used
+
+        # Last-5 W/L/T from completed matchups (most recent week first → reverse to chronological)
+        history_cursor = db.matchups.find({
+            "league_id": league_id,
+            "$or": [{"home_team_id": tid}, {"away_team_id": tid}],
+            "status": {"$in": ["completed", "final"]},
+        }).sort("week", -1).limit(5)
+        last_5: list[str] = []
+        async for m in history_cursor:
+            home_score = float(m.get("home_score") or 0)
+            away_score = float(m.get("away_score") or 0)
+            is_home = m.get("home_team_id") == tid
+            my_score = home_score if is_home else away_score
+            opp_score = away_score if is_home else home_score
+            if abs(my_score - opp_score) < 0.01:
+                last_5.append("T")
+            elif my_score > opp_score:
+                last_5.append("W")
+            else:
+                last_5.append("L")
+        last_5.reverse()  # chronological: oldest → newest
+
         standings.append({
             "rank": i + 1,
-            "team_id": str(team["_id"]),
+            "team_id": tid,
             "team_name": team["name"],
             "owner_name": team["owner_name"],
             "wins": team.get("wins", 0),
             "losses": team.get("losses", 0),
             "ties": team.get("ties", 0),
             "points_for": team.get("points_for", 0),
-            "points_against": team.get("points_against", 0)
+            "points_against": team.get("points_against", 0),
+            "salary_cap_enabled": cap_enabled,
+            "salary_cap": league_cap if cap_enabled else None,
+            "salary_used": round(cap_used, 2) if cap_enabled else None,
+            "salary_cap_remaining": round(cap_remaining, 2) if (cap_enabled and cap_remaining is not None) else None,
+            "last_5": last_5,
         })
-    
+
     return standings
 
 # Health check

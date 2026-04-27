@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import api from "@/lib/api";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -48,6 +49,9 @@ interface StandingsTeam {
   confLosses: number;
   isUser?: boolean;
   clinched?: ClinchStatus[];
+  capRemaining?: number | null;
+  capUsed?: number | null;
+  capLimit?: number | null;
   projectedSeed?: number;
 }
 
@@ -116,11 +120,13 @@ interface ColumnConfig {
   divRecord: boolean;
   confRecord: boolean;
   streak: boolean;
+  capRemaining: boolean;
 }
 
 const DEFAULT_COLUMNS: ColumnConfig = {
   wins: true, losses: true, ties: true, last5: true,
   pf: true, pa: true, diff: true, divRecord: true, confRecord: true, streak: true,
+  capRemaining: true,
 };
 
 const Sparkline = ({ results }: { results: ("W" | "L" | "T" | null)[] }) => {
@@ -172,6 +178,7 @@ const CustomizationModal = ({
     { key: "divRecord", label: "Division Record" },
     { key: "confRecord", label: "Conference Record" },
     { key: "streak", label: "Streak" },
+    { key: "capRemaining", label: "Cap Remaining" },
   ];
 
   return (
@@ -269,6 +276,7 @@ const StandingsTable = ({
             {columns.divRecord && <th className="w-16 py-2.5 text-center">Div</th>}
             {columns.confRecord && <th className="w-16 py-2.5 text-center">Conf</th>}
             {columns.streak && <th className="w-14 py-2.5 text-right pr-3">Streak</th>}
+            {columns.capRemaining && <th className="w-20 py-2.5 text-right pr-3" data-testid="standings-col-cap-remaining">Cap Left</th>}
           </tr>
         </thead>
         <tbody className="divide-y divide-border/50">
@@ -341,6 +349,26 @@ const StandingsTable = ({
                         team.streak.startsWith("W") ? "bg-success/20 text-success" : "bg-destructive/20 text-destructive"
                       }`}>{team.streak}</span>
                     </div>
+                  </td>
+                )}
+                {columns.capRemaining && (
+                  <td className="py-2.5 pr-3 text-right" data-testid={`standings-cap-remaining-${team.teamId || team.name}`}>
+                    {team.capLimit ? (
+                      <span
+                        className={`text-xs font-semibold ${
+                          (team.capRemaining ?? 0) < 0
+                            ? "text-destructive"
+                            : (team.capRemaining ?? 0) < 2_000_000
+                              ? "text-amber-400"
+                              : "text-success"
+                        }`}
+                        title={`Used $${((team.capUsed || 0) / 1_000_000).toFixed(2)}M of $${(team.capLimit / 1_000_000).toFixed(1)}M`}
+                      >
+                        {(team.capRemaining ?? 0) < 0 ? "−" : ""}${Math.abs((team.capRemaining ?? 0) / 1_000_000).toFixed(1)}M
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground/40">—</span>
+                    )}
                   </td>
                 )}
               </tr>
@@ -587,6 +615,22 @@ const StandingsPage = () => {
   const [cogOpen, setCogOpen] = useState(false);
   const [columns, setColumns] = useState<ColumnConfig>(DEFAULT_COLUMNS);
 
+  // ── Backend-enriched standings (real last_5 + cap remaining) ───
+  // We hit /api/leagues/{id}/standings which returns the actual W/L/T
+  // sequence from completed matchups + live cap_remaining for each team.
+  const [backendStandings, setBackendStandings] = useState<Record<string, any>>({});
+  useEffect(() => {
+    if (!leagueId) return;
+    let cancelled = false;
+    api.get(`/leagues/${leagueId}/standings`).then(({ data }) => {
+      if (cancelled) return;
+      const map: Record<string, any> = {};
+      (data || []).forEach((row: any) => { map[row.team_id] = row; });
+      setBackendStandings(map);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [leagueId]);
+
   // Build real-data teams list shaped like the Lovable mock so the UI below works as-is.
   const liveTeams: StandingsTeam[] = useMemo(() => {
     if (!leagueTeams || leagueTeams.length === 0) return mockTeams;
@@ -597,17 +641,15 @@ const StandingsPage = () => {
     const conferences: ("Eastern"|"Western")[] = ["Eastern","Western"];
     return ranked.map((t, idx) => {
       const gp = (t.wins || 0) + (t.losses || 0) + (t.ties || 0);
-      // Synthesize a rough last-5 from the cumulative W/L/T counts. If no games
-      // played, leave as empty array so the Sparkline renders all grey dots.
-      const last5: ("W" | "L" | "T")[] = [];
-      if (gp > 0) {
-        const pool: ("W" | "L" | "T")[] = [
-          ...Array(Math.min(t.wins || 0, 5)).fill("W"),
-          ...Array(Math.min(t.losses || 0, 5)).fill("L"),
-          ...Array(Math.min(t.ties || 0, 5)).fill("T"),
-        ];
-        last5.push(...pool.slice(0, 5) as ("W" | "L" | "T")[]);
-      }
+      // Prefer the backend's real last_5 sequence; fall back to a rough
+      // synthesized W/L/T pool only when no completed matchups exist.
+      const backend = backendStandings[t.id];
+      const realLast5 = (backend?.last_5 || []) as ("W" | "L" | "T")[];
+      const last5: ("W" | "L" | "T")[] = realLast5.length > 0 ? realLast5 : (gp > 0 ? ([
+        ...Array(Math.min(t.wins || 0, 5)).fill("W"),
+        ...Array(Math.min(t.losses || 0, 5)).fill("L"),
+        ...Array(Math.min(t.ties || 0, 5)).fill("T"),
+      ].slice(0, 5) as ("W" | "L" | "T")[]) : []);
       return {
         rank: idx + 1,
         prevRank: idx + 1,
@@ -632,9 +674,12 @@ const StandingsPage = () => {
         isUser: myTeam?.id === t.id,
         projectedSeed: idx + 1,
         clinched: idx === 0 ? ["presidents","conference","division","playoff"] : idx < 3 ? ["playoff"] : undefined,
+        capRemaining: backend?.salary_cap_remaining ?? null,
+        capUsed: backend?.salary_used ?? null,
+        capLimit: backend?.salary_cap ?? null,
       };
     }) as StandingsTeam[];
-  }, [leagueTeams, myTeam]);
+  }, [leagueTeams, myTeam, backendStandings]);
 
   const getFilteredTeams = () => {
     let filtered = [...liveTeams];
