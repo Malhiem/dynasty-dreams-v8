@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timezone
 
 import pytest
+import pytest_asyncio
 from bson import ObjectId
 from httpx import AsyncClient
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -22,6 +23,34 @@ def _backend_url():
 
 
 BASE = _backend_url()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _restore_my_picks():
+    """Some upstream tests leave Zarek's Frozen with no picks. Reset every
+    pick whose ORIGINAL_TEAM is Zarek's Frozen back to that team unless it
+    has a real trade_history (i.e. was traded outside this test). This keeps
+    the suite idempotent without cleaning up other tests' real moves."""
+    from motor.motor_asyncio import AsyncIOMotorClient as _M
+    db = _M(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+    me = await db.teams.find_one({"name": "Zarek's Frozen"}, {"_id": 1, "league_id": 1})
+    if me:
+        await db.draft_picks.update_many(
+            {
+                "league_id": me["league_id"],
+                "original_team_id": str(me["_id"]),
+                "current_team_id": {"$ne": str(me["_id"])},
+                "$or": [
+                    {"trade_history": {"$exists": False}},
+                    {"trade_history": []},
+                ],
+            },
+            {"$set": {
+                "current_team_id": str(me["_id"]),
+                "current_team_name": "Zarek's Frozen",
+            }},
+        )
+    yield
 
 
 async def _login(client, email, password):
@@ -241,6 +270,182 @@ async def test_pick_upgrade_with_player_condition_fires_on_threshold():
             pick = await db.draft_picks.find_one({"_id": ObjectId(partner_pick_id)})
             assert pick["round"] == 1, f"Expected R1 after player-condition trigger, got R{pick['round']}"
         finally:
+            await db.draft_picks.update_one(
+                {"_id": ObjectId(partner_pick_id)},
+                {"$set": {
+                    "round": original_round, "year": original_year,
+                    "current_team_id": str(partner["_id"]),
+                    "current_team_name": partner.get("name"),
+                }},
+            )
+
+
+@pytest.mark.asyncio
+async def test_pick_protection_fires_when_pick_lands_top_n():
+    """Pick-protection conditional: if the pick's slot is top-3, the trigger
+    fires and the pick is rewritten (typical use: lottery-protected 1sts)."""
+    db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+    async with AsyncClient(base_url=BASE, timeout=30) as c:
+        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        h = {"Authorization": f"Bearer {tok}"}
+        leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
+        lid = leagues[0]["id"]
+
+        teams = await db.teams.find({"league_id": lid}).to_list(20)
+        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+
+        # Find any R1 pick currently owned by ANY non-me team — the test data
+        # gets shuffled by earlier runs, so don't pin to a specific partner.
+        partner_pick = await db.draft_picks.find_one({
+            "league_id": lid,
+            "round": 1,
+            "current_team_id": {"$ne": str(my["_id"])},
+        })
+        if not partner_pick:
+            pytest.skip("No 1st-round pick on a partner team")
+        partner = next(t for t in teams if str(t["_id"]) == partner_pick["current_team_id"])
+        partner_pick_id = str(partner_pick["_id"])
+        original_round = partner_pick["round"]
+        original_year = partner_pick["year"]
+        original_pick_number = partner_pick.get("pick_number")
+        # Stamp the pick with a top-2 slot so the protection triggers
+        await db.draft_picks.update_one(
+            {"_id": ObjectId(partner_pick_id)},
+            {"$set": {"pick_number": 2}},
+        )
+
+        my_pick = await db.draft_picks.find_one({
+            "league_id": lid, "current_team_id": str(my["_id"]),
+        })
+        if not my_pick:
+            pytest.skip("No pick on my team")
+
+        # Protection: if the pick lands top-3, downgrade it to a 4th (i.e.,
+        # essentially neutered — a typical NHL-style protection rule).
+        payload = {
+            "league_id": lid,
+            "target_team_id": str(partner["_id"]),
+            "assets_offered": [{"asset_type": "pick", "pick_id": str(my_pick["_id"])}],
+            "assets_requested": [{"asset_type": "pick", "pick_id": partner_pick_id}],
+            "pick_upgrades": [{
+                "pick_id": partner_pick_id,
+                "new_round": 4,
+                "condition": {
+                    "subject_type": "pick",
+                    "subject": "requested",
+                    "pick_id": partner_pick_id,
+                    "metric": "pick_slot",
+                    "operator": "lte",
+                    "threshold": 3,
+                    "description": "If pick lands top-3 (lottery protection)",
+                },
+            }],
+        }
+        r = await c.post("/api/trades", json=payload, headers=h)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
+        assert trade_id, f"No trade id in response: {body}"
+        try:
+            r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
+            assert r.status_code == 200
+            pick = await db.draft_picks.find_one({"_id": ObjectId(partner_pick_id)})
+            assert pick["round"] == 4, f"Top-3 protection should have downgraded pick to R4, got R{pick['round']}"
+        finally:
+            reset = {
+                "round": original_round, "year": original_year,
+                "current_team_id": str(partner["_id"]),
+                "current_team_name": partner.get("name"),
+            }
+            if original_pick_number is None:
+                await db.draft_picks.update_one(
+                    {"_id": ObjectId(partner_pick_id)},
+                    {"$set": reset, "$unset": {"pick_number": ""}},
+                )
+            else:
+                reset["pick_number"] = original_pick_number
+                await db.draft_picks.update_one(
+                    {"_id": ObjectId(partner_pick_id)},
+                    {"$set": reset},
+                )
+
+
+@pytest.mark.asyncio
+async def test_won_draft_lottery_team_metric_evaluates():
+    """Team-level `won_draft_lottery` metric reads `draft_lottery_won_at`."""
+    db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+    async with AsyncClient(base_url=BASE, timeout=30) as c:
+        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        h = {"Authorization": f"Bearer {tok}"}
+        leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
+        lid = leagues[0]["id"]
+        teams = await db.teams.find({"league_id": lid}).to_list(20)
+        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        partner_pick = await db.draft_picks.find_one({
+            "league_id": lid, "round": 2,
+            "current_team_id": {"$ne": str(my["_id"])},
+        })
+        if not partner_pick:
+            pytest.skip("No 2nd-round pick on a partner team")
+        partner = next(t for t in teams if str(t["_id"]) == partner_pick["current_team_id"])
+        partner_pick_id = str(partner_pick["_id"])
+        original_round = partner_pick["round"]
+        original_year = partner_pick["year"]
+        my_pick = await db.draft_picks.find_one({
+            "league_id": lid, "current_team_id": str(my["_id"]),
+        })
+        if not my_pick:
+            pytest.skip("No pick on my team")
+
+        await db.teams.update_one({"_id": my["_id"]}, {"$unset": {"draft_lottery_won_at": ""}})
+
+        payload = {
+            "league_id": lid,
+            "target_team_id": str(partner["_id"]),
+            "assets_offered": [{"asset_type": "pick", "pick_id": str(my_pick["_id"])}],
+            "assets_requested": [{"asset_type": "pick", "pick_id": partner_pick_id}],
+            "pick_upgrades": [{
+                "pick_id": partner_pick_id,
+                "new_round": 1,
+                "condition": {
+                    "subject_type": "team",
+                    "subject": "offered",
+                    "team_id": str(my["_id"]),
+                    "metric": "won_draft_lottery",
+                    "operator": "eq",
+                    "threshold": 1,
+                    "description": "If my team wins the draft lottery",
+                },
+            }],
+        }
+        r = await c.post("/api/trades", json=payload, headers=h)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
+        assert trade_id, f"No trade id in response: {body}"
+        try:
+            await c.post(f"/api/trades/{trade_id}/execute", headers=h)
+            # Pre-lottery: pick stays as 2nd
+            pick = await db.draft_picks.find_one({"_id": ObjectId(partner_pick_id)})
+            assert pick["round"] == 2, "Should stay R2 before lottery"
+
+            # Toggle the lottery flag on my team
+            await db.teams.update_one(
+                {"_id": my["_id"]},
+                {"$set": {"draft_lottery_won_at": datetime.now(timezone.utc)}},
+            )
+
+            # Re-trigger eval
+            from server import _apply_pick_upgrades  # noqa: WPS433
+            t = await db.trades.find_one({"_id": ObjectId(trade_id)})
+            res = await _apply_pick_upgrades(t, final_eval=False)
+            assert res["applied"] >= 1, res
+            pick = await db.draft_picks.find_one({"_id": ObjectId(partner_pick_id)})
+            assert pick["round"] == 1, f"Lottery win should upgrade pick to R1, got R{pick['round']}"
+        finally:
+            await db.teams.update_one({"_id": my["_id"]}, {"$unset": {"draft_lottery_won_at": ""}})
             await db.draft_picks.update_one(
                 {"_id": ObjectId(partner_pick_id)},
                 {"$set": {

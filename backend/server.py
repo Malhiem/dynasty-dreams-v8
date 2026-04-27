@@ -3302,6 +3302,29 @@ async def _evaluate_conditions(trade: dict) -> dict:
                     actual = 1.0 if team.get("championship_won_at") else 0.0
                 elif metric == "won_consolation":
                     actual = 1.0 if team.get("consolation_won_at") else 0.0
+                elif metric == "won_draft_lottery":
+                    actual = 1.0 if team.get("draft_lottery_won_at") else 0.0
+        elif subject_type == "pick":
+            # Pick-level metrics — used for pick protection ("if pick lands top N").
+            # Resolves the pick from cond.pick_id (or auto-falls back to a pick
+            # found in this side's assets if not specified).
+            pick_id = cond.get("pick_id")
+            if not pick_id:
+                for a in side_assets:
+                    if a.get("asset_type") == "pick" and a.get("pick_id"):
+                        pick_id = a["pick_id"]; break
+            if pick_id:
+                try:
+                    pick = await db.draft_picks.find_one({"_id": ObjectId(pick_id)})
+                except Exception:
+                    pick = None
+                if pick:
+                    if metric == "pick_slot":
+                        # Lower = better. Returns 999 when slot not yet drawn (so
+                        # `lte` thresholds correctly stay unmet pre-lottery).
+                        actual = float(pick.get("pick_number") or 999)
+                    elif metric == "pick_round":
+                        actual = float(pick.get("round") or 0)
         else:
             # Player-level. If `player_id` is set explicitly we look the player
             # up directly (works regardless of which side of the trade they're

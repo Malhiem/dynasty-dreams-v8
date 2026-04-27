@@ -91,14 +91,21 @@ class TradeConditionMetric(str, Enum):
     TEAM_RANK = "team_rank"
     MADE_PLAYOFFS = "made_playoffs"   # 1 if playoffs_reached_at set
     WON_DIVISION = "won_division"     # 1 if division_winner_at set
+    WON_CONFERENCE = "won_conference"  # 1 if conference_winner_at set
     WON_CHAMPIONSHIP = "won_championship"  # 1 if championship_won_at set
+    WON_CONSOLATION = "won_consolation"    # 1 if consolation_won_at set
+    WON_DRAFT_LOTTERY = "won_draft_lottery"  # 1 if draft_lottery_won_at set
+    # Pick-level metrics (protection clauses)
+    PICK_SLOT = "pick_slot"           # numeric draft slot (lower = better)
+    PICK_ROUND = "pick_round"         # numeric round number
 
 
 class TradeCondition(BaseModel):
-    subject_type: str = "player"   # "player" | "team"
+    subject_type: str = "player"   # "player" | "team" | "pick"
     subject: str = "offered"       # "offered" | "requested" — which side the condition attaches to
     player_id: Optional[str] = None  # When subject_type == player
     team_id: Optional[str] = None    # When subject_type == team. If None, resolves to that side's team.
+    pick_id: Optional[str] = None    # When subject_type == pick
     metric: TradeConditionMetric
     operator: str = "gte"  # "gte" | "lte" | "eq"
     threshold: float
