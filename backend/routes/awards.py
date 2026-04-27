@@ -178,6 +178,24 @@ async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate
             logger.warning("Conditional trade re-eval failed league=%s trade=%s: %s",
                            league_id, str(t.get("_id")), ex)
 
+    # Re-evaluate pick-upgrade clauses on already-executed trades. An award
+    # toggle (championship/division/etc.) may have just unlocked an upgrade
+    # — apply it now.
+    pick_upgrades_applied = 0
+    apply_pu = _deps.get("_apply_pick_upgrades")
+    if apply_pu:
+        executed = await db.trades.find({
+            "league_id": league_id, "status": "executed",
+            "pick_upgrades": {"$exists": True, "$ne": []},
+        }).to_list(500)
+        for t in executed:
+            try:
+                pu_res = await apply_pu(t, final_eval=False)
+                pick_upgrades_applied += pu_res.get("applied", 0)
+            except Exception as ex:
+                logger.warning("Pick-upgrade re-eval failed league=%s trade=%s: %s",
+                               league_id, str(t.get("_id")), ex)
+
     fresh = await db.teams.find_one({"_id": team["_id"]})
     return {
         "team_id": team_id,
@@ -189,6 +207,7 @@ async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate
         "consolation_won_at": fresh.get("consolation_won_at"),
         "changes": changes,
         "unlocked_trades": unlocked,
+        "pick_upgrades_applied": pick_upgrades_applied,
     }
 
 

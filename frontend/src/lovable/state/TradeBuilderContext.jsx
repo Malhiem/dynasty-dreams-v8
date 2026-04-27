@@ -208,7 +208,7 @@ export function TradeBuilderProvider({ children }) {
       return false;
     }
 
-    // Pull conditions from the shared editor (window-global, same as today)
+    // Pull conditions + pick upgrades from the shared editors
     const rawConditions = (typeof window !== "undefined" && window.__getTradeConditions?.()) || [];
     const conditions = rawConditions.map((c) => ({
       subject_type: c.subject_type || "player",
@@ -220,6 +220,7 @@ export function TradeBuilderProvider({ children }) {
       threshold: Number(c.threshold || 0),
       description: c.description,
     }));
+    const pickUpgrades = (typeof window !== "undefined" && window.__getPickUpgrades?.()) || [];
 
     const isMulti = state.partners.length > 2;
 
@@ -276,6 +277,7 @@ export function TradeBuilderProvider({ children }) {
           league_id: state.leagueId,
           parties,
           conditions,
+          pick_upgrades: pickUpgrades,
           message: state.message || undefined,
         });
         toast.success(`${state.partners.length}-team trade proposed`, {
@@ -328,9 +330,10 @@ export function TradeBuilderProvider({ children }) {
           assets_offered: offered,
           assets_requested: requested,
           conditions,
+          pick_upgrades: pickUpgrades,
           message: state.message || `Proposal to ${target.name}`,
         });
-        const label = conditions.length > 0 ? "Conditional trade proposed" : "Trade proposed";
+        const label = (conditions.length > 0 || pickUpgrades.length > 0) ? "Conditional trade proposed" : "Trade proposed";
         toast.success(label, { description: `Sent to ${target.name}` });
         closeBuilder();
         return true;

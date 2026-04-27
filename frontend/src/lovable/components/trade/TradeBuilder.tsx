@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Slider } from "@/components/ui/slider";
 import { TradeConditionsEditor } from "./TradeConditionsEditor";
+import { PickUpgradeEditor } from "./PickUpgradeEditor";
 import {
   Select,
   SelectContent,
@@ -608,12 +609,24 @@ export const TradeBuilder = ({
                 >
                   + Team result
                 </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[11px] h-7"
+                  onClick={() => (window as any).__addPickUpgrade?.()}
+                  data-testid="add-pick-upgrade-btn"
+                >
+                  + Pick upgrade
+                </Button>
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground mb-2">
-              Trade executes only when all conditions are satisfied (e.g. "Only if my team wins the championship, partner gets a higher draft pick").
+              Trade executes only when all conditions are satisfied. Pick upgrades rewrite a draft pick already in the trade when its trigger fires (e.g. "if my team wins the championship, the 2nd round pick becomes a 1st").
             </p>
             <TradeConditionsEditor />
+            <div className="mt-2">
+              <PickUpgradeEditor />
+            </div>
           </div>
         </div>
       )}

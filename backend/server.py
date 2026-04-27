@@ -326,176 +326,7 @@ async def leave_room(sid, data):
 async def broadcast_to_room(room: str, event: str, message: dict):
     await sio.emit(event, message, room=room)
 
-# Auth Endpoints
-@api_router.post("/auth/register", response_model=UserResponse)
-async def register(input: UserRegister, response: Response):
-    email = input.email.lower()
-    username = input.username.strip()
-
-    existing = await db.users.find_one({"email": email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    if await db.users.find_one({"username": username}):
-        raise HTTPException(status_code=400, detail="Username already taken")
-
-    user_doc = {
-        "email": email,
-        "password_hash": hash_password(input.password),
-        "username": username,
-        "name": username,  # Keep `name` in sync for backward-compat
-        "role": UserRole.USER.value,
-        "subscription": None,
-        "created_at": datetime.now(timezone.utc)
-    }
-    result = await db.users.insert_one(user_doc)
-    user_id = str(result.inserted_id)
-    
-    access_token = create_access_token(user_id, email)
-    refresh_token = create_refresh_token(user_id)
-    
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, max_age=43200, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, max_age=604800, path="/")
-    
-    return UserResponse(
-        id=user_id,
-        email=email,
-        username=username,
-        name=username,
-        role=UserRole.USER.value,
-        created_at=user_doc["created_at"],
-        access_token=access_token,
-        refresh_token=refresh_token,
-    )
-
-@api_router.post("/auth/login", response_model=UserResponse)
-async def login(input: UserLogin, request: Request, response: Response):
-    email = input.email.lower()
-    identifier = f"{request.client.host}:{email}"
-    
-    # Check brute force
-    attempts = await db.login_attempts.find_one({"identifier": identifier})
-    if attempts and attempts.get("count", 0) >= 5:
-        lockout_until = attempts.get("lockout_until")
-        # Motor sometimes returns naive datetimes from MongoDB; coerce to UTC-aware
-        # to avoid `TypeError: can't compare offset-naive and offset-aware datetimes`.
-        if lockout_until and lockout_until.tzinfo is None:
-            lockout_until = lockout_until.replace(tzinfo=timezone.utc)
-        if lockout_until and datetime.now(timezone.utc) < lockout_until:
-            raise HTTPException(status_code=429, detail="Too many login attempts. Try again later.")
-        else:
-            await db.login_attempts.delete_one({"identifier": identifier})
-    
-    user = await db.users.find_one({"email": email})
-    if not user or not verify_password(input.password, user["password_hash"]):
-        # Increment failed attempts
-        await db.login_attempts.update_one(
-            {"identifier": identifier},
-            {
-                "$inc": {"count": 1},
-                "$set": {"lockout_until": datetime.now(timezone.utc) + timedelta(minutes=15)}
-            },
-            upsert=True
-        )
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    
-    # Clear failed attempts on success
-    await db.login_attempts.delete_one({"identifier": identifier})
-    
-    user_id = str(user["_id"])
-    access_token = create_access_token(user_id, email)
-    refresh_token = create_refresh_token(user_id)
-    
-    response.set_cookie(key="access_token", value=access_token, httponly=True, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, max_age=43200, path="/")
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, max_age=604800, path="/")
-    
-    return UserResponse(
-        id=user_id,
-        email=user["email"],
-        username=user.get("username") or user.get("name", ""),
-        name=user.get("username") or user.get("name", ""),
-        role=user["role"],
-        created_at=user["created_at"],
-        access_token=access_token,
-        refresh_token=refresh_token,
-    )
-
-@api_router.post("/auth/logout")
-async def logout(response: Response):
-    response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/")
-    return {"message": "Logged out successfully"}
-
-@api_router.get("/auth/me", response_model=UserResponse)
-async def get_me(request: Request):
-    user = await get_current_user(request)
-    return UserResponse(
-        id=user["_id"],
-        email=user["email"],
-        username=user.get("username") or user.get("name", ""),
-        name=user.get("username") or user.get("name", ""),
-        role=user["role"],
-        created_at=user["created_at"]
-    )
-
-@api_router.post("/auth/refresh")
-async def refresh_token(request: Request, response: Response):
-    # Accept refresh token from cookie OR Authorization header (for mobile)
-    token = request.cookies.get("refresh_token")
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-    if not token:
-        raise HTTPException(status_code=401, detail="No refresh token")
-    try:
-        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
-        if payload.get("type") != "refresh":
-            raise HTTPException(status_code=401, detail="Invalid token type")
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        
-        user_id = str(user["_id"])
-        access_token = create_access_token(user_id, user["email"])
-        response.set_cookie(key="access_token", value=access_token, httponly=True, secure=COOKIE_SECURE, samesite=COOKIE_SAMESITE, max_age=43200, path="/")
-        return {"message": "Token refreshed", "access_token": access_token, "refresh_token": token}
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Refresh token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
-
-@api_router.post("/auth/forgot-password")
-async def forgot_password(input: ForgotPassword):
-    email = input.email.lower()
-    user = await db.users.find_one({"email": email})
-    if not user:
-        return {"message": "If an account exists, a reset link has been sent"}
-    
-    token = secrets.token_urlsafe(32)
-    await db.password_reset_tokens.insert_one({
-        "token": token,
-        "user_id": str(user["_id"]),
-        "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
-        "used": False
-    })
-    logger.info(f"Password reset link: /reset-password?token={token}")
-    return {"message": "If an account exists, a reset link has been sent"}
-
-@api_router.post("/auth/reset-password")
-async def reset_password(input: ResetPassword):
-    token_doc = await db.password_reset_tokens.find_one({"token": input.token, "used": False})
-    if not token_doc:
-        raise HTTPException(status_code=400, detail="Invalid or expired token")
-    if datetime.now(timezone.utc) > token_doc["expires_at"]:
-        raise HTTPException(status_code=400, detail="Token expired")
-    
-    await db.users.update_one(
-        {"_id": ObjectId(token_doc["user_id"])},
-        {"$set": {"password_hash": hash_password(input.new_password)}}
-    )
-    await db.password_reset_tokens.update_one({"token": input.token}, {"$set": {"used": True}})
-    return {"message": "Password reset successfully"}
+# Auth Endpoints — extracted to routes/auth.py
 
 # League Endpoints
 @api_router.post("/leagues", response_model=LeagueResponse)
@@ -3629,6 +3460,135 @@ async def _post_trade_chat_messages(trade: dict, moves) -> None:
         logger.warning("trade chat hook failed: %s", e)
 
 
+async def _evaluate_single_condition(condition: dict, trade: dict) -> tuple[bool, float]:
+    """Reuse `_evaluate_conditions` mechanics for a single condition. Returns
+    (met, actual_value). The trade context is needed to resolve subject sides."""
+    fake = {**trade, "conditions": [condition]}
+    res = await _evaluate_conditions(fake)
+    if not res.get("results"):
+        return (False, 0.0)
+    r = res["results"][0]
+    return (bool(r.get("met")), float(r.get("actual_value", 0.0)))
+
+
+async def _apply_pick_upgrades(trade: dict, *, final_eval: bool = False) -> dict:
+    """Evaluate every `pick_upgrades` clause attached to the trade. When the
+    clause's condition is met and not yet applied, mutate the underlying
+    `draft_picks` doc (round + optional year), append a `pick_upgrade` entry
+    to its `trade_history`, mark the upgrade entry on the trade as
+    `applied_at`, and write a pass audit_log row.
+
+    When `final_eval=True` and the condition is unmet, mark the upgrade as
+    `failed_at` and write a fail audit_log row — used at season end to lock
+    the outcome in. Otherwise (mid-season), unmet clauses remain pending.
+
+    Returns `{applied: int, failed: int, results: [...]}`."""
+    upgrades = trade.get("pick_upgrades") or []
+    if not upgrades:
+        return {"applied": 0, "failed": 0, "results": []}
+    league_id = trade["league_id"]
+    trade_id = str(trade.get("_id"))
+    applied, failed = 0, 0
+    results = []
+    now = datetime.now(timezone.utc)
+
+    for idx, up in enumerate(list(upgrades)):
+        if up.get("applied_at") or up.get("failed_at"):
+            results.append({"index": idx, "skipped": True, "status": "settled"})
+            continue
+        cond = up.get("condition") or {}
+        try:
+            met, actual = await _evaluate_single_condition(cond, trade)
+        except Exception as e:
+            logger.warning("pick upgrade eval errored trade=%s idx=%s: %s", trade_id, idx, e)
+            continue
+
+        if met:
+            pick_id = up.get("pick_id")
+            new_round = int(up.get("new_round", 0))
+            new_year = up.get("new_year")
+            try:
+                pick = await db.draft_picks.find_one({"_id": ObjectId(pick_id)})
+            except Exception:
+                pick = None
+            if not pick:
+                results.append({"index": idx, "met": True, "applied": False, "reason": "pick_not_found"})
+                continue
+            old_round = pick.get("round")
+            old_year = pick.get("year")
+            update_set = {"round": new_round}
+            if new_year:
+                update_set["year"] = int(new_year)
+            await db.draft_picks.update_one(
+                {"_id": ObjectId(pick_id)},
+                {
+                    "$set": update_set,
+                    "$push": {"trade_history": {
+                        "trade_id": trade_id,
+                        "kind": "pick_upgrade",
+                        "from_round": old_round, "to_round": new_round,
+                        "from_year": old_year, "to_year": new_year or old_year,
+                        "trigger": cond.get("description") or cond.get("metric"),
+                        "actual_value": actual,
+                        "applied_at": now,
+                    }},
+                },
+            )
+            await db.trades.update_one(
+                {"_id": trade["_id"]},
+                {"$set": {f"pick_upgrades.{idx}.applied_at": now,
+                          f"pick_upgrades.{idx}.actual_value": actual}},
+            )
+            await db.audit_log.insert_one({
+                "league_id": league_id,
+                "action": "pick_upgrade_applied",
+                "result": "pass",
+                "trade_id": trade_id,
+                "pick_id": pick_id,
+                "from_round": old_round, "to_round": new_round,
+                "from_year": old_year, "to_year": new_year or old_year,
+                "trigger": cond.get("description") or cond.get("metric"),
+                "actual_value": actual,
+                "created_at": now,
+            })
+            try:
+                from routes.chat import post_system_message
+                await post_system_message(
+                    db, league_id,
+                    f"📈 Pick upgrade triggered: {old_year} R{old_round} → {new_year or old_year} R{new_round} "
+                    f"(condition: {cond.get('description') or cond.get('metric')})",
+                    channel_name="trades",
+                    metadata={"trade_id": trade_id, "kind": "pick_upgrade"},
+                )
+            except Exception:
+                pass
+            applied += 1
+            results.append({"index": idx, "met": True, "applied": True,
+                            "from_round": old_round, "to_round": new_round})
+        else:
+            if final_eval:
+                await db.trades.update_one(
+                    {"_id": trade["_id"]},
+                    {"$set": {f"pick_upgrades.{idx}.failed_at": now,
+                              f"pick_upgrades.{idx}.actual_value": actual}},
+                )
+                await db.audit_log.insert_one({
+                    "league_id": league_id,
+                    "action": "pick_upgrade_failed",
+                    "result": "fail",
+                    "trade_id": trade_id,
+                    "pick_id": up.get("pick_id"),
+                    "trigger": cond.get("description") or cond.get("metric"),
+                    "actual_value": actual,
+                    "created_at": now,
+                })
+                failed += 1
+                results.append({"index": idx, "met": False, "final": True})
+            else:
+                results.append({"index": idx, "met": False, "pending": True})
+    return {"applied": applied, "failed": failed, "results": results}
+
+
 async def _execute_multi_party_trade(trade: dict) -> dict:
     """Execute a trade with 3+ parties.
     Each party's `sends` are removed from their roster; the engine then routes
@@ -3773,6 +3733,11 @@ async def _execute_multi_party_trade(trade: dict) -> dict:
     except Exception:
         pass
     await _post_trade_chat_messages(trade, moves)
+    # Initial pick-upgrade eval. Mid-season / not-yet-finalized triggers stay
+    # pending and re-evaluate on every award toggle + weekly simulation.
+    refreshed = await db.trades.find_one({"_id": trade["_id"]})
+    if refreshed:
+        await _apply_pick_upgrades(refreshed, final_eval=False)
     return {"executed": True, "moves": moves, "parties": [p["team_name"] for p in parties]}
 
 
@@ -3903,6 +3868,9 @@ async def _execute_trade(trade: dict) -> dict:
     except Exception:
         pass
     await _post_trade_chat_messages(trade, moves)
+    refreshed = await db.trades.find_one({"_id": trade["_id"]})
+    if refreshed:
+        await _apply_pick_upgrades(refreshed, final_eval=False)
     return {"executed": True, "moves": moves}
 
 
@@ -4651,7 +4619,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes
 
 _router_deps = {
     "db": db,
@@ -4661,10 +4629,25 @@ _router_deps = {
     "_safe_object_id": _safe_object_id,
     "_evaluate_conditions": _evaluate_conditions,
     "_execute_trade": _execute_trade,
+    "_apply_pick_upgrades": _apply_pick_upgrades,
     "calculate_fantasy_points": calculate_fantasy_points,
     "broadcast_to_room": broadcast_to_room,
     "log_activity": log_activity,
     "create_notification": create_notification,
+    # Auth deps
+    "hash_password": hash_password,
+    "verify_password": verify_password,
+    "create_access_token": create_access_token,
+    "create_refresh_token": create_refresh_token,
+    "get_jwt_secret": get_jwt_secret,
+    "JWT_ALGORITHM": JWT_ALGORITHM,
+    "COOKIE_SECURE": COOKIE_SECURE,
+    "COOKIE_SAMESITE": COOKIE_SAMESITE,
+    "auth_models": {
+        "UserRegister": UserRegister, "UserLogin": UserLogin,
+        "UserResponse": UserResponse, "UserRole": UserRole,
+        "ForgotPassword": ForgotPassword, "ResetPassword": ResetPassword,
+    },
 }
 awards_routes.setup(_router_deps)
 drafts_routes.setup(_router_deps)
@@ -4675,6 +4658,7 @@ players_routes.setup(_router_deps)
 trades_routes.setup(_router_deps)
 comparisons_routes.setup(_router_deps)
 chat_routes.setup(_router_deps)
+auth_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -4684,6 +4668,7 @@ api_router.include_router(players_routes.router)
 api_router.include_router(trades_routes.router)
 api_router.include_router(comparisons_routes.router)
 api_router.include_router(chat_routes.router)
+api_router.include_router(auth_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")

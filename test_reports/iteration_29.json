@@ -1,0 +1,60 @@
+{
+  "summary": "Iteration 29 — Conditional Pick Upgrades + Auth router extraction + Mobile Chat parity. Backend is solid: 11/11 new auth router tests pass and pick-downgrade engine test passes (1 upgrade test SKIPPED — partner had no R2 pick at test time, test is correct, just lacking seed data). CRITICAL FRONTEND BUG FOUND: the actually-rendered trade builder component (GlobalTradeBuilder.jsx) does NOT contain the new '+ Pick upgrade' button or the <PickUpgradeEditor /> mount. The wiring went into a different component (TradeBuilder.tsx) that is not what gets shown when a user clicks roster-trade-btn-{id}. Net effect: end-users cannot reach the new pick-upgrade UI in production. All testids (add-pick-upgrade-btn, pick-upgrade-row-*, pick-upgrades-empty, etc.) exist in the editor component file but are unreachable because the editor is never mounted. Mobile ChatScreen.js (529 lines) verified via static analysis — channels, DMs, messages, @mention, mute long-press, create/delete channel are all present.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/trades (pick_upgrade applies-on-championship path)",
+        "issue": "test_pick_upgrade_applies_when_championship_unlocks SKIPS in current league state because partner team has no remaining 2nd-round pick (likely consumed by prior iterations of this same test, since the test only restores round/year of the upgraded pick — it does not restore current_team_id). Suggest test should also reset current_team_id or pick a fresh pick query. Engine itself is verified by the downgrade test, which passes."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "GlobalTradeBuilder.jsx (the actually-rendered trade builder)",
+        "issue": "Missing '+ Pick upgrade' button and <PickUpgradeEditor /> mount. File /app/frontend/src/lovable/components/trade/GlobalTradeBuilder.jsx lines 338-356 only renders '+ Player stat' and '+ Team result' buttons + <TradeConditionsEditor />. The new pick-upgrade button was added to the WRONG component (TradeBuilder.tsx lines 612-628, which is not what mounts when the user clicks roster-trade-btn-{id}). Verified live: opened trade builder from /team page, scanned all data-testids on the page — add-pick-upgrade-btn does NOT appear; only tb-add-player-condition and tb-add-team-condition appear. End-user can never reach the new editor.",
+        "selector": "[data-testid='add-pick-upgrade-btn']",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Trade proposal with pick_upgrades",
+        "issue": "Because the editor is unreachable, window.__getPickUpgrades() always returns empty array, so the /api/trades and /api/trades/multi payloads will never include pick_upgrades from real user flow. Backend correctly receives them when sent (pytest proves it), but no UI path exists.",
+        "affected_selectors": ["[data-testid='add-pick-upgrade-btn']", "[data-testid='pick-upgrades-list']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth_router.py",
+    "/app/backend/tests/test_pick_upgrades.py",
+    "/app/test_reports/pytest/iteration29_auth_router.xml",
+    "/app/test_reports/pytest/iteration29_pick_upgrades.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Add the '+ Pick upgrade' button and <PickUpgradeEditor /> mount to /app/frontend/src/lovable/components/trade/GlobalTradeBuilder.jsx (around lines 342-355, alongside the existing '+ Player stat' / '+ Team result' buttons). Use the same wiring as TradeBuilder.tsx lines 612-628: onClick={() => window.__addPickUpgrade?.()} with data-testid='add-pick-upgrade-btn', and mount <PickUpgradeEditor /> right after <TradeConditionsEditor />. Without this, the entire pick-upgrade feature is unreachable from the UI.",
+    "MINOR: Patch test_pick_upgrade_applies_when_championship_unlocks teardown to also restore pick.current_team_id (or pre-create a fresh R2 pick) so the test is fully idempotent across runs.",
+    "OPTIONAL: Confirm whether TradeBuilder.tsx is dead code now that GlobalTradeBuilder.jsx is the canonical component — if so, delete it to prevent future double-wiring mistakes."
+  ],
+  "critical_code_review_comments": [
+    "BUG (critical): /app/frontend/src/lovable/components/trade/GlobalTradeBuilder.jsx is the canonical rendered Trade Builder (testid='global-trade-builder', confirmed via DOM probe), but the new pick-upgrade integration was added to /app/frontend/src/lovable/components/trade/TradeBuilder.tsx — a separate, unmounted .tsx component. Two sibling 'TradeBuilder' files invite exactly this kind of mistake. Recommend consolidation.",
+    "Backend auth router (/app/backend/routes/auth.py) is well-structured: extracted cleanly via setup(deps) injection, all 7 endpoints behave identically to pre-extraction. Cookie + Bearer dual-auth on /refresh works correctly. Brute-force lockout, dup-email rejection, bogus-token 401 all confirmed.",
+    "Backend pick-upgrade engine (server.py _apply_pick_upgrades) correctly handles: idempotency (applied_at gates re-eval), bidirectional rounds (downgrade R1→R3 verified live), audit_log row written, draft_picks.trade_history pushed, trade.pick_upgrades[i].applied_at set. Award-toggle re-eval hook returns pick_upgrades_applied count.",
+    "Mobile ChatScreen.js (529 LOC) is at the upper end of the >700-line file-size guideline but still acceptable. Implements channels list, DMs list, message send, @mention popup, mute (whitelisted durations), create/delete channel with permission gating via league.commissioner_id + co_commissioners. Component shape and imports are valid React Native; module resolves cleanly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth_router.py — NEW, 11 pytest cases covering all 7 auth router endpoints (login, /me, refresh via Bearer + cookie, register success + dup-email, logout, forgot-password, reset-password)."
+  ],
+  "success_rate": {
+    "backend": "100% — 12/12 executed tests pass (1 skip-by-environment, not a failure). Auth router 11/11, pick-upgrade engine 1/1 executed.",
+    "frontend": "0% on the new pick-upgrade UX — the entry-point button is missing from the rendered component, so no user-facing flow exists. Other parts of the trade builder (asset add, conditions, send) are unaffected and continue to work."
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (co-comm of Ice Kings, Zarek's Frozen) and admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "test_auth_router.py creates one TEST_authrouter_{uuid}@example.com user via /api/auth/register (not cleaned up — harmless, not in any league). No other state changes.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes GlobalTradeBuilder.jsx by adding the '+ Pick upgrade' button + <PickUpgradeEditor /> mount, re-run UI flow: login chriszarek@gmail.com / Chris2026!, /team, click any roster-trade-btn-{id}, scroll to Conditional Triggers section, verify [data-testid='add-pick-upgrade-btn'] now exists. Click it once with no picks → expect [data-testid='pick-upgrades-empty'] with text 'Add a draft pick first'. Then add a pick to the trade payload (via 'Add Team to Trade' → partner roster → pick), click '+ Pick upgrade' again → expect pick-upgrade-row-0 with all 6 selectors. Backend pytest already covers send-proposal-with-upgrades persistence and the downgrade-fires-on-execute path, so once UI is reachable the integration test simplifies to: send a 1st→3rd downgrade with team_wins>=0 trigger, verify draft_picks doc round=3.",
+  "rca of the issue": "ROOT CAUSE — Two sibling Trade Builder components exist in the same folder: /app/frontend/src/lovable/components/trade/TradeBuilder.tsx (typed, not mounted in current routes) and /app/frontend/src/lovable/components/trade/GlobalTradeBuilder.jsx (untyped, mounted via AppLayout + TradeBuilderContext, this is what users see). The pick-upgrade feature work was added to TradeBuilder.tsx instead of GlobalTradeBuilder.jsx. STEPS TO REPRODUCE: 1) login as chriszarek 2) /team 3) click any [data-testid^='roster-trade-btn-'] 4) Trade Builder panel opens at bottom-right with 'Conditional Triggers' section showing only '+ Player stat' and '+ Team result' — no '+ Pick upgrade'. MITIGATION: copy the JSX block from /app/frontend/src/lovable/components/trade/TradeBuilder.tsx lines 612-628 (button + editor mount) into /app/frontend/src/lovable/components/trade/GlobalTradeBuilder.jsx around line 352 (after the '+ Team result' button) and after line 355 (after <TradeConditionsEditor />). Imports: add `import PickUpgradeEditor from './PickUpgradeEditor';` at top of GlobalTradeBuilder.jsx."
+}

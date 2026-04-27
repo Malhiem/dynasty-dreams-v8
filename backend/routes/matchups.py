@@ -279,6 +279,20 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                     except Exception as ex:
                         logger.warning("Conditional trade re-eval (auto-crown) failed league=%s trade=%s: %s",
                                        input.league_id, str(t.get("_id")), ex)
+                # Re-evaluate pick-upgrade clauses on executed trades. Final
+                # eval at championship → unmet upgrades lock as `failed`.
+                apply_pu = _deps.get("_apply_pick_upgrades")
+                if apply_pu:
+                    executed = await db.trades.find({
+                        "league_id": input.league_id, "status": "executed",
+                        "pick_upgrades": {"$exists": True, "$ne": []},
+                    }).to_list(500)
+                    for t in executed:
+                        try:
+                            await apply_pu(t, final_eval=True)
+                        except Exception as ex:
+                            logger.warning("Pick-upgrade final-eval failed league=%s trade=%s: %s",
+                                           input.league_id, str(t.get("_id")), ex)
                 await sio.emit("championship_crowned", {
                     "league_id": input.league_id,
                     "team_id": winner, "team_name": winner_name,

@@ -89,6 +89,7 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
 
     review_period_hours = 72
     has_conditions = bool(getattr(input, "conditions", None))
+    pick_upgrades = [u.dict() if hasattr(u, "dict") else u for u in (getattr(input, "pick_upgrades", None) or [])]
     trade_doc = {
         "league_id": input.league_id,
         "proposer_team_id": str(proposer_team["_id"]),
@@ -101,6 +102,7 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
         "assets_requested": requested_details,
         "conditions": [c.dict() if hasattr(c, "dict") else c for c in (input.conditions or [])],
         "conditional": has_conditions,
+        "pick_upgrades": pick_upgrades,
         "message": input.message,
         "status": "pending",
         "votes": {"approve": 0, "veto": 0, "voters": []},
@@ -365,6 +367,7 @@ async def create_multi_party_trade(input: MultiPartyTradeProposalCreate, request
         "assets_requested": proposer_team["receives"],
         "conditions": [c.dict() if hasattr(c, "dict") else c for c in (input.conditions or [])],
         "conditional": has_conditions,
+        "pick_upgrades": [u.dict() if hasattr(u, "dict") else u for u in (getattr(input, "pick_upgrades", None) or [])],
         "message": input.message,
         "status": "pending",
         "votes": {"approve": 0, "veto": 0, "voters": []},

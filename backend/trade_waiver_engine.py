@@ -68,6 +68,7 @@ class MultiPartyTradeProposalCreate(BaseModel):
     parties: list[TradePartyInput] = Field(min_length=2)
     message: Optional[str] = None
     conditions: list["TradeCondition"] = Field(default_factory=list)
+    pick_upgrades: list["TradePickUpgrade"] = Field(default_factory=list)
 
 
 class TradePartyResponse(BaseModel):
@@ -105,6 +106,17 @@ class TradeCondition(BaseModel):
     description: Optional[str] = None  # Free-form label, e.g. "If team wins championship"
 
 
+class TradePickUpgrade(BaseModel):
+    """Outcome-modifying conditional. When `condition` evaluates true, the
+    named pick is rewritten to `new_round` (and optionally `new_year`).
+    Supports upgrades (round → lower) and downgrades (round → higher)."""
+    pick_id: str
+    new_round: int = Field(ge=1, le=10)
+    new_year: Optional[int] = None
+    condition: TradeCondition
+    description: Optional[str] = None
+
+
 class TradeProposalCreate(BaseModel):
     league_id: str
     target_team_id: str
@@ -112,9 +124,10 @@ class TradeProposalCreate(BaseModel):
     assets_requested: list[TradeAsset]
     message: Optional[str] = None
     conditions: list[TradeCondition] = Field(default_factory=list)
+    pick_upgrades: list[TradePickUpgrade] = Field(default_factory=list)
 
 
-# Resolve forward reference now that TradeCondition is defined
+# Resolve forward references now that TradeCondition + TradePickUpgrade are defined
 MultiPartyTradeProposalCreate.model_rebuild()
 
 

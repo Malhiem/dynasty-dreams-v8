@@ -169,26 +169,55 @@ function TradeHistoryPopover({ pick }: { pick: PickOwnership }) {
           </p>
         </div>
         <div className="p-2 space-y-2 max-h-60 overflow-y-auto">
-          {pick.tradeHistory.map((trade, idx) => (
+          {pick.tradeHistory.map((trade: any, idx) => (
             <div
               key={idx}
-              className="p-2 rounded-md bg-secondary/50 border border-border/50 space-y-1"
+              data-testid={trade.kind === "pick_upgrade" ? `pick-upgrade-${idx}` : `pick-trade-${idx}`}
+              className={`p-2 rounded-md border space-y-1 ${
+                trade.kind === "pick_upgrade"
+                  ? "bg-amber-500/10 border-amber-500/30"
+                  : "bg-secondary/50 border-border/50"
+              }`}
             >
               <div className="flex items-center justify-between">
-                <Badge variant="outline" className="text-[10px] px-1.5 h-4">
-                  Trade {idx + 1}
+                <Badge
+                  variant="outline"
+                  className={`text-[10px] px-1.5 h-4 ${
+                    trade.kind === "pick_upgrade" ? "border-amber-500/50 text-amber-500" : ""
+                  }`}
+                >
+                  {trade.kind === "pick_upgrade"
+                    ? (trade.toRound < trade.fromRound ? "PASS · Upgrade" : "PASS · Downgrade")
+                    : `Trade ${idx + 1}`}
                 </Badge>
                 <span className="text-[10px] text-muted-foreground">
                   {trade.date ? (typeof trade.date === "string" ? trade.date.slice(0, 10) : String(trade.date)) : ""}
                 </span>
               </div>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                <span className="font-medium text-foreground">{trade.from}</span>
-                {" → "}
-                <span className="font-medium text-foreground">{trade.to}</span>
-              </p>
-              {trade.details && (
-                <p className="text-[11px] text-muted-foreground">{trade.details}</p>
+              {trade.kind === "pick_upgrade" ? (
+                <>
+                  <p className="text-xs leading-relaxed">
+                    <span className="font-medium text-amber-500">
+                      {trade.fromYear || ""} R{trade.fromRound} → {trade.toYear || trade.fromYear || ""} R{trade.toRound}
+                    </span>
+                  </p>
+                  {trade.trigger && (
+                    <p className="text-[11px] text-muted-foreground italic">
+                      Trigger: {trade.trigger}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    <span className="font-medium text-foreground">{trade.from}</span>
+                    {" → "}
+                    <span className="font-medium text-foreground">{trade.to}</span>
+                  </p>
+                  {trade.details && (
+                    <p className="text-[11px] text-muted-foreground">{trade.details}</p>
+                  )}
+                </>
               )}
             </div>
           ))}
@@ -241,8 +270,14 @@ export default function DraftBoardPage() {
         step: i + 1,
         from: teamIdToAbbr[h.from_team_id] || h.from_team_name,
         to: teamIdToAbbr[h.to_team_id] || h.to_team_name,
-        date: h.traded_at,
+        date: h.traded_at || h.applied_at,
         tradeId: h.trade_id,
+        kind: h.kind || "trade",
+        fromRound: h.from_round,
+        toRound: h.to_round,
+        fromYear: h.from_year,
+        toYear: h.to_year,
+        trigger: h.trigger,
       }));
       data[origAbbr][p.round] = {
         currentOwner: teamIdToAbbr[p.current_team_id] || origAbbr,

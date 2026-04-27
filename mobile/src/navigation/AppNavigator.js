@@ -22,6 +22,8 @@ import ActivityFeedScreen from '../screens/ActivityFeedScreen';
 import NotificationsScreen from '../screens/NotificationsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import MatchupScreen from '../screens/MatchupScreen';
+import ChatScreen from '../screens/ChatScreen';
+import { useChatUnread } from '../hooks/useChatUnread';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
@@ -82,6 +84,17 @@ function LeagueStack() {
   );
 }
 
+function ChatStack() {
+  return (
+    <Stack.Navigator screenOptions={{
+      headerStyle: { backgroundColor: '#141414' },
+      headerTintColor: '#fff',
+    }}>
+      <Stack.Screen name="ChatHome" component={ChatScreen} options={{ title: 'League Chat' }} />
+    </Stack.Navigator>
+  );
+}
+
 function ActivityStack() {
   return (
     <Stack.Navigator screenOptions={{
@@ -95,6 +108,7 @@ function ActivityStack() {
 }
 
 function MainTabs() {
+  const { count: chatUnread } = useChatUnread();
   return (
     <Tab.Navigator screenOptions={{
       headerShown: false,
@@ -105,6 +119,15 @@ function MainTabs() {
       <Tab.Screen name="Home" component={HomeStack} options={{ tabBarLabel: 'Home' }} />
       <Tab.Screen name="Players" component={PlayersStack} options={{ tabBarLabel: 'Players' }} />
       <Tab.Screen name="League" component={LeagueStack} options={{ tabBarLabel: 'League' }} />
+      <Tab.Screen
+        name="Chat"
+        component={ChatStack}
+        options={{
+          tabBarLabel: 'Chat',
+          tabBarBadge: chatUnread > 0 ? (chatUnread > 99 ? '99+' : chatUnread) : undefined,
+          tabBarBadgeStyle: { backgroundColor: '#FF3B5C', color: '#fff', fontSize: 10 },
+        }}
+      />
       <Tab.Screen name="Feed" component={ActivityStack} options={{ tabBarLabel: 'Activity' }} />
     </Tab.Navigator>
   );
