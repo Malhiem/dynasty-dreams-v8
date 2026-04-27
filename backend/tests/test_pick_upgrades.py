@@ -170,6 +170,88 @@ async def test_pick_upgrade_applies_when_championship_unlocks():
 
 
 @pytest.mark.asyncio
+async def test_pick_upgrade_with_player_condition_fires_on_threshold():
+    """Player-subject pick upgrade — uses a direct player_id (resolves from
+    DB regardless of trade side) and an always-true threshold to verify the
+    full eval path works end-to-end."""
+    from motor.motor_asyncio import AsyncIOMotorClient
+
+    db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+    async with AsyncClient(base_url=BASE, timeout=30) as c:
+        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        h = {"Authorization": f"Bearer {tok}"}
+        leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
+        lid = leagues[0]["id"]
+
+        teams = await db.teams.find({"league_id": lid}).to_list(20)
+        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        partner = next(t for t in teams if t["_id"] != my["_id"])
+
+        # 2nd-rounder owned by partner — they send it to me
+        partner_pick = await db.draft_picks.find_one({
+            "league_id": lid, "current_team_id": str(partner["_id"]), "round": 2,
+        })
+        if not partner_pick:
+            pytest.skip("No 2nd-round pick on partner")
+        partner_pick_id = str(partner_pick["_id"])
+        original_round = partner_pick["round"]
+        original_year = partner_pick["year"]
+
+        my_pick = await db.draft_picks.find_one({
+            "league_id": lid, "current_team_id": str(my["_id"]),
+        })
+        if not my_pick:
+            pytest.skip("No pick on my team")
+
+        # Find a player I own (will be the subject of the player condition)
+        my_roster = my.get("roster") or []
+        if not my_roster:
+            pytest.skip("My team has no roster")
+        subject_player_id = my_roster[0]
+
+        payload = {
+            "league_id": lid,
+            "target_team_id": str(partner["_id"]),
+            "assets_offered": [{"asset_type": "pick", "pick_id": str(my_pick["_id"])}],
+            "assets_requested": [{"asset_type": "pick", "pick_id": partner_pick_id}],
+            "pick_upgrades": [{
+                "pick_id": partner_pick_id,
+                "new_round": 1,
+                "condition": {
+                    "subject_type": "player",
+                    "subject": "offered",
+                    "player_id": subject_player_id,
+                    "metric": "games_played",
+                    "operator": "gte",
+                    "threshold": 0,  # always true
+                    "description": "If subject player has any games played",
+                },
+            }],
+        }
+        r = await c.post("/api/trades", json=payload, headers=h)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
+
+        try:
+            r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
+            assert r.status_code == 200, r.text
+            # Player-condition triggers immediately during _apply_pick_upgrades
+            pick = await db.draft_picks.find_one({"_id": ObjectId(partner_pick_id)})
+            assert pick["round"] == 1, f"Expected R1 after player-condition trigger, got R{pick['round']}"
+        finally:
+            await db.draft_picks.update_one(
+                {"_id": ObjectId(partner_pick_id)},
+                {"$set": {
+                    "round": original_round, "year": original_year,
+                    "current_team_id": str(partner["_id"]),
+                    "current_team_name": partner.get("name"),
+                }},
+            )
+
+
+@pytest.mark.asyncio
 async def test_pick_downgrade_clause_supported():
     """Round can also INCREASE (downgrade) — e.g., 'if my team misses
     playoffs, my 1st becomes a 2nd'."""

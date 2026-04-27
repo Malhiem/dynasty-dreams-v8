@@ -3303,16 +3303,20 @@ async def _evaluate_conditions(trade: dict) -> dict:
                 elif metric == "won_consolation":
                     actual = 1.0 if team.get("consolation_won_at") else 0.0
         else:
-            # Player-level
+            # Player-level. If `player_id` is set explicitly we look the player
+            # up directly (works regardless of which side of the trade they're
+            # on). Otherwise we scan the assets on `subject` side and take the
+            # best metric among them.
             specific_pid = cond.get("player_id")
             candidate_pids = []
-            for a in side_assets:
-                if a.get("asset_type") != "player":
-                    continue
-                if specific_pid and a.get("player_id") != specific_pid:
-                    continue
-                if a.get("player_id"):
-                    candidate_pids.append(a["player_id"])
+            if specific_pid:
+                candidate_pids = [specific_pid]
+            else:
+                for a in side_assets:
+                    if a.get("asset_type") != "player":
+                        continue
+                    if a.get("player_id"):
+                        candidate_pids.append(a["player_id"])
             best = 0.0
             for pid in candidate_pids:
                 try:
