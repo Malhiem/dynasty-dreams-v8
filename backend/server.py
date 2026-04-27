@@ -2794,15 +2794,32 @@ async def get_activity_feed(league_id: str, event_type: Optional[str] = None, li
 
 # ─── League transactions (normalized adds/drops/waivers/trades) ─
 @api_router.get("/leagues/{league_id}/transactions")
-async def get_league_transactions(league_id: str, limit: int = 30):
+async def get_league_transactions(
+    league_id: str, limit: int = 30,
+    since: Optional[str] = None, team_id: Optional[str] = None,
+):
     """Returns the most recent player transactions for a league in a normalized shape:
     [{type, description, team_id?, team_name?, player_name?, created_at, raw}, ...]
     Types: roster_add, roster_drop, waiver_won, trade_executed.
+
+    Filters:
+      - `since`: ISO date string (e.g. "2026-04-01") — only events on/after this date.
+      - `team_id`: filter by metadata.team_id (the actor team).
     """
-    cursor = db.activity_feed.find({
+    query: dict = {
         "league_id": league_id,
         "event_type": {"$in": ["roster_add", "roster_drop", "waiver_won", "waiver_lost", "trade_executed"]},
-    }).sort("created_at", -1).limit(max(1, min(limit, 100)))
+    }
+    if since:
+        try:
+            from datetime import datetime as _dt
+            cutoff = _dt.fromisoformat(since.replace("Z", "+00:00"))
+            query["created_at"] = {"$gte": cutoff}
+        except Exception:
+            pass
+    if team_id:
+        query["metadata.team_id"] = team_id
+    cursor = db.activity_feed.find(query).sort("created_at", -1).limit(max(1, min(limit, 500)))
     items = await cursor.to_list(limit)
     out = []
     for it in items:

@@ -37,6 +37,8 @@ export default function LeagueDetailPage() {
   const [txnsLoading, setTxnsLoading] = useState(false);
   const [topBlock, setTopBlock] = useState([]);
   const [blockTotal, setBlockTotal] = useState(0);
+  const [txnSinceKey, setTxnSinceKey] = useState("latest20");
+  const [txnTeamId, setTxnTeamId] = useState("");
 
   useEffect(() => {
     const fetchData = async () => {
@@ -77,8 +79,25 @@ export default function LeagueDetailPage() {
     if (!id) return;
     let cancelled = false;
     setTxnsLoading(true);
+
+    // Build txn query based on filters
+    const txnParams = new URLSearchParams();
+    if (txnSinceKey === "latest20") {
+      txnParams.set("limit", "20");
+    } else {
+      txnParams.set("limit", "200");
+      const now = new Date();
+      const since = new Date(now);
+      if (txnSinceKey === "1w") since.setDate(now.getDate() - 7);
+      else if (txnSinceKey === "1mo") since.setMonth(now.getMonth() - 1);
+      else if (txnSinceKey === "3mo") since.setMonth(now.getMonth() - 3);
+      else if (txnSinceKey === "season") since.setMonth(now.getMonth() - 12);
+      txnParams.set("since", since.toISOString());
+    }
+    if (txnTeamId) txnParams.set("team_id", txnTeamId);
+
     Promise.all([
-      api.get(`/leagues/${id}/transactions?limit=20`).catch(() => ({ data: { transactions: [] } })),
+      api.get(`/leagues/${id}/transactions?${txnParams.toString()}`).catch(() => ({ data: { transactions: [] } })),
       api.get(`/leagues/${id}/pending-trades`).catch(() => ({ data: { pending_trades: [] } })),
       api.get(`/leagues/${id}/trade-block-summary?limit=8`).catch(() => ({ data: { items: [], count: 0 } })),
     ])
@@ -91,7 +110,7 @@ export default function LeagueDetailPage() {
       })
       .finally(() => { if (!cancelled) setTxnsLoading(false); });
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, txnSinceKey, txnTeamId]);
 
   const handleJoin = async () => {
     if (!teamName.trim()) return;
@@ -222,30 +241,6 @@ export default function LeagueDetailPage() {
             </div>
           </div>
 
-          {/* League Info Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6 pt-6 border-t border-white/10">
-            <div>
-              <p className="text-[#A1A1AA] text-sm">Teams</p>
-              <p className="text-white font-semibold text-lg">
-                {league.current_teams}/{league.max_teams}
-              </p>
-            </div>
-            <div>
-              <p className="text-[#A1A1AA] text-sm">Draft Type</p>
-              <p className="text-white font-semibold text-lg capitalize">{league.draft_type}</p>
-            </div>
-            <div>
-              <p className="text-[#A1A1AA] text-sm">Entry Fee</p>
-              <p className="text-white font-semibold text-lg">
-                {league.entry_fee ? `$${league.entry_fee.toFixed(2)}` : 'Free'}
-              </p>
-            </div>
-            <div>
-              <p className="text-[#A1A1AA] text-sm">Commissioner</p>
-              <p className="text-white font-semibold text-lg">{league.commissioner_name}</p>
-            </div>
-          </div>
-
           {/* Invite Code for Private Leagues */}
           {isCommissioner && league.is_private && league.invite_code && (
             <div className="mt-6 p-4 bg-[#0A0A0A] rounded flex items-center justify-between">
@@ -260,99 +255,128 @@ export default function LeagueDetailPage() {
           )}
         </div>
 
-        {/* Matchups (H2H only) */}
-        {isH2H && (
-          <div className="mb-8" data-testid="league-matchups-section">
-            <div className="flex items-baseline justify-between mb-4">
-              <h2 className="font-heading text-2xl font-bold text-white">
-                MATCHUPS{currentWeek ? ` — WEEK ${currentWeek}` : ''}
-              </h2>
-              {weekMatchups.length > 0 && (
-                <span className="text-[#A1A1AA] text-sm">{weekMatchups.length} game{weekMatchups.length === 1 ? '' : 's'}</span>
-              )}
-            </div>
-            {matchupsLoading ? (
-              <div className="surface p-6 text-center text-[#A1A1AA]">Loading matchups…</div>
-            ) : weekMatchups.length === 0 ? (
-              <div className="surface p-6 text-center text-[#A1A1AA]">
-                No scheduled matchups. Commissioner can generate a schedule from <span className="text-white">League Administration</span>.
+        {/* Matchups + Standings (side-by-side on desktop) */}
+        {isH2H ? (
+          <div className="mb-8 grid grid-cols-1 lg:grid-cols-[1fr,360px] gap-6" data-testid="league-matchups-section">
+            {/* Matchups column */}
+            <div>
+              <div className="flex items-baseline justify-between mb-4">
+                <h2 className="font-heading text-2xl font-bold text-white">
+                  MATCHUPS{currentWeek ? ` — WEEK ${currentWeek}` : ''}
+                </h2>
+                {weekMatchups.length > 0 && (
+                  <span className="text-[#A1A1AA] text-sm">{weekMatchups.length} game{weekMatchups.length === 1 ? '' : 's'}</span>
+                )}
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {weekMatchups.map(m => {
-                  const home = teamById[m.home_team_id] || {};
-                  const away = teamById[m.away_team_id] || {};
-                  const homeRec = `${home.wins || 0}-${home.losses || 0}-${home.ties || 0}`;
-                  const awayRec = `${away.wins || 0}-${away.losses || 0}-${away.ties || 0}`;
-                  const homeWon = m.winner === m.home_team_id;
-                  const awayWon = m.winner === m.away_team_id;
-                  const isComplete = m.status === 'completed';
-                  const homeScore = (typeof m.home_score === 'number' ? m.home_score : 0).toFixed(1);
-                  const awayScore = (typeof m.away_score === 'number' ? m.away_score : 0).toFixed(1);
-                  return (
-                    <div
-                      key={m._id}
-                      className="surface p-4 hover:border-[#00D2FF]/40 transition-colors"
-                      data-testid={`league-matchup-card-${m._id}`}
-                    >
-                      {/* Home */}
-                      <div className={`flex items-center justify-between gap-3 ${homeWon ? 'text-[#00D2FF]' : 'text-white'}`}>
-                        <Link to={`/teams/${m.home_team_id}`} className="flex-1 min-w-0 hover:underline">
-                          <div className="font-semibold truncate" data-testid={`matchup-home-name-${m._id}`}>
-                            {m.home_team_name}
+              {matchupsLoading ? (
+                <div className="surface p-6 text-center text-[#A1A1AA]">Loading matchups…</div>
+              ) : weekMatchups.length === 0 ? (
+                <div className="surface p-6 text-center text-[#A1A1AA]">
+                  No scheduled matchups. Commissioner can generate a schedule from <span className="text-white">League Administration</span>.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {weekMatchups.map(m => {
+                    const home = teamById[m.home_team_id] || {};
+                    const away = teamById[m.away_team_id] || {};
+                    // Record (regular season) or seed (playoffs)
+                    const fmtRecord = (t) => m.bracket
+                      ? (t.playoff_seed ? `#${t.playoff_seed} seed` : '—')
+                      : `${t.wins || 0}-${t.losses || 0}-${t.ties || 0}`;
+                    const homeRec = fmtRecord(home);
+                    const awayRec = fmtRecord(away);
+                    const homeWon = m.winner === m.home_team_id;
+                    const awayWon = m.winner === m.away_team_id;
+                    const isComplete = m.status === 'completed';
+                    const homeScore = (typeof m.home_score === 'number' ? m.home_score : 0).toFixed(1);
+                    const awayScore = (typeof m.away_score === 'number' ? m.away_score : 0).toFixed(1);
+                    const TeamRow = ({ t, name, rec, score, won, side }) => (
+                      <Link to={`/teams/${m[`${side}_team_id`]}`} className="flex items-center gap-3 group">
+                        {t.logo_url ? (
+                          <img src={t.logo_url} alt={name} className="h-9 w-9 rounded-md object-cover shrink-0" />
+                        ) : (
+                          <div className="h-9 w-9 rounded-md bg-[#00D2FF]/15 text-[#00D2FF] font-bold flex items-center justify-center shrink-0">
+                            {(name || '?').split(/\s+/).slice(0, 2).map(s => s[0]).join('').toUpperCase()}
                           </div>
-                          <div className="text-xs text-[#A1A1AA]" data-testid={`matchup-home-record-${m._id}`}>
-                            {homeRec}{home.owner_name ? ` · ${home.owner_name}` : ''}
-                          </div>
-                        </Link>
-                        <div
-                          className={`text-2xl font-black tabular-nums ${homeWon ? 'text-[#00D2FF]' : 'text-white'}`}
-                          data-testid={`matchup-home-score-${m._id}`}
-                        >
-                          {homeScore}
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className={`font-semibold truncate group-hover:underline ${won ? 'text-[#00D2FF]' : 'text-white'}`} data-testid={`matchup-${side}-name-${m._id}`}>{name}</div>
+                          <div className="text-xs text-[#A1A1AA]" data-testid={`matchup-${side}-record-${m._id}`}>{rec}</div>
                         </div>
-                      </div>
-
-                      <div className="my-2 flex items-center gap-2">
-                        <div className="flex-1 h-px bg-white/10" />
-                        <span className="text-[10px] uppercase tracking-wider text-[#52525B]">vs</span>
-                        <div className="flex-1 h-px bg-white/10" />
-                      </div>
-
-                      {/* Away */}
-                      <div className={`flex items-center justify-between gap-3 ${awayWon ? 'text-[#00D2FF]' : 'text-white'}`}>
-                        <Link to={`/teams/${m.away_team_id}`} className="flex-1 min-w-0 hover:underline">
-                          <div className="font-semibold truncate" data-testid={`matchup-away-name-${m._id}`}>
-                            {m.away_team_name}
-                          </div>
-                          <div className="text-xs text-[#A1A1AA]" data-testid={`matchup-away-record-${m._id}`}>
-                            {awayRec}{away.owner_name ? ` · ${away.owner_name}` : ''}
-                          </div>
-                        </Link>
-                        <div
-                          className={`text-2xl font-black tabular-nums ${awayWon ? 'text-[#00D2FF]' : 'text-white'}`}
-                          data-testid={`matchup-away-score-${m._id}`}
-                        >
-                          {awayScore}
+                        <div className={`text-2xl font-black tabular-nums ${won ? 'text-[#00D2FF]' : 'text-white'}`} data-testid={`matchup-${side}-score-${m._id}`}>{score}</div>
+                      </Link>
+                    );
+                    return (
+                      <div
+                        key={m._id}
+                        className="surface p-4 hover:border-[#00D2FF]/40 transition-colors"
+                        data-testid={`league-matchup-card-${m._id}`}
+                      >
+                        <TeamRow t={home} name={m.home_team_name} rec={homeRec} score={homeScore} won={homeWon} side="home" />
+                        <div className="my-2 flex items-center gap-2">
+                          <div className="flex-1 h-px bg-white/10" />
+                          <span className="text-[10px] uppercase tracking-wider text-[#52525B]">vs</span>
+                          <div className="flex-1 h-px bg-white/10" />
                         </div>
-                      </div>
-
-                      <div className="mt-3 flex items-center justify-between">
-                        <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                          isComplete ? 'bg-emerald-500/15 text-emerald-400' : 'bg-white/5 text-[#A1A1AA]'
-                        }`}>
-                          {isComplete ? 'FINAL' : 'SCHEDULED'}
-                        </span>
-                        {m.bracket && (
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
-                            {m.is_final ? '🏆 ' : ''}{(m.bracket || '').replace(/_/g, ' ')}
-                          </span>
+                        <TeamRow t={away} name={m.away_team_name} rec={awayRec} score={awayScore} won={awayWon} side="away" />
+                        {(isComplete || m.bracket) && (
+                          <div className="mt-3 flex items-center justify-between">
+                            {isComplete ? (
+                              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400">FINAL</span>
+                            ) : <span />}
+                            {m.bracket && (
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
+                                {m.is_final ? '🏆 ' : ''}{(m.bracket || '').replace(/_/g, ' ')}
+                              </span>
+                            )}
+                          </div>
                         )}
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Standings rail */}
+            <div>
+              <h2 className="font-heading text-2xl font-bold text-white mb-4">STANDINGS</h2>
+              {standings.length === 0 ? (
+                <div className="surface p-6 text-center text-[#A1A1AA]">
+                  <Users size={32} className="text-[#52525B] mx-auto mb-2" />
+                  No teams yet.
+                </div>
+              ) : (
+                <div className="surface divide-y divide-white/5" data-testid="standings-table">
+                  {standings.map((s, i) => (
+                    <Link
+                      key={s.team_id}
+                      to={`/teams/${s.team_id}`}
+                      className="px-3 py-2 flex items-center gap-3 hover:bg-white/[0.02] transition-colors"
+                      data-testid={`standings-row-${s.team_id}`}
+                    >
+                      <span className="text-xs font-bold text-[#00D2FF] w-5 tabular-nums">{i + 1}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm text-white truncate">{s.team_name}</div>
+                        <div className="text-[10px] text-[#A1A1AA] tabular-nums">{s.wins}-{s.losses}-{s.ties} · {s.points_for.toFixed(0)} PF</div>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* Non-H2H: just standings */
+          <div className="mb-8">
+            <h2 className="font-heading text-2xl font-bold text-white mb-4">STANDINGS</h2>
+            {standings.length === 0 ? (
+              <div className="surface p-8 text-center">
+                <Users size={48} className="text-[#52525B] mx-auto mb-4" />
+                <p className="text-[#A1A1AA]">No teams yet. Be the first to join!</p>
               </div>
+            ) : (
+              <DataTable columns={standingsColumns} data={standings} testId="standings-table" />
             )}
           </div>
         )}
@@ -569,17 +593,42 @@ export default function LeagueDetailPage() {
 
         {/* Recent Transactions */}
         <div className="mb-8" data-testid="league-transactions-section">
-          <div className="flex items-baseline justify-between mb-4">
+          <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
             <h2 className="font-heading text-2xl font-bold text-white">RECENT TRANSACTIONS</h2>
-            {!txnsLoading && transactions.length > 0 && (
-              <span className="text-[#A1A1AA] text-sm">last {transactions.length}</span>
-            )}
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <select
+                value={txnSinceKey}
+                onChange={(e) => setTxnSinceKey(e.target.value)}
+                data-testid="txn-filter-since"
+                className="bg-[#0A0A0A] border border-white/10 rounded px-2 py-1 text-white"
+              >
+                <option value="latest20">Last 20 moves</option>
+                <option value="1w">Past 1 week</option>
+                <option value="1mo">Past 1 month</option>
+                <option value="3mo">Past 3 months</option>
+                <option value="season">This season</option>
+              </select>
+              <select
+                value={txnTeamId}
+                onChange={(e) => setTxnTeamId(e.target.value)}
+                data-testid="txn-filter-team"
+                className="bg-[#0A0A0A] border border-white/10 rounded px-2 py-1 text-white max-w-[180px]"
+              >
+                <option value="">All teams</option>
+                {teams.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              {!txnsLoading && transactions.length > 0 && (
+                <span className="text-[#A1A1AA]">{transactions.length} shown</span>
+              )}
+            </div>
           </div>
           {txnsLoading ? (
             <div className="surface p-6 text-center text-[#A1A1AA]">Loading transactions…</div>
           ) : transactions.length === 0 ? (
             <div className="surface p-6 text-center text-[#A1A1AA]" data-testid="league-transactions-empty">
-              No transactions yet. Add or drop a player, win a waiver claim, or accept a trade — all activity shows up here.
+              No transactions for this filter. Try a wider time range or a different team.
             </div>
           ) : (
             <div className="surface divide-y divide-white/5" data-testid="league-transactions-list">
@@ -622,19 +671,6 @@ export default function LeagueDetailPage() {
                 );
               })}
             </div>
-          )}
-        </div>
-
-        {/* Standings */}
-        <div className="mb-8">
-          <h2 className="font-heading text-2xl font-bold text-white mb-4">STANDINGS</h2>
-          {standings.length === 0 ? (
-            <div className="surface p-8 text-center">
-              <Users size={48} className="text-[#52525B] mx-auto mb-4" />
-              <p className="text-[#A1A1AA]">No teams yet. Be the first to join!</p>
-            </div>
-          ) : (
-            <DataTable columns={standingsColumns} data={standings} testId="standings-table" />
           )}
         </div>
 

@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 33 — verified League Home polish, Matchup/Live tab nav, Setup card on /scoring, and new /api/leagues/{id}/transactions filters (limit, since, team_id). 6/6 backend pytest pass. All frontend flows pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration33_txn_filters.py",
+    "/app/test_reports/pytest/iteration33.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is ~4900 lines — extracting /users and /leagues routers (deferred per user note) is strongly recommended for maintainability.",
+    "When user picks 'Past 1 week' the UI fetches limit=200 and caps there. If a league has >200 moves/week, older events in the window are silently truncated. Consider paging or a friendlier 'showing most recent 200' indicator.",
+    "WebSocket connection to wss://.../api/socket.io keeps failing with warnings in console on every page (non-blocking but noisy).",
+    "Frontend sends `since=latest20` synthetic key through a client-side switch — mapping logic is ok, but a dedicated `preset` param on backend would make it cleaner."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration33_txn_filters.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! ; League 69e46af167999bfb85c39628 (Ice Kings Head-to-Head)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Validated items: (1) GET /api/leagues/{id}/transactions default limit=30 old-shape regression OK. (2) limit=20 caps results. (3) since=ISO filter drops older events (verified >= cutoff). (4) team_id filter only returns events tagged to that team. (5) Combined since+team_id+limit works. (6) Empty Zarek's<->Ice Breakers trades = 0 (47 deletions confirmed). (7) League Home header no longer shows Teams/Draft Type/Entry Fee/Commissioner 4-stat grid. (8) Matchups (x=448,w=1280) render side-by-side with Standings (x=1368,w=360). (9) Matchup cards show logo+name+W-L-T+score, no SCHEDULED badge, no 'Ice Kings Head-to-Head' label inside the card (the only occurrence is the page header banner — expected). 6 home and 6 away testids present. (10) txn-filter-since dropdown has 5 options (Last 20 moves, Past 1 week, 1 month, 3 months, This season); txn-filter-team has 13 options (All teams + 12 teams). Switching to 'latest20' shows exactly 20 rows. (11) Setup card on /scoring Overview shows 12/12, snake, $50.00, Admin. (12) /matchup and /live both show top tab-nav; clicking cross-navigates correctly (/live <-> /matchup).",
+  "rca of the issue": "N/A — no regressions. Initial pytest flagged 1 'empty pending trade' but RCA showed the remaining trade is a 3-party trade (Zarek/Power Play/Slapshot Snipers) with real Roope Hintz asset using `sends` schema — it is NOT a Zarek<->Ice Breakers empty trade. Test was tightened to only flag 2-party Zarek<->IceBreakers empty trades; now passes cleanly."
+}

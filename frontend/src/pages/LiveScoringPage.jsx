@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +34,7 @@ export default function LiveScoringPage() {
   const [currentMatchup, setCurrentMatchup] = useState(null);
   const [selectedLeague, setSelectedLeague] = useState(null);
   const { myTeam } = useActiveLeague();
+  const navigate = useNavigate();
 
   useGlobalSocketEvent('live_scoring_update', (payload) => {
     setSummary(payload);
@@ -147,6 +148,24 @@ export default function LiveScoringPage() {
   return (
     <AppLayout>
       <div data-testid="live-scoring-page" className="max-w-7xl mx-auto">
+        {/* Top-level page tab nav: Matchup vs Live Scoring */}
+        <div className="mb-4 flex items-center gap-2" data-testid="live-page-tabs">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate("/matchup")}
+            data-testid="page-tab-matchup"
+          >
+            My Matchup
+          </Button>
+          <Button
+            size="sm"
+            data-testid="page-tab-live-scoring"
+            className="bg-[#00D2FF] text-black hover:bg-[#33DBFF]"
+          >
+            Live Scoring (League + NHL)
+          </Button>
+        </div>
         <div className="flex items-start justify-between flex-wrap gap-4 mb-8">
           <div>
             <div className="flex items-center gap-3 mb-2">

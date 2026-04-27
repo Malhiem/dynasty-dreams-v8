@@ -253,6 +253,44 @@ const Scoring = () => {
 
           {/* OVERVIEW TAB */}
           <TabsContent value="overview" className="space-y-6">
+            {/* Setup card — moved from League Home header */}
+            <Card className="bg-card border-border" data-testid="league-info-setup-card">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Shield className="h-5 w-5 text-primary" />
+                  Setup
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <p className="text-xs text-muted-foreground">Teams</p>
+                    <p className="text-lg font-semibold" data-testid="setup-teams">
+                      {league ? `${league.current_teams ?? "—"}/${league.max_teams ?? "—"}` : "—"}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <p className="text-xs text-muted-foreground">Draft Type</p>
+                    <p className="text-lg font-semibold capitalize" data-testid="setup-draft-type">
+                      {(league as any)?.draft_type || "—"}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <p className="text-xs text-muted-foreground">Entry Fee</p>
+                    <p className="text-lg font-semibold" data-testid="setup-entry-fee">
+                      {(league as any)?.entry_fee ? `$${Number((league as any).entry_fee).toFixed(2)}` : "Free"}
+                    </p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-secondary/30">
+                    <p className="text-xs text-muted-foreground">Commissioner</p>
+                    <p className="text-lg font-semibold" data-testid="setup-commissioner">
+                      {(league as any)?.commissioner_name || "—"}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
             <Card className="bg-card border-border">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import TeamLogo from "@/lovable/components/TeamLogo";
 import TeamLink from "@/lovable/components/TeamLink";
+import { useNavigate } from "react-router-dom";
 
 interface MatchupPlayer {
   id: number | string;
@@ -70,6 +71,7 @@ const DEFAULT_OPP_PLAYERS: MatchupPlayer[] = [
 type ViewMode = "totals" | "daily";
 
 const Matchup = () => {
+  const navigate = useNavigate();
   const [viewMode, setViewMode] = useState<ViewMode>("totals");
   const [selectedDayIndex, setSelectedDayIndex] = useState(3); // Thu 2/20 (today)
 
@@ -162,6 +164,25 @@ const Matchup = () => {
   return (
     <AppLayout>
       <div className="container py-8">
+        {/* Top-level page tab nav: Matchup vs Live Scoring */}
+        <div className="mb-4 flex items-center gap-2" data-testid="matchup-page-tabs">
+          <Button
+            size="sm"
+            variant="default"
+            data-testid="page-tab-matchup"
+            className="bg-primary text-primary-foreground"
+          >
+            My Matchup
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => navigate("/live")}
+            data-testid="page-tab-live-scoring"
+          >
+            Live Scoring (League + NHL)
+          </Button>
+        </div>
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1 space-y-6 min-w-0">
         {/* View Toggle */}
