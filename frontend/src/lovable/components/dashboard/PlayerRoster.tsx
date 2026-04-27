@@ -91,7 +91,7 @@ interface Player {
   schedule: PlayerGame[];
 }
 
-type RosterSection = "starting" | "bench" | "ir" | "minors";
+type RosterSection = "starting" | "bench" | "ir" | "minors" | "goalies" | "goalies_minors";
 
 type ViewFilter =
   | "season"
@@ -339,7 +339,9 @@ const sectionConfig: Record<RosterSection, { label: string; color: string; borde
   starting: { label: "Starting Roster", color: "bg-primary/10", borderColor: "border-l-primary", maxSlots: LEAGUE_ROSTER_SLOTS.length },
   bench: { label: "Bench", color: "bg-accent/10", borderColor: "border-l-accent", maxSlots: 4 },
   ir: { label: "Injury Reserve", color: "bg-destructive/10", borderColor: "border-l-destructive", maxSlots: 3 },
-  minors: { label: "Minors", color: "bg-purple-500/10", borderColor: "border-l-purple-500", maxSlots: 5 },
+  minors: { label: "Minors Pool", color: "bg-purple-500/10", borderColor: "border-l-purple-500", maxSlots: 5 },
+  goalies: { label: "Goalies", color: "bg-teal-500/10", borderColor: "border-l-teal-500", maxSlots: 4 },
+  goalies_minors: { label: "Goalies — Minors Pool", color: "bg-teal-500/5", borderColor: "border-l-teal-700", maxSlots: 3 },
 };
 
 // ── Ineligibility Checks ──────────────────────────────
@@ -383,7 +385,7 @@ const getRosterViolations = (playerList: Player[]): { player: Player; reason: st
     }
   });
   // Check section over-limits
-  const sectionCounts: Record<RosterSection, number> = { starting: 0, bench: 0, ir: 0, minors: 0 };
+  const sectionCounts: Record<RosterSection, number> = { starting: 0, bench: 0, ir: 0, minors: 0, goalies: 0, goalies_minors: 0 };
   playerList.forEach(p => { sectionCounts[p.rosterSection]++; });
   if (sectionCounts.bench > sectionConfig.bench.maxSlots) {
     violations.push({ player: playerList.find(p => p.rosterSection === "bench")!, reason: `Bench over limit (${sectionCounts.bench}/${sectionConfig.bench.maxSlots})` });
@@ -436,7 +438,7 @@ const canOwnerFixViolations = (playerList: Player[]): boolean => {
   return false;
 };
 
-const sectionOrder: RosterSection[] = ["starting", "bench", "ir", "minors"];
+const sectionOrder: RosterSection[] = ["starting", "bench", "ir", "minors", "goalies", "goalies_minors"];
 
 
 

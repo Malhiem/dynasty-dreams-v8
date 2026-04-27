@@ -4020,6 +4020,7 @@ async def get_roster(team_id: str):
         raise HTTPException(status_code=404, detail="Team not found")
 
     roster_players = team.get("roster", [])
+    lineup = team.get("lineup") or {}
     players = []
     for pid in roster_players:
         player = await db.players.find_one({"_id": ObjectId(pid)})
@@ -4027,10 +4028,13 @@ async def get_roster(team_id: str):
             # Calculate fantasy points
             config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
             fpts = calculate_fantasy_points(player, config)
+            section_info = lineup.get(pid) or {}
+            section = (section_info.get("section") or "active").lower()
             players.append({
                 "player_id": str(player["_id"]),
                 "name": player["name"],
                 "position": player["position"],
+                "player_type": player.get("player_type") or ("goalie" if player.get("position") == "G" else "skater"),
                 "nhl_team": player.get("team", ""),
                 "team_name": player.get("team_name", ""),
                 "games_played": player.get("games_played", 0),
@@ -4043,10 +4047,15 @@ async def get_roster(team_id: str):
                 "power_play_points": player.get("power_play_points", 0),
                 "shots": player.get("shots", 0),
                 "wins": player.get("wins", 0),
+                "losses": player.get("losses", 0),
+                "saves": player.get("saves", 0),
+                "shots_against": player.get("shots_against", 0),
+                "goals_against": player.get("goals_against", 0),
                 "save_pct": player.get("save_pct", 0),
                 "goals_against_avg": player.get("goals_against_avg", 0),
                 "shutouts": player.get("shutouts", 0),
-                "fantasy_points": fpts
+                "fantasy_points": fpts,
+                "roster_section": section,
             })
 
     players.sort(key=lambda p: -(p.get("fantasy_points") or 0))
@@ -4215,22 +4224,41 @@ async def get_roster_detail(team_id: str):
                 continue
             if cand["position"] in elig:
                 cand["rosterSlotId"] = slot_id
-                cand["rosterSection"] = "starting"
+                # Goalies still occupy their roster slot but are routed to the
+                # dedicated "goalies" section so the Roster UI can render them
+                # in a separate card with goalie-only stat columns.
+                cand["rosterSection"] = "goalies" if cand.get("is_goalie") else "starting"
                 assigned_ids.add(cand["id"])
                 break
 
-    # Put remaining into bench / minors
+    # Put remaining into bench / minors / goalies / goalies_minors
     for cand in enriched:
         if cand["id"] in assigned_ids:
             continue
         cand["rosterSlotId"] = None
-        # Mark as bench; overflow goes to minors
-        bench_count = sum(1 for c in enriched if c.get("rosterSection") == "bench")
-        if bench_count < 6:
-            cand["rosterSection"] = "bench"
+        if cand.get("is_goalie"):
+            # Spillover goalies → goalies section if there's room (max 4),
+            # else goalies_minors pool.
+            goalie_count = sum(1 for c in enriched if c.get("rosterSection") == "goalies")
+            cand["rosterSection"] = "goalies" if goalie_count < 4 else "goalies_minors"
         else:
-            cand["rosterSection"] = "minors"
+            bench_count = sum(1 for c in enriched if c.get("rosterSection") == "bench")
+            if bench_count < 6:
+                cand["rosterSection"] = "bench"
+            else:
+                cand["rosterSection"] = "minors"
         assigned_ids.add(cand["id"])
+
+    # Honor team.lineup overrides (commissioner-set sections — minors, ir, etc.)
+    lineup = team.get("lineup") or {}
+    for cand in enriched:
+        ln = lineup.get(cand["id"])
+        if ln and ln.get("section"):
+            sec = ln["section"].lower()
+            if sec == "minors":
+                cand["rosterSection"] = "goalies_minors" if cand.get("is_goalie") else "minors"
+            elif sec == "ir":
+                cand["rosterSection"] = "ir"
 
     total_fpts = round(sum(p["fantasy_points"] for p in enriched), 2)
     total_live = round(sum(p["live"]["fpts"] for p in enriched), 2)

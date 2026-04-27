@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 35 — verified 4 of 4 work items. (1) Recent Transactions timestamps now show seconds (e.g. 'Apr 27, 5:32:20 PM', 'Apr 27, 2:38:13 PM') for both single rows (data-testid='league-transaction-time-{id}') and grouped rows (data-testid='league-transaction-group-time-{i}'). (2) Grouped roster moves collapse correctly: a 9-drop window by Zarek's Frozen renders as a SINGLE row 'DROP · Zarek's Frozen drops Kris Letang, Tony DeAngelo, Frank Nazar, Vincent Trocheck, Mason McTavish, Casey Mittelstadt, Filip Hronek, Vince Dunn, Mikael Granlund' under data-testid='league-transaction-group-0-roster_drop' (no team-name repetition, comma-separated player list). (4) Team page (/team) renders all 6 sections in the correct order: STARTING ROSTER → BENCH (6/4) → INJURY RESERVE (0/3) → MINORS POOL (0/5) → GOALIES (2/4) → GOALIES — MINORS POOL (0/3); Hellebuyck + Vejmelka classified into the Goalies section. Backend 6/6 pytest pass: GET /api/roster/{id}/detail classifies goalies into rosterSection ∈ {goalies, goalies_minors} and skaters retain {starting,bench,minors,ir}; GET /api/roster/{id} now returns saves, goals_against, losses, shots_against alongside wins/save_pct, plus player_type and roster_section. CRITICAL ISSUE: feature #3 (sticky 'Add Player → /waivers' toast on drop with open slot) is NOT functionally delivered — RosterPage.jsx where the new toast lives is not mounted in App.js (the Rosters sidebar link routes to /roster → <LovableTeam/> → Team.tsx, which uses its OWN drop confirmation toast 'drop-toast-{id}' without any 'Add Player' CTA navigating to /waivers). User will never see the sticky 'drop-add-player-toast' on drop.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "RosterPage.jsx (orphaned)",
+        "issue": "New sticky drop toast (data-testid='drop-add-player-toast' with 'drop-toast-add-player-btn' navigating to /waivers) lives in /app/frontend/src/pages/RosterPage.jsx but this component is NEVER imported in App.js. Route /roster is mapped to LovableTeam (Team.tsx) which has its own drop confirmation toast (data-testid='drop-toast-{playerId}') and does NOT show an Add Player CTA / does not navigate to /waivers when an open slot exists. Feature #3 is dead code.",
+        "selector": "[data-testid='drop-add-player-toast']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Drop player → open-slot sticky toast → Add Player → /waivers",
+        "issue": "End-to-end flow not exercisable from any user-reachable page. Need to either (a) port the sticky-toast logic from RosterPage.jsx into Team.tsx's handleDropPlayer (after successful POST /roster/{id}/drop, check open slots and fire toast.custom with sticky duration:Infinity + Add Player button → navigate('/waivers')), OR (b) mount RosterPage.jsx at a distinct route and update the Rosters sidebar link.",
+        "affected_selectors": ["[data-testid='drop-add-player-toast']", "[data-testid='drop-toast-add-player-btn']", "[data-testid='drop-toast-dismiss']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration35_goalies_txns.py",
+    "/app/test_reports/pytest/iteration35.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Port the sticky 'drop-add-player-toast' / 'drop-toast-add-player-btn' (→ /waivers) / 'drop-toast-dismiss' logic from /app/frontend/src/pages/RosterPage.jsx into the post-drop success branch of handleDropPlayer in /app/frontend/src/lovable/pages/Team.tsx (around line 365 after `await api.post(/roster/{selectedTeamId}/drop ...)` succeeds). Compute openSlots = max(0, league.roster_spots - newRosterCount) and fire the sticky toast when > 0. This is the page users actually land on when clicking the 'Rosters' sidebar link.",
+    "Optional cleanup: delete the orphaned /app/frontend/src/pages/RosterPage.jsx if its logic is fully merged into Team.tsx, otherwise document why it is retained.",
+    "Optional: Consider adding seconds (HH:MM:SS) to other transaction timestamp displays (LeagueTransactionsPage, TeamHistory) for consistency — currently only LeagueDetailPage Recent Transactions widget uses second:'2-digit'."
+  ],
+  "critical_code_review_comments": [
+    "/app/frontend/src/pages/RosterPage.jsx is orphaned (not referenced anywhere) — clear architectural drift: the simple roster page was built first, then replaced by /lovable/pages/Team.tsx, but the new drop-toast feature was added back to the orphaned file instead of the live one.",
+    "Team.tsx handleDropPlayer (line 327) is a confirmation-pattern toast (Drop {name}? Confirm/Cancel) — semantically very different from RosterPage.jsx handleDropPlayer (line 84) which is a post-drop success toast with Add Player CTA. The two files diverged without a clear single-source-of-truth.",
+    "server.py /api/roster/{id} simple endpoint and /api/roster/{id}/detail are nearly duplicate logic (~150 lines each) — extract goalie-stats projection and roster_section classifier into a shared helper.",
+    "PlayerRoster.tsx (~2200 lines) and Team.tsx (~720 lines) both >700-line threshold — split sectionConfig + DropButton + PlayerCardChip into separate modules."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration35_goalies_txns.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "75%"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (team 69e59b30cbd3fea02a914c61, league 69e46af167999bfb85c39628)",
+  "seed_data_creation": "None.",
+  "retest_needed": true,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "After main agent ports the sticky drop toast into Team.tsx handleDropPlayer (post-success branch), retest by: (1) login as chriszarek; (2) navigate to /roster; (3) click DropButton on a starting-roster player; (4) confirm drop in the lovable confirmation toast; (5) assert [data-testid='drop-add-player-toast'] becomes visible AND persists (does not auto-dismiss); (6) click [data-testid='drop-toast-add-player-btn'] and assert URL navigates to /waivers. Zarek's Frozen currently has 16 players vs roster_spots=20 (verified via /team header: 'Roster Size 16 · 9 spots open'), so any drop should trigger the sticky toast. All 6 sections (Starting Roster, Bench 6/4, IR 0/3, Minors 0/5, Goalies 2/4, Goalies — Minors Pool 0/3) verified rendering and the grouped DROP row collapses 9 drops to one line — these are good and don't need re-verification.",
+  "rca of the issue": "RCA for missing drop toast: /app/frontend/src/App.js line 97-98 maps both /roster and /team routes to <LovableTeam/> which renders /app/frontend/src/lovable/pages/Team.tsx. RosterPage.jsx (where the new sticky toast was implemented) has no <Route> entry and is not imported anywhere — `grep -rn 'RosterPage' frontend/src` returns only its own export line. The drop handler at Team.tsx:327 only renders a Drop confirmation toast (data-testid='drop-toast-{playerId}') without a post-success Add Player CTA. Mitigation: copy the openSlots check + toast.custom call from RosterPage.jsx:97-142 into Team.tsx:365 right after the `await api.post(...)` success and pass `navigate` from useNavigate."
+}

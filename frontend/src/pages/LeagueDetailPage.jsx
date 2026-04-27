@@ -645,7 +645,7 @@ export default function LeagueDetailPage() {
                   const d = new Date(iso);
                   return d.toLocaleString(undefined, {
                     month: 'short', day: 'numeric',
-                    hour: 'numeric', minute: '2-digit',
+                    hour: 'numeric', minute: '2-digit', second: '2-digit',
                   });
                 };
                 // Group consecutive same-team add/drop transactions within a 5-minute window.
@@ -753,24 +753,45 @@ export default function LeagueDetailPage() {
                         </div>
                       </div>
                       <ul className="ml-11 mt-2 space-y-0.5" data-testid={`league-transaction-group-${gi}-items`}>
-                        {g.entries.map((tx) => {
-                          const I = ICON[tx.type] || { icon: '·', color: 'text-[#A1A1AA] bg-white/5', label: 'TXN' };
-                          return (
-                            <li
-                              key={tx.id}
-                              className="flex items-center gap-2 text-xs text-[#A1A1AA]"
-                              data-testid={`league-transaction-${tx.id}`}
-                            >
-                              <span className={`text-[9px] font-bold tracking-wider w-9 ${I.color.split(' ')[0]}`}>
-                                {I.label}
-                              </span>
-                              <span className="truncate flex-1">{tx.description}</span>
-                              <span className="text-[9px] text-[#52525B] tabular-nums shrink-0">
-                                {fmtTime(tx.created_at)}
-                              </span>
-                            </li>
-                          );
-                        })}
+                        {(() => {
+                          // Collapse to one row per event_type with comma-separated player list
+                          const byType = new Map();
+                          for (const tx of g.entries) {
+                            if (!byType.has(tx.type)) byType.set(tx.type, []);
+                            byType.get(tx.type).push(tx);
+                          }
+                          const TYPE_VERB = { roster_add: 'adds', roster_drop: 'drops' };
+                          return Array.from(byType.entries()).map(([type, txs]) => {
+                            const I = ICON[type] || { icon: '·', color: 'text-[#A1A1AA] bg-white/5', label: 'TXN' };
+                            const verb = TYPE_VERB[type] || type;
+                            const playerNames = txs.map(t => t.player_name).filter(Boolean);
+                            const startTs = txs[txs.length - 1]?.created_at;
+                            const endTs = txs[0]?.created_at;
+                            const sameMin = startTs && endTs && (
+                              new Date(startTs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) ===
+                              new Date(endTs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+                            );
+                            return (
+                              <li
+                                key={type}
+                                className="flex items-start gap-2 text-xs text-[#A1A1AA]"
+                                data-testid={`league-transaction-group-${gi}-${type}`}
+                              >
+                                <span className={`text-[9px] font-bold tracking-wider w-9 shrink-0 mt-0.5 ${I.color.split(' ')[0]}`}>
+                                  {I.label}
+                                </span>
+                                <span className="flex-1">
+                                  <span className="text-white font-medium">{g.team_name}</span>{' '}
+                                  <span className="text-[#A1A1AA]">{verb}</span>{' '}
+                                  <span className="text-white">{playerNames.join(', ')}</span>
+                                </span>
+                                <span className="text-[9px] text-[#52525B] tabular-nums shrink-0 mt-0.5">
+                                  {fmtTime(endTs)}{!sameMin && startTs !== endTs ? ` ↔ ${fmtTime(startTs)}` : ''}
+                                </span>
+                              </li>
+                            );
+                          });
+                        })()}
                       </ul>
                     </div>
                   );
