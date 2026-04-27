@@ -4665,6 +4665,16 @@ async def get_team_compliance(team_id: str):
                     })
 
     compliant = len(reasons) == 0
+
+    # Salary retention slots: how many other teams' players this team is
+    # currently paying retention dollars on, plus the league-configured cap
+    # (default 3 — matches NHL CBA convention). Also report the total amount
+    # being retained in this team's books.
+    retentions_list = team.get("salary_retentions") or []
+    retention_slots_total = int((league or {}).get("salary_retention_slots") or 3)
+    retention_slots_used = len(retentions_list)
+    retained_salary_total = sum(float(r.get("amount") or 0.0) for r in retentions_list)
+
     return {
         "team_id": team_id,
         "compliant": compliant,
@@ -4674,6 +4684,10 @@ async def get_team_compliance(team_id: str):
         "salary_used": salary_used,
         "salary_cap": salary_cap,
         "salary_cap_enabled": bool((league or {}).get("salary_cap_enabled")),
+        "salary_retention_slots_total": retention_slots_total,
+        "salary_retention_slots_used": retention_slots_used,
+        "salary_retention_slots_remaining": max(0, retention_slots_total - retention_slots_used),
+        "retained_salary_total": retained_salary_total,
         "injury_reserve_compliance_mode": (league or {}).get("injury_reserve_compliance_mode") or "none",
     }
 

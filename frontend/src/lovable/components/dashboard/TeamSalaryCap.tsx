@@ -13,7 +13,7 @@ interface Props {
 }
 
 const TeamSalaryCap = ({ teamId, refreshKey }: Props) => {
-  const { league, myTeam } = useActiveLeague();
+  const { myTeam } = useActiveLeague();
   const resolvedTeamId = teamId || myTeam?.id;
 
   const [compliance, setCompliance] = useState<any>(null);
@@ -67,14 +67,36 @@ const TeamSalaryCap = ({ teamId, refreshKey }: Props) => {
   const overCap = capRemaining < 0;
   const overReason = (compliance.reasons || []).find((r: any) => r.code === "over_salary_cap");
 
+  // Retention slots — preserved from the original roster-page UX (these were
+  // accidentally removed when the component was rewritten to read live data).
+  const retentionSlotsTotal = Number(compliance.salary_retention_slots_total ?? 3);
+  const retentionSlotsUsed = Number(compliance.salary_retention_slots_used ?? 0);
+  const retentionSlotsRemaining = Number(
+    compliance.salary_retention_slots_remaining ?? Math.max(0, retentionSlotsTotal - retentionSlotsUsed),
+  );
+  const retainedSalary = Number(compliance.retained_salary_total ?? 0);
+
   const items = [
-    { label: "Cap Limit", value: formatCurrency(capLimit), accent: false },
-    { label: "Cap Used", value: formatCurrency(capUsed), accent: false },
+    { label: "Cap Limit", value: formatCurrency(capLimit), accent: false, testId: "salary-cap-tile-limit" },
+    { label: "Cap Used", value: formatCurrency(capUsed), accent: false, testId: "salary-cap-tile-used" },
     {
       label: overCap ? "Over Cap By" : "Cap Remaining",
       value: formatCurrency(Math.abs(capRemaining)),
       accent: true,
       negative: overCap,
+      testId: "salary-cap-tile-remaining",
+    },
+    {
+      label: "Retention Slots Remaining",
+      value: `${retentionSlotsRemaining} / ${retentionSlotsTotal}`,
+      accent: false,
+      testId: "salary-cap-tile-retention-slots",
+    },
+    {
+      label: "Retained Salary",
+      value: formatCurrency(retainedSalary),
+      accent: false,
+      testId: "salary-cap-tile-retained-salary",
     },
   ];
 
@@ -93,6 +115,7 @@ const TeamSalaryCap = ({ teamId, refreshKey }: Props) => {
       </div>
 
       <div className="p-6">
+        {/* Cap progress bar */}
         <div className="mb-6">
           <div className="flex justify-between text-xs text-muted-foreground mb-2">
             <span>Used: {formatCurrency(capUsed)}</span>
@@ -111,9 +134,10 @@ const TeamSalaryCap = ({ teamId, refreshKey }: Props) => {
           )}
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        {/* 5-tile grid: Limit · Used · Remaining · Retention Slots · Retained $ */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
           {items.map((item) => (
-            <div key={item.label} className="text-center p-3 rounded-lg bg-secondary/30">
+            <div key={item.label} className="text-center p-3 rounded-lg bg-secondary/30" data-testid={item.testId}>
               <p className="text-xs text-muted-foreground mb-1">{item.label}</p>
               <p
                 className={`text-sm font-bold ${
