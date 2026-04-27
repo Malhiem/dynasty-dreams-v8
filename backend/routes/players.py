@@ -233,6 +233,10 @@ async def get_players(
 
     out = []
     global_team_total = await db.teams.count_documents({})
+    # Pre-load the league's scoring config once per page so we can compute
+    # per-player fantasy points (FPTS) for the Players-page table column.
+    list_scoring_cfg = await _scoring_cfg_for(league_id) if league_id else None
+    calc_fn = _deps.get("calculate_fantasy_points")
     for player in players:
         pid = str(player["_id"])
         player["_id"] = pid
@@ -284,10 +288,41 @@ async def get_players(
                 player["news_signal"] = "cold"
             else:
                 player["news_signal"] = None
+
+        # Fantasy points + per-game (league-aware when league_id is supplied,
+        # platform default otherwise). Always populated so the table column
+        # works even without a selected league.
+        is_g = (player.get("position") == "G")
+        stats_for_fpts = {
+            "goals": player.get("goals", 0), "assists": player.get("assists", 0),
+            "points": player.get("points", 0), "plus_minus": player.get("plus_minus", 0),
+            "shots": player.get("shots", 0),
+            "ppg": player.get("power_play_goals", 0),
+            "ppp": player.get("power_play_points", 0),
+            "shg": player.get("short_handed_goals", 0),
+            "pim": player.get("penalty_minutes", 0),
+            "saves": player.get("saves", 0),
+            "goals_against": player.get("goals_against", 0),
+            "wins": player.get("wins", 0), "losses": player.get("losses", 0),
+            "shutouts": player.get("shutouts", 0),
+            "position": player.get("position") or "C",
+            "player_type": "goalie" if is_g else "skater",
+        }
+        if calc_fn:
+            fpts = calc_fn(stats_for_fpts, list_scoring_cfg)
+            player["fantasy_points"] = round(fpts, 2)
+            gp = player.get("games_played", 0) or 0
+            player["fantasy_points_per_game"] = round(fpts / gp, 2) if gp else 0.0
         out.append(player)
 
-    if (sort_by or "").lower() in {"league_pct", "global_pct", "pct_change", "start_pct"}:
-        key = {"pct_change": "pct_change_7d"}.get(sort_by.lower(), sort_by.lower())
+    if (sort_by or "").lower() in {"league_pct", "global_pct", "pct_change", "start_pct", "fantasy_points", "fpts", "fantasy_points_per_game", "fp_per_game", "fpg"}:
+        key_map = {
+            "pct_change": "pct_change_7d",
+            "fpts": "fantasy_points",
+            "fp_per_game": "fantasy_points_per_game",
+            "fpg": "fantasy_points_per_game",
+        }
+        key = key_map.get(sort_by.lower(), sort_by.lower())
         out.sort(key=lambda x: (x.get(key) is None, x.get(key) or 0),
                  reverse=(direction == -1))
 
@@ -809,7 +844,7 @@ async def get_player_historical_stats(player_id: str, league_id: Optional[str] =
         row["fantasy_points"] = _calc_fpts(stats, is_goalie, scoring_cfg)
         seasons_out.append(row)
 
-    seasons_out.sort(key=lambda r: r["season"] or "")
+    seasons_out.sort(key=lambda r: r["season"] or "", reverse=True)
     career = (raw or {}).get("careerTotals", {}).get("regularSeason") or {}
     return {
         "player_id": player_id,

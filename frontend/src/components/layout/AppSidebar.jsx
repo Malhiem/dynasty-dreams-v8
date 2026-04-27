@@ -1,7 +1,7 @@
 import {
   Home, Users, MessageSquare, Newspaper, ArrowRightLeft, Trophy, DollarSign,
   Star, Clock, Settings, BarChart3, CreditCard, History, Medal, UserSearch,
-  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle, Flag, Search
+  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle, Flag, Search, Network
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
@@ -18,23 +18,25 @@ const userItems = [
   { title: "User Dashboard", url: "/dashboard", icon: UserCircle },
 ];
 
-const leagueHubItems = [
-  { title: "Roster", url: "/roster", icon: Users },
+// Static items that don't depend on the active league live in this list.
+// Dynamic items (League Home, League Administration) are inserted below.
+const leagueHubStatic = [
   { title: "Live Scoring", url: "/live", icon: Radio },
   { title: "Standings", url: "/standings", icon: Trophy },
   { title: "Transactions", url: "/transactions", icon: ArrowRightLeft },
+  { title: "League Information", url: "/league-info", icon: ScrollText },
+  { title: "League History", url: "/league-history", icon: History },
 ];
 
 const socialItems = [
   { title: "Trade Block", url: "/trade-block", icon: ArrowRightLeft },
-  { title: "Players", url: "/players", icon: UserSearch },
 ];
 
 const managementItems = [
-  { title: "League Information", url: "/league-info", icon: ScrollText },
   { title: "Salary Cap", url: "/salary-cap", icon: DollarSign },
-  { title: "Waivers", url: "/waivers", icon: Clock },
-  { title: "League Administration", url: "/commissioner/settings", icon: Shield },
+  { title: "Waivers / Players", url: "/waivers", icon: Clock },
+  { title: "Depth Chart", url: "/depth-chart", icon: Network },
+  { title: "Analytics", url: "/analytics", icon: BarChart3 },
 ];
 
 const draftItems = [
@@ -47,18 +49,31 @@ export function AppSidebar() {
   const collapsed = state === "collapsed";
   const location = useLocation();
   const { user, logout } = useAuth();
-  const { leagueId: activeLeagueId } = useActiveLeague();
+  const { leagueId: activeLeagueId, league } = useActiveLeague();
 
   const isActive = (path) => location.pathname === path;
 
-  // Dynamic League Hub: prepend "League Home" linking to the active league's landing page
+  // Determine if the current user is the commissioner OR a co-commissioner
+  // for the active league. Used to gate the "League Administration" link.
+  const isLeagueAdmin = !!(
+    league && user && (
+      league.commissioner_id === user.id ||
+      (league.co_commissioners || []).includes(user.id)
+    )
+  );
+
+  // Dynamic League Hub: prepend "League Home" and append "League
+  // Administration" only when the user is allowed to administer the league.
   const dynamicLeagueHub = [
     {
       title: "League Home",
       url: activeLeagueId ? `/leagues/${activeLeagueId}` : "/leagues",
       icon: Flag,
     },
-    ...leagueHubItems,
+    ...leagueHubStatic,
+    ...(isLeagueAdmin
+      ? [{ title: "League Administration", url: "/commissioner/settings", icon: Shield }]
+      : []),
   ];
 
   const renderGroup = (label, items) => (

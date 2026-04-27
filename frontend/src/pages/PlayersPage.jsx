@@ -398,6 +398,8 @@ export default function PlayersPage() {
                 <SortHeader label="Player"  sortKey="name"     currentSort={sortBy} currentDir={sortDir} onSort={handleSort} align="left" />
                 <SortHeader label="Pos"     sortKey="position" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="Team"    sortKey="team"     currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="FPTS"    sortKey="fantasy_points" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
+                <SortHeader label="FP/G"    sortKey="fantasy_points_per_game" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">Owned</th>
                 <SortHeader label="OWN%"     sortKey="league_pct" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="% Chg 7d" sortKey="pct_change" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
@@ -410,10 +412,10 @@ export default function PlayersPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={8 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+                <tr><td colSpan={10 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
               )}
               {!loading && players.length === 0 && (
-                <tr><td colSpan={8 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">No players match these filters.</td></tr>
+                <tr><td colSpan={10 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">No players match these filters.</td></tr>
               )}
               {!loading && players.map((p) => {
                 const stats = p.category_breakdown || p.stats || {};
@@ -437,6 +439,8 @@ export default function PlayersPage() {
                     </td>
                     <td className="p-2 text-center text-xs text-muted-foreground">{p.position}</td>
                     <td className="p-2 text-center text-xs text-muted-foreground">{p.team}</td>
+                    <td className="p-2 text-center text-xs font-bold text-cyan-300 tabular-nums" data-testid={`players-fpts-${p._id}`}>{p.fantasy_points != null ? p.fantasy_points.toFixed(1) : "—"}</td>
+                    <td className="p-2 text-center text-xs text-cyan-200 tabular-nums" data-testid={`players-fpg-${p._id}`}>{p.fantasy_points_per_game != null ? p.fantasy_points_per_game.toFixed(2) : "—"}</td>
                     <td className="p-2 text-center"><OwnedCell player={p} /></td>
                     <td className="p-2 text-center"><PctCell pct={p.league_pct} /></td>
                     <td className="p-2 text-center"><ChangeCell delta={p.pct_change_7d} /></td>
