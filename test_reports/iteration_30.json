@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 30 — RETEST after main agent wired '+ Pick upgrade' into the actually-rendered GlobalTradeBuilder.jsx (was previously misplaced in dead-code TradeBuilder.tsx). All targeted retest items now PASS: (1) add-pick-upgrade-btn renders alongside + Player stat and + Team result inside the open Trade Builder; (2) pick-upgrades-empty is visible BEFORE any row is added with the correct copy 'Add a draft pick to this trade first…'; (3) clicking + Pick upgrade mounts pick-upgrade-row-0 with all 6 child selectors (pick, team, trigger, new-round, new-year, remove); (4) clicking pick-upgrade-remove-0 returns the editor to the empty state; (5) + Player stat editor (TradeConditionsEditor) still works alongside the new editor — adds a new condition row without affecting pick-upgrade rows; (6) backend pytest test_pick_upgrades.py — both championship-trigger and downgrade tests pass (2/2 PASSED, 1.5s); (7) /api/auth/login + /api/auth/me regressions both 200 OK. The previously SKIPPED upgrade test now PASSES because the test now resets pick.current_team_id during teardown, restoring R2 partner-pick seed state.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Pick-upgrade UI badge verification (Upgrade/Downgrade chip)",
+        "issue": "Could not interactively verify the Upgrade/Downgrade badge swap (TEST 4) because adding a draft pick to the trade requires navigating to the partner team and using a pick-level trade icon, which is not surfaced as a clear data-testid on the current Team page (no pick-trade-btn-* nodes found in DOM). Static review of PickUpgradeEditor.tsx lines 138-186 confirms the badge logic is correct (newRound < currentRound → 'Upgrade'; > → 'Downgrade'), and backend pytest test_pick_downgrade_clause_supported passes end-to-end on the actual round-mutation logic. Suggest exposing a pick-trade-btn-{pickId} data-testid on partner roster pick rows to make this fully UI-testable.",
+        "affected_selectors": ["pick-upgrade-new-round-0", "pick-upgrade-row-0 .badge"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_pick_upgrades.py",
+    "/app/test_reports/pytest/iteration30_pick_upgrades.xml"
+  ],
+  "action_items": [
+    "OPTIONAL (testability): Add a data-testid='pick-trade-btn-{pickId}' or similar to the per-pick trade icon on the partner's draft-picks UI so end-to-end UI tests can drive the full pick-upgrade flow including the Upgrade/Downgrade badge swap.",
+    "OPTIONAL (cleanup): TradeBuilder.tsx is now confirmed dead code (the misplaced wiring lives there but the component is never mounted). Recommend deleting it to prevent future double-wiring mistakes — already flagged in iteration_29.",
+    "NONE (blocking): No critical or blocking bugs. Pick-upgrade feature is now end-to-end functional; backend persistence + execution engine + UI editor are all wired correctly."
+  ],
+  "critical_code_review_comments": [
+    "GlobalTradeBuilder.jsx wiring is correct: PickUpgradeEditor imported (line 14), + Pick upgrade button renders alongside existing buttons (lines 354-358) with onClick={() => window.__addPickUpgrade?.()}, and <PickUpgradeEditor /> is mounted after <TradeConditionsEditor /> (lines 365-367). Verified live in DOM.",
+    "PickUpgradeEditor.tsx empty-state branching is correct: distinct copy when (rows=0 AND noPicks) vs (rows=0 AND hasPicks). Both render data-testid='pick-upgrades-empty' so existing test assertions remain stable.",
+    "test_pick_upgrades.py teardown is now fully idempotent — finally block restores round, year, current_team_id, and current_team_name (lines 162-169), so the championship-trigger test no longer SKIPs after a previous run consumed the partner R2 pick.",
+    "WebSocket warning in console (wss://.../api/socket.io/) on every page load — unrelated to this feature, but is a continuous background failure worth investigating in a future iteration."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% — 2/2 pytest pick_upgrades + auth router regression (login, /me) all 200",
+    "frontend": "100% on all targeted retest items (button visibility, empty state, row selectors, remove → empty, + Player stat parity); 1 indirect item (Upgrade/Downgrade badge swap) verified via source review + backend pytest only, due to lack of a pick-trade-btn testid on partner page"
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026!",
+  "seed_data_creation": "None new in iteration_30. test_pick_upgrades.py creates a transient trade + executes it and rolls back via finally clause; no residual DB state.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Pick-upgrade feature is now fully wired and reachable. If asked to extend coverage, the only un-driven UI assertion is the Upgrade/Downgrade badge swap inside pick-upgrade-row-0 — this requires a real pick to be in the trade (currentRound > 0). To do this from the UI, navigate from the trade builder to the partner team via tb-partner-link-{partnerId}, then locate the partner's draft pick rows (likely on a separate /draft-picks or 'Draft Picks' tab — the /team page only shows the player roster, no picks). After adding a pick, set pick-upgrade-new-round-0 to a value lower than current to assert 'Upgrade' badge, higher to assert 'Downgrade'. Backend already has full coverage for the round-rewrite logic (test_pick_upgrades.py, both tests pass).",
+  "rca of the issue": "The iteration_29 critical bug ('+ Pick upgrade' button missing from rendered UI) was caused by adding the wiring to TradeBuilder.tsx instead of GlobalTradeBuilder.jsx. Main agent fixed this in iteration 30 by adding the import (line 14) and the button + editor mount (lines 354-358, 365-367) into the correct file. RETEST CONFIRMS FIX: live DOM probe of the open trade builder shows add-pick-upgrade-btn alongside tb-add-player-condition and tb-add-team-condition, and the editor's empty state and row selectors all render as expected."
+}

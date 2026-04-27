@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { TradeConditionsEditor } from "./TradeConditionsEditor";
+import { PickUpgradeEditor } from "./PickUpgradeEditor";
 import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
 import { useActiveLeague } from "@/hooks/use-active-league";
 
@@ -350,9 +351,20 @@ export default function GlobalTradeBuilder() {
                   data-testid="tb-add-team-condition">
                   + Team result
                 </Button>
+                <Button size="sm" variant="outline" className="text-[10px] h-6"
+                  onClick={() => window.__addPickUpgrade?.()}
+                  data-testid="add-pick-upgrade-btn">
+                  + Pick upgrade
+                </Button>
               </div>
             </div>
+            <p className="text-[10px] text-muted-foreground mb-2">
+              Trade executes only when all conditions are satisfied. Pick upgrades rewrite a draft pick already in the trade when its trigger fires (e.g., "if my team wins the championship, the 2nd round pick becomes a 1st").
+            </p>
             <TradeConditionsEditor />
+            <div className="mt-2">
+              <PickUpgradeEditor />
+            </div>
           </div>
         </div>
       )}

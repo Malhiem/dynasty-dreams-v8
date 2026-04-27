@@ -151,7 +151,8 @@ async def test_pick_upgrade_applies_when_championship_unlocks():
             assert r2.status_code == 200
             assert r2.json().get("pick_upgrades_applied", 0) == 0, "Should not re-apply"
         finally:
-            # Cleanup: restore commish + roll the pick back so the test is idempotent
+            # Cleanup: restore commish + roll the pick back (round/year AND owner)
+            # so the test is idempotent across runs.
             if original_commish:
                 await db.leagues.update_one(
                     {"_id": ObjectId(lid)},
@@ -160,7 +161,11 @@ async def test_pick_upgrade_applies_when_championship_unlocks():
             await db.teams.update_one({"_id": my["_id"]}, {"$unset": {"championship_won_at": ""}})
             await db.draft_picks.update_one(
                 {"_id": ObjectId(partner_pick_id)},
-                {"$set": {"round": original_round, "year": original_year}},
+                {"$set": {
+                    "round": original_round, "year": original_year,
+                    "current_team_id": str(partner["_id"]),
+                    "current_team_name": partner.get("name"),
+                }},
             )
 
 
@@ -232,5 +237,9 @@ async def test_pick_downgrade_clause_supported():
         finally:
             await db.draft_picks.update_one(
                 {"_id": ObjectId(partner_pick_id)},
-                {"$set": {"round": original_round, "year": original_year}},
+                {"$set": {
+                    "round": original_round, "year": original_year,
+                    "current_team_id": str(partner["_id"]),
+                    "current_team_name": partner.get("name"),
+                }},
             )
