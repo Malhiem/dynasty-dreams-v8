@@ -144,7 +144,8 @@ const LEAGUE_ROSTER_SLOTS: RosterSlot[] = [
   { id: "W1", label: "W", eligiblePositions: slotEligibility.W },
   { id: "D1", label: "D", eligiblePositions: slotEligibility.D },
   { id: "UTIL1", label: "UTIL", eligiblePositions: slotEligibility.UTIL },
-  { id: "G1", label: "G", eligiblePositions: slotEligibility.G },
+  // Note: G slot intentionally omitted — goalies render in their dedicated
+  // "Goalies" section below, not in the skater Starting Roster grid.
 ];
 
 // ── Mock Data ──────────────────────────────────────────
@@ -673,6 +674,19 @@ const PlayerRoster = ({
       .catch(() => { if (!cancelled) setOwnershipMap({}); });
     return () => { cancelled = true; };
   }, [livePlayers, leagueId, refreshKey]);
+
+  // ── Scoring config (per-category fantasy point weights) ──
+  // Used by the "Fantasy Points" filter to break down each player's FPTS
+  // into per-category contribution (e.g. 10 goals × 3 = 30 pts).
+  const [scoringConfig, setScoringConfig] = useState<any>(null);
+  useEffect(() => {
+    if (!leagueId) return;
+    let cancelled = false;
+    api.get(`/scoring/config?league_id=${leagueId}`)
+      .then(({ data }) => { if (!cancelled) setScoringConfig(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [leagueId]);
 
   // ── News map: { player_id: {news_headline, news_summary, news_signal, ...} } ──
   // Powers the inline news icon next to each player's name. The icon opens
@@ -1308,7 +1322,7 @@ const PlayerRoster = ({
         ) : effectiveFilter === "matchup-schedule" ? (
           <MatchupScheduleTable grouped={grouped} onTrade={handleOpenTrade} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} showPositionEligibility={showPositionEligibility} />
         ) : effectiveFilter === "fantasy-points" ? (
-          <FantasyPointsTable grouped={grouped} onTrade={handleOpenTrade} getSectionTotal={getSectionTotal} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} visibleCategories={filteredStatCategories} showFpts={showFpts} showPositionEligibility={showPositionEligibility} />
+          <FantasyPointsTable grouped={grouped} onTrade={handleOpenTrade} getSectionTotal={getSectionTotal} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} visibleCategories={filteredStatCategories} showFpts={showFpts} showPositionEligibility={showPositionEligibility} scoringConfig={scoringConfig} />
         ) : (
           <StatsTable
             grouped={grouped}
@@ -1350,6 +1364,7 @@ const PlayerRoster = ({
           open={cardOpen}
           onOpenChange={setCardOpen}
           player={cardPlayer}
+          scoringConfig={scoringConfig}
         />
       )}
     </>
@@ -1591,6 +1606,7 @@ const FantasyPointsTable = ({
   visibleCategories,
   showFpts = true,
   showPositionEligibility = true,
+  scoringConfig,
 }: {
   grouped: Record<RosterSection, Player[]>;
   onTrade: (p: Player) => void;
@@ -1601,9 +1617,47 @@ const FantasyPointsTable = ({
   visibleCategories?: string[];
   showFpts?: boolean;
   showPositionEligibility?: boolean;
+  scoringConfig?: any;
 } & HighlightProps) => {
   const defaultCategories = ["G", "A", "PPP", "SOG", "HIT", "BLK", "PIM", "+/-"];
   const categories = visibleCategories ?? defaultCategories;
+
+  // Map UI category abbreviation → scoring_config key
+  const CAT_TO_CFG_KEY: Record<string, string> = {
+    G: "goals", A: "assists", PPG: "power_play_goals", PPP: "power_play_points",
+    SHG: "short_handed_goals", SHP: "short_handed_points", GWG: "game_winning_goals",
+    SOG: "shots", HIT: "hits", BLK: "blocked_shots", PIM: "penalty_minutes", "+/-": "plus_minus",
+    W: "wins", L: "losses", SV: "saves", GA: "goals_against", SO: "shutouts", OTL: "overtime_losses",
+  };
+  const skaterCfg = scoringConfig?.skater_scoring || {};
+  const goalieCfg = scoringConfig?.goalie_scoring || {};
+
+  const weightFor = (cat: string, isGoalie: boolean): number | null => {
+    const k = CAT_TO_CFG_KEY[cat];
+    if (!k) return null;
+    const cfg = isGoalie ? goalieCfg : skaterCfg;
+    const w = cfg?.[k];
+    return typeof w === "number" ? w : null;
+  };
+
+  // Render a single category cell — when scoring weight is known, show
+  // "count × w = pts" so the user sees per-category point contribution.
+  const CatCell = ({ player, cat }: { player: Player; cat: string }) => {
+    const count = Number((player.categoryBreakdown as any)[cat] ?? 0);
+    const isGoalie = (player as any).position === "G" || (player as any).player_type === "goalie";
+    const w = weightFor(cat, isGoalie);
+    if (w == null || count === 0) {
+      return <td className="p-3 text-center text-sm font-medium" data-testid={`fp-cell-${cat}-${player.id}`}>{count}</td>;
+    }
+    const pts = +(count * w).toFixed(1);
+    const ptsTone = pts >= 0 ? "text-emerald-400" : "text-rose-400";
+    return (
+      <td className="p-2 text-center text-[11px] leading-tight" data-testid={`fp-cell-${cat}-${player.id}`}>
+        <div className="font-medium">{count}</div>
+        <div className={`text-[9px] ${ptsTone} tabular-nums`} data-testid={`fp-pts-${cat}-${player.id}`}>{pts > 0 ? `+${pts}` : pts} pt{Math.abs(pts) === 1 ? "" : "s"}</div>
+      </td>
+    );
+  };
   return (
     <div className="overflow-x-auto">
       <table className="w-full">
@@ -1611,16 +1665,21 @@ const FantasyPointsTable = ({
           <tr className="border-b border-border bg-secondary/30">
             <th className="text-center text-xs font-medium text-muted-foreground p-3 w-[56px]">POS</th>
             <th className="text-left text-xs font-medium text-muted-foreground p-4">Player</th>
-            {categories.map(cat => (
-              <th key={cat} className="text-center text-xs font-medium text-muted-foreground p-3 min-w-[50px]">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger><span>{cat}</span></TooltipTrigger>
-                    <TooltipContent><p>{categoryLabels[cat]}</p></TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </th>
-            ))}
+            {categories.map(cat => {
+              const w = skaterCfg[CAT_TO_CFG_KEY[cat]] ?? goalieCfg[CAT_TO_CFG_KEY[cat]];
+              return (
+                <th key={cat} className="text-center text-xs font-medium text-muted-foreground p-3 min-w-[60px]">
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger>
+                        <span>{cat}{typeof w === "number" && w !== 1 ? <span className="text-[9px] text-muted-foreground/70 ml-0.5">×{w}</span> : null}</span>
+                      </TooltipTrigger>
+                      <TooltipContent><p>{categoryLabels[cat]}{typeof w === "number" ? ` (${w} pt${Math.abs(w) === 1 ? "" : "s"} each)` : ""}</p></TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </th>
+              );
+            })}
             {showFpts && <th className="text-right text-xs font-medium text-muted-foreground p-4">Total</th>}
             <th className="text-center text-xs font-medium text-muted-foreground p-4">Trade</th>
           </tr>
@@ -1651,7 +1710,7 @@ const FantasyPointsTable = ({
                             </div>
                           </div>
                         </td>
-                        {categories.map(cat => (<td key={cat} className="p-3 text-center text-sm font-medium">{player.categoryBreakdown[cat] ?? 0}</td>))}
+                        {categories.map(cat => (<CatCell key={cat} player={player} cat={cat} />))}
                         {showFpts && <td className="p-4 text-right font-bold text-primary">{player.points}</td>}
                         <td className="p-4 text-center"><TradeButton player={player} onTrade={onTrade} /></td>
                       </tr>
@@ -1688,7 +1747,7 @@ const FantasyPointsTable = ({
                               </div>
                             </div>
                           </td>
-                          {categories.map(cat => (<td key={cat} className="p-3 text-center text-sm font-medium">{player.categoryBreakdown[cat] ?? 0}</td>))}
+                          {categories.map(cat => (<CatCell key={cat} player={player} cat={cat} />))}
                           {showFpts && <td className="p-4 text-right font-bold text-primary">{player.points}</td>}
                           <td className="p-4 text-center"><TradeButton player={player} onTrade={onTrade} /></td>
                         </tr>

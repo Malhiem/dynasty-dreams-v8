@@ -4092,7 +4092,7 @@ async def get_roster_detail(team_id: str):
         ("W1", "W", ["LW", "RW"]),
         ("D1", "D", ["D"]), ("D2", "D", ["D"]),
         ("UTIL1", "UTIL", ["C", "LW", "RW", "D"]),
-        ("G1", "G", ["G"]), ("G2", "G", ["G"]),
+        # G slots removed — goalies route to dedicated "goalies" section.
     ]
 
     # Map live stats

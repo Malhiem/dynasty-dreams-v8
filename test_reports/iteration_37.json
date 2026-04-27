@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 37 — Verified (1) GET /api/waivers/suggest endpoint, (2) G slot removal from Starting Roster, (3) Smart Pick-up drop toast, (4) Player Card Fantasy Points Breakdown, (5) Fantasy Points filter table on /team. 7/7 backend tests pass. All four UI features work end-to-end.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/team top-right toast region", "issues": ["Same overlap noted in iteration_36: the persistent red 'No available roster move can resolve violations' alert sits in the same top-right corner as the new sticky drop-toast. After clicking 'Pick up McDavid', the success toast briefly stacks under the red alert. Minor UX polish only — no functional blocker."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration37_waiver_suggest.py",
+    "/app/test_reports/pytest/iteration37.xml"
+  ],
+  "action_items": [
+    "No action required — all 9 review items from the request pass. Optional: stack/move the persistent 'roster violations' alert away from the toast region (iteration_36 carry-over)."
+  ],
+  "critical_code_review_comments": [
+    "PlayerRoster.tsx is now 2282 lines — well past the 700-line guideline. Strong recommend splitting FantasyPointsTable, CatCell, slot-grid view, list view, depth-chart view into separate modules.",
+    "/api/waivers/suggest does `from server import calculate_fantasy_points` inside the request handler (waivers.py:109). Lazy import inside hot path is acceptable but produces a circular-import smell — consider lifting calculate_fantasy_points into a shared scoring utils module.",
+    "/api/waivers/suggest pulls `db.players.find(...).sort('points', -1).limit(limit*5)` then re-sorts in Python by computed FPTS. For a league where league-specific scoring weights differ significantly from raw 'points', the initial sort+limit may miss the true top-N. Limit is capped to 50 candidates which is generally fine but worth documenting.",
+    "Roster_id exclusion uses `t.get('roster')` array; if a team stores rostered ids in a different field (e.g., minors, taxi), they could leak into suggestions. Confirmed against current schema but flag for future-proofing.",
+    "Team.tsx still trending toward 800+ lines (carry-over from iteration_36). Drop-toast JSX should be extracted."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration37_waiver_suggest.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (4/4 features)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (verified). Team 69e59b30cbd3fea02a914c61, League 69e46af167999bfb85c39628.",
+  "seed_data_creation": "During UI test: dropped Morgan Geekie and picked up Connor McDavid via the smart toast (round-trip not auto-undone). Backend regression test does its own add+drop round-trip on whatever the top free agent is and restores state.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 37 adds /api/waivers/suggest (waivers.py:75-130) and the smart-pickup drop toast on Team.tsx. Verified data points: Morgan Geekie FP breakdown = G39×3 +117, A29×2 +58, PPP24×0.5 +12, SOG181×0.5 +90.5, PIM22×-0.5 -11, +/- -5×1 -5, total 261.5 (matches spec). FP filter toggle is the Select dropdown labeled 'Season Stats / Fantasy Points' next to Week N navigator. Fantasy Points option renders FantasyPointsTable with headers like 'G×3 / A×2 / PPP×0.5 / SOG×0.5' and per-player cell breakdown via [data-testid=fp-pts-{cat}-{playerId}]. Drop toast renders [data-testid=drop-toast-suggestion], [data-testid=drop-toast-pick-up-btn] (label: 'Pick up {LastName}'), [data-testid=drop-toast-add-player-btn] (Browse), [data-testid=drop-toast-dismiss]. After Pick-up click, success toast 'Picked up {Name}' fires and roster reloads.",
+  "detailed_test_results": {
+    "BACKEND-1 suggest goalie top-1": "PASS — Joey Daccord, FPTS 164.6, FPG 3.5, GP 47.",
+    "BACKEND-2 suggest center top-3 sorted desc": "PASS — McDavid 520 > Aho 307 > Bourque 175.",
+    "BACKEND-3 suggest excludes rostered": "PASS — none of returned ids are in any team's roster array.",
+    "BACKEND-4 default limit=1": "PASS.",
+    "BACKEND-5 no position returns top overall sorted": "PASS.",
+    "BACKEND-6 scoring/config smoke": "PASS — skater goals=3, assists=2, PPP=0.5, SOG=0.5, PIM=-0.5, +/-=1; goalie wins=5, saves=0.2.",
+    "BACKEND-7 roster add/drop round-trip": "PASS.",
+    "FRONTEND-1 G slot removed from Starting Roster": "PASS (code-verified) — LEAGUE_ROSTER_SLOTS only contains C1, C2, LW1, RW1, W1, D1, UTIL1.",
+    "FRONTEND-2 Player Card FP Breakdown — Morgan Geekie": "PASS — Card present with 6 rows (G +117, A +58, PPP +12, SOG +90.5, PIM -11, +/- -5) + Total 261.5. Exactly matches expected.",
+    "FRONTEND-3 Smart drop toast w/ suggestion": "PASS — Dropped Morgan Geekie → toast shows 'Connor McDavid · C · EDM · 6.34 FP/G · 520 FPTS' with 'Pick up McDavid' green button + Browse + Dismiss.",
+    "FRONTEND-4 Pick up button POSTs /add and dismisses": "PASS — Sticky toast vanished; success toast 'Picked up Connor McDavid' rendered; roster reflects McDavid (Morgan Geekie gone, McDavid added).",
+    "FRONTEND-5 FP filter table": "PASS — 49 [data-testid=fp-pts-*] cells rendered. Headers show 'G×3, A×2, PPP×0.5, SOG×0.5'. Connor McDavid row: 48 G ⇒ +144 pts, 90 A ⇒ +180 pts, 54 PPP ⇒ +27 pts, 306 SOG ⇒ +153 pts, total 520. SHP/HIT/BLK/FOW/FOL show no breakdown line (zero count or zero weight) — consistent with 'CatCell only shows breakdown when weight known AND count nonzero' rule."
+  }
+}

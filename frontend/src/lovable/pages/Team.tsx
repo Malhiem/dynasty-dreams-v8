@@ -367,17 +367,28 @@ const Team = () => {
                   setRosterReloadKey((k) => k + 1);
 
                   // If a roster slot is now open, surface a sticky toast with
-                  // an "Add Player" CTA that takes the user to the free agent
-                  // pool. Toast persists (duration: Infinity) until dismissed.
+                  // a smart "Pick up {best FA}" CTA + fallback "Add Player".
+                  // Toast persists (duration: Infinity) until dismissed.
                   const maxRoster = Number((league as any)?.roster_spots ?? 25);
                   const newRosterCount = Math.max(0, (selectedTeam?.roster_count ?? 1) - 1);
                   const openSlots = Math.max(0, maxRoster - newRosterCount);
 
                   if (openSlots > 0) {
+                    // Fetch top free agent at the dropped player's position
+                    let suggestion: any = null;
+                    try {
+                      const { data } = await api.get(`/waivers/suggest`, {
+                        params: { league_id: league?.id, position: player.position, limit: 1 },
+                      });
+                      suggestion = data?.suggestions?.[0] || null;
+                    } catch {
+                      suggestion = null;
+                    }
+
                     toast.custom(
                       (st) => (
                         <div
-                          className="w-[360px] rounded-md border border-primary/40 bg-card p-4 shadow-xl"
+                          className="w-[380px] rounded-md border border-primary/40 bg-card p-4 shadow-xl"
                           data-testid="drop-add-player-toast"
                         >
                           <div className="flex items-start gap-3">
@@ -389,19 +400,57 @@ const Team = () => {
                                 Dropped {playerName}
                               </p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {openSlots} roster spot{openSlots === 1 ? "" : "s"} now open. Add a free agent to fill it.
+                                {openSlots} roster spot{openSlots === 1 ? "" : "s"} now open. {suggestion ? "Suggested replacement:" : "Add a free agent to fill it."}
                               </p>
                             </div>
                           </div>
+
+                          {suggestion && (
+                            <div
+                              className="mt-3 p-2 rounded-md bg-primary/10 border border-primary/20"
+                              data-testid="drop-toast-suggestion"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-semibold truncate" data-testid="drop-toast-suggestion-name">
+                                    {suggestion.name}
+                                  </p>
+                                  <p className="text-[10px] text-muted-foreground">
+                                    {suggestion.position} · {suggestion.team}
+                                    {suggestion.fpg != null && ` · ${suggestion.fpg} FP/G`}
+                                    {` · ${suggestion.fantasy_points} FPTS`}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
                           <div className="flex items-center gap-2 mt-3">
+                            {suggestion && (
+                              <button
+                                className="flex-1 h-8 rounded-md bg-emerald-500 text-white text-xs font-semibold hover:bg-emerald-600"
+                                data-testid="drop-toast-pick-up-btn"
+                                onClick={async () => {
+                                  try {
+                                    await api.post(`/roster/${selectedTeamId}/add`, { player_id: suggestion.id });
+                                    toast.dismiss(st);
+                                    toast.success(`Picked up ${suggestion.name}`);
+                                    setRosterReloadKey((k) => k + 1);
+                                  } catch (err: any) {
+                                    const msg = err?.response?.data?.detail || "Pick-up failed";
+                                    toast.error(msg);
+                                  }
+                                }}
+                              >Pick up {suggestion.name.split(" ").slice(-1)[0]}</button>
+                            )}
                             <button
-                              className="flex-1 h-8 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90"
+                              className={`${suggestion ? "" : "flex-1"} h-8 px-3 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90`}
                               data-testid="drop-toast-add-player-btn"
                               onClick={() => {
                                 toast.dismiss(st);
                                 navigate("/waivers");
                               }}
-                            >+ Add Player</button>
+                            >{suggestion ? "Browse" : "+ Add Player"}</button>
                             <button
                               className="h-8 px-3 rounded-md border border-border hover:bg-secondary text-xs text-muted-foreground"
                               data-testid="drop-toast-dismiss"

@@ -249,9 +249,17 @@ interface PlayerCardModalProps {
   onOpenChange: (open: boolean) => void;
   player: Player;
   defaultTab?: string;
+  scoringConfig?: any;
 }
 
-const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview" }: PlayerCardModalProps) => {
+const CAT_TO_CFG_KEY: Record<string, string> = {
+  G: "goals", A: "assists", PPG: "power_play_goals", PPP: "power_play_points",
+  SHG: "short_handed_goals", SHP: "short_handed_points", GWG: "game_winning_goals",
+  SOG: "shots", HIT: "hits", BLK: "blocked_shots", PIM: "penalty_minutes", "+/-": "plus_minus",
+  W: "wins", L: "losses", SV: "saves", GA: "goals_against", SO: "shutouts", OTL: "overtime_losses",
+};
+
+const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", scoringConfig }: PlayerCardModalProps) => {
   const [sideTab, setSideTab] = useState(defaultTab);
   useEffect(() => { if (open) setSideTab(defaultTab); }, [open, defaultTab]);
   const [chartCategory, setChartCategory] = useState("G");
@@ -342,6 +350,7 @@ const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview" }
                   news={news}
                   last10Games={last10Games}
                   next5Games={next5Games}
+                  scoringConfig={scoringConfig}
                 />
               )}
               {sideTab === "season-stats" && (
@@ -382,11 +391,13 @@ const OverviewTab = ({
   news,
   last10Games,
   next5Games,
+  scoringConfig,
 }: {
   player: Player;
   news: ReturnType<typeof generatePlayerNews>;
   last10Games: PlayerGame[];
   next5Games: PlayerGame[];
+  scoringConfig?: any;
 }) => (
   <div className="space-y-6">
     {/* Latest News */}
@@ -434,6 +445,68 @@ const OverviewTab = ({
         ))}
       </div>
     </div>
+
+    {/* Fantasy Points Breakdown */}
+    {(() => {
+      const isGoalie = (player as any).position === "G" || (player as any).player_type === "goalie";
+      const cfg = (isGoalie ? scoringConfig?.goalie_scoring : scoringConfig?.skater_scoring) || {};
+      const rows = categories
+        .map((cat) => {
+          const count = Number(player.categoryBreakdown[cat] ?? 0);
+          const w = cfg[CAT_TO_CFG_KEY[cat]];
+          if (typeof w !== "number" || count === 0) return null;
+          const pts = +(count * w).toFixed(1);
+          return { cat, count, w, pts };
+        })
+        .filter(Boolean) as { cat: string; count: number; w: number; pts: number }[];
+      const totalPositive = rows.filter(r => r.pts > 0).reduce((s, r) => s + r.pts, 0);
+      const totalNegative = rows.filter(r => r.pts < 0).reduce((s, r) => s + r.pts, 0);
+      if (!scoringConfig || rows.length === 0) return null;
+      return (
+        <div data-testid="player-card-fp-breakdown">
+          <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-emerald-400" />
+            Fantasy Points Breakdown
+            <span className="text-[10px] text-muted-foreground font-normal ml-1">(per league scoring)</span>
+          </h4>
+          <div className="rounded-lg border border-border/50 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-secondary/30">
+                <tr>
+                  <th className="text-left p-2 text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Category</th>
+                  <th className="text-right p-2 text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Count</th>
+                  <th className="text-right p-2 text-[10px] uppercase tracking-wider text-muted-foreground font-medium">×</th>
+                  <th className="text-right p-2 text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Per</th>
+                  <th className="text-right p-2 text-[10px] uppercase tracking-wider text-muted-foreground font-medium">Points</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.cat} className="border-t border-border/30" data-testid={`fp-breakdown-row-${r.cat}`}>
+                    <td className="p-2">
+                      <span className="text-sm font-medium">{r.cat}</span>
+                      <span className="text-[10px] text-muted-foreground ml-2">{categoryLabels[r.cat] || r.cat}</span>
+                    </td>
+                    <td className="p-2 text-right tabular-nums">{r.count}</td>
+                    <td className="p-2 text-right text-muted-foreground">×</td>
+                    <td className="p-2 text-right tabular-nums text-muted-foreground">{r.w}</td>
+                    <td className={`p-2 text-right tabular-nums font-semibold ${r.pts >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+                      {r.pts > 0 ? `+${r.pts}` : r.pts}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-border bg-secondary/20" data-testid="fp-breakdown-total">
+                  <td className="p-2 font-semibold" colSpan={4}>Total Fantasy Points</td>
+                  <td className="p-2 text-right tabular-nums font-bold text-primary text-base">
+                    {(totalPositive + totalNegative).toFixed(1)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    })()}
 
     {/* Last 10 Games */}
     <div>

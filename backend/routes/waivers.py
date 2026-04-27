@@ -72,6 +72,64 @@ async def get_waiver_players(
     return {"players": result, "total": total, "page": page, "pages": (total + limit - 1) // limit}
 
 
+@router.get("/waivers/suggest")
+async def suggest_free_agent(
+    league_id: str, position: Optional[str] = None, limit: int = 1,
+):
+    """Suggest the top-N free agents for the given position. Used by the
+    smart drop toast on Team page — pre-loads the best replacement so the
+    user can pick up a free agent in one click.
+
+    Excludes players already rostered in this league. Returns players sorted
+    by FPTS (computed against the league's scoring config) descending.
+    """
+    db = _db()
+    # Build set of player_ids already rostered in this league
+    teams = await db.teams.find({"league_id": league_id}, {"roster": 1}).to_list(50)
+    rostered_ids = set()
+    for t in teams:
+        for pid in (t.get("roster") or []):
+            rostered_ids.add(pid)
+
+    rostered_obj_ids = []
+    for pid in rostered_ids:
+        try:
+            rostered_obj_ids.append(ObjectId(pid))
+        except Exception:
+            pass
+
+    query: dict = {"_id": {"$nin": rostered_obj_ids}}
+    if position and position not in ("all", "ALL"):
+        query["position"] = position
+
+    cursor = db.players.find(query).sort("points", -1).limit(max(1, min(limit * 5, 50)))
+    players = await cursor.to_list(50)
+
+    cfg = await db.scoring_configs.find_one({"league_id": league_id})
+    from server import calculate_fantasy_points  # type: ignore
+
+    out = []
+    for p in players:
+        try:
+            fpts = calculate_fantasy_points(p, cfg)
+        except Exception:
+            fpts = float(p.get("points") or 0)
+        gp = int(p.get("games_played") or 0)
+        out.append({
+            "id": str(p["_id"]),
+            "name": p["name"],
+            "position": p["position"],
+            "team": p.get("team", ""),
+            "team_name": p.get("team_name", ""),
+            "fantasy_points": round(fpts, 1),
+            "fpg": round(fpts / gp, 2) if gp > 0 else None,
+            "games_played": gp,
+        })
+
+    out.sort(key=lambda r: -r["fantasy_points"])
+    return {"league_id": league_id, "position": position, "suggestions": out[:max(1, limit)]}
+
+
 @router.post("/waivers/claim")
 async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     db = _db()
