@@ -284,6 +284,7 @@ export default function DraftBoardPage() {
         isTraded: p.current_team_id !== p.original_team_id,
         tradeHistory: history,
         pickId: p._id,
+        pendingProtections: p.pending_protections || [],
       };
     });
     return data;
@@ -434,6 +435,25 @@ export default function DraftBoardPage() {
                             const isTraded = pick && pick.currentOwner !== pick.originalTeam;
                             const pickKey = `${selectedYear}-${pick?.currentOwner || team.abbr}-${round}`;
                             const isOnTradeBlock = tradeBlockPicks.has(pickKey);
+                            const protections = (pick?.pendingProtections as any[]) || [];
+                            const protectionLabel = (() => {
+                              if (!protections.length) return null;
+                              const p = protections[0];
+                              if (p.subject_type === "pick" && p.metric === "pick_slot") {
+                                return `Top-${p.threshold ?? "?"}`;
+                              }
+                              if (p.subject_type === "team") {
+                                return p.metric === "won_championship" ? "Champ trigger"
+                                  : p.metric === "won_draft_lottery" ? "Lottery trigger"
+                                  : p.metric === "made_playoffs" ? "Playoffs trigger"
+                                  : "Conditional";
+                              }
+                              if (p.subject_type === "player") return "Player trigger";
+                              return "Conditional";
+                            })();
+                            const newRound = protections[0]?.new_round;
+                            const direction = newRound && newRound < round ? "upgrade"
+                              : newRound && newRound > round ? "downgrade" : null;
 
                             return (
                               <TableCell key={round} className="text-center py-3">
@@ -450,6 +470,19 @@ export default function DraftBoardPage() {
                                         Available
                                       </Badge>
                                     )}
+                                    {protectionLabel && (
+                                      <Badge
+                                        data-testid={`pick-protection-${pick.pickId}`}
+                                        variant="outline"
+                                        className={`text-[9px] px-1 h-3.5 gap-0.5 mt-0.5 ${
+                                          direction === "downgrade"
+                                            ? "bg-rose-500/10 border-rose-500/30 text-rose-400"
+                                            : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                                        }`}
+                                      >
+                                        Protected: {protectionLabel}
+                                      </Badge>
+                                    )}
                                   </div>
                                 ) : (
                                   <div className="flex flex-col items-center gap-0.5">
@@ -458,6 +491,15 @@ export default function DraftBoardPage() {
                                       <Badge variant="outline" className="text-[9px] px-1 h-3.5 bg-amber-500/10 border-amber-500/30 text-amber-400 gap-0.5 mt-0.5">
                                         <ShoppingCart className="h-2 w-2" />
                                         Available
+                                      </Badge>
+                                    )}
+                                    {protectionLabel && (
+                                      <Badge
+                                        data-testid={`pick-protection-${pick?.pickId}`}
+                                        variant="outline"
+                                        className="text-[9px] px-1 h-3.5 bg-emerald-500/10 border-emerald-500/30 text-emerald-400 gap-0.5 mt-0.5"
+                                      >
+                                        Protected: {protectionLabel}
                                       </Badge>
                                     )}
                                   </div>

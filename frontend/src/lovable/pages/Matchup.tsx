@@ -3,6 +3,7 @@ import { useState, useEffect, useMemo } from "react";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { MatchupSideRail } from "@/lovable/components/matchup/MatchupSideRail";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -160,7 +161,9 @@ const Matchup = () => {
 
   return (
     <AppLayout>
-      <div className="container py-8 space-y-6">
+      <div className="container py-8">
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="flex-1 space-y-6 min-w-0">
         {/* View Toggle */}
         <div className="flex items-center justify-between">
           <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
@@ -320,6 +323,15 @@ const Matchup = () => {
               )}
             </CardContent>
           </Card>
+        </div>
+          </div>
+          {league?.id && (
+            <MatchupSideRail
+              leagueId={league.id}
+              myMatchupId={myMatchup?.id}
+              currentWeek={matchup?.week}
+            />
+          )}
         </div>
       </div>
     </AppLayout>

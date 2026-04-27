@@ -22,7 +22,7 @@ const userItems = [
 // Static items that don't depend on the active league live in this list.
 // Dynamic items (League Home, League Administration) are inserted below.
 const leagueHubStatic = [
-  { title: "Live Scoring", url: "/live", icon: Radio },
+  { title: "Live Scoring", url: "/matchup", icon: Radio },
   { title: "Standings", url: "/standings", icon: Trophy },
   { title: "Transactions", url: "/transactions", icon: ArrowRightLeft },
   { title: "League Information", url: "/league-info", icon: ScrollText },

@@ -23,6 +23,74 @@ def _current_season() -> str:
     return f"{now.year - 1}-{str(now.year)[-2:]}"
 
 
+@router.get("/leagues/{league_id}/top-performers")
+async def get_top_performers(league_id: str, limit: int = 25):
+    """Top scoring players in the league across all rosters for the active
+    matchup window. Used by the live-scoring overview's 'Top Performers' tab.
+    Resolves matchup window via /api/matchups/{league_id}/current-week
+    semantics (Mon..Sun rolling). Returns sorted by live FPTS desc."""
+    db = _deps["db"]
+    teams = await db.teams.find({"league_id": league_id}).to_list(50)
+    # Map every rostered player to its owning team for cross-league credit
+    pid_to_team: dict = {}
+    for t in teams:
+        for pid in (t.get("roster") or []):
+            pid_to_team.setdefault(pid, {
+                "team_id": str(t["_id"]),
+                "team_name": t.get("name"),
+                "team_logo": t.get("logo_url"),
+            })
+    if not pid_to_team:
+        return {"league_id": league_id, "performers": []}
+
+    # Pull league scoring config (or fall back to default)
+    league = await db.leagues.find_one({"_id": _deps["_safe_object_id"](league_id)})
+    scoring = (league or {}).get("scoring_settings") or {}
+
+    from bson import ObjectId
+    # Hydrate player docs with their `live_fantasy_points` (set by the live-
+    # scoring worker). Anything < 0.01 we drop.
+    obj_ids = []
+    for pid in pid_to_team.keys():
+        try:
+            obj_ids.append(ObjectId(pid))
+        except Exception:
+            continue
+    cursor = db.players.find(
+        {"_id": {"$in": obj_ids}},
+        {"name": 1, "position": 1, "team": 1,
+         "live_fantasy_points": 1, "live_goals": 1, "live_assists": 1,
+         "live_shots": 1, "live_saves": 1, "live_games": 1, "live_wins": 1,
+         "fantasy_points": 1, "is_goalie": 1},
+    )
+    rows = []
+    async for p in cursor:
+        pid = str(p["_id"])
+        owner = pid_to_team.get(pid)
+        if not owner:
+            continue
+        fpts = float(p.get("live_fantasy_points") or 0)
+        if fpts <= 0.01:
+            continue
+        rows.append({
+            "player_id": pid,
+            "name": p.get("name"),
+            "position": p.get("position"),
+            "team": p.get("team"),
+            "is_goalie": bool(p.get("is_goalie")),
+            "fpts": round(fpts, 2),
+            "goals": int(p.get("live_goals") or 0),
+            "assists": int(p.get("live_assists") or 0),
+            "shots": int(p.get("live_shots") or 0),
+            "saves": int(p.get("live_saves") or 0),
+            "wins": int(p.get("live_wins") or 0),
+            "games": int(p.get("live_games") or 0),
+            **owner,
+        })
+    rows.sort(key=lambda r: r["fpts"], reverse=True)
+    return {"league_id": league_id, "scoring": scoring, "performers": rows[:max(1, min(limit, 100))]}
+
+
 @router.get("/leagues/{league_id}/weekly-analytics")
 async def get_weekly_analytics(
     league_id: str,

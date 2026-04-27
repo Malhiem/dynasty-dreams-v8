@@ -325,8 +325,8 @@ export default function LiveScoringPage() {
             <Tabs defaultValue="leaderboard">
               <TabsList>
                 <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
-                <TabsTrigger value="top-team" data-testid="live-scoring-top-team-tab">
-                  Top Team Roster
+                <TabsTrigger value="top-performers" data-testid="live-scoring-top-performers-tab">
+                  Top Performers
                 </TabsTrigger>
               </TabsList>
 
@@ -372,65 +372,8 @@ export default function LiveScoringPage() {
                 </div>
               </TabsContent>
 
-              <TabsContent value="top-team" className="mt-4">
-                {myTeamLive ? (
-                  <div className="surface overflow-hidden">
-                    <div className="p-4 border-b border-white/5 flex items-center justify-between">
-                      <div>
-                        <div className="text-xs text-[#52525B] uppercase tracking-wider">Top team</div>
-                        <div className="text-white font-bold text-lg">{myTeamLive.team_name}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs text-[#52525B] uppercase tracking-wider">Total fpts</div>
-                        <div className="text-3xl font-bold text-[#00D2FF] tabular-nums">{myTeamLive.live_points.toFixed(2)}</div>
-                      </div>
-                    </div>
-                    <table className="w-full text-left text-sm">
-                      <thead className="bg-white/5 text-[#52525B] text-xs uppercase tracking-wider">
-                        <tr>
-                          <th className="px-4 py-3">Player</th>
-                          <th className="px-4 py-3">Pos</th>
-                          <th className="px-4 py-3 text-right">G</th>
-                          <th className="px-4 py-3 text-right">A</th>
-                          <th className="px-4 py-3 text-right">SOG</th>
-                          <th className="px-4 py-3 text-right">Saves</th>
-                          <th className="px-4 py-3 text-right">Games</th>
-                          <th className="px-4 py-3 text-right">FPTS</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {myTeamLive.players
-                          .filter(p => p.games > 0)
-                          .map(p => (
-                          <tr key={p.id} className="border-t border-white/5">
-                            <td className="px-4 py-3">
-                              <Link to={`/players/${p.id}`} className="text-white hover:text-[#00D2FF]">
-                                {p.name}
-                              </Link>
-                              <div className="text-xs text-[#52525B]">{p.team}</div>
-                            </td>
-                            <td className="px-4 py-3 text-[#A1A1AA]">{p.position}</td>
-                            <td className="px-4 py-3 text-right text-white tabular-nums">{p.goals}</td>
-                            <td className="px-4 py-3 text-right text-white tabular-nums">{p.assists}</td>
-                            <td className="px-4 py-3 text-right text-white tabular-nums">{p.shots}</td>
-                            <td className="px-4 py-3 text-right text-white tabular-nums">{p.saves || '-'}</td>
-                            <td className="px-4 py-3 text-right text-[#A1A1AA] tabular-nums">{p.games}</td>
-                            <td className="px-4 py-3 text-right text-[#00D2FF] font-bold tabular-nums">{p.fpts.toFixed(2)}</td>
-                          </tr>
-                        ))}
-                        {myTeamLive.players.filter(p => p.games > 0).length === 0 && (
-                          <tr><td colSpan={8} className="p-6 text-center text-[#A1A1AA]">
-                            No rostered players have logged stats yet. Wait for the next puck drop.
-                          </td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <div className="surface p-6 text-[#A1A1AA] text-sm">
-                    Select a league with drafted rosters to see live player performance.
-                  </div>
-                )}
+              <TabsContent value="top-performers" className="mt-4">
+                <TopPerformersPanel leagueId={selectedLeague} />
               </TabsContent>
             </Tabs>
 
@@ -441,5 +384,96 @@ export default function LiveScoringPage() {
         )}
       </div>
     </AppLayout>
+  );
+}
+
+function TopPerformersPanel({ leagueId }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!leagueId) { setRows([]); return; }
+    let cancelled = false;
+    const load = async () => {
+      setLoading(true);
+      try {
+        const { data } = await api.get(`/leagues/${leagueId}/top-performers?limit=25`);
+        if (!cancelled) setRows(data?.performers || []);
+      } catch (e) {
+        // best-effort
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    const id = setInterval(load, 60000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [leagueId]);
+
+  if (!leagueId) {
+    return (
+      <div className="surface p-6 text-[#A1A1AA] text-sm">
+        Select a league to see top performers across all rosters.
+      </div>
+    );
+  }
+  return (
+    <div className="surface overflow-hidden" data-testid="top-performers-panel">
+      <div className="p-4 border-b border-white/5">
+        <div className="text-xs text-[#52525B] uppercase tracking-wider">Top performers — current matchup window</div>
+        <div className="text-white text-sm">Best fantasy producers across every roster</div>
+      </div>
+      <table className="w-full text-left text-sm">
+        <thead className="bg-white/5 text-[#52525B] text-xs uppercase tracking-wider">
+          <tr>
+            <th className="px-4 py-3">#</th>
+            <th className="px-4 py-3">Player</th>
+            <th className="px-4 py-3">Pos</th>
+            <th className="px-4 py-3">Owner</th>
+            <th className="px-4 py-3 text-right">G</th>
+            <th className="px-4 py-3 text-right">A</th>
+            <th className="px-4 py-3 text-right">SOG</th>
+            <th className="px-4 py-3 text-right">GP</th>
+            <th className="px-4 py-3 text-right">FPTS</th>
+          </tr>
+        </thead>
+        <tbody data-testid="top-performers-body">
+          {rows.map((p, idx) => (
+            <tr
+              key={p.player_id}
+              data-testid={`top-performer-row-${p.player_id}`}
+              className={`border-t border-white/5 ${idx === 0 ? 'bg-[#00D2FF]/5' : ''}`}
+            >
+              <td className="px-4 py-3 text-[#A1A1AA] tabular-nums">{idx + 1}</td>
+              <td className="px-4 py-3">
+                <Link to={`/players/${p.player_id}`} className="text-white hover:text-[#00D2FF] font-medium">
+                  {p.name}
+                </Link>
+                <div className="text-xs text-[#52525B]">{p.team}</div>
+              </td>
+              <td className="px-4 py-3 text-[#A1A1AA]">{p.position}</td>
+              <td className="px-4 py-3">
+                <Link
+                  to={`/teams/${p.team_id}`}
+                  data-testid={`top-performer-owner-${p.player_id}`}
+                  className="text-[#A1A1AA] hover:text-[#00D2FF] text-sm"
+                >
+                  {p.team_name}
+                </Link>
+              </td>
+              <td className="px-4 py-3 text-right text-white tabular-nums">{p.goals}</td>
+              <td className="px-4 py-3 text-right text-white tabular-nums">{p.assists}</td>
+              <td className="px-4 py-3 text-right text-white tabular-nums">{p.shots}</td>
+              <td className="px-4 py-3 text-right text-[#A1A1AA] tabular-nums">{p.games}</td>
+              <td className="px-4 py-3 text-right text-[#00D2FF] font-bold tabular-nums">{p.fpts.toFixed(2)}</td>
+            </tr>
+          ))}
+          {!loading && rows.length === 0 && (
+            <tr><td colSpan={9} className="p-6 text-center text-[#A1A1AA]">
+              No live fantasy points logged yet. Top performers refresh every 60 seconds.
+            </td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
