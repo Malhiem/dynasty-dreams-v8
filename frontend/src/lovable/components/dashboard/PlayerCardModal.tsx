@@ -47,6 +47,7 @@ import {
   Legend,
 } from "recharts";
 import { getPlayerAccolades, awardWinnersData, type PlayerAccolade } from "@/lovable/data/playerAwardsData";
+import api from "@/lib/api";
 
 // ── Types (shared with PlayerRoster) ───────────────────
 
@@ -265,13 +266,58 @@ const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", 
   const [chartCategory, setChartCategory] = useState("G");
   const [chartType, setChartType] = useState<"season" | "career">("career");
 
-  const news = generatePlayerNews(player.name);
+  // ── Real news + recent games (league-aware) ──
+  // Falls back to the legacy mock generators if either endpoint errors out so
+  // the modal never renders blank.
+  const [liveNews, setLiveNews] = useState<any[] | null>(null);
+  const [liveGames, setLiveGames] = useState<any[] | null>(null);
+  useEffect(() => {
+    if (!open || !(player as any).id) return;
+    const pid = String((player as any).id);
+    let cancelled = false;
+    api.get(`/players/${pid}/news`, { params: { limit: 20 } })
+      .then(({ data }) => { if (!cancelled) setLiveNews(data?.news || []); })
+      .catch(() => { if (!cancelled) setLiveNews([]); });
+    api.get(`/players/${pid}/recent-games`, { params: { limit: 10 } })
+      .then(({ data }) => { if (!cancelled) setLiveGames(data?.games || []); })
+      .catch(() => { if (!cancelled) setLiveGames([]); });
+    return () => { cancelled = true; };
+  }, [open, (player as any).id]);
+
+  const news = (liveNews && liveNews.length > 0)
+    ? liveNews.map((n) => ({
+        date: n.published_at ? new Date(n.published_at).toLocaleDateString() : "",
+        time: n.published_at ? new Date(n.published_at).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "",
+        title: n.headline || n.title || "Update",
+        snippet: n.summary || n.body || "",
+        source: n.source || "Beat",
+        tag: (n.signal || n.tag || "update").toString(),
+      }))
+    : generatePlayerNews(player.name);
   const careerStats = generateCareerStats(player);
-  const last10Games = player.schedule.filter((g) => g.played).slice(-10);
+  const last10Games = (liveGames && liveGames.length > 0)
+    ? liveGames.slice(0, 10).map((g) => ({
+        date: g.date || "",
+        opponent: g.opponent || "—",
+        played: true,
+        goals: g.goals ?? 0,
+        assists: g.assists ?? 0,
+        ppp: g.ppp ?? 0,
+        shp: g.shp ?? 0,
+        sog: g.shots ?? g.sog ?? 0,
+        hits: g.hits ?? 0,
+        blocks: g.blocks ?? 0,
+        pim: g.pim ?? 0,
+        plus_minus: g.plus_minus ?? 0,
+        fpts: g.fantasy_points ?? g.fpts ?? 0,
+        pts: g.points ?? ((g.goals ?? 0) + (g.assists ?? 0)),
+      }))
+    : player.schedule.filter((g) => g.played).slice(-10);
   const next5Games = player.schedule.filter((g) => !g.played).slice(0, 5);
 
   const sideMenuItems = [
     { id: "overview", label: "Overview", icon: Newspaper },
+    { id: "news", label: "News", icon: Newspaper },
     { id: "season-stats", label: "Season Stats", icon: BarChart3 },
     { id: "career-stats", label: "Career Stats", icon: TrendingUp },
     { id: "transactions", label: "Transactions", icon: ArrowRightLeft },
@@ -351,6 +397,7 @@ const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", 
                   last10Games={last10Games}
                   next5Games={next5Games}
                   scoringConfig={scoringConfig}
+                  onSeeMoreNews={() => setSideTab("news")}
                 />
               )}
               {sideTab === "season-stats" && (
@@ -376,6 +423,7 @@ const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", 
                 <FantasyTransactionsTab name={player.name} />
               )}
               {sideTab === "ownership" && <OwnershipTab />}
+              {sideTab === "news" && <NewsTab news={news} />}
             </div>
           </ScrollArea>
         </div>
@@ -392,40 +440,17 @@ const OverviewTab = ({
   last10Games,
   next5Games,
   scoringConfig,
+  onSeeMoreNews,
 }: {
   player: Player;
-  news: ReturnType<typeof generatePlayerNews>;
-  last10Games: PlayerGame[];
+  news: any[];
+  last10Games: any[];
   next5Games: PlayerGame[];
   scoringConfig?: any;
+  onSeeMoreNews?: () => void;
 }) => (
   <div className="space-y-6">
-    {/* Latest News */}
-    <div>
-      <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-        <Newspaper className="h-4 w-4 text-primary" />
-        Latest News
-      </h4>
-      <div className="space-y-3">
-        {news.map((item, i) => (
-          <div
-            key={i}
-            className="p-3 rounded-lg bg-secondary/20 border border-border/50"
-          >
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-sm font-medium">{item.headline}</span>
-              <span className="text-xs text-muted-foreground">{item.date}</span>
-            </div>
-            <p className="text-xs text-muted-foreground">{item.summary}</p>
-            <span className="text-[10px] text-primary mt-1 inline-block">
-              {item.source}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
-
-    {/* Season Stat Line */}
+    {/* Season Stat Line — moved to top per UX request */}
     <div>
       <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
         <BarChart3 className="h-4 w-4 text-primary" />
@@ -444,6 +469,46 @@ const OverviewTab = ({
           </div>
         ))}
       </div>
+    </div>
+
+    {/* Latest News — single most-recent item, click "More news" → News tab */}
+    <div data-testid="player-card-latest-news">
+      <div className="flex items-center justify-between mb-3">
+        <h4 className="text-sm font-semibold flex items-center gap-2">
+          <Newspaper className="h-4 w-4 text-primary" />
+          Latest News
+        </h4>
+        {news.length > 1 && (
+          <button
+            type="button"
+            data-testid="player-card-more-news-btn"
+            onClick={onSeeMoreNews}
+            className="text-xs text-primary hover:underline"
+          >
+            More news →
+          </button>
+        )}
+      </div>
+      {news.length === 0 ? (
+        <div className="p-3 rounded-lg bg-secondary/20 border border-border/50 text-xs text-muted-foreground italic">
+          No recent news for this player.
+        </div>
+      ) : (
+        <div className="p-3 rounded-lg bg-secondary/20 border border-border/50" data-testid="player-card-latest-news-item">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-sm font-medium">{(news[0] as any).title || (news[0] as any).headline}</span>
+            <span className="text-xs text-muted-foreground">
+              {(news[0] as any).date}{(news[0] as any).time ? ` · ${(news[0] as any).time}` : ""}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {(news[0] as any).snippet || (news[0] as any).summary}
+          </p>
+          <span className="text-[10px] text-primary mt-1 inline-block">
+            {(news[0] as any).source}
+          </span>
+        </div>
+      )}
     </div>
 
     {/* Fantasy Points Breakdown */}
@@ -508,8 +573,11 @@ const OverviewTab = ({
       );
     })()}
 
-    {/* Last 10 Games */}
-    <div>
+    {/* Last 10 Games — full category table matching roster column order
+         (POS · Date · OPP · FPTS · G · A · PPP · SHP · SOG · HIT · BLK · PIM · +/-)
+         minus FP/G per UX request. Categories pulled from the same `categories`
+         constant used by Season Stats so the columns track league scoring. */}
+    <div data-testid="player-card-last10">
       <h4 className="text-sm font-semibold mb-3">Last 10 Games</h4>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -517,26 +585,50 @@ const OverviewTab = ({
             <tr className="border-b border-border bg-secondary/30">
               <th className="text-left p-2 text-xs text-muted-foreground">Date</th>
               <th className="text-center p-2 text-xs text-muted-foreground">OPP</th>
-              <th className="text-center p-2 text-xs text-muted-foreground">G</th>
-              <th className="text-center p-2 text-xs text-muted-foreground">A</th>
-              <th className="text-center p-2 text-xs text-muted-foreground">PTS</th>
+              <th className="text-right p-2 text-xs text-muted-foreground">FPTS</th>
+              {categories.map((cat) => (
+                <th key={cat} className="text-center p-2 text-xs text-muted-foreground">{cat}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {last10Games.map((g, i) => (
-              <tr
-                key={i}
-                className="border-b border-border/30 hover:bg-secondary/10"
-              >
-                <td className="p-2 text-xs text-muted-foreground">{g.date}</td>
-                <td className="p-2 text-center text-xs font-medium">{g.opponent}</td>
-                <td className="p-2 text-center">{g.goals}</td>
-                <td className="p-2 text-center">{g.assists}</td>
-                <td className="p-2 text-center font-semibold text-primary">
-                  {g.pts}
+            {last10Games.length === 0 && (
+              <tr>
+                <td colSpan={3 + categories.length} className="p-4 text-center text-xs text-muted-foreground italic">
+                  No games played yet this season.
                 </td>
               </tr>
-            ))}
+            )}
+            {last10Games.map((g, i) => {
+              const valFor = (cat: string) => {
+                const map: Record<string, any> = {
+                  G: g.goals, A: g.assists,
+                  PPP: g.ppp, SHP: g.shp,
+                  SOG: g.sog, HIT: g.hits, BLK: g.blocks,
+                  PIM: g.pim, "+/-": g.plus_minus,
+                };
+                const v = map[cat];
+                return v == null ? "—" : v;
+              };
+              return (
+                <tr
+                  key={i}
+                  className="border-b border-border/30 hover:bg-secondary/10"
+                  data-testid={`last10-row-${i}`}
+                >
+                  <td className="p-2 text-xs text-muted-foreground whitespace-nowrap">{g.date}</td>
+                  <td className="p-2 text-center text-xs font-medium">{g.opponent}</td>
+                  <td className="p-2 text-right font-semibold text-primary tabular-nums" data-testid={`last10-fpts-${i}`}>
+                    {typeof g.fpts === "number" ? g.fpts.toFixed(1) : "—"}
+                  </td>
+                  {categories.map((cat) => (
+                    <td key={cat} className="p-2 text-center tabular-nums" data-testid={`last10-${cat}-${i}`}>
+                      {valFor(cat)}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
