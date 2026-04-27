@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/sidebar";
 import FantasyLevelBadge from "@/components/FantasyLevelBadge";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import { useChatUnread } from "@/hooks/use-chat-unread";
 
 const userItems = [
   { title: "User Dashboard", url: "/dashboard", icon: UserCircle },
@@ -54,6 +55,7 @@ export function AppSidebar() {
   const { leagueId: activeLeagueId, league } = useActiveLeague();
 
   const isActive = (path) => location.pathname === path;
+  const { count: chatUnread } = useChatUnread();
 
   // Determine if the current user is the commissioner OR a co-commissioner
   // for the active league. Used to gate the "League Administration" link.
@@ -94,7 +96,15 @@ export function AppSidebar() {
                   activeClassName="bg-[#00D2FF]/10 text-[#00D2FF] border-l-2 border-[#00D2FF]"
                 >
                   <item.icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && <span>{item.title}</span>}
+                  {!collapsed && <span className="flex-1">{item.title}</span>}
+                  {item.badge > 0 && (
+                    <span
+                      data-testid={`sidebar-badge-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                      className={`ml-auto h-5 ${collapsed ? "absolute right-1 top-1 min-w-[18px]" : "min-w-[20px]"} px-1.5 rounded-full bg-[#FF3B5C] text-white text-[10px] font-bold flex items-center justify-center shadow`}
+                    >
+                      {item.badge > 99 ? "99+" : item.badge}
+                    </span>
+                  )}
                 </NavLink>
               </SidebarMenuButton>
             </SidebarMenuItem>
@@ -102,6 +112,11 @@ export function AppSidebar() {
         </SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
+  );
+
+  // Inject the live unread count onto the Chat menu item.
+  const socialItemsWithBadge = socialItems.map((it) =>
+    it.title === "Chat" ? { ...it, badge: chatUnread } : it,
   );
 
   return (
@@ -122,7 +137,7 @@ export function AppSidebar() {
       <SidebarContent className="px-2">
         {renderGroup("User", userItems)}
         {renderGroup("League Hub", dynamicLeagueHub)}
-        {renderGroup("Social", socialItems)}
+        {renderGroup("Social", socialItemsWithBadge)}
         {renderGroup("Team Management", managementItems)}
         {renderGroup("Draft", draftItems)}
       </SidebarContent>

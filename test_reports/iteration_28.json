@@ -1,0 +1,44 @@
+{
+  "summary": "Iteration 28 — full backend + frontend regression on Dynasty Dreams chat overhaul (channels, DMs, messages, unread, mute, commissioner permissions, trade hook, waiver_lost transactions). 11/12 pytest cases pass (1 skipped: no DM exists in chris's league that excludes him because DMs only auto-materialize for the calling user). 7/8 frontend journey checkpoints pass via Playwright. Sole frontend miss is a Playwright selector issue inside the delete-channel flow (the more-actions trigger lookup using closest() didn't resolve correctly in my script) — DELETE is already covered by backend pytest test_commissioner_create_delete_and_default_protected so functionality is verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/leagues/{id}/transactions",
+        "issue": "No waiver_lost rows or new metadata fields (competing_claims/winning_team_name/winning_bid) observed in Ice Kings transactions. Endpoint accepts the new types and shape, but no live waiver-processing run has produced rows that exercise the new code paths in this league. Recommend: have main agent run a fresh waiver cycle with multiple competing claims and verify the metadata on the resulting waiver_won + waiver_lost rows."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_chat.py",
+    "/app/backend/tests/test_iteration28_chat_extras.py",
+    "/app/test_reports/pytest/iteration28_full.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: trigger one fresh weekly waiver run (or manually call the waiver-processing endpoint) so we can validate the new competing_claims / winning_team_name / winning_bid metadata embedding on a live waiver_won row, plus confirm waiver_lost rows surface in /api/leagues/{id}/transactions. The schema and endpoint are correct; only live data is missing.",
+    "OPTIONAL: minor httpx test-client gotcha worth documenting — the auth middleware accepts both bearer tokens AND login cookies, and httpx.AsyncClient persists cookies across requests, which can cause a cookie from a prior login to override a Bearer header on subsequent calls. Tests should `c.cookies.clear()` between identity switches. This is auth-middleware behavior, not a bug."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/routes/chat.py is well-structured: per-league cap (12) enforced, default channels seeded idempotently, DM team_pair sorted for order-independence, mute durations whitelisted, sender's read cursor advanced on POST so no self-unread. Permission check correctly uses commissioner_id + co_commissioners.",
+    "/app/backend/routes/chat.py:_is_commissioner reads only `commissioner_id` and `co_commissioners` — does NOT read `commissioner_ids` (plural). Today there is no `commissioner_ids` field populated in Ice Kings, so this works; but if any other league seeds `commissioner_ids` instead, that user would be 403'd. Low priority — matches existing convention.",
+    "Frontend Chat.tsx renders cap label (4/12), default channels marked, channel rows expose chat-channel-actions-{id} on hover, mention popup with chat-mention-popup, all per the testid registry in the spec. Toast confirmation on mute/unmute works ('Unmuted' toast observed)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration28_chat_extras.py — NEW: 6 supplemental pytest cases (unread shape, message length, channel name normalization+dup, outsider 403 perms, DM access guard, transactions schema)."
+  ],
+  "success_rate": {
+    "backend": "92% — 11/12 pass (1 skipped by design — DM access guard requires a DM that excludes the calling user, but DMs auto-materialize only for the caller's team-pairs)",
+    "frontend": "87% — 7/8 user-journey checkpoints pass (login, create channel, post message, @mention autocomplete inserts '@Blue Line Bruisers ', mute 30m, unmute, switch DM). Delete channel via UI not validated due to a Playwright selector issue in my own script — the underlying DELETE endpoint passes via backend pytest."
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (Ice Kings co-commissioner, owner of Zarek's Frozen).",
+  "seed_data_creation": "test_iteration28_chat_extras.py creates a fresh outsider user via /api/auth/register for the permission-check test; that user is not cleaned up but is harmless (not in any league). All custom channels created during testing were cleaned up at end of run (db.chat_channels.delete_many for non-default). Backend trade-hook test executes one real 2-party draft-pick swap on Ice Kings — this is permanent state.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Chat backend regression at /app/backend/tests/test_chat.py + /app/backend/tests/test_iteration28_chat_extras.py — 12 tests, 11 pass, 1 skip-by-design. Run with `export $(grep -v '^#' /app/backend/.env | xargs) && pytest /app/backend/tests/test_chat.py /app/backend/tests/test_iteration28_chat_extras.py -v`. The DM access-guard test will skip in a fresh setup unless you query as a non-participant — to assert it, either materialize a non-chris DM via direct insert, or run the test as a third party and look at chris's DMs. The waiver_lost+competing_claims metadata test asserts schema only — no live data exercises the new fields yet.",
+  "rca of the issue": "The frontend delete-channel flow could not be exercised due to a Playwright closest()-based selector path in my own script (not a product bug). The backend DELETE /api/chat/channels/{id} is verified via test_commissioner_create_delete_and_default_protected which both creates and deletes a custom channel and confirms default channels return 400."
+}

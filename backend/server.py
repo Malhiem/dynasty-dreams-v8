@@ -2970,7 +2970,7 @@ async def get_league_transactions(league_id: str, limit: int = 30):
     """
     cursor = db.activity_feed.find({
         "league_id": league_id,
-        "event_type": {"$in": ["roster_add", "roster_drop", "waiver_won", "trade_executed"]},
+        "event_type": {"$in": ["roster_add", "roster_drop", "waiver_won", "waiver_lost", "trade_executed"]},
     }).sort("created_at", -1).limit(max(1, min(limit, 100)))
     items = await cursor.to_list(limit)
     out = []
@@ -2986,6 +2986,9 @@ async def get_league_transactions(league_id: str, limit: int = 30):
             "player_id": meta.get("player_id"),
             "player_name": meta.get("player_name"),
             "bid_amount": meta.get("bid_amount"),
+            "winning_team_name": meta.get("winning_team_name"),
+            "winning_bid": meta.get("winning_bid"),
+            "competing_claims": meta.get("competing_claims") or [],
             "created_at": it.get("created_at"),
         })
     return {"league_id": league_id, "transactions": out, "count": len(out)}
@@ -3505,6 +3508,127 @@ async def _evaluate_conditions(trade: dict) -> dict:
     return {"all_met": all_met, "results": results}
 
 
+async def _format_player_for_trade_msg(pid: str) -> str:
+    try:
+        p = await db.players.find_one({"_id": ObjectId(pid)}, {"name": 1, "position": 1, "team": 1})
+    except Exception:
+        return pid
+    if not p:
+        return pid
+    bits = [p.get("name", "Unknown")]
+    pos = p.get("position")
+    team = p.get("team")
+    if pos or team:
+        bits.append("(" + " · ".join(x for x in [pos, team] if x) + ")")
+    return " ".join(bits)
+
+
+async def _format_pick_for_trade_msg(pick_id: Optional[str], year: Optional[int], rnd: Optional[int]) -> str:
+    if pick_id:
+        try:
+            d = await db.draft_picks.find_one({"_id": ObjectId(pick_id)}, {"year": 1, "round": 1})
+            if d:
+                year = d.get("year"); rnd = d.get("round")
+        except Exception:
+            pass
+    if year and rnd:
+        return f"{year} R{rnd} pick"
+    return "Draft pick"
+
+
+async def _post_trade_chat_messages(trade: dict, moves) -> None:
+    """Best-effort: drop a detailed system message in the league `general`
+    channel and in each pairwise DM between the trade participants.
+    `moves` is the structured roster-movement dict (singles dict for 2-party,
+    list for multi-party). Failures are swallowed so chat hiccups never block
+    the underlying trade."""
+    try:
+        from routes.chat import post_system_message  # local import avoids circular
+        league_id = trade["league_id"]
+        teams_in_trade: list[tuple[str, str]] = []  # (team_id, team_name)
+        per_team_lines: dict[str, list[str]] = {}   # team_id -> ["received: ...", ...]
+
+        if trade.get("is_multi_party") and isinstance(moves, list):
+            # Multi-party: moves is a flat list of {asset_type, from, to, ...}
+            for p in (trade.get("parties") or []):
+                tid = p["team_id"]
+                teams_in_trade.append((tid, p.get("team_name", "Team")))
+                per_team_lines.setdefault(tid, [])
+            for m in moves:
+                from_tid, to_tid = m.get("from"), m.get("to")
+                if m.get("asset_type") == "player":
+                    label = await _format_player_for_trade_msg(m.get("player_id"))
+                else:
+                    label = await _format_pick_for_trade_msg(m.get("pick_id"), m.get("year"), m.get("round"))
+                if to_tid in per_team_lines:
+                    per_team_lines[to_tid].append(f"+ {label}  ← from {m.get('from_name','?')}")
+                if from_tid in per_team_lines:
+                    per_team_lines[from_tid].append(f"− {label}  → to {m.get('to_name','?')}")
+        else:
+            # Two-party: moves dict with players_out/in + picks_out/in
+            ptid = trade.get("proposer_team_id"); pname = trade.get("proposer_team_name", "Team A")
+            ttid = trade.get("target_team_id");   tname = trade.get("target_team_name", "Team B")
+            teams_in_trade = [(ptid, pname), (ttid, tname)]
+            per_team_lines = {ptid: [], ttid: []}
+            for it in moves.get("players_out", []):
+                lbl = await _format_player_for_trade_msg(it["player_id"])
+                per_team_lines[ptid].append(f"− {lbl}  → to {tname}")
+                per_team_lines[ttid].append(f"+ {lbl}  ← from {pname}")
+            for it in moves.get("players_in", []):
+                lbl = await _format_player_for_trade_msg(it["player_id"])
+                per_team_lines[ptid].append(f"+ {lbl}  ← from {tname}")
+                per_team_lines[ttid].append(f"− {lbl}  → to {pname}")
+            for it in moves.get("picks_out", []):
+                lbl = await _format_pick_for_trade_msg(it.get("pick_id"), it.get("year"), it.get("round"))
+                per_team_lines[ptid].append(f"− {lbl}  → to {tname}")
+                per_team_lines[ttid].append(f"+ {lbl}  ← from {pname}")
+            for it in moves.get("picks_in", []):
+                lbl = await _format_pick_for_trade_msg(it.get("pick_id"), it.get("year"), it.get("round"))
+                per_team_lines[ptid].append(f"+ {lbl}  ← from {tname}")
+                per_team_lines[ttid].append(f"− {lbl}  → to {pname}")
+
+        names = " ↔ ".join(n for _, n in teams_in_trade)
+        general_lines = [f"🤝 Trade executed: {names}"]
+        for tid, tname in teams_in_trade:
+            received = [ln for ln in per_team_lines.get(tid, []) if ln.startswith("+")]
+            if received:
+                general_lines.append(f"  • {tname} receives:")
+                general_lines.extend(f"      {ln[2:]}" for ln in received)
+        general_text = "\n".join(general_lines)
+        await post_system_message(
+            db, league_id, general_text,
+            channel_name="general",
+            metadata={"trade_id": str(trade.get("_id")), "kind": "trade_executed"},
+        )
+        await post_system_message(
+            db, league_id, general_text,
+            channel_name="trades",
+            metadata={"trade_id": str(trade.get("_id")), "kind": "trade_executed"},
+        )
+
+        # DMs: one message in every pairwise DM
+        for i in range(len(teams_in_trade)):
+            for j in range(i + 1, len(teams_in_trade)):
+                tid_a, name_a = teams_in_trade[i]
+                tid_b, name_b = teams_in_trade[j]
+                lines = [f"🤝 Trade complete — {name_a} ↔ {name_b}"]
+                a_lines = per_team_lines.get(tid_a, [])
+                b_lines = per_team_lines.get(tid_b, [])
+                if a_lines:
+                    lines.append(f"\n{name_a}:")
+                    lines.extend(f"  {ln}" for ln in a_lines)
+                if b_lines:
+                    lines.append(f"\n{name_b}:")
+                    lines.extend(f"  {ln}" for ln in b_lines)
+                await post_system_message(
+                    db, league_id, "\n".join(lines),
+                    team_pair=[tid_a, tid_b],
+                    metadata={"trade_id": str(trade.get("_id")), "kind": "trade_executed_dm"},
+                )
+    except Exception as e:
+        logger.warning("trade chat hook failed: %s", e)
+
+
 async def _execute_multi_party_trade(trade: dict) -> dict:
     """Execute a trade with 3+ parties.
     Each party's `sends` are removed from their roster; the engine then routes
@@ -3648,6 +3772,7 @@ async def _execute_multi_party_trade(trade: dict) -> dict:
         })
     except Exception:
         pass
+    await _post_trade_chat_messages(trade, moves)
     return {"executed": True, "moves": moves, "parties": [p["team_name"] for p in parties]}
 
 
@@ -3777,6 +3902,7 @@ async def _execute_trade(trade: dict) -> dict:
         })
     except Exception:
         pass
+    await _post_trade_chat_messages(trade, moves)
     return {"executed": True, "moves": moves}
 
 
@@ -4525,7 +4651,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes
 
 _router_deps = {
     "db": db,
@@ -4548,6 +4674,7 @@ waivers_routes.setup(_router_deps)
 players_routes.setup(_router_deps)
 trades_routes.setup(_router_deps)
 comparisons_routes.setup(_router_deps)
+chat_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -4556,6 +4683,7 @@ api_router.include_router(waivers_routes.router)
 api_router.include_router(players_routes.router)
 api_router.include_router(trades_routes.router)
 api_router.include_router(comparisons_routes.router)
+api_router.include_router(chat_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")

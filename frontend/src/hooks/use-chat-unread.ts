@@ -1,32 +1,52 @@
 // @ts-nocheck
-import { useState, useEffect, useCallback } from "react";
+/**
+ * Polls /api/chat/unread every 30s and exposes the aggregate unread count
+ * for the sidebar badge. `markRead()` triggers an immediate refresh after
+ * the user views any channel (which already updates the read cursor on
+ * the server inside list_messages).
+ */
+import { useState, useEffect, useCallback, useRef } from "react";
+import api from "@/lib/api";
 
-const STORAGE_KEY = "chat-unread-count";
-const DEFAULT_COUNT = 8;
-
-function getStoredCount(): number {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  return stored !== null ? parseInt(stored, 10) : DEFAULT_COUNT;
-}
+const POLL_MS = 30_000;
+const REFRESH_EVENT = "chat-unread-updated";
 
 export function useChatUnread() {
-  const [count, setCount] = useState(getStoredCount);
+  const [count, setCount] = useState(0);
+  const [byChannel, setByChannel] = useState({});
+  const mountedRef = useRef(true);
+
+  const refresh = useCallback(async () => {
+    try {
+      const { data } = await api.get("/chat/unread");
+      if (!mountedRef.current) return;
+      setCount(Number(data?.unread || 0));
+      setByChannel(data?.by_channel || {});
+    } catch (e) {
+      // Silently swallow — unread badge is best-effort
+    }
+  }, []);
 
   useEffect(() => {
-    const handler = () => setCount(getStoredCount());
-    window.addEventListener("chat-unread-updated", handler);
-    window.addEventListener("storage", handler);
+    mountedRef.current = true;
+    refresh();
+    const id = setInterval(refresh, POLL_MS);
+    const handler = () => refresh();
+    window.addEventListener(REFRESH_EVENT, handler);
     return () => {
-      window.removeEventListener("chat-unread-updated", handler);
-      window.removeEventListener("storage", handler);
+      mountedRef.current = false;
+      clearInterval(id);
+      window.removeEventListener(REFRESH_EVENT, handler);
     };
-  }, []);
+  }, [refresh]);
 
   const markRead = useCallback(() => {
-    localStorage.setItem(STORAGE_KEY, "0");
-    setCount(0);
-    window.dispatchEvent(new Event("chat-unread-updated"));
-  }, []);
+    // The server already moves the read cursor when /messages is fetched;
+    // we just trigger a refresh shortly after so the badge updates without
+    // waiting for the next 30s tick.
+    setTimeout(refresh, 250);
+    window.dispatchEvent(new Event(REFRESH_EVENT));
+  }, [refresh]);
 
-  return { count, markRead };
+  return { count, byChannel, markRead, refresh };
 }

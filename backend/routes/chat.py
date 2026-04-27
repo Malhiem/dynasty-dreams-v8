@@ -33,7 +33,7 @@ MUTE_DURATIONS = {
 
 def setup(deps: dict) -> None:
     _deps.update(deps)
-    _deps["post_chat_system_message"] = _post_system_message
+    _deps["post_chat_system_message"] = post_system_message
 
 
 def _db(): return _deps["db"]
@@ -295,7 +295,7 @@ async def post_message(channel_id: str, payload: dict, request: Request):
 
 
 @router.get("/chat/unread")
-async def total_unread(league_id: Optional[str] = None, request: Request = None):
+async def total_unread(request: Request, league_id: Optional[str] = None):
     """Aggregate unread count across all of the user's visible channels —
     powers the sidebar badge. Excludes channels the user has muted."""
     db = _db()
@@ -385,10 +385,40 @@ async def set_mute(channel_id: str, payload: dict, request: Request):
     }
 
 
+@router.get("/chat/league/{league_id}/members")
+async def list_league_members(league_id: str, request: Request):
+    """League members for @mention autocomplete. Returns one row per team in
+    the league: { team_id, team_name, owner_name, abbr }."""
+    db = _db()
+    await _get_user(request)
+    teams = await db.teams.find(
+        {"league_id": league_id},
+        {"_id": 1, "name": 1, "owner_id": 1, "owner_name": 1, "abbreviation": 1},
+    ).to_list(50)
+    out = []
+    for t in teams:
+        owner_name = t.get("owner_name")
+        if not owner_name and t.get("owner_id"):
+            try:
+                u = await db.users.find_one({"_id": ObjectId(t["owner_id"])}, {"name": 1, "email": 1})
+                if u:
+                    owner_name = u.get("name") or u.get("email")
+            except Exception:
+                pass
+        out.append({
+            "team_id": str(t["_id"]),
+            "team_name": t.get("name", ""),
+            "owner_name": owner_name or "Owner",
+            "abbr": t.get("abbreviation") or (t.get("name", "")[:3].upper() if t.get("name") else "?"),
+        })
+    out.sort(key=lambda x: x["team_name"].lower())
+    return {"members": out}
+
+
 # ─────────────── Helpers used by other modules ─────────────────────
 
 
-async def _post_system_message(
+async def post_system_message(
     db,
     league_id: str,
     text: str,

@@ -287,6 +287,22 @@ async def process_waivers(league_id: str, request: Request):
                 {"_id": loser["_id"]},
                 {"$set": {"status": "lost", "processed_at": datetime.now(timezone.utc).isoformat()}},
             )
+            await _log_activity(
+                league_id,
+                "waiver_lost",
+                f"{loser['team_name']} lost waiver claim on {loser['player_name']} (${loser['bid_amount']} FAAB) — won by {winner['team_name']} (${winner['bid_amount']})",
+                None,
+                metadata={
+                    "team_id": loser["team_id"],
+                    "team_name": loser["team_name"],
+                    "player_id": loser["player_id"],
+                    "player_name": loser["player_name"],
+                    "bid_amount": loser["bid_amount"],
+                    "winning_team_id": winner["team_id"],
+                    "winning_team_name": winner["team_name"],
+                    "winning_bid": winner["bid_amount"],
+                },
+            )
 
         try:
             await db.teams.update_one(
@@ -310,6 +326,10 @@ async def process_waivers(league_id: str, request: Request):
                 "player_id": winner["player_id"],
                 "player_name": winner["player_name"],
                 "bid_amount": winner["bid_amount"],
+                "competing_claims": [
+                    {"team_id": l["team_id"], "team_name": l["team_name"], "bid_amount": l["bid_amount"]}
+                    for l in losers
+                ],
             },
         )
 
