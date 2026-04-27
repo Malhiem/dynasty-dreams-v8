@@ -3532,8 +3532,7 @@ async def _apply_pick_upgrades(trade: dict, *, final_eval: bool = False) -> dict
 
         if met:
             pick_id = up.get("pick_id")
-            new_round = int(up.get("new_round", 0))
-            new_year = up.get("new_year")
+            action = up.get("action") or "rewrite"
             try:
                 pick = await db.draft_picks.find_one({"_id": ObjectId(pick_id)})
             except Exception:
@@ -3541,8 +3540,90 @@ async def _apply_pick_upgrades(trade: dict, *, final_eval: bool = False) -> dict
             if not pick:
                 results.append({"index": idx, "met": True, "applied": False, "reason": "pick_not_found"})
                 continue
+
             old_round = pick.get("round")
             old_year = pick.get("year")
+            old_owner = pick.get("current_team_id")
+
+            if action == "add" or action == "remove":
+                # Transfer ownership: from_team_id → to_team_id
+                from_team_id = up.get("from_team_id")
+                to_team_id = up.get("to_team_id")
+                if not to_team_id:
+                    results.append({"index": idx, "met": True, "applied": False,
+                                    "reason": "missing_to_team_id"})
+                    continue
+                history_kind = "pick_added" if action == "add" else "pick_removed"
+                history_emoji = "📈" if action == "add" else "📉"
+                history_label = "Pick added" if action == "add" else "Pick removed"
+                await db.draft_picks.update_one(
+                    {"_id": ObjectId(pick_id)},
+                    {
+                        "$set": {"current_team_id": to_team_id},
+                        "$push": {"trade_history": {
+                            "trade_id": trade_id,
+                            "kind": history_kind,
+                            "from_team_id": from_team_id or old_owner,
+                            "to_team_id": to_team_id,
+                            "round": old_round,
+                            "year": old_year,
+                            "trigger": cond.get("description") or cond.get("metric"),
+                            "actual_value": actual,
+                            "applied_at": now,
+                        }},
+                    },
+                )
+                # Resolve team names for chat/audit
+                from_team_name = None
+                to_team_name = None
+                try:
+                    if from_team_id or old_owner:
+                        ft = await db.teams.find_one({"_id": ObjectId(from_team_id or old_owner)})
+                        from_team_name = (ft or {}).get("name")
+                    tt = await db.teams.find_one({"_id": ObjectId(to_team_id)})
+                    to_team_name = (tt or {}).get("name")
+                except Exception:
+                    pass
+                await db.trades.update_one(
+                    {"_id": trade["_id"]},
+                    {"$set": {f"pick_upgrades.{idx}.applied_at": now,
+                              f"pick_upgrades.{idx}.actual_value": actual}},
+                )
+                await db.audit_log.insert_one({
+                    "league_id": league_id,
+                    "action": f"pick_upgrade_{action}_applied",
+                    "result": "pass",
+                    "trade_id": trade_id,
+                    "pick_id": pick_id,
+                    "from_team_id": from_team_id or old_owner,
+                    "to_team_id": to_team_id,
+                    "round": old_round, "year": old_year,
+                    "trigger": cond.get("description") or cond.get("metric"),
+                    "actual_value": actual,
+                    "created_at": now,
+                })
+                try:
+                    from routes.chat import post_system_message
+                    await post_system_message(
+                        db, league_id,
+                        f"{history_emoji} {history_label}: {old_year} R{old_round} "
+                        f"{'→' if action == 'add' else 'reverts to'} {to_team_name or to_team_id} "
+                        f"(condition: {cond.get('description') or cond.get('metric')})",
+                        channel_name="trades",
+                        metadata={"trade_id": trade_id, "kind": history_kind},
+                    )
+                except Exception:
+                    pass
+                applied += 1
+                results.append({"index": idx, "met": True, "applied": True,
+                                "action": action,
+                                "from_team_id": from_team_id or old_owner,
+                                "to_team_id": to_team_id})
+                continue
+
+            # action == "rewrite" (default, back-compat)
+            new_round = int(up.get("new_round", 0))
+            new_year = up.get("new_year")
             update_set = {"round": new_round}
             if new_year:
                 update_set["year"] = int(new_year)
@@ -3591,6 +3672,7 @@ async def _apply_pick_upgrades(trade: dict, *, final_eval: bool = False) -> dict
                 pass
             applied += 1
             results.append({"index": idx, "met": True, "applied": True,
+                            "action": "rewrite",
                             "from_round": old_round, "to_round": new_round})
         else:
             if final_eval:

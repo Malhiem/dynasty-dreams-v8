@@ -114,12 +114,23 @@ class TradeCondition(BaseModel):
 
 
 class TradePickUpgrade(BaseModel):
-    """Outcome-modifying conditional. When `condition` evaluates true, the
-    named pick is rewritten to `new_round` (and optionally `new_year`).
-    Supports upgrades (round → lower) and downgrades (round → higher)."""
+    """Outcome-modifying conditional. Three action modes:
+
+    - `rewrite` (default, back-compat): when `condition` is true, the named
+      pick's `round` (and optionally `year`) is rewritten. Supports upgrades
+      (round → lower) and downgrades (round → higher).
+    - `add`: pick is NOT part of the trade assets. When `condition` is true,
+      ownership transfers from `from_team_id` → `to_team_id` (effectively
+      adding the pick to the deal post-hoc).
+    - `remove`: pick IS part of the trade assets and was already transferred
+      at execution. When `condition` is true, ownership reverts back —
+      `current_team_id` → `to_team_id` (typically the original sender)."""
     pick_id: str
-    new_round: int = Field(ge=1, le=10)
+    action: str = "rewrite"  # "rewrite" | "add" | "remove"
+    new_round: Optional[int] = Field(default=None, ge=1, le=10)
     new_year: Optional[int] = None
+    from_team_id: Optional[str] = None  # required for add/remove
+    to_team_id: Optional[str] = None    # required for add/remove
     condition: TradeCondition
     description: Optional[str] = None
 

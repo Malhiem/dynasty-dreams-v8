@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 32 — Conditional trade ADD/REMOVE pick actions PASS end-to-end. Backend pytest: 7/7 in test_pick_upgrades.py (incl. 2 NEW: test_pick_upgrade_action_add_transfers_ownership_on_trigger, test_pick_upgrade_action_remove_reverts_ownership_on_trigger). Regression: 30/30 across test_pick_upgrades.py (7), test_trade_analyzer.py (8), test_compare_paywall.py (6), test_chat.py (6), test_multi_party_trade.py (3). Frontend (Playwright on https://dynasty-preview.preview.emergentagent.com): logged in as chriszarek, opened GlobalTradeBuilder via roster-trade-btn on partner team page (/team?team=69e59b30cbd3fea02a914c63 = Ice Breakers). All 4 testids present (add-pick-upgrade-btn, add-pick-downgrade-btn, add-pick-add-btn, add-pick-remove-btn). After clicking each in order, badges 'Pick upgrade', 'Pick downgrade', 'Add pick on trigger', 'Remove pick on trigger' all PRESENT. Rewrite rows (idx 0,1) expose pick-upgrade-new-round-{i} + pick-upgrade-new-year-{i}; add/remove rows (idx 2,3) expose pick-upgrade-from-team-{i} + pick-upgrade-to-team-{i} and DO NOT expose new-round (count=0 as expected).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_pick_upgrades.py",
+    "/app/test_reports/pytest/iteration32_pick_upgrades.xml",
+    "/app/test_reports/pytest/iteration32_regression.xml"
+  ],
+  "action_items": [
+    "NONE (blocking): Feature is production-ready. 7/7 pick_upgrades + 23 regression tests pass; 4 conditional buttons + per-action THEN UI verified live."
+  ],
+  "critical_code_review_comments": [
+    "TradePickUpgrade model correctly makes new_round Optional — required for action='add'/'remove' where round rewrite is N/A.",
+    "_apply_pick_upgrades branches cleanly on action ('rewrite' | 'add' | 'remove') — each emits the right trade_history kind ('pick_upgrade' / 'pick_added' / 'pick_removed') and matching audit_log action with result='pass'.",
+    "applied_at flag on trade.pick_upgrades[i] guarantees idempotency — re-toggling championship returns pick_upgrades_applied=0, asserted in test.",
+    "PickUpgradeEditor.tsx 'window.__addPickUpgrade(direction)' bridge correctly maps direction → action: upgrade/downgrade → 'rewrite', add → 'add', remove → 'remove'.",
+    "From/To-team selectors only rendered for action != 'rewrite' — keeps rewrite UI uncluttered and prevents invalid payloads.",
+    "Badge labels use direction (not action) so 'upgrade' vs 'downgrade' are distinguishable to users even though both serialize as action='rewrite'."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (7/7 pick_upgrades + 23/23 regression = 30/30)", "frontend": "100% on all 4 conditional buttons, 4 badges, conditional THEN UI for both rewrite + add/remove"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! ; admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "Pre-test: db.draft_picks.update_many({original_team_id: '69e59b30cbd3fea02a914c61', league_id: '69e46af167999bfb85c39628'}, {$set: {current_team_id: '69e59b30cbd3fea02a914c61', current_team_name: \"Zarek's Frozen\", trade_history: []}}) — restored 15 picks for Zarek's Frozen so the autouse fixture sees a clean slate. Tests are idempotent (each test cleans up its own pick + commish/championship flags in finally blocks).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Conditional trade add/remove is production-ready. To retest: (1) restore Zarek's picks via the seed_data_creation snippet; (2) `set -a && source backend/.env && set +a && pytest backend/tests/test_pick_upgrades.py -v` (5s, 7/7 pass — env load is required because tests import os.environ['MONGO_URL'] at fixture-setup time and pytest does not auto-load backend/.env). Frontend: log in as chriszarek, go to /team?team=69e59b30cbd3fea02a914c63, click any roster-trade-btn-* in the Ice Breakers roster — that opens GlobalTradeBuilder where the 4 testids 'add-pick-upgrade-btn / add-pick-downgrade-btn / add-pick-add-btn / add-pick-remove-btn' are rendered side-by-side under 'Conditional Trade'. NOTE: there is NO standalone 'Propose Trade' button on the team page in the current build — clicking a player's roster-trade-btn opens the builder (works as designed; the GlobalTradeBuilder is also reachable from /roster + Trade Block flows).",
+  "rca of the issue": "N/A — no bugs found."
+}

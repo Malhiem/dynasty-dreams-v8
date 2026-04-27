@@ -530,3 +530,248 @@ async def test_pick_downgrade_clause_supported():
                     "current_team_name": partner.get("name"),
                 }},
             )
+
+
+
+@pytest.mark.asyncio
+async def test_pick_upgrade_action_add_transfers_ownership_on_trigger():
+    """Action='add': pick is NOT in the trade. When championship triggers,
+    pick ownership transfers from sender (partner) to receiver (me)."""
+    db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+    async with AsyncClient(base_url=BASE, timeout=30) as c:
+        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        h = {"Authorization": f"Bearer {tok}"}
+
+        leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
+        league = leagues[0]
+        lid = league["id"]
+
+        teams = await db.teams.find({"league_id": lid}).to_list(20)
+        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        partner = next(t for t in teams if t["_id"] != my["_id"])
+
+        # Pick that the partner currently owns and that is NOT going to be
+        # included in the trade today — only added if the condition fires.
+        future_pick = await db.draft_picks.find_one({
+            "league_id": lid, "current_team_id": str(partner["_id"]), "round": 4,
+        })
+        if not future_pick:
+            pytest.skip("No 4th-round pick on partner team")
+        future_pick_id = str(future_pick["_id"])
+        original_owner = str(partner["_id"])
+
+        # Token assets so the trade has at least one asset on each side
+        my_player_pick = await db.draft_picks.find_one({
+            "league_id": lid, "current_team_id": str(my["_id"]),
+        })
+        partner_real_pick = await db.draft_picks.find_one({
+            "league_id": lid, "current_team_id": str(partner["_id"]),
+            "_id": {"$ne": ObjectId(future_pick_id)},
+        })
+        if not my_player_pick or not partner_real_pick:
+            pytest.skip("Insufficient picks for setup")
+
+        await db.teams.update_one({"_id": my["_id"]}, {"$unset": {"championship_won_at": ""}})
+
+        payload = {
+            "league_id": lid,
+            "target_team_id": str(partner["_id"]),
+            "assets_offered": [{"asset_type": "pick", "pick_id": str(my_player_pick["_id"])}],
+            "assets_requested": [{"asset_type": "pick", "pick_id": str(partner_real_pick["_id"])}],
+            "message": "add-pick pytest",
+            "pick_upgrades": [{
+                "pick_id": future_pick_id,
+                "action": "add",
+                "from_team_id": str(partner["_id"]),
+                "to_team_id": str(my["_id"]),
+                "condition": {
+                    "subject_type": "team",
+                    "subject": "offered",
+                    "team_id": str(my["_id"]),
+                    "metric": "won_championship",
+                    "operator": "eq", "threshold": 1,
+                    "description": "If Zarek wins championship",
+                },
+                "description": "Add 4th-round pick on championship",
+            }],
+        }
+        r = await c.post("/api/trades", json=payload, headers=h)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
+        if not trade_id:
+            pytest.skip(f"trade response missing id: {body}")
+        assert trade_id
+
+        r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
+        assert r.status_code == 200, r.text
+
+        # The "add" pick must NOT have moved yet (no championship)
+        pick = await db.draft_picks.find_one({"_id": ObjectId(future_pick_id)})
+        assert pick["current_team_id"] == original_owner, "Pick moved prematurely"
+
+        # Toggle championship — promote chris to commissioner first
+        original_commish = league.get("commissioner_id")
+        await db.leagues.update_one(
+            {"_id": ObjectId(lid)},
+            {"$set": {"commissioner_id": str(my["_id"])}},
+        )
+        try:
+            r = await c.put(
+                f"/api/leagues/{lid}/teams/{my['_id']}/awards",
+                json={"championship_won": True}, headers=h,
+            )
+            assert r.status_code == 200, r.text
+            assert r.json().get("pick_upgrades_applied", 0) >= 1
+
+            # The "add" pick now belongs to me
+            pick = await db.draft_picks.find_one({"_id": ObjectId(future_pick_id)})
+            assert pick["current_team_id"] == str(my["_id"]), \
+                f"Expected pick owned by me, got {pick['current_team_id']}"
+            history = pick.get("trade_history") or []
+            assert any(h.get("kind") == "pick_added" for h in history), \
+                f"Missing pick_added trade_history: {history}"
+
+            # Audit + trade doc updated
+            audit = await db.audit_log.find_one({
+                "league_id": lid, "trade_id": trade_id,
+                "action": "pick_upgrade_add_applied", "result": "pass",
+            })
+            assert audit, "Missing audit_log row"
+            t = await db.trades.find_one({"_id": ObjectId(trade_id)})
+            assert t["pick_upgrades"][0].get("applied_at"), "trade upgrade not marked applied"
+        finally:
+            if original_commish:
+                await db.leagues.update_one(
+                    {"_id": ObjectId(lid)},
+                    {"$set": {"commissioner_id": original_commish}},
+                )
+            await db.teams.update_one({"_id": my["_id"]}, {"$unset": {"championship_won_at": ""}})
+            # Restore pick ownership
+            await db.draft_picks.update_one(
+                {"_id": ObjectId(future_pick_id)},
+                {"$set": {
+                    "current_team_id": original_owner,
+                    "current_team_name": partner.get("name"),
+                }},
+            )
+
+
+@pytest.mark.asyncio
+async def test_pick_upgrade_action_remove_reverts_ownership_on_trigger():
+    """Action='remove': pick IS in the trade and transfers at execution.
+    When the condition fires, ownership reverts back to the original sender."""
+    db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
+
+    async with AsyncClient(base_url=BASE, timeout=30) as c:
+        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        h = {"Authorization": f"Bearer {tok}"}
+
+        leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
+        league = leagues[0]
+        lid = league["id"]
+
+        teams = await db.teams.find({"league_id": lid}).to_list(20)
+        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        partner = next(t for t in teams if t["_id"] != my["_id"])
+
+        # Pick that the partner sends to me as part of this trade. If
+        # championship triggers, it reverts back to partner.
+        traded_pick = await db.draft_picks.find_one({
+            "league_id": lid, "current_team_id": str(partner["_id"]), "round": 5,
+        })
+        if not traded_pick:
+            pytest.skip("No 5th-round pick on partner team")
+        traded_pick_id = str(traded_pick["_id"])
+        original_owner = str(partner["_id"])
+        original_round = traded_pick["round"]
+        original_year = traded_pick["year"]
+
+        my_pick = await db.draft_picks.find_one({
+            "league_id": lid, "current_team_id": str(my["_id"]),
+        })
+        if not my_pick:
+            pytest.skip("No pick on my team to send")
+
+        await db.teams.update_one({"_id": my["_id"]}, {"$unset": {"championship_won_at": ""}})
+
+        payload = {
+            "league_id": lid,
+            "target_team_id": str(partner["_id"]),
+            "assets_offered": [{"asset_type": "pick", "pick_id": str(my_pick["_id"])}],
+            "assets_requested": [{"asset_type": "pick", "pick_id": traded_pick_id}],
+            "message": "remove-pick pytest",
+            "pick_upgrades": [{
+                "pick_id": traded_pick_id,
+                "action": "remove",
+                "from_team_id": str(my["_id"]),     # current holder after execution
+                "to_team_id": original_owner,        # revert target = original owner
+                "condition": {
+                    "subject_type": "team",
+                    "subject": "offered",
+                    "team_id": str(my["_id"]),
+                    "metric": "won_championship",
+                    "operator": "eq", "threshold": 1,
+                    "description": "If Zarek wins championship, return pick",
+                },
+                "description": "Revert 5th-round pick on championship",
+            }],
+        }
+        r = await c.post("/api/trades", json=payload, headers=h)
+        assert r.status_code == 200, r.text
+        body = r.json()
+        trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
+        if not trade_id:
+            pytest.skip(f"trade response missing id: {body}")
+        assert trade_id
+
+        r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
+        assert r.status_code == 200, r.text
+
+        # Pick is now mine post-execution
+        pick = await db.draft_picks.find_one({"_id": ObjectId(traded_pick_id)})
+        assert pick["current_team_id"] == str(my["_id"]), "Pick should be mine post-execution"
+
+        # Toggle championship
+        original_commish = league.get("commissioner_id")
+        await db.leagues.update_one(
+            {"_id": ObjectId(lid)},
+            {"$set": {"commissioner_id": str(my["_id"])}},
+        )
+        try:
+            r = await c.put(
+                f"/api/leagues/{lid}/teams/{my['_id']}/awards",
+                json={"championship_won": True}, headers=h,
+            )
+            assert r.status_code == 200, r.text
+            assert r.json().get("pick_upgrades_applied", 0) >= 1
+
+            # Pick reverts to original owner
+            pick = await db.draft_picks.find_one({"_id": ObjectId(traded_pick_id)})
+            assert pick["current_team_id"] == original_owner, \
+                f"Pick should have reverted, current owner: {pick['current_team_id']}"
+            history = pick.get("trade_history") or []
+            assert any(h.get("kind") == "pick_removed" for h in history), \
+                f"Missing pick_removed history: {history}"
+
+            audit = await db.audit_log.find_one({
+                "league_id": lid, "trade_id": trade_id,
+                "action": "pick_upgrade_remove_applied", "result": "pass",
+            })
+            assert audit
+        finally:
+            if original_commish:
+                await db.leagues.update_one(
+                    {"_id": ObjectId(lid)},
+                    {"$set": {"commissioner_id": original_commish}},
+                )
+            await db.teams.update_one({"_id": my["_id"]}, {"$unset": {"championship_won_at": ""}})
+            await db.draft_picks.update_one(
+                {"_id": ObjectId(traded_pick_id)},
+                {"$set": {
+                    "round": original_round, "year": original_year,
+                    "current_team_id": original_owner,
+                    "current_team_name": partner.get("name"),
+                }},
+            )

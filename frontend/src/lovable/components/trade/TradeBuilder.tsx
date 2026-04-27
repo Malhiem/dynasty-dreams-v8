@@ -589,7 +589,7 @@ export const TradeBuilder = ({
           <div className="px-4 py-3 border-t border-border bg-secondary/10">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-xs font-semibold text-foreground">Conditional Trade</h4>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 flex-wrap">
                 <Button
                   size="sm"
                   variant="outline"
@@ -607,6 +607,24 @@ export const TradeBuilder = ({
                   data-testid="add-pick-downgrade-btn"
                 >
                   + Pick downgrade
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[11px] h-7"
+                  onClick={() => (window as any).__addPickUpgrade?.("add")}
+                  data-testid="add-pick-add-btn"
+                >
+                  + Add pick
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="text-[11px] h-7"
+                  onClick={() => (window as any).__addPickUpgrade?.("remove")}
+                  data-testid="add-pick-remove-btn"
+                >
+                  + Remove pick
                 </Button>
               </div>
             </div>

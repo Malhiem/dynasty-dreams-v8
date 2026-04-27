@@ -339,7 +339,7 @@ export default function GlobalTradeBuilder() {
           <div className="rounded-lg border border-border/50 bg-secondary/10 p-3">
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-xs font-semibold">Conditional Trade</h4>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1 flex-wrap">
                 <Button size="sm" variant="outline" className="text-[10px] h-6"
                   onClick={() => window.__addPickUpgrade?.("upgrade")}
                   data-testid="add-pick-upgrade-btn">
@@ -349,6 +349,16 @@ export default function GlobalTradeBuilder() {
                   onClick={() => window.__addPickUpgrade?.("downgrade")}
                   data-testid="add-pick-downgrade-btn">
                   + Pick downgrade
+                </Button>
+                <Button size="sm" variant="outline" className="text-[10px] h-6"
+                  onClick={() => window.__addPickUpgrade?.("add")}
+                  data-testid="add-pick-add-btn">
+                  + Add pick
+                </Button>
+                <Button size="sm" variant="outline" className="text-[10px] h-6"
+                  onClick={() => window.__addPickUpgrade?.("remove")}
+                  data-testid="add-pick-remove-btn">
+                  + Remove pick
                 </Button>
               </div>
             </div>
