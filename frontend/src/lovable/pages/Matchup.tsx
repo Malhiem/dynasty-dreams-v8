@@ -122,7 +122,7 @@ const Matchup = () => {
     if (viewingMatchup) {
       return leagueTeams.find(t => t.id === activeAwayTeamId) || null;
     }
-    if (!myMatchup || !myTeam) return leagueTeams.find(t => t.id !== myTeam?.id) || null;
+    if (!myMatchup || !myTeam) return leagueTeams.find(t => t.id !== focusedMyTeam?.id) || null;
     const oppId = myMatchup.home_team_id === myTeam.id ? myMatchup.away_team_id : myMatchup.home_team_id;
     return leagueTeams.find(t => t.id === oppId) || null;
   }, [viewingMatchup, activeAwayTeamId, leagueTeams, myMatchup, myTeam]);
@@ -283,11 +283,13 @@ const Matchup = () => {
         <div className="stat-card p-8">
           <div className="flex items-center justify-between">
             <div className="text-center flex-1">
-              <TeamLogo logo={myTeam?.logo_url} name={myTeam?.name || "—"} abbr={myTeam?.logo_abbr || "—"} size="lg" className="mx-auto mb-3 rounded-full" />
-              <h2 className="text-xl font-bold"><TeamLink name={myTeam?.name || "—"} id={myTeam?.id} /></h2>
+              <TeamLogo logo={focusedMyTeam?.logo_url} name={focusedMyTeam?.name || "—"} abbr={focusedMyTeam?.logo_abbr || "—"} size="lg" className="mx-auto mb-3 rounded-full" />
+              <h2 className="text-xl font-bold"><TeamLink name={focusedMyTeam?.name || "—"} id={focusedMyTeam?.id} /></h2>
               <p className="text-muted-foreground text-sm">
-                {myTeam ? `${myTeam.wins || 0}-${myTeam.losses || 0}-${myTeam.ties || 0}` : ''}
-                {league?.name ? ` • ${league.name}` : ''}
+                {focusedMyTeam ? `${focusedMyTeam.wins || 0}-${focusedMyTeam.losses || 0}-${focusedMyTeam.ties || 0}` : ''}
+                {viewingMatchup && focusedMyTeam?.owner_name
+                  ? ` • ${focusedMyTeam.owner_name}`
+                  : (league?.name ? ` • ${league.name}` : '')}
               </p>
             </div>
             
@@ -374,8 +376,8 @@ const Matchup = () => {
           <Card className="bg-card border-border">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
-                <TeamLogo logo={myTeam?.logo_url} name={myTeam?.name || 'ME'} abbr={myTeam?.logo_abbr || 'ME'} size="xs" />
-                {myTeam?.name || 'My Lineup'}
+                <TeamLogo logo={focusedMyTeam?.logo_url} name={focusedMyTeam?.name || 'ME'} abbr={focusedMyTeam?.logo_abbr || 'ME'} size="xs" />
+                {focusedMyTeam?.name || 'My Lineup'}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
