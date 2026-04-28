@@ -809,6 +809,45 @@ const CommissionerSettings = () => {
     setIsPrivate(!!activeLeague?.is_private);
   }, [activeLeague?.id, activeLeague?.is_private]);
 
+  // ─── Salary Retention Slots (per-team cap, default 3) ───────────
+  // Controls how many retained-salary trades each team may stack. Stored
+  // on the league document and consumed by /teams/{id}/compliance to drive
+  // the "Retention Slots Remaining" tile on the roster page.
+  const [retentionSlots, setRetentionSlots] = useState<number>(3);
+  const [retentionSlotsDraft, setRetentionSlotsDraft] = useState<string>("3");
+  const [savingRetentionSlots, setSavingRetentionSlots] = useState<boolean>(false);
+  useEffect(() => {
+    const val = Number((activeLeague as any)?.salary_retention_slots ?? 3);
+    setRetentionSlots(val);
+    setRetentionSlotsDraft(String(val));
+  }, [activeLeague?.id, (activeLeague as any)?.salary_retention_slots]);
+
+  const saveRetentionSlots = async () => {
+    if (!activeLeague?.id) return;
+    const parsed = parseInt(retentionSlotsDraft, 10);
+    if (Number.isNaN(parsed) || parsed < 0 || parsed > 10) {
+      toast.error("Retention slots must be a number between 0 and 10");
+      return;
+    }
+    setSavingRetentionSlots(true);
+    try {
+      await api.put(`/leagues/${activeLeague.id}/salary-retention-slots`, {
+        salary_retention_slots: parsed,
+      });
+      setRetentionSlots(parsed);
+      toast.success(
+        parsed === retentionSlots
+          ? "No change — retention slots already set to " + parsed
+          : `Retention slots updated to ${parsed} per team`,
+      );
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save retention slots");
+      setRetentionSlotsDraft(String(retentionSlots));
+    } finally {
+      setSavingRetentionSlots(false);
+    }
+  };
+
   const togglePrivacy = async (next: boolean) => {
     if (!activeLeague?.id) return;
     setPrivacyLoading(true);
@@ -1362,6 +1401,43 @@ const CommissionerSettings = () => {
                     <p className="text-sm text-muted-foreground">Minimum spending requirement</p>
                   </div>
                   <Switch />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* ─── Salary Retention Slots (wired) ─────────────────── */}
+            <Card className="bg-card border-border" data-testid="salary-retention-slots-card">
+              <CardHeader>
+                <CardTitle>Salary Retention Slots</CardTitle>
+                <CardDescription>
+                  How many retained-salary trades each team can stack at one time. Default is <span className="font-semibold text-foreground">3</span> (mirrors the NHL CBA).
+                  Set to <span className="font-semibold text-foreground">0</span> to disable retention trades entirely.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap items-end gap-4">
+                  <div className="space-y-2 flex-1 min-w-[180px]">
+                    <Label htmlFor="retention-slots-input">Retention Slots per Team</Label>
+                    <Input
+                      id="retention-slots-input"
+                      type="number"
+                      min={0}
+                      max={10}
+                      step={1}
+                      value={retentionSlotsDraft}
+                      onChange={(e) => setRetentionSlotsDraft(e.target.value)}
+                      className="bg-secondary border-border"
+                      data-testid="retention-slots-input"
+                    />
+                    <p className="text-xs text-muted-foreground">Allowed range: 0 – 10. Current league value: <span className="font-semibold">{retentionSlots}</span></p>
+                  </div>
+                  <Button
+                    onClick={saveRetentionSlots}
+                    disabled={savingRetentionSlots || retentionSlotsDraft === String(retentionSlots)}
+                    data-testid="retention-slots-save-btn"
+                  >
+                    {savingRetentionSlots ? "Saving…" : "Save"}
+                  </Button>
                 </div>
               </CardContent>
             </Card>
