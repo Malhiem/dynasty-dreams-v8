@@ -49,7 +49,8 @@ async def _set_pro(client, admin_token, user_id, is_pro):
 
 
 @pytest.mark.asyncio
-async def test_smart_drop_suggest_paywalled_for_non_pro():
+async def test_smart_drop_suggest_open_to_non_pro():
+    """Paywall removed — non-Pro users now receive 200 + suggestions."""
     async with AsyncClient(base_url=BASE, timeout=30) as client:
         token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
         admin = await _login(client, "admin@dynastydreams.com", "Admin123!")
@@ -61,10 +62,11 @@ async def test_smart_drop_suggest_paywalled_for_non_pro():
             f"/api/waivers/suggest?league_id={league}&position=C&limit=1",
             headers={"Authorization": f"Bearer {token}"},
         )
-        assert r.status_code == 402, r.text
+        assert r.status_code == 200, r.text
         body = r.json()
-        assert body["detail"]["code"] == "upgrade_required"
-        assert body["detail"]["feature"] == "smart_drop_suggest"
+        assert body["league_id"] == league
+        assert isinstance(body["suggestions"], list)
+        assert len(body["suggestions"]) >= 1
 
 
 @pytest.mark.asyncio

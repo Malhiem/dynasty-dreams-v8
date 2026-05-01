@@ -291,18 +291,9 @@ export default function TradeAnalyzerPage() {
           </div>
           {analyzerStatus && (
             <div className="text-right" data-testid="analyzer-status-strip">
-              {analyzerStatus.is_pro ? (
-                <Badge className="bg-[#FFB020] text-black">
-                  <Crown className="h-3 w-3 mr-1" /> Pro · Unlimited
-                </Badge>
-              ) : (
-                <div>
-                  <p className="text-xs text-[#A1A1AA]">Free tier</p>
-                  <p className="text-sm text-white">
-                    <span className="text-[#00D2FF] font-semibold">{analyzerStatus.analyses_remaining}</span> / {analyzerStatus.free_analyses_per_year} analysis left this year
-                  </p>
-                </div>
-              )}
+              <Badge className="bg-[#00D2FF]/15 text-[#00D2FF] border border-[#00D2FF]/30">
+                Unlimited
+              </Badge>
             </div>
           )}
         </div>
@@ -314,11 +305,6 @@ export default function TradeAnalyzerPage() {
         </div>
 
         <div className="flex items-center justify-end gap-3">
-          {!analyzerStatus?.is_pro && analyzerStatus?.analyses_remaining === 0 && (
-            <span className="text-xs text-[#FFB020] flex items-center gap-1.5">
-              <Lock className="h-3 w-3" /> Free tier exhausted
-            </span>
-          )}
           <Button
             onClick={runAnalyze}
             disabled={submitting}

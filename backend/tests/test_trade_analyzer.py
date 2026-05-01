@@ -150,8 +150,8 @@ async def test_player_projections_endpoint():
 
 
 @pytest.mark.asyncio
-async def test_analyze_paywall_after_first_analysis():
-    """Free tier: 1 analysis / year. Second call returns 402 upgrade_required."""
+async def test_analyze_unlimited_after_paywall_removed():
+    """Paywall removed — free-tier user can run multiple analyses back-to-back."""
     async with AsyncClient(base_url=BASE, timeout=60) as client:
         token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
         uid = await _user_id(client, token)
@@ -175,15 +175,13 @@ async def test_analyze_paywall_after_first_analysis():
         assert result["winner"] in ("a", "b", "tie")
         assert "fairness_pct" in result
         assert "verdict" in result
-        assert result["analyses_remaining"] == 0
 
-        # 2nd call must 402
+        # 2nd call (previously would 402) now succeeds as well
         r2 = await client.post(
             "/api/trade-analyzer/analyze", json=body,
             headers={"Authorization": f"Bearer {token}"},
         )
-        assert r2.status_code == 402
-        assert r2.json()["detail"]["code"] == "upgrade_required"
+        assert r2.status_code == 200, r2.text
 
 
 @pytest.mark.asyncio

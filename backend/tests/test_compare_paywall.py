@@ -72,7 +72,8 @@ async def test_pro_status_initial():
 
 
 @pytest.mark.asyncio
-async def test_compare_decrements_quota_and_paywalls_on_4th():
+async def test_compare_unlimited_after_paywall_removed():
+    """Paywall removed — a non-Pro user can compare >3 times a month now."""
     async with AsyncClient(base_url=BASE, timeout=60) as client:
         token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
         uid = await _user_id(client, token)
@@ -83,19 +84,11 @@ async def test_compare_decrements_quota_and_paywalls_on_4th():
         body = {"player_a_id": a, "player_b_id": b,
                 "season_a": "current", "season_b": "current",
                 "league_id": lid}
-        # 3 succesful compares
-        remainings = []
-        for i in range(3):
+        # 5 consecutive compares all succeed (previously the 4th would 402)
+        for i in range(5):
             r = await client.post("/api/comparisons/compare", json=body,
                                   headers={"Authorization": f"Bearer {token}"})
-            assert r.status_code == 200, r.text
-            remainings.append(r.json()["comparisons_remaining"])
-        assert remainings == [2, 1, 0], f"Expected [2,1,0] got {remainings}"
-        # 4th must 402
-        r = await client.post("/api/comparisons/compare", json=body,
-                              headers={"Authorization": f"Bearer {token}"})
-        assert r.status_code == 402
-        assert r.json()["detail"]["code"] == "upgrade_required"
+            assert r.status_code == 200, f"Call #{i+1}: {r.status_code} {r.text}"
 
 
 @pytest.mark.asyncio

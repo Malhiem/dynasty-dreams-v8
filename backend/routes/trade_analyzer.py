@@ -408,16 +408,8 @@ async def analyze_trade(payload: dict, request: Request):
     user = await _get_user(request)
 
     q = await _ensure_analyzer_quota(db, user)
-    if not q["is_pro"] and q["remaining"] <= 0:
-        raise HTTPException(
-            status_code=402,
-            detail={
-                "code": "upgrade_required",
-                "message": "You've used your 1 free trade analysis this year. Upgrade to Pro for unlimited.",
-                "free_analyses_per_year": FREE_ANALYSES_PER_YEAR,
-                "analyses_used_this_year": q["used"],
-            },
-        )
+    # Paywall removed — all users have unlimited trade analyses. Quota
+    # counter kept for telemetry/future re-enable.
 
     league_id = payload.get("league_id")
     side_a = payload.get("side_a") or {}

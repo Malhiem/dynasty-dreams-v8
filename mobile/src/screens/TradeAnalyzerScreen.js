@@ -295,13 +295,7 @@ export default function TradeAnalyzerScreen({ route }) {
           <Text style={s.sub}>Drag in players, picks, and FAAB. We score both sides against your league's rules and call the verdict.</Text>
           {status && (
             <View testID="analyzer-status-strip" style={s.statusStrip}>
-              {status.is_pro ? (
-                <Text style={[s.statusText, { color: COL.gold }]}>👑 Pro · Unlimited</Text>
-              ) : (
-                <Text style={s.statusText}>
-                  Free · <Text style={{ color: COL.cyan, fontWeight: '700' }}>{status.analyses_remaining}</Text> / {status.free_analyses_per_year} this year
-                </Text>
-              )}
+              <Text style={[s.statusText, { color: COL.cyan }]}>✦ Unlimited</Text>
             </View>
           )}
         </View>

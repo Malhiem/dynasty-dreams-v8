@@ -375,21 +375,14 @@ const Team = () => {
 
                   if (openSlots > 0) {
                     // Fetch top free agent at the dropped player's position.
-                    // This is a Pro-paywalled feature ($2.50/mo); on 402 we
-                    // render an upsell chip instead of a suggestion.
+                    // Paywall removed — this now returns for all users.
                     let suggestion: any = null;
-                    let upgradeRequired = false;
                     try {
                       const { data } = await api.get(`/waivers/suggest`, {
                         params: { league_id: league?.id, position: player.position, limit: 1 },
                       });
                       suggestion = data?.suggestions?.[0] || null;
-                    } catch (err: any) {
-                      const code = err?.response?.status;
-                      const detailCode = err?.response?.data?.detail?.code;
-                      if (code === 402 || detailCode === "upgrade_required") {
-                        upgradeRequired = true;
-                      }
+                    } catch {
                       suggestion = null;
                     }
 
@@ -408,35 +401,10 @@ const Team = () => {
                                 Dropped {playerName}
                               </p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {openSlots} roster spot{openSlots === 1 ? "" : "s"} now open. {suggestion ? "Suggested replacement:" : upgradeRequired ? "Upgrade for smart pickup suggestions." : "Add a free agent to fill it."}
+                                {openSlots} roster spot{openSlots === 1 ? "" : "s"} now open. {suggestion ? "Suggested replacement:" : "Add a free agent to fill it."}
                               </p>
                             </div>
                           </div>
-
-                          {upgradeRequired && (
-                            <div
-                              className="mt-3 p-2 rounded-md bg-amber-500/10 border border-amber-500/30 flex items-start gap-2"
-                              data-testid="drop-toast-upgrade-chip"
-                            >
-                              <span className="text-amber-400 text-base leading-none mt-0.5">🔒</span>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-semibold text-amber-300">
-                                  Smart Drop Suggestions
-                                </p>
-                                <p className="text-[10px] text-muted-foreground">
-                                  Pro auto-recommends the best free agent at this position. <span className="text-amber-300 font-semibold">$2.50/mo</span>
-                                </p>
-                              </div>
-                              <button
-                                className="h-7 px-2 rounded-md bg-amber-500 text-black text-[10px] font-bold hover:bg-amber-400 shrink-0"
-                                data-testid="drop-toast-upgrade-btn"
-                                onClick={() => {
-                                  toast.dismiss(st);
-                                  navigate("/trade-analyzer");
-                                }}
-                              >Upgrade</button>
-                            </div>
-                          )}
 
                           {suggestion && (
                             <div

@@ -254,18 +254,9 @@ export default function ComparePage() {
           </div>
           {proStatus && (
             <div className="text-right" data-testid="pro-status-strip">
-              {proStatus.is_pro ? (
-                <Badge className="bg-[#FFB020] text-black">
-                  <Crown className="h-3 w-3 mr-1" /> Pro · Unlimited
-                </Badge>
-              ) : (
-                <div>
-                  <p className="text-xs text-[#A1A1AA]">Free tier</p>
-                  <p className="text-sm text-white">
-                    <span className="text-[#00D2FF] font-semibold">{proStatus.comparisons_remaining}</span> / {proStatus.free_quota_per_month} comparisons left this month
-                  </p>
-                </div>
-              )}
+              <Badge className="bg-[#00D2FF]/15 text-[#00D2FF] border border-[#00D2FF]/30">
+                Unlimited
+              </Badge>
             </div>
           )}
         </div>
@@ -316,11 +307,6 @@ export default function ComparePage() {
             </div>
 
             <div className="mt-5 flex items-center justify-end gap-3">
-              {!proStatus?.is_pro && proStatus?.comparisons_remaining === 0 && (
-                <span className="text-xs text-[#FFB020] flex items-center gap-1.5">
-                  <Lock className="h-3 w-3" /> Free tier exhausted
-                </span>
-              )}
               <Button
                 onClick={runCompare}
                 disabled={!playerA || !playerB || submitting}

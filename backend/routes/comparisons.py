@@ -168,24 +168,16 @@ async def compare_players(payload: dict, request: Request):
         "league_id": "..."   (optional but strongly recommended — drives FPTS)
     }
 
-    Paywall: non-Pro users get **3 free comparisons per calendar month**.
-    The 4th call returns 402 with an "upgrade_required" payload.
+    Paywall **removed** — all users now have unlimited comparisons. The
+    quota bookkeeping is retained for telemetry / future re-enable but we
+    no longer 402 once the monthly count is exhausted.
     """
     db = _db()
     user = await _get_user(request)
 
-    # Quota check
+    # Quota tracking (no longer gated — we still bump the counter so usage
+    # analytics keep working).
     q = await _ensure_quota(db, user)
-    if not q["is_pro"] and q["remaining"] <= 0:
-        raise HTTPException(
-            status_code=402,
-            detail={
-                "code": "upgrade_required",
-                "message": "You've used your 3 free comparisons this month. Upgrade to Pro for unlimited.",
-                "free_quota_per_month": FREE_QUOTA_PER_MONTH,
-                "comparisons_used_this_month": q["used"],
-            },
-        )
 
     pa_id = payload.get("player_a_id")
     pb_id = payload.get("player_b_id")
