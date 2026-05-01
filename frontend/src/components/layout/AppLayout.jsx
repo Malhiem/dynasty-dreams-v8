@@ -1,6 +1,6 @@
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
-import { Search } from "lucide-react";
+import { Search, Settings } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,7 @@ import { useGlobalSocketEvent } from "@/hooks/use-global-socket";
 import { toast } from "sonner";
 import GlobalTradeBuilder from "@/lovable/components/trade/GlobalTradeBuilder";
 
-export function AppLayout({ children }) {
+export function AppLayout({ children, onSettingsClick }) {
   const { user } = useAuth();
 
   // Real-time championship / consolation toasts (app-wide)
@@ -47,6 +47,22 @@ export function AppLayout({ children }) {
             </div>
             <div className="flex items-center gap-3">
               <NotificationsPanel />
+              {/* Page-level "Customize" cog — rendered only when the
+                  hosting page wires up an onSettingsClick handler (e.g.
+                  League Home → DashboardSettingsModal). Placed next to
+                  the notifications bell per UX spec. */}
+              {onSettingsClick && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={onSettingsClick}
+                  data-testid="page-settings-cog"
+                  title="Customize this page"
+                  className="text-[#A1A1AA] hover:text-white hover:bg-white/5 h-9 w-9"
+                >
+                  <Settings className="h-5 w-5" />
+                </Button>
+              )}
               {user && (
                 <div className="flex items-center gap-3 pl-3 border-l border-white/10">
                   <div className="text-right hidden sm:block">

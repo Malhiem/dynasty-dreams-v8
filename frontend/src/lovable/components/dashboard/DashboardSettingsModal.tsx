@@ -33,7 +33,10 @@ const DashboardSettingsModal = ({ open, onOpenChange, config }: DashboardSetting
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto bg-card border-border">
+      <DialogContent
+        className="sm:max-w-lg max-h-[85vh] overflow-y-auto bg-card border-border"
+        data-testid="dashboard-settings-modal"
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <LayoutDashboard className="h-5 w-5 text-primary" />
