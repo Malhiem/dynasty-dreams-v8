@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Trophy, Users, Calendar, Gear, ArrowLeft, Plus, Copy, Check } from '@phosphor-icons/react';
 import { useLeagueHomeConfig } from '@/hooks/use-league-home-config';
 import LeagueHomeSettingsModal from '@/components/LeagueHomeSettingsModal';
+import { SortableSections, SortableSection } from '@/components/SortableSections';
 
 export default function LeagueDetailPage() {
   const { id } = useParams();
@@ -25,7 +26,7 @@ export default function LeagueDetailPage() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { visibility: widgetVis, toggle: toggleWidget, reset: resetWidgets } = useLeagueHomeConfig(id);
+  const { visibility: widgetVis, order: widgetOrder, toggle: toggleWidget, reorder: reorderWidgets, reset: resetWidgets } = useLeagueHomeConfig(id);
 
   const isCommissioner = league?.commissioner_id === user?.id;
   const hasTeam = teams.some(t => t.owner_id === user?.id);
@@ -259,9 +260,18 @@ export default function LeagueDetailPage() {
           )}
         </div>
 
+        {/* Sortable / customizable sections — drag the grip handle in the
+            top-right of any card to reorder, or use the cog in the header
+            to hide widgets entirely. Section order is persisted to
+            localStorage per-league. Uses CSS `order` so source JSX stays
+            stable while visual order follows the user's choice. */}
+        <SortableSections ids={widgetOrder} onReorder={reorderWidgets}>
+        <div className="flex flex-col">
+
         {/* Matchups + Standings (side-by-side on desktop) */}
         {widgetVis.matchups && isH2H ? (
-          <div className="mb-8 grid grid-cols-1 lg:grid-cols-[1fr,360px] gap-6" data-testid="league-matchups-section">
+          <SortableSection id="matchups" className="mb-8" style={{order: widgetOrder.indexOf("matchups")}}>
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr,360px] gap-6" data-testid="league-matchups-section">
             {/* Matchups column */}
             <div>
               <div className="flex items-baseline justify-between mb-4">
@@ -370,9 +380,11 @@ export default function LeagueDetailPage() {
               )}
             </div>
           </div>
+          </SortableSection>
         ) : widgetVis.points_leaderboard ? (
           /* Non-H2H: just standings */
-          <div className="mb-8" data-testid="league-points-leaderboard-section">
+          <SortableSection id="points_leaderboard" className="mb-8" style={{order: widgetOrder.indexOf("points_leaderboard")}}>
+          <div data-testid="league-points-leaderboard-section">
             <h2 className="font-heading text-2xl font-bold text-white mb-4">STANDINGS</h2>
             {standings.length === 0 ? (
               <div className="surface p-8 text-center">
@@ -383,11 +395,13 @@ export default function LeagueDetailPage() {
               <DataTable columns={standingsColumns} data={standings} testId="standings-table" />
             )}
           </div>
+          </SortableSection>
         ) : null}
 
         {/* Top Trade Block */}
         {widgetVis.top_trade_block && topBlock.length > 0 && (
-          <div className="mb-8" data-testid="league-top-trade-block">
+          <SortableSection id="top_trade_block" className="mb-8" style={{order: widgetOrder.indexOf("top_trade_block")}}>
+          <div data-testid="league-top-trade-block">
             <div className="flex items-baseline justify-between mb-4">
               <h2 className="font-heading text-2xl font-bold text-white">TOP TRADE BLOCK</h2>
               <Link
@@ -465,11 +479,13 @@ export default function LeagueDetailPage() {
               })}
             </div>
           </div>
+          </SortableSection>
         )}
 
         {/* Pending Trades */}
         {widgetVis.pending_trades && pendingTrades.length > 0 && (
-          <div className="mb-8" data-testid="league-pending-trades-section">
+          <SortableSection id="pending_trades" className="mb-8" style={{order: widgetOrder.indexOf("pending_trades")}}>
+          <div data-testid="league-pending-trades-section">
             <div className="flex items-baseline justify-between mb-4">
               <h2 className="font-heading text-2xl font-bold text-white flex items-center gap-2">
                 <span className="inline-block h-2 w-2 rounded-full bg-amber-400 animate-pulse" />
@@ -593,11 +609,13 @@ export default function LeagueDetailPage() {
               </Link>
             )}
           </div>
+          </SortableSection>
         )}
 
         {/* Recent Transactions */}
         {widgetVis.transactions && (
-        <div className="mb-8" data-testid="league-transactions-section">
+        <SortableSection id="transactions" className="mb-8" style={{order: widgetOrder.indexOf("transactions")}}>
+        <div data-testid="league-transactions-section">
           <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
             <h2 className="font-heading text-2xl font-bold text-white">RECENT TRANSACTIONS</h2>
             <div className="flex items-center gap-2 flex-wrap text-xs">
@@ -805,10 +823,12 @@ export default function LeagueDetailPage() {
             </div>
           )}
         </div>
+        </SortableSection>
         )}
 
         {/* Quick Actions */}
         {widgetVis.quick_actions && hasTeam && (
+          <SortableSection id="quick_actions" className="mb-8" style={{order: widgetOrder.indexOf("quick_actions")}}>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Link to={`/leagues/${id}/roster`} className="surface p-6 hover:border-[#00D2FF]/50 transition-colors">
               <Users size={32} className="text-[#00D2FF] mb-3" />
@@ -826,7 +846,10 @@ export default function LeagueDetailPage() {
               <p className="text-[#A1A1AA] text-sm">Propose and review trades</p>
             </Link>
           </div>
+          </SortableSection>
         )}
+        </div>
+        </SortableSections>
       </div>
 
       {/* Join League Modal */}

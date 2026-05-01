@@ -14,6 +14,7 @@ import TradeBlockWidget from "@/lovable/components/dashboard/TradeBlockWidget";
 import LeagueScheduleWidget from "@/lovable/components/dashboard/LeagueScheduleWidget";
 import DashboardSettingsModal from "@/lovable/components/dashboard/DashboardSettingsModal";
 import { useDashboardConfig } from "@/hooks/use-dashboard-config";
+import { SortableList } from "@/components/SortableList";
 import OutstandingFeesBanner from "@/lovable/components/dashboard/OutstandingFeesBanner";
 import { Trophy, TrendingUp, Users, Target, Calendar, Flag, CalendarCheck, Clock } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
@@ -90,11 +91,29 @@ const TradeDeadlineCountdown = () => {
 const Index = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const config = useDashboardConfig();
-  const { getVisibleWidgets } = config;
+  const { getVisibleWidgets, reorderByIds } = config;
 
   const visibleStats = getVisibleWidgets("stats");
   const visibleMain = getVisibleWidgets("main");
   const visibleSidebar = getVisibleWidgets("sidebar");
+
+  // ── DnD helpers — render a widget by id and handle reorder persistence ──
+  const renderWidget = (id: string, layout: "stat" | "main" | "sidebar" = "main") => {
+    const statProps = STAT_WIDGETS[id];
+    if (statProps) {
+      return <StatCard {...statProps} />;
+    }
+    const Component = WIDGET_COMPONENTS[id];
+    if (!Component) return null;
+    if (layout === "stat") {
+      return (
+        <div className="max-h-48 overflow-y-auto rounded-xl border border-border">
+          <Component />
+        </div>
+      );
+    }
+    return <Component />;
+  };
 
   return (
     <AppLayout onSettingsClick={() => setSettingsOpen(true)}>
@@ -124,45 +143,41 @@ const Index = () => {
 
         <OutstandingFeesBanner />
 
-        {/* Stats Grid */}
+        {/* Stats Grid — drag-and-drop reorder (stats layout keeps 4-col grid) */}
         {visibleStats.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-            {visibleStats.map((widget) => {
-              const statProps = STAT_WIDGETS[widget.id];
-              if (statProps) return <StatCard key={widget.id} {...statProps} />;
-              const Component = WIDGET_COMPONENTS[widget.id];
-              return Component ? (
-                <div key={widget.id} className="max-h-48 overflow-y-auto rounded-xl border border-border">
-                  <Component />
-                </div>
-              ) : null;
-            })}
-          </div>
+          <SortableList
+            ids={visibleStats.map((w) => w.id)}
+            onReorder={(next) => reorderByIds("stats", next)}
+            dragHandleTestIdPrefix="stats-drag-handle"
+            className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8"
+          >
+            {(id) => renderWidget(id, "stat")}
+          </SortableList>
         )}
 
         {/* Main Content Grid */}
         {(visibleMain.length > 0 || visibleSidebar.length > 0) ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {visibleMain.length > 0 && (
-              <div className="lg:col-span-2 space-y-6">
-                {visibleMain.map((widget) => {
-                  const statProps = STAT_WIDGETS[widget.id];
-                  if (statProps) return <StatCard key={widget.id} {...statProps} />;
-                  const Component = WIDGET_COMPONENTS[widget.id];
-                  return Component ? <Component key={widget.id} /> : null;
-                })}
-              </div>
+              <SortableList
+                ids={visibleMain.map((w) => w.id)}
+                onReorder={(next) => reorderByIds("main", next)}
+                dragHandleTestIdPrefix="main-drag-handle"
+                className="lg:col-span-2 space-y-6"
+              >
+                {(id) => renderWidget(id, "main")}
+              </SortableList>
             )}
 
             {visibleSidebar.length > 0 && (
-              <div className="space-y-6">
-                {visibleSidebar.map((widget) => {
-                  const statProps = STAT_WIDGETS[widget.id];
-                  if (statProps) return <StatCard key={widget.id} {...statProps} />;
-                  const Component = WIDGET_COMPONENTS[widget.id];
-                  return Component ? <Component key={widget.id} /> : null;
-                })}
-              </div>
+              <SortableList
+                ids={visibleSidebar.map((w) => w.id)}
+                onReorder={(next) => reorderByIds("sidebar", next)}
+                dragHandleTestIdPrefix="sidebar-drag-handle"
+                className="space-y-6"
+              >
+                {(id) => renderWidget(id, "sidebar")}
+              </SortableList>
             )}
           </div>
         ) : visibleStats.length === 0 ? (

@@ -358,79 +358,61 @@ export default function LiveScoringPage() {
                         <th className="px-4 py-3">Team</th>
                         <th className="px-4 py-3 text-center" data-testid="col-projected-change">Proj. Δ</th>
                         <th className="px-4 py-3 text-right">Live Points For</th>
-                        <th className="px-4 py-3 text-right" data-testid="col-live-points-against">Live Points Against</th>
+                        <th className="px-4 py-3 text-right" data-testid="col-projection">Projection</th>
                         <th className="px-4 py-3 text-right">Roster</th>
                       </tr>
                     </thead>
                     <tbody data-testid="live-scoring-leaderboard-body">
-                      {/*
-                        When a league runs 2+ matchups per period we group
-                        rows by `matchup_id` so each head-to-head pair sits
-                        together — the subheader below makes the separation
-                        visible so "Live Points Against" is unambiguous.
-                      */}
-                      {(() => {
-                        const groups = new Map();
-                        for (const r of leaderboard) {
-                          const key = r.matchup_id || "ungrouped";
-                          if (!groups.has(key)) groups.set(key, []);
-                          groups.get(key).push(r);
-                        }
-                        const multi = groups.size >= 2 && Array.from(groups.values()).every(g => g.length >= 1);
-                        let globalIdx = 0;
-                        const out = [];
-                        let groupNum = 0;
-                        for (const [key, rows] of groups) {
-                          groupNum += 1;
-                          if (multi) {
-                            out.push(
-                              <tr key={`hdr-${key}`} className="border-t border-[#00D2FF]/20 bg-white/[0.02]">
-                                <td colSpan={6} className="px-4 py-1.5 text-[10px] uppercase tracking-widest text-[#00D2FF]" data-testid={`matchup-group-header-${key}`}>
-                                  Matchup {groupNum}
-                                </td>
-                              </tr>
-                            );
-                          }
-                          for (const r of rows) {
-                            const delta = r.projected_rank_change;
-                            const deltaEl = delta == null || delta === 0 ? (
-                              <span className="text-[#52525B] text-xs">—</span>
-                            ) : delta > 0 ? (
-                              <span className="text-emerald-400 text-xs font-semibold" data-testid={`proj-delta-${r.team_id}`}>
-                                ↑ {delta}
-                              </span>
-                            ) : (
-                              <span className="text-rose-400 text-xs font-semibold" data-testid={`proj-delta-${r.team_id}`}>
-                                ↓ {Math.abs(delta)}
-                              </span>
-                            );
-                            const rowIdx = globalIdx++;
-                            out.push(
-                              <tr key={r.team_id} className={`border-t border-white/5 ${rowIdx === 0 ? 'bg-[#00D2FF]/5' : ''}`}>
-                                <td className="px-4 py-3 text-white font-semibold">{rowIdx + 1}</td>
-                                <td className="px-4 py-3">
-                                  <Link
-                                    to={`/teams/${r.team_id}`}
-                                    data-testid={`live-leaderboard-team-${r.team_id}`}
-                                    className="text-white hover:text-[#00D2FF]"
-                                  >
-                                    {r.team_name}
-                                  </Link>
-                                </td>
-                                <td className="px-4 py-3 text-center">{deltaEl}</td>
-                                <td className="px-4 py-3 text-right text-white tabular-nums font-bold">
-                                  {r.live_points.toFixed(2)}
-                                </td>
-                                <td className="px-4 py-3 text-right text-[#A1A1AA] tabular-nums" data-testid={`live-points-against-${r.team_id}`}>
-                                  {r.live_points_against == null ? "—" : r.live_points_against.toFixed(2)}
-                                </td>
-                                <td className="px-4 py-3 text-right text-[#A1A1AA] text-sm">{r.roster_count}</td>
-                              </tr>
-                            );
-                          }
-                        }
-                        return out;
-                      })()}
+                      {leaderboard.map((r, rowIdx) => {
+                        const delta = r.projected_rank_change;
+                        const deltaEl = delta == null || delta === 0 ? (
+                          <span className="text-[#52525B] text-xs">—</span>
+                        ) : delta > 0 ? (
+                          <span className="text-emerald-400 text-xs font-semibold" data-testid={`proj-delta-${r.team_id}`}>
+                            ↑ {delta}
+                          </span>
+                        ) : (
+                          <span className="text-rose-400 text-xs font-semibold" data-testid={`proj-delta-${r.team_id}`}>
+                            ↓ {Math.abs(delta)}
+                          </span>
+                        );
+                        return (
+                          <tr key={r.team_id} className={`border-t border-white/5 ${rowIdx === 0 ? 'bg-[#00D2FF]/5' : ''}`}>
+                            <td className="px-4 py-3 text-white font-semibold">{rowIdx + 1}</td>
+                            <td className="px-4 py-3">
+                              <Link
+                                to={`/teams/${r.team_id}`}
+                                data-testid={`live-leaderboard-team-${r.team_id}`}
+                                className="text-white hover:text-[#00D2FF]"
+                              >
+                                {r.team_name}
+                              </Link>
+                            </td>
+                            <td className="px-4 py-3 text-center">{deltaEl}</td>
+                            <td className="px-4 py-3 text-right text-white tabular-nums font-bold">
+                              {r.live_points.toFixed(2)}
+                            </td>
+                            <td className="px-4 py-3 text-right tabular-nums" data-testid={`projection-${r.team_id}`}>
+                              {r.preweek_projection == null ? (
+                                <span className="text-[#52525B]">—</span>
+                              ) : (() => {
+                                const d = Number(r.projection_delta || 0);
+                                const tone = d > 0.5 ? "text-emerald-400" : d < -0.5 ? "text-rose-400" : "text-[#A1A1AA]";
+                                const arrow = d > 0.5 ? "↑" : d < -0.5 ? "↓" : "=";
+                                return (
+                                  <div className="flex flex-col items-end leading-tight">
+                                    <span className="text-[#A1A1AA]">{r.preweek_projection.toFixed(1)}</span>
+                                    <span className={`${tone} text-[10px] font-semibold`} data-testid={`projection-variance-${r.team_id}`}>
+                                      {arrow} {d > 0 ? "+" : ""}{d.toFixed(1)}
+                                    </span>
+                                  </div>
+                                );
+                              })()}
+                            </td>
+                            <td className="px-4 py-3 text-right text-[#A1A1AA] text-sm">{r.roster_count}</td>
+                          </tr>
+                        );
+                      })}
                       {leaderboard.length === 0 && (
                         <tr><td colSpan={6} className="p-6 text-center text-[#A1A1AA]">
                           No live points logged yet for this league. Click Refresh.

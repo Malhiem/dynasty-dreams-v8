@@ -103,6 +103,23 @@ export function useDashboardConfig() {
     save(DEFAULT_WIDGETS.map((w) => ({ ...w })));
   }, [save]);
 
+  /**
+   * Drag-and-drop friendly reorder: accepts the *new* ordered list of widget
+   * ids for a single area and rewrites the saved config to match. Widgets
+   * that already live in other areas are preserved in-place.
+   */
+  const reorderByIds = useCallback(
+    (area: DashboardWidget["area"], nextIdsInOrder: string[]) => {
+      const otherWidgets = widgets.filter((w) => w.area !== area);
+      const byId = new Map(widgets.filter((w) => w.area === area).map((w) => [w.id, w]));
+      const reorderedAreaWidgets = nextIdsInOrder
+        .map((id) => byId.get(id))
+        .filter(Boolean) as DashboardWidget[];
+      save([...otherWidgets, ...reorderedAreaWidgets]);
+    },
+    [widgets, save],
+  );
+
   const getWidgetsByArea = useCallback(
     (area: DashboardWidget["area"]) =>
       widgets.filter((w) => w.area === area),
@@ -131,6 +148,7 @@ export function useDashboardConfig() {
     moveUp,
     moveDown,
     resetToDefaults,
+    reorderByIds,
     getWidgetsByArea,
     getVisibleWidgets,
     changeArea,

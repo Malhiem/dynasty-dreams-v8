@@ -79,6 +79,53 @@ async def test_live_points_against_matches_opponent_live_points():
 
 
 @pytest.mark.asyncio
+async def test_preweek_projection_and_delta_present_and_stable():
+    """Iter 62: every leaderboard row must include numeric `preweek_projection`
+    and `projection_delta`. Repeated calls in the same week must return the
+    SAME projection per team (cached on team.preweek_projections)."""
+    async with AsyncClient(base_url=BASE, timeout=30) as client:
+        token = await _login(client, USER_EMAIL, USER_PASSWORD)
+        h = {"Authorization": f"Bearer {token}"}
+        r1 = await client.get(f"/api/live-scoring/league/{LEAGUE_ID}", headers=h)
+        assert r1.status_code == 200, r1.text
+        rows1 = r1.json()["leaderboard"]
+        assert len(rows1) > 0
+        for row in rows1:
+            assert "preweek_projection" in row
+            assert "projection_delta" in row
+            assert isinstance(row["preweek_projection"], (int, float))
+            assert isinstance(row["projection_delta"], (int, float))
+            # Sanity: clamped projection range
+            assert 60.0 <= float(row["preweek_projection"]) <= 300.0
+            # Delta math must be self-consistent
+            expected_delta = round(float(row["live_points"]) - float(row["preweek_projection"]), 2)
+            assert abs(row["projection_delta"] - expected_delta) < 0.01
+
+        # Stability across calls
+        r2 = await client.get(f"/api/live-scoring/league/{LEAGUE_ID}", headers=h)
+        rows2 = {row["team_id"]: row for row in r2.json()["leaderboard"]}
+        for row in rows1:
+            tid = row["team_id"]
+            assert tid in rows2
+            assert abs(rows2[tid]["preweek_projection"] - row["preweek_projection"]) < 0.01, (
+                f"Team {tid} projection changed between calls: "
+                f"{row['preweek_projection']} -> {rows2[tid]['preweek_projection']}"
+            )
+
+
+@pytest.mark.asyncio
+async def test_live_points_against_still_present_backend():
+    """Backend should NOT have removed live_points_against — only the UI changed."""
+    async with AsyncClient(base_url=BASE, timeout=30) as client:
+        token = await _login(client, USER_EMAIL, USER_PASSWORD)
+        h = {"Authorization": f"Bearer {token}"}
+        r = await client.get(f"/api/live-scoring/league/{LEAGUE_ID}", headers=h)
+        rows = r.json()["leaderboard"]
+        for row in rows:
+            assert "live_points_against" in row, "live_points_against must remain in API response"
+
+
+@pytest.mark.asyncio
 async def test_matchup_id_groups_pairs():
     """Each matchup_id should appear on exactly 2 team rows (home + away)."""
     async with AsyncClient(base_url=BASE, timeout=30) as client:

@@ -1249,7 +1249,14 @@ async def get_league_live_scoring(league_id: str, request: Request):
     """League-wide leaderboard of team live points.
 
     Now enriched with:
-    - `live_points_against` — current-week opponent's live points (by matchup).
+    - `preweek_projection` — what the team was projected to score for this
+      week *at the start of the week* (average PF per completed week, floored
+      at a minimum so week 1 teams don't see 0). Cached to
+      `team.preweek_projections[week_N]` so the number is stable mid-week even
+      if the team streams players.
+    - `projection_delta` — `live_points − preweek_projection`. Positive =
+      outperforming (green ↑), zero = on pace (grey =), negative = missing
+      (red ↓). Frontend uses this as the sole comparator.
     - `matchup_id` — so the frontend can group rows when a league runs 2+
       matchups per period.
     - `projected_rank_change` — delta vs. the pre-week rank (ranked by PF
@@ -1261,10 +1268,11 @@ async def get_league_live_scoring(league_id: str, request: Request):
     teams = await db.teams.find(
         {"league_id": league_id},
         {"_id": 1, "name": 1, "owner_name": 1, "live_points": 1, "roster": 1,
-         "points_for": 1},
+         "points_for": 1, "wins": 1, "losses": 1, "ties": 1,
+         "preweek_projections": 1},
     ).to_list(200)
 
-    # Map team_id -> live points + PF (for projected-rank delta baseline)
+    # Map team_id -> live points (for opponent lookup, kept for future use)
     tid_to_live = {str(t["_id"]): float(t.get("live_points", 0.0) or 0.0) for t in teams}
 
     # Grab current-week matchups to resolve each team's opponent
@@ -1281,6 +1289,36 @@ async def get_league_live_scoring(league_id: str, request: Request):
             opp_map[aid] = hid
             matchup_map[hid] = mid
             matchup_map[aid] = mid
+
+    # ── Pre-week projection helper ─────────────────────────────────
+    # Cached on team.preweek_projections so it's stable for the entire week
+    # once the first live-scoring call of the week hits. Formula: average
+    # `points_for` per completed week, clamped to [60, 250] so week-1 teams
+    # or post-bye teams don't see wild numbers. Persisted via a single
+    # $set so subsequent calls are O(1).
+    async def preweek_proj(t: dict) -> float:
+        cache_key = f"week_{cur_week}"
+        cached = (t.get("preweek_projections") or {}).get(cache_key)
+        if cached is not None:
+            return float(cached)
+        games_played = int(t.get("wins", 0) or 0) + int(t.get("losses", 0) or 0) + int(t.get("ties", 0) or 0)
+        pf = float(t.get("points_for") or 0.0)
+        if games_played >= 1 and pf > 0:
+            avg = pf / games_played
+            # Seed data sometimes has season-total FPTS in points_for — anything
+            # over ~400/week is almost certainly accumulated, not a realistic
+            # single-matchup total. Fall back to a neutral 120 so the variance
+            # stays meaningful.
+            if avg > 400.0:
+                avg = 120.0
+        else:
+            avg = 120.0  # reasonable H2H week baseline
+        proj = max(60.0, min(300.0, round(avg, 1)))
+        await db.teams.update_one(
+            {"_id": t["_id"]},
+            {"$set": {f"preweek_projections.{cache_key}": proj}},
+        )
+        return proj
 
     # Pre-week rank = rank by points_for (before this week's live points).
     # Post-week projected rank = rank by points_for + live_points.
@@ -1315,12 +1353,16 @@ async def get_league_live_scoring(league_id: str, request: Request):
         pre = pre_rank.get(tid, 0)
         post = proj_rank.get(tid, 0)
         delta = (pre - post) if (pre and post) else 0   # positive = moved UP, negative = moved DOWN
+        projection = await preweek_proj(t)
+        live_pts = round(t.get("live_points", 0.0) or 0.0, 2)
         rows.append({
             "team_id": tid,
             "team_name": t["name"],
             "owner_name": t.get("owner_name"),
-            "live_points": round(t.get("live_points", 0.0) or 0.0, 2),
+            "live_points": live_pts,
             "live_points_against": lp_against,
+            "preweek_projection": projection,
+            "projection_delta": round(live_pts - projection, 2),
             "opponent_team_id": opp_id,
             "matchup_id": matchup_map.get(tid),
             "roster_count": len(t.get("roster", [])),

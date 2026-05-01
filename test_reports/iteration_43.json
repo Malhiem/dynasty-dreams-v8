@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 62 testing — drag-and-drop widget reorder on /leagues/:id and /league/:id/home (Lovable Index), plus replacing 'Live Points Against' column with new 'Projection' column on /live League Leaderboard. Backend 32/32 tests pass (30 regression + 2 new for preweek_projection/projection_delta). All 4 frontend behaviors verified end-to-end. No blocking issues.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_live_scoring_league_enrich.py",
+    "/app/test_reports/pytest/iteration_43_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "LeagueDetailPage.jsx remains a ~860-line monolith — separate refactor ticket as previously noted; SortableSections wrapping is clean and contained.",
+    "Drag handles use opacity-0 with group-hover:opacity-100 — Playwright tests must either hover the parent or force opacity=1 before computing bounding box. Acceptable UX pattern, just a testing nuance.",
+    "Lovable Index default config has only one visible widget in the 'main' area (standings) with trade-block and league-schedule defaulting to visible:false. SortableList still works correctly but reorder-within-main is only meaningful once a 2nd widget is enabled. Consider enabling 1 more main widget by default so the drag affordance is more discoverable.",
+    "preweek_projection clamp range [60, 300] with fallback 120 prevents wild week-1 numbers — sensible. Cache key 'week_{n}' on team.preweek_projections is idempotent; verified stability across two consecutive API calls."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_live_scoring_league_enrich.py"
+  ],
+  "success_rate": {"backend": "100% (32/32)", "frontend": "100% (4/4 features)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (from request)",
+  "seed_data_creation": "None — used existing Ice Kings Head-to-Head league (69e46af167999bfb85c39628), 12 teams, week 2.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 62 verified: (1) GET /api/live-scoring/league/{id} now returns preweek_projection (60–300, clamped) and projection_delta (live_points − projection) on every row; values are stable across calls (cached on team.preweek_projections.week_N). live_points_against is still in the API response. (2) /live page Leaderboard: col-projection present (testid=col-projection), col-live-points-against ABSENT, 12 projection-{tid} cells + 12 projection-variance-{tid} cells with format '↑ +82.1' style (sample first 6: ↑+82.1, ↑+80.0, ↑+68.1, ↑+38.9, ↑+38.2, ↑+30.6). Variance arrows render in green/grey/red tones based on delta. (3) /leagues/69e46af167999bfb85c39628: 5 sortable-section-* wrappers (matchups, top_trade_block, pending_trades, transactions, quick_actions). section-drag-handle-{id} hidden until hover (opacity-0 → opacity-100). Manual mouse drag (mouse.down/move×10/up at >6px) successfully reorders: transactions moved from order=4 to order=0 on first run; localStorage['dynasty-league-home-order-69e46af167999bfb85c39628'] persisted as ['transactions','matchups','points_leaderboard','top_trade_block','pending_trades','quick_actions']. After page.reload(), CSS `order` style on each section reflects the persisted array. (4) /league/{id}/home Lovable Index: 3 stats-drag-handle-* (stat-rank/points/roster), 1 main-drag-handle-* (only standings visible by default), 6 sidebar-drag-handle-*. Drag stat-points before stat-rank updated 'dynasty-ice-dashboard-config' localStorage with stat-points moved to first stats slot. Backend regression: 32/32 PASS in 19.76s (test_live_scoring_league_enrich, test_salary_cap_enforcement, test_standings_cap_consistency, test_retention_slots_admin, test_smart_drop_paywall, test_compare_paywall, test_trade_analyzer).",
+  "rca of the issue": "N/A — no bugs found."
+}

@@ -18,6 +18,8 @@ export const LEAGUE_HOME_WIDGETS = [
   { id: "quick_actions", label: "Quick Actions", description: "Shortcuts to your roster, the draft room, and the trade center." },
 ];
 
+const DEFAULT_ORDER = LEAGUE_HOME_WIDGETS.map((w) => w.id);
+
 const defaultVisible = () => {
   const out = {};
   LEAGUE_HOME_WIDGETS.forEach((w) => { out[w.id] = true; });
@@ -25,33 +27,61 @@ const defaultVisible = () => {
 };
 
 export function useLeagueHomeConfig(leagueId) {
-  const key = leagueId ? `dynasty-league-home-widgets-${leagueId}` : null;
+  const visKey = leagueId ? `dynasty-league-home-widgets-${leagueId}` : null;
+  const orderKey = leagueId ? `dynasty-league-home-order-${leagueId}` : null;
+
   const [visibility, setVisibility] = useState(defaultVisible);
+  const [order, setOrder] = useState(DEFAULT_ORDER);
 
   useEffect(() => {
-    if (!key) return;
+    if (!visKey) return;
     try {
-      const raw = localStorage.getItem(key);
+      const raw = localStorage.getItem(visKey);
       if (raw) setVisibility({ ...defaultVisible(), ...JSON.parse(raw) });
       else setVisibility(defaultVisible());
     } catch {
       setVisibility(defaultVisible());
     }
-  }, [key]);
+    try {
+      const rawOrder = orderKey ? localStorage.getItem(orderKey) : null;
+      if (rawOrder) {
+        const parsed = JSON.parse(rawOrder);
+        if (Array.isArray(parsed) && parsed.length) {
+          // Guard against missing ids after a release added/removed widgets
+          const kept = parsed.filter((id) => DEFAULT_ORDER.includes(id));
+          const missing = DEFAULT_ORDER.filter((id) => !kept.includes(id));
+          setOrder([...kept, ...missing]);
+        } else {
+          setOrder(DEFAULT_ORDER);
+        }
+      } else {
+        setOrder(DEFAULT_ORDER);
+      }
+    } catch {
+      setOrder(DEFAULT_ORDER);
+    }
+  }, [visKey, orderKey]);
 
   const toggle = useCallback((id) => {
     setVisibility((prev) => {
       const next = { ...prev, [id]: !prev[id] };
-      if (key) { try { localStorage.setItem(key, JSON.stringify(next)); } catch { /* noop */ } }
+      if (visKey) { try { localStorage.setItem(visKey, JSON.stringify(next)); } catch { /* noop */ } }
       return next;
     });
-  }, [key]);
+  }, [visKey]);
+
+  const reorder = useCallback((nextOrder) => {
+    setOrder(nextOrder);
+    if (orderKey) { try { localStorage.setItem(orderKey, JSON.stringify(nextOrder)); } catch { /* noop */ } }
+  }, [orderKey]);
 
   const reset = useCallback(() => {
     const d = defaultVisible();
     setVisibility(d);
-    if (key) { try { localStorage.removeItem(key); } catch { /* noop */ } }
-  }, [key]);
+    setOrder(DEFAULT_ORDER);
+    if (visKey) { try { localStorage.removeItem(visKey); } catch { /* noop */ } }
+    if (orderKey) { try { localStorage.removeItem(orderKey); } catch { /* noop */ } }
+  }, [visKey, orderKey]);
 
-  return { visibility, toggle, reset };
+  return { visibility, order, toggle, reorder, reset };
 }
