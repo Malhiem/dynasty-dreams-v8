@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Radio, ChevronRight, Clock, TrendingUp } from "lucide-react";
+import { Radio, ChevronRight, Clock, TrendingUp, LayoutList, Rows2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 
@@ -40,6 +40,18 @@ function ContributorRow({ c }) {
 }
 
 export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMatchup, viewingMatchupId }) {
+  const [view, setView] = useState<"compact" | "detailed">(() => {
+    try {
+      return (localStorage.getItem("dynasty-matchup-sidebar-view") as "compact" | "detailed") || "detailed";
+    } catch { return "detailed"; }
+  });
+  const toggleView = () => {
+    setView((v) => {
+      const next = v === "compact" ? "detailed" : "compact";
+      try { localStorage.setItem("dynasty-matchup-sidebar-view", next); } catch { /* noop */ }
+      return next;
+    });
+  };
   const [matchups, setMatchups] = useState([]);
 
   useEffect(() => {
@@ -76,13 +88,29 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
             </span>
           )}
         </h3>
-        <Link
-          to="/live"
-          data-testid="matchup-live-link"
-          className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
-        >
-          Full View <ChevronRight className="h-3 w-3" />
-        </Link>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={toggleView}
+            data-testid="side-rail-view-toggle"
+            data-view={view}
+            title={view === "compact" ? "Switch to detailed view" : "Switch to compact view"}
+            className="text-[10px] text-muted-foreground hover:text-primary flex items-center gap-1 px-1.5 py-0.5 rounded border border-border/60 hover:border-primary/60 transition-colors"
+          >
+            {view === "compact" ? (
+              <><LayoutList className="h-3 w-3" /> Detailed</>
+            ) : (
+              <><Rows2 className="h-3 w-3" /> Compact</>
+            )}
+          </button>
+          <Link
+            to="/live"
+            data-testid="matchup-live-link"
+            className="text-[11px] text-primary hover:underline flex items-center gap-0.5"
+          >
+            Full View <ChevronRight className="h-3 w-3" />
+          </Link>
+        </div>
       </div>
 
       {otherMatchups.length === 0 && (
@@ -136,24 +164,26 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
                         style={{ width: `${(row.prob * 100).toFixed(0)}%` }}
                       />
                     </div>
-                    <div className="flex items-center justify-between mt-0.5 gap-2">
-                      <span className="text-[10px] text-muted-foreground">
-                        Win prob {(row.prob * 100).toFixed(0)}%
-                      </span>
-                      <span className="text-[10px] text-muted-foreground tabular-nums flex items-center gap-1"
-                        data-testid={`side-rail-proj-${row.team_id}`}>
-                        <TrendingUp className="h-2.5 w-2.5 text-emerald-400" />
-                        Proj {row.projected_final.toFixed(1)}
-                        {row.projected_delta > 0 && (
-                          <span className="text-emerald-400">(+{row.projected_delta.toFixed(1)})</span>
-                        )}
-                      </span>
-                    </div>
+                    {view !== "compact" && (
+                      <div className="flex items-center justify-between mt-0.5 gap-2">
+                        <span className="text-[10px] text-muted-foreground">
+                          Win prob {(row.prob * 100).toFixed(0)}%
+                        </span>
+                        <span className="text-[10px] text-muted-foreground tabular-nums flex items-center gap-1"
+                          data-testid={`side-rail-proj-${row.team_id}`}>
+                          <TrendingUp className="h-2.5 w-2.5 text-emerald-400" />
+                          Proj {row.projected_final.toFixed(1)}
+                          {row.projected_delta > 0 && (
+                            <span className="text-emerald-400">(+{row.projected_delta.toFixed(1)})</span>
+                          )}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                {/* Top-3 contributors */}
-                {row.top_contributors && row.top_contributors.length > 0 && (
+                {/* Top-3 contributors — hidden in compact view to show just the score. */}
+                {view !== "compact" && row.top_contributors && row.top_contributors.length > 0 && (
                   <div className="ml-8 mr-1 space-y-0.5"
                     data-testid={`side-rail-contributors-${row.team_id}`}>
                     {row.top_contributors.slice(0, 3).map((c) => (

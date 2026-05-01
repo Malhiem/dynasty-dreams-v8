@@ -8,6 +8,8 @@ import { Input } from '@/components/ui/input';
 import { DataTable } from '@/components/ui/data-table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Trophy, Users, Calendar, Gear, ArrowLeft, Plus, Copy, Check } from '@phosphor-icons/react';
+import { useLeagueHomeConfig } from '@/hooks/use-league-home-config';
+import LeagueHomeSettingsModal from '@/components/LeagueHomeSettingsModal';
 
 export default function LeagueDetailPage() {
   const { id } = useParams();
@@ -22,6 +24,8 @@ export default function LeagueDetailPage() {
   const [joining, setJoining] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const { visibility: widgetVis, toggle: toggleWidget, reset: resetWidgets } = useLeagueHomeConfig(id);
 
   const isCommissioner = league?.commissioner_id === user?.id;
   const hasTeam = teams.some(t => t.owner_id === user?.id);
@@ -186,7 +190,7 @@ export default function LeagueDetailPage() {
   }
 
   return (
-    <AppLayout>
+    <AppLayout onSettingsClick={() => setSettingsOpen(true)}>
     <div data-testid="league-detail-page">
       <div className="max-w-7xl mx-auto">
         <button
@@ -256,7 +260,7 @@ export default function LeagueDetailPage() {
         </div>
 
         {/* Matchups + Standings (side-by-side on desktop) */}
-        {isH2H ? (
+        {widgetVis.matchups && isH2H ? (
           <div className="mb-8 grid grid-cols-1 lg:grid-cols-[1fr,360px] gap-6" data-testid="league-matchups-section">
             {/* Matchups column */}
             <div>
@@ -366,9 +370,9 @@ export default function LeagueDetailPage() {
               )}
             </div>
           </div>
-        ) : (
+        ) : widgetVis.points_leaderboard ? (
           /* Non-H2H: just standings */
-          <div className="mb-8">
+          <div className="mb-8" data-testid="league-points-leaderboard-section">
             <h2 className="font-heading text-2xl font-bold text-white mb-4">STANDINGS</h2>
             {standings.length === 0 ? (
               <div className="surface p-8 text-center">
@@ -379,10 +383,10 @@ export default function LeagueDetailPage() {
               <DataTable columns={standingsColumns} data={standings} testId="standings-table" />
             )}
           </div>
-        )}
+        ) : null}
 
         {/* Top Trade Block */}
-        {topBlock.length > 0 && (
+        {widgetVis.top_trade_block && topBlock.length > 0 && (
           <div className="mb-8" data-testid="league-top-trade-block">
             <div className="flex items-baseline justify-between mb-4">
               <h2 className="font-heading text-2xl font-bold text-white">TOP TRADE BLOCK</h2>
@@ -464,7 +468,7 @@ export default function LeagueDetailPage() {
         )}
 
         {/* Pending Trades */}
-        {pendingTrades.length > 0 && (
+        {widgetVis.pending_trades && pendingTrades.length > 0 && (
           <div className="mb-8" data-testid="league-pending-trades-section">
             <div className="flex items-baseline justify-between mb-4">
               <h2 className="font-heading text-2xl font-bold text-white flex items-center gap-2">
@@ -592,6 +596,7 @@ export default function LeagueDetailPage() {
         )}
 
         {/* Recent Transactions */}
+        {widgetVis.transactions && (
         <div className="mb-8" data-testid="league-transactions-section">
           <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
             <h2 className="font-heading text-2xl font-bold text-white">RECENT TRANSACTIONS</h2>
@@ -800,9 +805,10 @@ export default function LeagueDetailPage() {
             </div>
           )}
         </div>
+        )}
 
         {/* Quick Actions */}
-        {hasTeam && (
+        {widgetVis.quick_actions && hasTeam && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Link to={`/leagues/${id}/roster`} className="surface p-6 hover:border-[#00D2FF]/50 transition-colors">
               <Users size={32} className="text-[#00D2FF] mb-3" />
@@ -860,6 +866,14 @@ export default function LeagueDetailPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {/* League Home Customize Modal (triggered by the cog in AppLayout header) */}
+      <LeagueHomeSettingsModal
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        visibility={widgetVis}
+        onToggle={toggleWidget}
+        onReset={resetWidgets}
+      />
     </div>
     </AppLayout>
   );

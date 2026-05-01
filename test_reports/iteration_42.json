@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 61 testing — 4 user-facing features + 3 new backend tests. All 4 frontend features verified working end-to-end. All 30 backend tests pass (27 regression + 3 new for /live-scoring/league LPA enrichment and matchup_id grouping). No blocking issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_live_scoring_league_enrich.py",
+    "/app/backend/tests/test_salary_cap_enforcement.py",
+    "/app/backend/tests/test_standings_cap_consistency.py",
+    "/app/backend/tests/test_retention_slots_admin.py",
+    "/app/backend/tests/test_smart_drop_paywall.py",
+    "/app/backend/tests/test_compare_paywall.py",
+    "/app/backend/tests/test_trade_analyzer.py",
+    "/app/test_reports/pytest/iteration_42_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "LeagueDetailPage.jsx is still a ~860 line monolith — as noted by E1 this is a separate refactor ticket. The cog wiring + widget guards approach works correctly but the file should eventually be split.",
+    "Side rail toggle label semantics: button displays the label of the *target* state (click 'Compact' -> switches to compact and button reads 'Detailed' to flip back). The PRD asked for 'the button flips label to Detailed after click' which matches this implementation, but some users may find it inverted. No change needed unless product clarifies.",
+    "localStorage keys are good per-league (`dynasty-league-home-widgets-{leagueId}`) and per-user-device (`dynasty-matchup-sidebar-view`) — no cross-league leakage observed."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (30/30)", "frontend": "100% (4/4 features)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (from request)",
+  "seed_data_creation": "None — used existing Ice Kings Head-to-Head league (69e46af167999bfb85c39628) with 12 teams / 6 matchups / Week 2",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Verified feature-by-feature: (1) /leagues/:id cog visible (data-testid=page-settings-cog), opens league-home-settings-modal, toggle-transactions hides league-transactions-section, localStorage persists across reload, reset-defaults restores. (2) /matchup page has side-rail-view-toggle (initial label 'Compact'). Clicking it reduces 'Proj' occurrences from 38->26 in side rail, label flips to 'Detailed', persists to 'Detailed' after reload. (3) /live League Leaderboard now has cols: Rank, Team, Proj. Δ (col-projected-change), Live Points For, Live Points Against (col-live-points-against), Roster. Owner column GONE. 12 live-points-against-{team_id} cells present. Example symmetry: Checkmate Chiefs LP=202.10 / Zarek's Frozen LPA=202.10 and vice versa (118.40). (4) 6 matchup-group-header-{id} rows rendered (MATCHUP 1..6), each followed by exactly 2 team rows. Backend pytest: 30/30 PASS in 22s.",
+  "rca of the issue": "N/A — no bugs found."
+}

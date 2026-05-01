@@ -1246,20 +1246,88 @@ async def get_team_live_scoring(team_id: str, request: Request):
 
 @api_router.get("/live-scoring/league/{league_id}")
 async def get_league_live_scoring(league_id: str, request: Request):
-    """League-wide leaderboard of team live points."""
+    """League-wide leaderboard of team live points.
+
+    Now enriched with:
+    - `live_points_against` — current-week opponent's live points (by matchup).
+    - `matchup_id` — so the frontend can group rows when a league runs 2+
+      matchups per period.
+    - `projected_rank_change` — delta vs. the pre-week rank (ranked by PF
+      *before* live points), so every team shows a projected move (↑/↓/–).
+    """
     await get_current_user(request)
     _ = _safe_object_id(league_id, "league_id")
-    teams = await db.teams.find({"league_id": league_id}, {"_id": 1, "name": 1, "owner_name": 1, "live_points": 1, "roster": 1}).to_list(200)
-    rows = [
-        {
-            "team_id": str(t["_id"]),
+
+    teams = await db.teams.find(
+        {"league_id": league_id},
+        {"_id": 1, "name": 1, "owner_name": 1, "live_points": 1, "roster": 1,
+         "points_for": 1},
+    ).to_list(200)
+
+    # Map team_id -> live points + PF (for projected-rank delta baseline)
+    tid_to_live = {str(t["_id"]): float(t.get("live_points", 0.0) or 0.0) for t in teams}
+
+    # Grab current-week matchups to resolve each team's opponent
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    cur_week = int((league or {}).get("current_week", 1) or 1)
+    matchups = await db.matchups.find({"league_id": league_id, "week": cur_week}).to_list(50)
+    opp_map: dict = {}
+    matchup_map: dict = {}
+    for m in matchups:
+        hid = m.get("home_team_id"); aid = m.get("away_team_id")
+        mid = str(m.get("_id"))
+        if hid and aid:
+            opp_map[hid] = aid
+            opp_map[aid] = hid
+            matchup_map[hid] = mid
+            matchup_map[aid] = mid
+
+    # Pre-week rank = rank by points_for (before this week's live points).
+    # Post-week projected rank = rank by points_for + live_points.
+    pre_rank = {
+        r["team_id"]: idx + 1 for idx, r in enumerate(
+            sorted(
+                [{"team_id": str(t["_id"]), "pre": float(t.get("points_for", 0) or 0)} for t in teams],
+                key=lambda x: x["pre"], reverse=True,
+            )
+        )
+    }
+    proj_rank = {
+        r["team_id"]: idx + 1 for idx, r in enumerate(
+            sorted(
+                [
+                    {
+                        "team_id": str(t["_id"]),
+                        "post": float(t.get("points_for", 0) or 0) + float(t.get("live_points", 0) or 0),
+                    }
+                    for t in teams
+                ],
+                key=lambda x: x["post"], reverse=True,
+            )
+        )
+    }
+
+    rows = []
+    for t in teams:
+        tid = str(t["_id"])
+        opp_id = opp_map.get(tid)
+        lp_against = round(tid_to_live.get(opp_id, 0.0), 2) if opp_id else None
+        pre = pre_rank.get(tid, 0)
+        post = proj_rank.get(tid, 0)
+        delta = (pre - post) if (pre and post) else 0   # positive = moved UP, negative = moved DOWN
+        rows.append({
+            "team_id": tid,
             "team_name": t["name"],
             "owner_name": t.get("owner_name"),
             "live_points": round(t.get("live_points", 0.0) or 0.0, 2),
+            "live_points_against": lp_against,
+            "opponent_team_id": opp_id,
+            "matchup_id": matchup_map.get(tid),
             "roster_count": len(t.get("roster", [])),
-        }
-        for t in teams
-    ]
+            "pre_rank": pre,
+            "projected_rank": post,
+            "projected_rank_change": delta,
+        })
     rows.sort(key=lambda r: r["live_points"], reverse=True)
     return {"league_id": league_id, "leaderboard": rows}
 
