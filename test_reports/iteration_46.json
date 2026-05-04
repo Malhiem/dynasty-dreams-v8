@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 46 — validated 3 new related features: (A) GET/PUT /api/leagues/{id}/schedule-config endpoints with defaults, commissioner-gate, validation & persistence; (B) division-aware POST /api/matchups/generate-schedule mode branching; (C) end-of-regular-season division auto-crown via simulate-week; and the CommissionerSettings → Divisions → Schedule Mix UI card with all required testids, toast and status indicator flipping correctly after save. Backend: 30/30 pytest passed (7/7 new schedule_config_and_division_crown + 6/6 playoff_bracket_divisions + 14/14 matchup_engine + 3/3 standings_cap_consistency). Frontend: verified via Playwright on production preview URL with admin login (admin@dynastydreams.com).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_schedule_config_and_division_crown.py",
+    "/app/backend/tests/test_playoff_bracket_divisions.py",
+    "/app/backend/tests/test_matchup_engine.py",
+    "/app/backend/tests/test_standings_cap_consistency.py",
+    "/app/test_reports/pytest/iteration_46_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "routes/leagues.py ScheduleConfig Pydantic model enforces 0..10 via Field(ge=0, le=10); PUT returns {saved: {...}} shape matches frontend saveScheduleCfg expectation; GET returns configured=True only after any PUT persists league.schedule_config document — clean semantics.",
+    "routes/matchups.py _build_division_pairings correctly emits n duplicates per pairing per category (intra-div / intra-conf / inter-conf). Unit test verifies 4-team / 3-div setup produces 7 pairings as expected. generate-schedule branches on use_divisional = (schedule_config is set) AND (≥2 distinct divisions among teams) — falls back to vanilla round-robin otherwise, preserving default=B opt-in semantics.",
+    "simulate-week end-of-regular-season division auto-crown computes winners with the agreed tiebreaker (wins desc, division_wins desc, points_for desc), flips division_winner_at, and only runs for divisions that actually have ≥1 team. Idempotency is enforced by $exists check on division_winner_at — re-running simulate-week does NOT re-crown (verified indirectly by crowd-count check in test).",
+    "DivisionsTab.tsx Schedule Mix card is cleanly scoped ~240-330 line block: loads /schedule-config on mount (catches 404/network), renders warning banner only when unique-division count < 2, flips status testid between -configured and -default based on `configured` flag from server, and toast 'Schedule mix saved — applies next time schedule is generated' fires on successful PUT. All four required testids (schedule-mix-card, schedule-mix-intra-div-input, schedule-mix-intra-conf-input, schedule-mix-inter-conf-input, schedule-mix-save-btn, schedule-mix-status-configured/-default, schedule-mix-need-divisions) are present and functional."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (30/30)", "frontend": "100% (5/5 — card visible, 3 inputs visible, Save button visible, toast fires, status=OPTED-IN after save)"},
+  "test_credentials": "admin@dynastydreams.com / Admin123! (primary commissioner of all admin leagues)",
+  "seed_data_creation": "None — leveraged existing admin-commissioned league with 12 teams; schedule-config persisted via test_put_schedule_config_saves_and_persists and the Playwright save click (status correctly reads OPTED-IN in UI).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 46 — all 3 new features (division-aware schedule generator, end-of-season division auto-crown, schedule-mix commissioner UI) are green end-to-end. The tiebreaker hierarchy (wins desc, division_wins desc, points_for desc) is enforced in simulate-week. Auto-crown is idempotent via $exists:false guard. Schedule Mix card shows warning banner only when <2 distinct divisions among teams — admin's 'Ice Kings Head-to-Head' league has Atlantic/Metropolitan/Central/Pacific + South so banner is hidden. Toast copy is 'Schedule mix saved — applies next time schedule is generated' (substring 'Schedule mix saved' matches user spec). Pre-existing flaky tests to keep skipping: test_week_at_a_glance_chris_has_5 (data drift), test_trade_flow.py (pick depletion), test_dynasty_dreams register 500 (test-only, missing username).",
+  "rca of the issue": "N/A — no bugs found this iteration. All 3 features ship as specified."
+}

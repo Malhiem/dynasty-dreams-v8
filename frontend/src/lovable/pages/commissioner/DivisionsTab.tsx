@@ -26,6 +26,15 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
   const [newDivName, setNewDivName] = useState("");
   const [newConfName, setNewConfName] = useState("");
 
+  // Schedule config
+  const [scheduleCfg, setScheduleCfg] = useState({
+    intra_division_games: 2,
+    intra_conference_games: 1,
+    inter_conference_games: 1,
+    configured: false,
+  });
+  const [savingCfg, setSavingCfg] = useState(false);
+
   useEffect(() => {
     if (!leagueId) { setLoading(false); return; }
     let cancelled = false;
@@ -33,7 +42,8 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
     Promise.all([
       api.get(`/teams?league_id=${leagueId}`).catch(() => ({ data: [] })),
       api.get(`/leagues/${leagueId}/divisions`).catch(() => ({ data: { divisions: [], unassigned: [] } })),
-    ]).then(([teamsRes, divRes]) => {
+      api.get(`/leagues/${leagueId}/schedule-config`).catch(() => ({ data: null })),
+    ]).then(([teamsRes, divRes, cfgRes]) => {
       if (cancelled) return;
       const tlist = teamsRes.data || [];
       setTeams(tlist);
@@ -48,6 +58,7 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
         });
       });
       setAssignments(initMap);
+      if (cfgRes?.data) setScheduleCfg(cfgRes.data);
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [leagueId]);
@@ -100,6 +111,26 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
   // Unique division / conference names seen so far — fuel Select dropdowns
   const divNames = Array.from(new Set(Object.values(assignments).map(a => a.division).filter(Boolean)));
   const confNames = Array.from(new Set(Object.values(assignments).map(a => a.conference).filter(Boolean)));
+  const hasMinDivisions = divNames.length >= 2;
+
+  const saveScheduleCfg = async () => {
+    if (!leagueId) return;
+    setSavingCfg(true);
+    try {
+      const payload = {
+        intra_division_games: scheduleCfg.intra_division_games,
+        intra_conference_games: scheduleCfg.intra_conference_games,
+        inter_conference_games: scheduleCfg.inter_conference_games,
+      };
+      await api.put(`/leagues/${leagueId}/schedule-config`, payload);
+      setScheduleCfg(prev => ({ ...prev, configured: true }));
+      toast.success("Schedule mix saved — applies next time schedule is generated");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save schedule config");
+    } finally {
+      setSavingCfg(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -232,6 +263,99 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
                 )}
               </tbody>
             </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Schedule Mix Card */}
+      <Card className="bg-card border-border" data-testid="schedule-mix-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Network className="h-5 w-5 text-accent" /> Schedule Mix
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            Control how many times each team plays its rivals. These counts take effect the
+            next time the commissioner (re)generates the schedule.
+            <span className="block mt-1 text-xs">
+              Status:{" "}
+              {scheduleCfg.configured ? (
+                <span className="text-success font-semibold" data-testid="schedule-mix-status-configured">OPTED-IN · division-aware scheduling ACTIVE</span>
+              ) : (
+                <span className="text-muted-foreground italic" data-testid="schedule-mix-status-default">Using vanilla round-robin (default) · Save this card to opt into division-aware scheduling</span>
+              )}
+            </span>
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!hasMinDivisions && (
+            <div
+              className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200"
+              data-testid="schedule-mix-need-divisions"
+            >
+              ⚠️ You need at least <strong>2 divisions</strong> configured above before
+              division-aware scheduling can take effect. You can still save these numbers —
+              they&apos;ll activate automatically once divisions are in place.
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl">
+            <div>
+              <Label htmlFor="intra-div" className="text-xs font-semibold">Intra-division games</Label>
+              <Input
+                id="intra-div"
+                type="number"
+                min={0}
+                max={10}
+                value={scheduleCfg.intra_division_games}
+                onChange={e => setScheduleCfg(prev => ({ ...prev, intra_division_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) }))}
+                className="mt-1"
+                data-testid="schedule-mix-intra-div-input"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Times you play each team in your OWN division. (NHL: ~4×, fantasy: 2×)
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="intra-conf" className="text-xs font-semibold">Intra-conference games</Label>
+              <Input
+                id="intra-conf"
+                type="number"
+                min={0}
+                max={10}
+                value={scheduleCfg.intra_conference_games}
+                onChange={e => setScheduleCfg(prev => ({ ...prev, intra_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) }))}
+                className="mt-1"
+                data-testid="schedule-mix-intra-conf-input"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Times you play each non-division team in your OWN conference.
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="inter-conf" className="text-xs font-semibold">Inter-conference games</Label>
+              <Input
+                id="inter-conf"
+                type="number"
+                min={0}
+                max={10}
+                value={scheduleCfg.inter_conference_games}
+                onChange={e => setScheduleCfg(prev => ({ ...prev, inter_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) }))}
+                className="mt-1"
+                data-testid="schedule-mix-inter-conf-input"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Times you play each team in the OPPOSITE conference.
+              </p>
+            </div>
+          </div>
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              onClick={saveScheduleCfg}
+              disabled={savingCfg || !leagueId}
+              data-testid="schedule-mix-save-btn"
+            >
+              <Save className="h-4 w-4 mr-1" /> {savingCfg ? "Saving..." : "Save Schedule Mix"}
+            </Button>
           </div>
         </CardContent>
       </Card>

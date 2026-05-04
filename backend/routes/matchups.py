@@ -49,6 +49,74 @@ def generate_round_robin(team_ids):
     return schedule
 
 
+def _build_division_pairings(teams: list, cfg: dict) -> list:
+    """Build a flat list of (home, away) pairings per the division-aware schedule config.
+
+    For each unordered pair (A,B), choose a "times to play" based on:
+      - same division → cfg.intra_division_games
+      - same conference (diff division) → cfg.intra_conference_games
+      - different conference → cfg.inter_conference_games
+    Home/away alternates when a pair plays multiple times.
+    Returns [(home_id, away_id), ...] — not yet distributed into weeks.
+    """
+    pairings = []
+    n = len(teams)
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = teams[i], teams[j]
+            same_div = a.get("division") and a.get("division") == b.get("division")
+            same_conf = a.get("conference") and a.get("conference") == b.get("conference")
+            if same_div:
+                games = int(cfg.get("intra_division_games") or 0)
+            elif same_conf:
+                games = int(cfg.get("intra_conference_games") or 0)
+            else:
+                games = int(cfg.get("inter_conference_games") or 0)
+            for g in range(games):
+                if g % 2 == 0:
+                    pairings.append((str(a["_id"]), str(b["_id"])))
+                else:
+                    pairings.append((str(b["_id"]), str(a["_id"])))
+    return pairings
+
+
+def _distribute_to_weeks(pairings: list, team_ids: list, num_weeks: int) -> list:
+    """Spread pairings across weeks so each team plays at most once per week.
+
+    Greedy: iterate pairings in random order, placing each in the earliest
+    week where neither team already has a game. If all weeks are full,
+    evenly overflow the earliest weeks (rare for normal configs).
+    """
+    import random as _random
+    weeks: list[list] = [[] for _ in range(num_weeks)]
+    teams_in_week: list[set] = [set() for _ in range(num_weeks)]
+
+    shuffled = pairings[:]
+    _random.shuffle(shuffled)
+
+    placed = []
+    unplaced = []
+    for home, away in shuffled:
+        placed_flag = False
+        for w in range(num_weeks):
+            if home not in teams_in_week[w] and away not in teams_in_week[w]:
+                weeks[w].append((home, away))
+                teams_in_week[w].add(home)
+                teams_in_week[w].add(away)
+                placed.append((w + 1, home, away))
+                placed_flag = True
+                break
+        if not placed_flag:
+            unplaced.append((home, away))
+    # Overflow: append leftovers into the sparsest weeks round-robin
+    if unplaced:
+        for home, away in unplaced:
+            w = min(range(num_weeks), key=lambda x: len(weeks[x]))
+            weeks[w].append((home, away))
+            placed.append((w + 1, home, away))
+    return placed  # list of (week, home, away)
+
+
 # ─── Endpoints ───────────────────────────────────────────────
 @router.post("/matchups/generate-schedule")
 async def generate_schedule(input: GenerateScheduleRequest, request: Request):
@@ -71,14 +139,19 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
     team_map = {str(t["_id"]): t["name"] for t in teams}
     scoring_format = league.get("scoring_format", "head_to_head")
 
-    base_schedule = generate_round_robin(team_ids)
+    # Division-aware? Only opt-in via league.schedule_config AND ≥2 distinct
+    # divisions configured. Otherwise fall back to vanilla round-robin.
+    schedule_cfg = league.get("schedule_config")
+    div_names = {t.get("division") for t in teams if t.get("division")}
+    use_divisional = bool(schedule_cfg) and len(div_names) >= 2
+
     full_schedule: list = []
-    week = 1
-    cycle = itertools.cycle(base_schedule)
-    while week <= input.num_weeks:
-        round_matchups = next(cycle)
-        _random.shuffle(round_matchups)
-        for home_id, away_id in round_matchups:
+    if use_divisional:
+        pairings = _build_division_pairings(teams, schedule_cfg)
+        distributed = _distribute_to_weeks(pairings, team_ids, input.num_weeks)
+        for week, home_id, away_id in distributed:
+            if week > input.num_weeks:
+                continue
             full_schedule.append({
                 "week": week,
                 "home_team_id": home_id,
@@ -90,7 +163,26 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
                 "status": "scheduled",
                 "winner": None,
             })
-        week += 1
+    else:
+        base_schedule = generate_round_robin(team_ids)
+        week = 1
+        cycle = itertools.cycle(base_schedule)
+        while week <= input.num_weeks:
+            round_matchups = next(cycle)
+            _random.shuffle(round_matchups)
+            for home_id, away_id in round_matchups:
+                full_schedule.append({
+                    "week": week,
+                    "home_team_id": home_id,
+                    "home_team_name": team_map.get(home_id, ""),
+                    "away_team_id": away_id,
+                    "away_team_name": team_map.get(away_id, ""),
+                    "home_score": 0,
+                    "away_score": 0,
+                    "status": "scheduled",
+                    "winner": None,
+                })
+            week += 1
 
     await db.matchups.delete_many({"league_id": input.league_id})
     if full_schedule:
@@ -99,8 +191,11 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
             m["scoring_format"] = scoring_format
         await db.matchups.insert_many(full_schedule)
 
-    return {"message": f"Generated {len(full_schedule)} matchups for {input.num_weeks} weeks",
-            "weeks": input.num_weeks}
+    return {
+        "message": f"Generated {len(full_schedule)} matchups for {input.num_weeks} weeks",
+        "weeks": input.num_weeks,
+        "mode": "division_aware" if use_divisional else "round_robin",
+    }
 
 
 @router.get("/matchups/{league_id}")
@@ -420,5 +515,103 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         "week": input.week,
         "results": results,
     })
+
+    # ─── Division-winner auto-crown ──────────────────────────────
+    # Fire when the just-simulated week is the FINAL regular-season week:
+    #   last_regular_season_week = max(week) among matchups with is_playoff != True
+    # Uses tiebreakers: (wins desc, division_wins desc, points_for desc).
+    # Idempotent: skips teams that already have `division_winner_at` set.
+    try:
+        rs_agg = await db.matchups.aggregate([
+            {"$match": {
+                "league_id": input.league_id,
+                "$or": [{"is_playoff": {"$exists": False}}, {"is_playoff": False}],
+            }},
+            {"$group": {"_id": None, "max_week": {"$max": "$week"}}},
+        ]).to_list(1)
+        last_rs_week = rs_agg[0]["max_week"] if rs_agg else None
+
+        if last_rs_week is not None and input.week >= last_rs_week:
+            all_league_teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
+            divisions_seen = {t.get("division") for t in all_league_teams if t.get("division")}
+            if len(divisions_seen) >= 2:
+                now = datetime.now(timezone.utc)
+                # Compute each team's division-win count from completed matchups
+                completed = await db.matchups.find({
+                    "league_id": input.league_id,
+                    "status": {"$in": ["completed", "final"]},
+                }).to_list(5000)
+                team_div = {str(t["_id"]): t.get("division") for t in all_league_teams}
+                div_wins: dict = {str(t["_id"]): 0 for t in all_league_teams}
+                for mm in completed:
+                    hid = mm.get("home_team_id")
+                    aid = mm.get("away_team_id")
+                    if not hid or not aid:
+                        continue
+                    # Only count intra-division games
+                    if team_div.get(hid) and team_div.get(hid) == team_div.get(aid):
+                        hs = float(mm.get("home_score") or 0)
+                        as_ = float(mm.get("away_score") or 0)
+                        if hs > as_:
+                            div_wins[hid] = div_wins.get(hid, 0) + 1
+                        elif as_ > hs:
+                            div_wins[aid] = div_wins.get(aid, 0) + 1
+
+                for div_name in divisions_seen:
+                    div_teams = [t for t in all_league_teams if t.get("division") == div_name]
+                    if not div_teams:
+                        continue
+                    # Skip if someone in this division already crowned this season
+                    if any(t.get("division_winner_at") for t in div_teams):
+                        continue
+                    div_teams_sorted = sorted(
+                        div_teams,
+                        key=lambda t: (
+                            int(t.get("wins", 0) or 0),
+                            int(div_wins.get(str(t["_id"]), 0) or 0),
+                            float(t.get("points_for", 0.0) or 0.0),
+                        ),
+                        reverse=True,
+                    )
+                    winner_team = div_teams_sorted[0]
+                    winner_id = str(winner_team["_id"])
+                    winner_name = winner_team.get("name", "Unknown")
+                    await db.teams.update_one(
+                        {"_id": winner_team["_id"]},
+                        {"$set": {"division_winner_at": now}},
+                    )
+                    await db.activity_feed.insert_one({
+                        "league_id": input.league_id,
+                        "event_type": "division_awarded",
+                        "description": f"🏅 {winner_name} won the {div_name} Division!",
+                        "message": f"Division champion crowned: {winner_name} ({div_name})",
+                        "created_at": now,
+                    })
+                    await db.audit_log.insert_one({
+                        "league_id": input.league_id,
+                        "actor_id": "system",
+                        "actor_name": "System (auto-crown)",
+                        "action": "division_awarded_regular_season",
+                        "role": "system",
+                        "diff": {
+                            "winner_team_id": winner_id,
+                            "division": div_name,
+                            "wins": winner_team.get("wins", 0),
+                            "division_wins": div_wins.get(winner_id, 0),
+                            "points_for": winner_team.get("points_for", 0.0),
+                            "reason": "end_of_regular_season",
+                        },
+                        "created_at": now,
+                    })
+                    await sio.emit("division_crowned", {
+                        "league_id": input.league_id,
+                        "team_id": winner_id,
+                        "team_name": winner_name,
+                        "division": div_name,
+                        "reason": "end_of_regular_season",
+                        "crowned_at": now.isoformat(),
+                    })
+    except Exception as e:
+        logger.warning(f"Division auto-crown skipped: {e}")
 
     return {"week": input.week, "results": results, "matchups_simulated": len(matchups)}

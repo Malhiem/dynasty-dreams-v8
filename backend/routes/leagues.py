@@ -26,6 +26,20 @@ class DivisionsUpdate(BaseModel):
     assignments: List[DivisionAssignment]
 
 
+class ScheduleConfig(BaseModel):
+    """Commissioner-tunable schedule mix.
+    `intra_division_games` = times you play every team in your OWN division.
+    `intra_conference_games` = times you play every non-division team in your OWN conference.
+    `inter_conference_games` = times you play every team in the OPPOSITE conference.
+    All three must be positive integers; set any to 0 to skip that tier.
+    When not set (or <2 divisions configured), the generator falls back to
+    vanilla round-robin (no intra-division bias).
+    """
+    intra_division_games: int = 2
+    intra_conference_games: int = 1
+    inter_conference_games: int = 1
+
+
 # ─── Helpers ─────────────────────────────────────────────────
 def _score(team: dict) -> float:
     """Tiebreaker score used for ranking within a group."""
@@ -271,6 +285,66 @@ async def update_divisions(league_id: str, input: DivisionsUpdate, request: Requ
         }}},
     )
     return {"updated": updated}
+
+
+@router.get("/leagues/{league_id}/schedule-config")
+async def get_schedule_config(league_id: str):
+    """Return the league's schedule mix config (or defaults if unset)."""
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"schedule_config": 1})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    cfg = league.get("schedule_config") or {}
+    return {
+        "intra_division_games": cfg.get("intra_division_games", 2),
+        "intra_conference_games": cfg.get("intra_conference_games", 1),
+        "inter_conference_games": cfg.get("inter_conference_games", 1),
+        "configured": bool(league.get("schedule_config")),
+    }
+
+
+@router.put("/leagues/{league_id}/schedule-config")
+async def update_schedule_config(league_id: str, input: ScheduleConfig, request: Request):
+    """Commissioner tunes intra-division / intra-conference / inter-conference game counts."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner only")
+
+    for field_name, val in (
+        ("intra_division_games", input.intra_division_games),
+        ("intra_conference_games", input.intra_conference_games),
+        ("inter_conference_games", input.inter_conference_games),
+    ):
+        if val < 0 or val > 10:
+            raise HTTPException(status_code=400, detail=f"{field_name} must be 0-10")
+
+    cfg = {
+        "intra_division_games": input.intra_division_games,
+        "intra_conference_games": input.intra_conference_games,
+        "inter_conference_games": input.inter_conference_games,
+    }
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {
+            "$set": {"schedule_config": cfg},
+            "$push": {"audit_log": {
+                "action": "schedule_config_updated",
+                "by": user.get("email"),
+                "config": cfg,
+            }},
+        },
+    )
+    return {"saved": cfg}
 
 
 @router.get("/leagues/{league_id}/playoff-bracket")
