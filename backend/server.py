@@ -227,6 +227,7 @@ class LeagueResponse(BaseModel):
     status: str
     invite_code: Optional[str] = None
     created_at: datetime
+    setup_wizard_complete: bool = False
 
 class TeamCreate(BaseModel):
     name: str
@@ -380,7 +381,8 @@ async def create_league(input: LeagueCreate, request: Request):
         is_private=league_doc["is_private"],
         status=league_doc["status"],
         invite_code=league_doc.get("invite_code"),
-        created_at=league_doc["created_at"]
+        created_at=league_doc["created_at"],
+        setup_wizard_complete=bool(league_doc.get("setup_wizard_complete", False)),
     )
 
 @api_router.get("/leagues", response_model=List[LeagueResponse])
@@ -422,7 +424,8 @@ async def get_leagues(request: Request, my_leagues: bool = False):
             is_private=league["is_private"],
             status=league["status"],
             invite_code=league.get("invite_code"),
-            created_at=league["created_at"]
+            created_at=league["created_at"],
+            setup_wizard_complete=bool(league.get("setup_wizard_complete", False)),
         )
         for league in leagues
     ]
@@ -453,7 +456,8 @@ async def get_league(league_id: str):
         is_private=league["is_private"],
         status=league["status"],
         invite_code=league.get("invite_code"),
-        created_at=league["created_at"]
+        created_at=league["created_at"],
+        setup_wizard_complete=bool(league.get("setup_wizard_complete", False)),
     )
 
 # ─── League Invite System ─────────────────────────────────────
@@ -2038,7 +2042,7 @@ class NotificationType(str, Enum):
 
 
 async def create_notification(user_id: str, notif_type: str, title: str, message: str, league_id: str = None, link: str = None):
-    """Create a notification and broadcast it via WebSocket."""
+    """Create a notification and broadcast it via WebSocket + Expo push."""
     doc = {
         "user_id": user_id,
         "type": notif_type,
@@ -2051,8 +2055,19 @@ async def create_notification(user_id: str, notif_type: str, title: str, message
     }
     result = await db.notifications.insert_one(doc)
     doc["_id"] = str(result.inserted_id)
-    # Broadcast to user's personal room
+    # Broadcast to user's personal room (socket.io)
     await sio.emit("notification", doc, room=f"user_{user_id}")
+    # Fire an Expo push in parallel (non-blocking best-effort)
+    try:
+        from routes.push import send_push
+        asyncio.create_task(send_push(
+            [user_id],
+            title=title,
+            body=message,
+            data={"type": notif_type, "league_id": league_id, "link": link, "notification_id": doc["_id"]},
+        ))
+    except Exception as e:
+        logger.debug(f"push notify skipped: {e}")
     return doc
 
 
@@ -4924,7 +4939,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes
 
 _router_deps = {
     "db": db,
@@ -4971,6 +4986,7 @@ trade_analyzer_routes.setup(_router_deps)
 _router_deps["get_team_week_summary"] = get_team_week_summary
 users_routes.setup(_router_deps)
 leagues_routes.setup(_router_deps)
+push_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -4984,6 +5000,7 @@ api_router.include_router(auth_routes.router)
 api_router.include_router(trade_analyzer_routes.router)
 api_router.include_router(users_routes.router)
 api_router.include_router(leagues_routes.router)
+api_router.include_router(push_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")

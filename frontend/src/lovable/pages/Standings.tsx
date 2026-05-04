@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
@@ -619,6 +619,7 @@ const StandingsPage = () => {
   const navigate = useNavigate();
   const { league, leagueTeams, myTeam, myLeagues, leagueId, switchLeague } = useActiveLeague();
   const [view, setView] = useState<ViewType>("league");
+  const viewExplicitlyChanged = useRef(false);
   const [divisionFilter, setDivisionFilter] = useState<string>("all");
   const [conferenceFilter, setConferenceFilter] = useState<string>("all");
   const [showProjections, setShowProjections] = useState(false);
@@ -645,6 +646,12 @@ const StandingsPage = () => {
         divisions: data?.divisions || [],
         conferences: data?.conferences || [],
       });
+      // Auto-select division view when the league has divisions configured
+      // (user can still manually switch back to League via the Select)
+      if (data?.has_divisions && !viewExplicitlyChanged.current) {
+        setView("division");
+        setDivisionFilter("all");
+      }
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [leagueId]);
@@ -760,7 +767,7 @@ const StandingsPage = () => {
           {/* ── Standings Tab ── */}
           <TabsContent value="standings" className="space-y-4">
             <div className="flex flex-wrap items-center gap-3">
-              <Select value={view} onValueChange={(v: ViewType) => setView(v)}>
+              <Select value={view} onValueChange={(v: ViewType) => { viewExplicitlyChanged.current = true; setView(v); }}>
                 <SelectTrigger className="w-[130px] h-9 text-sm"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="league">League</SelectItem>
@@ -774,10 +781,12 @@ const StandingsPage = () => {
                   <SelectTrigger className="w-[140px] h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Divisions</SelectItem>
-                    <SelectItem value="Atlantic">Atlantic</SelectItem>
-                    <SelectItem value="Central">Central</SelectItem>
-                    <SelectItem value="Metropolitan">Metropolitan</SelectItem>
-                    <SelectItem value="Pacific">Pacific</SelectItem>
+                    {(standingsMeta.divisions.length > 0
+                      ? standingsMeta.divisions
+                      : ["Atlantic", "Central", "Metropolitan", "Pacific"]
+                    ).map(div => (
+                      <SelectItem key={div} value={div}>{div}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               )}
@@ -787,8 +796,12 @@ const StandingsPage = () => {
                   <SelectTrigger className="w-[150px] h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Conferences</SelectItem>
-                    <SelectItem value="Eastern">Eastern</SelectItem>
-                    <SelectItem value="Western">Western</SelectItem>
+                    {(standingsMeta.conferences.length > 0
+                      ? standingsMeta.conferences
+                      : ["Eastern", "Western"]
+                    ).map(conf => (
+                      <SelectItem key={conf} value={conf}>{conf}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               )}

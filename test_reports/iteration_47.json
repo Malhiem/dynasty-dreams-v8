@@ -1,0 +1,39 @@
+{
+  "summary": "Iter 47 testing complete. Verified (a) Setup Wizard backend+frontend, (b) Expo Push Notifications backend, (c) Standings division auto-switch logic, (d) mobile hook wiring. 12/12 backend pytest tests passed (test_setup_wizard.py 4/4, test_push_notifications.py 8/8). Frontend wizard auto-opens, all 10 data-testids present and interactive (step navigation, Next/Back/Finish, dismiss + Re-run all working). Division auto-switch logic verified via code review (Standings.tsx line 651-653) since no league in test DB currently has has_divisions=true.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Setup Wizard dialog", "issues": ["DialogContent missing `Description` or aria-describedby warning in console (accessibility nit, non-blocking)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_setup_wizard.py",
+    "/app/backend/tests/test_push_notifications.py",
+    "/app/test_reports/pytest/iteration_47_junit.xml"
+  ],
+  "action_items": [
+    "(Low) Add DialogDescription or aria-describedby to SetupWizard DialogContent to silence a11y console warning.",
+    "(Info) Route naming mismatch: review request says SetupWizard auto-opens on /commissioner, but actually renders at /commissioner/settings AND /league-administration (CommissionerSettings.tsx). /commissioner route uses a different CommissionerPage component without wizard. Confirm intended behavior — if /commissioner should also host wizard, wire it there; otherwise update PRD language."
+  ],
+  "critical_code_review_comments": [
+    "Standings.tsx: auto-switch guarded by viewExplicitlyChanged.current ref so user manual override persists — correct pattern.",
+    "routes/push.py: my-tokens endpoint correctly scrubs raw expo_push_token in response (verified in test).",
+    "server.py line 2062-2063: send_push fired via asyncio.create_task inside create_notification — confirmed non-blocking.",
+    "CommissionerSettings.tsx: setup-wizard-dialog auto-opens when activeLeague.setup_wizard_complete === false and sessionStorage key not set; dismissal persists within session — matches PRD.",
+    "SetupWizard.jsx: 5-step flow with Basics/Cap/Divisions/Schedule/Generate pills + Back/Next/Finish buttons all carry correct data-testids.",
+    "mobile/App.js: PushBridge correctly wraps AppNavigator and calls usePushRegistration(user?.id || null) — graceful when unauthenticated."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "95% (all testids present; division auto-switch not empirically triggered — no league with divisions in test DB)"},
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "To empirically verify division auto-switch on /standings: PUT /api/leagues/{id}/divisions with team->division mappings to make the league's has_divisions=true, then visit /standings and confirm dropdown defaults to 'Division' and sub-tables render. Currently no league in test DB has divisions populated. All wizard UI testids verified present: setup-wizard-dialog, reopen-setup-wizard-btn, wizard-step-(basics|cap|divisions|schedule|generate), wizard-(next|back|finish)-btn. Wizard is mounted at /commissioner/settings and /league-administration (NOT /commissioner).",
+  "rca of the issue": "N/A — no bugs found"
+}

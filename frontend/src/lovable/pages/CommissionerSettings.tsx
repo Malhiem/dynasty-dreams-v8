@@ -20,6 +20,7 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
 import TeamsTab from "@/lovable/components/admin/TeamsTab";
 import DivisionsTab from "@/lovable/pages/commissioner/DivisionsTab";
+import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
 import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
 
@@ -783,6 +784,30 @@ const CommissionerSettings = () => {
   const [auditFilterCategory, setAuditFilterCategory] = useState<string>("all");
   const { league: activeLeague } = useActiveLeague();
 
+  // ─── Setup Wizard (first-time) ─────────────────────────────────
+  const [wizardOpen, setWizardOpen] = useState(false);
+  useEffect(() => {
+    // Auto-open wizard once per session per league when setup isn't complete yet.
+    if (activeLeague?.id && activeLeague.setup_wizard_complete === false) {
+      const dismissedKey = `dd-setup-wizard-dismissed-${activeLeague.id}`;
+      if (!sessionStorage.getItem(dismissedKey)) {
+        setWizardOpen(true);
+      }
+    }
+  }, [activeLeague?.id, activeLeague?.setup_wizard_complete]);
+  const handleWizardClose = () => {
+    setWizardOpen(false);
+    if (activeLeague?.id) {
+      sessionStorage.setItem(`dd-setup-wizard-dismissed-${activeLeague.id}`, "1");
+    }
+  };
+  const reopenWizard = async () => {
+    if (activeLeague?.id) {
+      sessionStorage.removeItem(`dd-setup-wizard-dismissed-${activeLeague.id}`);
+    }
+    setWizardOpen(true);
+  };
+
   // ─── Privacy toggle (League Setup) ──────────────────────────────
   const [isPrivate, setIsPrivate] = useState<boolean>(false);
   const [privacyLoading, setPrivacyLoading] = useState<boolean>(false);
@@ -1103,11 +1128,29 @@ const CommissionerSettings = () => {
           <div className="p-2 rounded-lg bg-primary/20 border border-primary/30">
             <Settings className="h-6 w-6 text-primary" />
           </div>
-          <div>
+          <div className="flex-1">
             <h1 className="text-2xl font-bold">League Administration</h1>
             <p className="text-muted-foreground">Configure your league settings, rules, and monitor team activity</p>
           </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={reopenWizard}
+            data-testid="reopen-setup-wizard-btn"
+            disabled={!activeLeague?.id}
+          >
+            <Trophy className="h-4 w-4 mr-1.5" />
+            {activeLeague?.setup_wizard_complete ? "Re-run Setup Wizard" : "Complete Setup"}
+          </Button>
         </div>
+
+        {/* Setup Wizard Dialog */}
+        <SetupWizard
+          open={wizardOpen}
+          onClose={handleWizardClose}
+          leagueId={activeLeague?.id}
+          onComplete={() => { /* No-op; next page load will see setup_wizard_complete=true */ }}
+        />
 
         <Tabs defaultValue="league-setup" className="space-y-6">
           <TabsList className="bg-secondary border border-border">

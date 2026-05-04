@@ -1,6 +1,7 @@
 """Leagues router: enhanced standings (divisions/conferences/GB/movement) +
 playoff bracket + division management (commissioner-only).
 """
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from bson import ObjectId
@@ -345,6 +346,64 @@ async def update_schedule_config(league_id: str, input: ScheduleConfig, request:
         },
     )
     return {"saved": cfg}
+
+
+@router.post("/leagues/{league_id}/setup-complete")
+async def mark_setup_complete(league_id: str, request: Request):
+    """Flip league.setup_wizard_complete = true (commissioner only)."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner only")
+
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {
+            "$set": {
+                "setup_wizard_complete": True,
+                "setup_wizard_completed_at": datetime.now(timezone.utc),
+                "setup_wizard_completed_by": user.get("email"),
+            },
+            "$push": {"audit_log": {
+                "action": "setup_wizard_completed",
+                "by": user.get("email"),
+            }},
+        },
+    )
+    return {"setup_wizard_complete": True}
+
+
+@router.post("/leagues/{league_id}/setup-reset")
+async def reset_setup_wizard(league_id: str, request: Request):
+    """Re-open the setup wizard (commissioner only)."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner only")
+
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {"setup_wizard_complete": False}},
+    )
+    return {"setup_wizard_complete": False}
 
 
 @router.get("/leagues/{league_id}/playoff-bracket")
