@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -177,6 +177,9 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
             <Trophy className="h-5 w-5 text-accent" />
             League Setup Wizard
           </DialogTitle>
+          <DialogDescription>
+            Walk through 5 quick steps to configure your league: basics, salary cap, divisions, schedule mix, and regular-season generation.
+          </DialogDescription>
         </DialogHeader>
 
         {/* Stepper */}
