@@ -294,7 +294,7 @@ const StandingsTable = ({
                 }`}
               >
                 <td className="py-2.5 text-center">
-                  <div className="flex items-center justify-center gap-0.5">
+                  <div className="flex items-center justify-center gap-0.5" data-testid={`standings-movement-${team.teamId || team.name}`}>
                     <span className={`font-bold ${
                       team.displayRank === 1 ? "text-accent" :
                       team.displayRank <= 3 ? "text-orange-400" : "text-muted-foreground"
