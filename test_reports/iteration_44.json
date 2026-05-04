@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 44 testing — P0 features for Dynasty Dreams: server.py modularization (routes/users.py + routes/leagues.py), enhanced Standings (divisions/conf/GB/movement), and new Playoff Tree UI. Backend: 23/23 focused tests pass (6 new playoff_bracket_divisions + 14 matchup_engine + 3 standings_cap_consistency). Frontend: Standings GB column verified end-to-end (— for #1, decimals for others), sidebar 'Playoff Tree' link present and active, LeagueDetailPage standings widget renders correctly with new payload shape. Found and fixed 1 critical bug: PlayoffBracket.tsx was destructuring non-existent properties from useActiveLeague hook, causing the page to always show empty state. After fix, /playoffs renders 6-team bracket with 3 rounds, 5 matchups, 6 seed chips, 2 byes, and PROJECTED status badge.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/register", "issue": "Pre-existing 500 on new user registration (flagged by main agent as not caused by this iter; unrelated to modularization)"},
+      {"endpoint": "/api/users/me/week-at-a-glance", "issue": "Pre-existing test_week_at_a_glance_chris_has_5 expects 5 leagues but data grew to 12 — test data drift, not a regression"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "/playoffs page", "issue": "FIXED — PlayoffBracket.tsx destructured { activeLeagueId, activeLeague } but useActiveLeague returns { leagueId, league }. Resulted in activeLeagueId=undefined, no API call, permanent empty state. Patched to: const { leagueId: activeLeagueId, league: activeLeague } = useActiveLeague(). Verified bracket now renders.", "affected_selectors": ["[data-testid=\"playoff-bracket-page\"]","[data-testid=\"bracket-round-0\"]","[data-testid^=\"bracket-seed-chip-\"]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_playoff_bracket_divisions.py",
+    "/app/backend/tests/test_matchup_engine.py",
+    "/app/backend/tests/test_standings_cap_consistency.py",
+    "/app/test_reports/pytest/iteration_44_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Address pre-existing test_iteration13_week_level data drift: update test_week_at_a_glance_chris_has_5 expected count from 5 → 12, and investigate /api/auth/register 500 (separate from this iteration).",
+    "(Optional) Add data-testid=\"standings-movement-{teamId}\" to the rank delta arrows in Standings.tsx — currently arrows render correctly visually (e.g. ^5, v2, ^1) but no testid present for automation. Not blocking."
+  ],
+  "critical_code_review_comments": [
+    "PlayoffBracket.tsx used a destructuring contract that didn't match the hook's exported keys — easy to catch in a TS-strict mode but the file uses // @ts-nocheck which silenced the error. Consider removing @ts-nocheck once types stabilize so similar drift is caught at compile time.",
+    "useActiveLeague hook returns leagueId/league, but newer pages assume activeLeagueId/activeLeague. Worth standardizing the public API of this hook (or aliasing both) so future page authors don't repeat this mistake.",
+    "Backend modularization is clean — routes/users.py and routes/leagues.py expose cohesive endpoints, server.py reduced ~400 LOC. No regression observed in the 23 focused tests.",
+    "Playoff bracket endpoint correctly seeds 1..N, gives byes to top 2 in 6-team bracket, and returns status='projected' when no actual playoff schedule exists. Edge cases for divisions persistence + commissioner gating verified."
+  ],
+  "updated_files": [
+    "/app/frontend/src/lovable/pages/PlayoffBracket.tsx (fixed destructuring of useActiveLeague)"
+  ],
+  "success_rate": {"backend": "100% (23/23 focused tests)", "frontend": "100% (4/4 P0 features verified — standings GB, sidebar link, league detail backward compat, playoff bracket after fix)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (commissioner of Ice Kings Head-to-Head, league_id=69e46af167999bfb85c39628)",
+  "seed_data_creation": "None — used existing leagues. test_put_divisions_commissioner_only registers a stranger via /api/auth/register at runtime.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 44: Backend modularization (routes/users.py + routes/leagues.py) verified clean — moved /users/me/level, /users/me/week-at-a-glance, /u/{username}, /leagues/{id}/standings, /leagues/{id}/divisions, /leagues/{id}/playoff-bracket all return 200 with correct shapes. Standings new shape confirmed: {standings:[...], has_divisions, has_conferences, divisions, conferences}; per-row fields games_back, division, conference, rank_delta, movement all present. Playoff bracket for 12-team H2H league returns 6-team bracket, 3 rounds (Quarterfinals/Semifinals/Championship), seeds 1&2 get byes. Frontend /playoffs was BROKEN by hook-property mismatch (activeLeagueId/leagueId) — fixed by aliasing in destructure (line 132 of PlayoffBracket.tsx). All 6 seed chips render with format '#1IBIce Breakers(4-0)'. Standings GB column shows '—' for rank 1, decimals (3.0, 1.0, 4.0, 0.5...) for others. Up/down rank movement arrows render visually but lack data-testid (not blocking). LeagueDetailPage backward compat with new standings payload works (handles both Array and {standings:[...]} shapes). Pre-existing test failures: test_register_new_user 500, test_week_at_a_glance_chris_has_5 (data drift 5→12), test_trade_flow.py — all flagged by main agent as not caused by this iteration.",
+  "rca of the issue": "Bug: /playoffs page always rendered empty 'Not enough teams to generate a playoff bracket yet' even though backend returned a valid 6-team bracket with 3 rounds. Reproduction: login as chriszarek, navigate to /playoffs, observe empty state and zero network calls to /api/leagues/{id}/playoff-bracket. Root cause: PlayoffBracket.tsx (line 132) destructured `{ activeLeagueId, activeLeague }` from useActiveLeague(), but the hook returns `{ leagueId, league, ... }`. Both destructured names resolved to undefined; the useEffect's `if (!activeLeagueId) return` short-circuited before any fetch; loading was set false; bracket remained null; component rendered the 'rounds.length === 0' empty branch. The bug went unnoticed because the file uses // @ts-nocheck. Fix: aliased destructuring `const { leagueId: activeLeagueId, league: activeLeague } = useActiveLeague();` — minimum-impact change that preserves all other variable usages. Verified: 2 successful 200 calls to playoff-bracket endpoint, all testids render, 6 seed chips, 2 byes, PROJECTED badge."
+}

@@ -1,0 +1,442 @@
+"""Leagues router: enhanced standings (divisions/conferences/GB/movement) +
+playoff bracket + division management (commissioner-only).
+"""
+from typing import List, Optional
+
+from bson import ObjectId
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+
+router = APIRouter()
+_deps: dict = {}
+
+
+def setup(deps: dict) -> None:
+    _deps.update(deps)
+
+
+# ─── Pydantic ─────────────────────────────────────────────────
+class DivisionAssignment(BaseModel):
+    team_id: str
+    division: Optional[str] = None       # e.g. "Atlantic"
+    conference: Optional[str] = None     # e.g. "Eastern"
+
+
+class DivisionsUpdate(BaseModel):
+    assignments: List[DivisionAssignment]
+
+
+# ─── Helpers ─────────────────────────────────────────────────
+def _score(team: dict) -> float:
+    """Tiebreaker score used for ranking within a group."""
+    return float(team.get("points_for", 0) or 0) + float(team.get("live_points", 0) or 0)
+
+
+def _rank_teams(teams: List[dict]) -> List[dict]:
+    """Sort teams by W desc, PF desc. Returns new sorted list."""
+    return sorted(
+        teams,
+        key=lambda t: (
+            t.get("wins", 0) or 0,
+            _score(t),
+        ),
+        reverse=True,
+    )
+
+
+def _games_back(leader: dict, team: dict) -> float:
+    """NHL-style Games Back. 0.0 for leader."""
+    if leader is None or team is None:
+        return 0.0
+    lw = leader.get("wins", 0) or 0
+    ll = leader.get("losses", 0) or 0
+    tw = team.get("wins", 0) or 0
+    tl = team.get("losses", 0) or 0
+    gb = ((lw - tw) + (tl - ll)) / 2.0
+    return max(0.0, round(gb, 1))
+
+
+# ─── Endpoints ───────────────────────────────────────────────
+@router.get("/leagues/{league_id}/standings")
+async def get_standings(league_id: str):
+    """Standings with live cap remaining, last-5 W/L/T, division/conference
+    grouping, Games Back (GB), and week-over-week rank movement arrows.
+    """
+    db = _deps["db"]
+    _recompute_team_salary_used = _deps["_recompute_team_salary_used"]
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    cap_enabled = bool((league or {}).get("salary_cap_enabled"))
+    league_cap = float((league or {}).get("salary_cap") or 0.0)
+
+    # ─── Overall ranking ─────────────────────────────────
+    overall_ranked = _rank_teams(teams)
+    overall_leader = overall_ranked[0] if overall_ranked else None
+    overall_rank_by_id = {str(t["_id"]): i + 1 for i, t in enumerate(overall_ranked)}
+
+    # ─── Division / Conference grouping ─────────────────
+    divisions_map: dict = {}  # division name -> list
+    conferences_map: dict = {}  # conference name -> list
+    has_divisions = False
+    has_conferences = False
+    for t in teams:
+        div = t.get("division")
+        conf = t.get("conference")
+        if div:
+            has_divisions = True
+            divisions_map.setdefault(div, []).append(t)
+        if conf:
+            has_conferences = True
+            conferences_map.setdefault(conf, []).append(t)
+
+    div_rank_by_id: dict = {}
+    for div_name, div_teams in divisions_map.items():
+        for i, t in enumerate(_rank_teams(div_teams)):
+            div_rank_by_id[str(t["_id"])] = i + 1
+
+    conf_rank_by_id: dict = {}
+    for conf_name, conf_teams in conferences_map.items():
+        for i, t in enumerate(_rank_teams(conf_teams)):
+            conf_rank_by_id[str(t["_id"])] = i + 1
+
+    # ─── Build rows ──────────────────────────────────────
+    standings = []
+    for team in overall_ranked:
+        tid = str(team["_id"])
+
+        cap_used = 0.0
+        cap_remaining: Optional[float] = None
+        if cap_enabled and league_cap > 0:
+            try:
+                cap_used = await _recompute_team_salary_used(tid)
+                cap_remaining = league_cap - cap_used
+            except Exception:
+                cap_used = float(team.get("salary_used") or 0.0)
+                cap_remaining = league_cap - cap_used
+
+        # Last-5 sequence
+        history_cursor = db.matchups.find({
+            "league_id": league_id,
+            "$or": [{"home_team_id": tid}, {"away_team_id": tid}],
+            "status": {"$in": ["completed", "final"]},
+        }).sort("week", -1).limit(5)
+        last_5: list[str] = []
+        async for m in history_cursor:
+            home_score = float(m.get("home_score") or 0)
+            away_score = float(m.get("away_score") or 0)
+            is_home = m.get("home_team_id") == tid
+            my_score = home_score if is_home else away_score
+            opp_score = away_score if is_home else home_score
+            if abs(my_score - opp_score) < 0.01:
+                last_5.append("T")
+            elif my_score > opp_score:
+                last_5.append("W")
+            else:
+                last_5.append("L")
+        last_5.reverse()
+
+        overall_rank = overall_rank_by_id[tid]
+        prev_rank = team.get("previous_rank") or overall_rank
+        rank_delta = prev_rank - overall_rank  # positive = moved up
+        if rank_delta > 0:
+            movement = "up"
+        elif rank_delta < 0:
+            movement = "down"
+        else:
+            movement = "same"
+
+        gb = _games_back(overall_leader, team)
+        gb_division = 0.0
+        division_leader = None
+        if team.get("division"):
+            div_teams_sorted = _rank_teams(divisions_map.get(team["division"], []))
+            if div_teams_sorted:
+                division_leader = div_teams_sorted[0]
+                gb_division = _games_back(division_leader, team)
+
+        standings.append({
+            "rank": overall_rank,
+            "division_rank": div_rank_by_id.get(tid),
+            "conference_rank": conf_rank_by_id.get(tid),
+            "previous_rank": prev_rank,
+            "rank_delta": rank_delta,
+            "movement": movement,
+            "team_id": tid,
+            "team_name": team["name"],
+            "team_abbr": team.get("logo_abbr"),
+            "team_logo_url": team.get("logo_url"),
+            "owner_name": team["owner_name"],
+            "division": team.get("division"),
+            "conference": team.get("conference"),
+            "wins": team.get("wins", 0),
+            "losses": team.get("losses", 0),
+            "ties": team.get("ties", 0),
+            "points_for": team.get("points_for", 0),
+            "points_against": team.get("points_against", 0),
+            "games_back": gb,
+            "games_back_division": gb_division,
+            "salary_cap_enabled": cap_enabled,
+            "salary_cap": league_cap if cap_enabled else None,
+            "salary_used": round(cap_used, 2) if cap_enabled else None,
+            "salary_cap_remaining": round(cap_remaining, 2) if (cap_enabled and cap_remaining is not None) else None,
+            "last_5": last_5,
+        })
+
+    return {
+        "standings": standings,
+        "has_divisions": has_divisions,
+        "has_conferences": has_conferences,
+        "divisions": sorted(divisions_map.keys()),
+        "conferences": sorted(conferences_map.keys()),
+    }
+
+
+@router.get("/leagues/{league_id}/divisions")
+async def get_divisions(league_id: str):
+    """Return division/conference setup for a league."""
+    db = _deps["db"]
+    teams = await db.teams.find(
+        {"league_id": league_id},
+        {"_id": 1, "name": 1, "division": 1, "conference": 1, "logo_abbr": 1},
+    ).to_list(200)
+
+    divisions: dict = {}
+    for t in teams:
+        div = t.get("division")
+        if not div:
+            continue
+        entry = divisions.setdefault(div, {
+            "division": div,
+            "conference": t.get("conference"),
+            "team_ids": [],
+            "teams": [],
+        })
+        entry["team_ids"].append(str(t["_id"]))
+        entry["teams"].append({
+            "id": str(t["_id"]),
+            "name": t.get("name"),
+            "abbr": t.get("logo_abbr"),
+        })
+    return {
+        "divisions": list(divisions.values()),
+        "unassigned": [
+            {"id": str(t["_id"]), "name": t.get("name")}
+            for t in teams if not t.get("division")
+        ],
+    }
+
+
+@router.put("/leagues/{league_id}/divisions")
+async def update_divisions(league_id: str, input: DivisionsUpdate, request: Request):
+    """Commissioner assigns teams to divisions/conferences."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner only")
+
+    updated = 0
+    for a in input.assignments:
+        try:
+            oid = ObjectId(a.team_id)
+        except Exception:
+            continue
+        res = await db.teams.update_one(
+            {"_id": oid, "league_id": league_id},
+            {"$set": {
+                "division": a.division or None,
+                "conference": a.conference or None,
+            }},
+        )
+        updated += res.modified_count
+
+    # Audit log
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$push": {"audit_log": {
+            "action": "divisions_updated",
+            "by": user.get("email"),
+            "count": updated,
+            "assignments": [a.model_dump() for a in input.assignments],
+        }}},
+    )
+    return {"updated": updated}
+
+
+@router.get("/leagues/{league_id}/playoff-bracket")
+async def get_playoff_bracket(league_id: str):
+    """Projected playoff bracket using current standings.
+
+    Format:
+      - 6 teams  → top 2 seeds bye, 3v6 + 4v5, then winners vs seeds → final
+      - 4 teams  → 1v4, 2v3 → final
+      - 8 teams  → 1v8, 2v7, 3v6, 4v5 → QF/SF/F
+      - 2 teams  → single championship game
+    Matches `league.playoff_teams` if set, otherwise defaults by team count:
+      12 teams → 6, 10 → 6, 8 → 6, 6 → 4, 4 → 2.
+    Pairings follow standard single-elimination seeding.
+    """
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+    total = len(teams)
+    if total < 2:
+        return {"rounds": [], "playoff_teams": [], "bye_teams": [], "status": "insufficient_teams"}
+
+    # Determine playoff size
+    playoff_size = league.get("playoff_teams")
+    if not playoff_size or not isinstance(playoff_size, int) or playoff_size < 2:
+        if total >= 10:
+            playoff_size = 6
+        elif total >= 8:
+            playoff_size = 6
+        elif total >= 6:
+            playoff_size = 4
+        elif total >= 4:
+            playoff_size = 4
+        else:
+            playoff_size = 2
+    playoff_size = min(playoff_size, total)
+
+    # Seed by overall rank
+    seeded = _rank_teams(teams)[:playoff_size]
+    overall_leader = seeded[0] if seeded else None
+
+    def _team_to_slot(t: dict, seed: int) -> dict:
+        return {
+            "team_id": str(t["_id"]),
+            "team_name": t.get("name"),
+            "team_abbr": t.get("logo_abbr"),
+            "team_logo_url": t.get("logo_url"),
+            "owner_name": t.get("owner_name"),
+            "seed": seed,
+            "wins": t.get("wins", 0),
+            "losses": t.get("losses", 0),
+            "ties": t.get("ties", 0),
+            "points_for": round(float(t.get("points_for", 0) or 0), 2),
+            "games_back": _games_back(overall_leader, t),
+        }
+
+    playoff_teams_out = [_team_to_slot(t, i + 1) for i, t in enumerate(seeded)]
+
+    # Build bracket rounds
+    rounds: list = []
+    bye_teams_out: list = []
+
+    def _make_matchup(high_seed: dict, low_seed: dict) -> dict:
+        return {
+            "high_seed": high_seed,
+            "low_seed": low_seed,
+            "projected_winner": high_seed["team_id"] if high_seed else None,
+            "status": "projected",
+        }
+
+    if playoff_size == 2:
+        rounds.append({
+            "name": "Championship",
+            "matchups": [_make_matchup(playoff_teams_out[0], playoff_teams_out[1])],
+        })
+    elif playoff_size == 4:
+        r1 = [
+            _make_matchup(playoff_teams_out[0], playoff_teams_out[3]),  # 1v4
+            _make_matchup(playoff_teams_out[1], playoff_teams_out[2]),  # 2v3
+        ]
+        rounds.append({"name": "Semifinals", "matchups": r1})
+        rounds.append({
+            "name": "Championship",
+            "matchups": [_make_matchup(playoff_teams_out[0], playoff_teams_out[1])],
+        })
+    elif playoff_size == 6:
+        # Top-2 seeds bye; 3v6, 4v5 in R1
+        bye_teams_out = [playoff_teams_out[0], playoff_teams_out[1]]
+        r1 = [
+            _make_matchup(playoff_teams_out[2], playoff_teams_out[5]),  # 3v6
+            _make_matchup(playoff_teams_out[3], playoff_teams_out[4]),  # 4v5
+        ]
+        rounds.append({"name": "Quarterfinals", "matchups": r1, "byes": bye_teams_out})
+        # Semis: 1 vs lowest surviving, 2 vs next
+        rounds.append({
+            "name": "Semifinals",
+            "matchups": [
+                _make_matchup(playoff_teams_out[0], playoff_teams_out[5]),
+                _make_matchup(playoff_teams_out[1], playoff_teams_out[3]),
+            ],
+        })
+        rounds.append({
+            "name": "Championship",
+            "matchups": [_make_matchup(playoff_teams_out[0], playoff_teams_out[1])],
+        })
+    elif playoff_size == 8:
+        r1 = [
+            _make_matchup(playoff_teams_out[0], playoff_teams_out[7]),
+            _make_matchup(playoff_teams_out[3], playoff_teams_out[4]),
+            _make_matchup(playoff_teams_out[1], playoff_teams_out[6]),
+            _make_matchup(playoff_teams_out[2], playoff_teams_out[5]),
+        ]
+        rounds.append({"name": "Quarterfinals", "matchups": r1})
+        rounds.append({
+            "name": "Semifinals",
+            "matchups": [
+                _make_matchup(playoff_teams_out[0], playoff_teams_out[3]),
+                _make_matchup(playoff_teams_out[1], playoff_teams_out[2]),
+            ],
+        })
+        rounds.append({
+            "name": "Championship",
+            "matchups": [_make_matchup(playoff_teams_out[0], playoff_teams_out[1])],
+        })
+
+    # Overlay actual playoff matchups if they exist for this league
+    actual_matchups = await db.matchups.find({
+        "league_id": league_id,
+        "is_playoff": True,
+    }).to_list(50)
+    actual_by_pair: dict = {}
+    for m in actual_matchups:
+        key = tuple(sorted([m.get("home_team_id"), m.get("away_team_id")]))
+        actual_by_pair[key] = m
+
+    for rd in rounds:
+        for mu in rd["matchups"]:
+            hs = mu.get("high_seed")
+            ls = mu.get("low_seed")
+            if not hs or not ls:
+                continue
+            key = tuple(sorted([hs["team_id"], ls["team_id"]]))
+            a = actual_by_pair.get(key)
+            if a:
+                mu["status"] = a.get("status", "scheduled")
+                mu["home_score"] = a.get("home_score")
+                mu["away_score"] = a.get("away_score")
+                mu["week"] = a.get("week")
+                # Winner (if finalized)
+                if a.get("status") in ("completed", "final"):
+                    home = a.get("home_team_id")
+                    hs_s = float(a.get("home_score") or 0)
+                    as_s = float(a.get("away_score") or 0)
+                    if hs_s > as_s:
+                        mu["projected_winner"] = home
+                    elif as_s > hs_s:
+                        mu["projected_winner"] = a.get("away_team_id")
+
+    return {
+        "league_id": league_id,
+        "playoff_size": playoff_size,
+        "playoff_teams": playoff_teams_out,
+        "bye_teams": bye_teams_out,
+        "rounds": rounds,
+        "status": "actual" if actual_matchups else "projected",
+    }

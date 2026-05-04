@@ -41,12 +41,14 @@ interface StandingsTeam {
   pointsAgainst: number;
   streak: string;
   last5: ("W" | "L" | "T")[];
-  division: "Atlantic" | "Metropolitan" | "Central" | "Pacific";
-  conference: "Eastern" | "Western";
+  division: string;
+  conference: string;
   divWins: number;
   divLosses: number;
   confWins: number;
   confLosses: number;
+  gb?: number;
+  gbDivision?: number;
   isUser?: boolean;
   clinched?: ClinchStatus[];
   capRemaining?: number | null;
@@ -117,6 +119,7 @@ interface ColumnConfig {
   pf: boolean;
   pa: boolean;
   diff: boolean;
+  gb: boolean;
   divRecord: boolean;
   confRecord: boolean;
   streak: boolean;
@@ -125,7 +128,7 @@ interface ColumnConfig {
 
 const DEFAULT_COLUMNS: ColumnConfig = {
   wins: true, losses: true, ties: true, last5: true,
-  pf: true, pa: true, diff: true, divRecord: true, confRecord: true, streak: true,
+  pf: true, pa: true, diff: true, gb: true, divRecord: true, confRecord: true, streak: true,
   capRemaining: true,
 };
 
@@ -273,6 +276,7 @@ const StandingsTable = ({
             {columns.pf && <th className="w-14 py-2.5 text-right">PF</th>}
             {columns.pa && <th className="w-14 py-2.5 text-right">PA</th>}
             {columns.diff && <th className="w-14 py-2.5 text-right">+/-</th>}
+            {columns.gb && <th className="w-12 py-2.5 text-right" data-testid="standings-col-gb">GB</th>}
             {columns.divRecord && <th className="w-16 py-2.5 text-center">Div</th>}
             {columns.confRecord && <th className="w-16 py-2.5 text-center">Conf</th>}
             {columns.streak && <th className="w-14 py-2.5 text-right pr-3">Streak</th>}
@@ -338,6 +342,11 @@ const StandingsTable = ({
                 {columns.diff && (
                   <td className={`py-2.5 text-right font-medium ${diff > 0 ? "text-success" : diff < 0 ? "text-destructive" : "text-muted-foreground"}`}>
                     {diff > 0 ? "+" : ""}{diff}
+                  </td>
+                )}
+                {columns.gb && (
+                  <td className="py-2.5 text-right text-xs font-medium" data-testid={`standings-gb-${team.teamId || team.name}`}>
+                    {team.displayRank === 1 ? <span className="text-muted-foreground/60">—</span> : <span className="text-muted-foreground">{(team.gb ?? 0).toFixed(1)}</span>}
                   </td>
                 )}
                 {columns.divRecord && <td className="py-2.5 text-center text-xs">{team.divWins}-{team.divLosses}</td>}
@@ -619,14 +628,22 @@ const StandingsPage = () => {
   // We hit /api/leagues/{id}/standings which returns the actual W/L/T
   // sequence from completed matchups + live cap_remaining for each team.
   const [backendStandings, setBackendStandings] = useState<Record<string, any>>({});
+  const [standingsMeta, setStandingsMeta] = useState<{ has_divisions: boolean; has_conferences: boolean; divisions: string[]; conferences: string[]; }>({ has_divisions: false, has_conferences: false, divisions: [], conferences: [] });
   useEffect(() => {
     if (!leagueId) return;
     let cancelled = false;
     api.get(`/leagues/${leagueId}/standings`).then(({ data }) => {
       if (cancelled) return;
+      const rows = Array.isArray(data) ? data : (data?.standings || []);
       const map: Record<string, any> = {};
-      (data || []).forEach((row: any) => { map[row.team_id] = row; });
+      rows.forEach((row: any) => { map[row.team_id] = row; });
       setBackendStandings(map);
+      setStandingsMeta({
+        has_divisions: !!data?.has_divisions,
+        has_conferences: !!data?.has_conferences,
+        divisions: data?.divisions || [],
+        conferences: data?.conferences || [],
+      });
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [leagueId]);
@@ -637,12 +654,10 @@ const StandingsPage = () => {
     const ranked = [...leagueTeams]
       .map(t => ({ ...t, _total: (t.points_for || 0) + (t.live_points || 0) }))
       .sort((a, b) => b._total - a._total);
-    const divisions: ("Atlantic"|"Metropolitan"|"Central"|"Pacific")[] = ["Atlantic","Metropolitan","Central","Pacific"];
-    const conferences: ("Eastern"|"Western")[] = ["Eastern","Western"];
+    const fallbackDivisions = ["Atlantic","Metropolitan","Central","Pacific"];
+    const fallbackConferences = ["Eastern","Western"];
     return ranked.map((t, idx) => {
       const gp = (t.wins || 0) + (t.losses || 0) + (t.ties || 0);
-      // Prefer the backend's real last_5 sequence; fall back to a rough
-      // synthesized W/L/T pool only when no completed matchups exist.
       const backend = backendStandings[t.id];
       const realLast5 = (backend?.last_5 || []) as ("W" | "L" | "T")[];
       const last5: ("W" | "L" | "T")[] = realLast5.length > 0 ? realLast5 : (gp > 0 ? ([
@@ -650,9 +665,11 @@ const StandingsPage = () => {
         ...Array(Math.min(t.losses || 0, 5)).fill("L"),
         ...Array(Math.min(t.ties || 0, 5)).fill("T"),
       ].slice(0, 5) as ("W" | "L" | "T")[]) : []);
+      const displayRank = backend?.rank ?? (idx + 1);
+      const rankDelta = backend?.rank_delta ?? 0;
       return {
-        rank: idx + 1,
-        prevRank: idx + 1,
+        rank: displayRank,
+        prevRank: displayRank + rankDelta,  // positive delta = moved up, so prev was higher #
         name: t.name,
         teamId: t.id,
         logo_url: t.logo_url || null,
@@ -665,14 +682,16 @@ const StandingsPage = () => {
         pointsAgainst: Math.round(t.points_against || 0),
         streak: gp === 0 ? "—" : ((t.wins || 0) > (t.losses || 0) ? `W${Math.min(t.wins, 5)}` : `L${Math.min(t.losses, 5)}`),
         last5,
-        division: divisions[idx % 4],
-        conference: conferences[Math.floor(idx / 4) % 2],
+        division: backend?.division || fallbackDivisions[idx % 4],
+        conference: backend?.conference || fallbackConferences[Math.floor(idx / 4) % 2],
         divWins: Math.floor((t.wins || 0) / 2),
         divLosses: Math.floor((t.losses || 0) / 2),
         confWins: Math.floor((t.wins || 0) * 0.7),
         confLosses: Math.floor((t.losses || 0) * 0.7),
+        gb: backend?.games_back ?? 0,
+        gbDivision: backend?.games_back_division ?? 0,
         isUser: myTeam?.id === t.id,
-        projectedSeed: idx + 1,
+        projectedSeed: displayRank,
         clinched: idx === 0 ? ["presidents","conference","division","playoff"] : idx < 3 ? ["playoff"] : undefined,
         capRemaining: backend?.salary_cap_remaining ?? null,
         capUsed: backend?.salary_used ?? null,

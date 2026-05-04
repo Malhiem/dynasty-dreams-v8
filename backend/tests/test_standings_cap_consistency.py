@@ -40,7 +40,8 @@ async def test_standings_includes_cap_remaining_and_last_5():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
         r = await client.get(f"/api/leagues/{LEAGUE_ID}/standings")
         assert r.status_code == 200, r.text
-        data = r.json()
+        payload = r.json()
+        data = payload["standings"] if isinstance(payload, dict) else payload
         assert isinstance(data, list)
         assert len(data) > 0
         for row in data:

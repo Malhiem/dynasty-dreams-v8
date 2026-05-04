@@ -35,6 +35,7 @@ import LovableIndex from "@/lovable/pages/Index";
 import LovableTeam from "@/lovable/pages/Team";
 import LovableMatchup from "@/lovable/pages/Matchup";
 import LovableStandings from "@/lovable/pages/Standings";
+import LovablePlayoffBracket from "@/lovable/pages/PlayoffBracket";
 import LovableTransactions from "@/lovable/pages/Transactions";
 import LovableWaivers from "@/lovable/pages/Waivers";
 import LovableTradeBlock from "@/lovable/pages/TradeBlock";
@@ -98,6 +99,7 @@ function App() {
           <Route path="/team" element={<ProtectedRoute><LovableTeam /></ProtectedRoute>} />
           <Route path="/matchup" element={<ProtectedRoute><LovableMatchup /></ProtectedRoute>} />
           <Route path="/standings" element={<ProtectedRoute><LovableStandings /></ProtectedRoute>} />
+          <Route path="/playoffs" element={<ProtectedRoute><LovablePlayoffBracket /></ProtectedRoute>} />
           <Route path="/transactions" element={<ProtectedRoute><LovableTransactions /></ProtectedRoute>} />
           <Route path="/waivers" element={<ProtectedRoute><LovableWaivers /></ProtectedRoute>} />
           <Route path="/trade-block" element={<ProtectedRoute><LovableTradeBlock /></ProtectedRoute>} />

@@ -46,7 +46,7 @@ export default function StandingsPage() {
           api.get(`/leagues/${leagueId}/standings`),
           api.get(`/matchups/${leagueId}/current-week`),
         ]);
-        setStandings(standingsRes.data);
+        setStandings(Array.isArray(standingsRes.data) ? standingsRes.data : (standingsRes.data?.standings || []));
         setCurrentWeek(weekRes.data.week);
         setMatchups(weekRes.data.matchups || []);
       } catch (e) { console.error(e); }
@@ -81,7 +81,7 @@ export default function StandingsPage() {
       setWeekResults(data.results || []);
       // Refresh standings
       const standingsRes = await api.get(`/leagues/${leagueId}/standings`);
-      setStandings(standingsRes.data);
+      setStandings(Array.isArray(standingsRes.data) ? standingsRes.data : (standingsRes.data?.standings || []));
       // Refresh matchups
       const weekRes = await api.get(`/matchups/${leagueId}/current-week`);
       setCurrentWeek(weekRes.data.week);

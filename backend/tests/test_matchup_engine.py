@@ -160,7 +160,9 @@ class TestMatchupEngine:
         """Test GET /api/leagues/{league_id}/standings returns standings"""
         resp = self.session.get(f"{BASE_URL}/api/leagues/{self.league_id}/standings")
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}"
-        data = resp.json()
+        payload = resp.json()
+        # New shape: {standings:[...], has_divisions, has_conferences, divisions, conferences}
+        data = payload["standings"] if isinstance(payload, dict) else payload
         assert isinstance(data, list), "Expected list of standings"
         # Check standings structure
         for team in data:

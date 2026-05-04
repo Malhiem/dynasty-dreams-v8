@@ -55,7 +55,7 @@ export default function LeagueDetailPage() {
         ]);
         setLeague(leagueRes.data);
         setTeams(teamsRes.data);
-        setStandings(standingsRes.data);
+        setStandings(Array.isArray(standingsRes.data) ? standingsRes.data : (standingsRes.data?.standings || []));
       } catch (err) {
         console.error('Failed to fetch league', err);
       } finally {
@@ -129,7 +129,7 @@ export default function LeagueDetailPage() {
         api.get(`/leagues/${id}/standings`),
       ]);
       setTeams(teamsRes.data);
-      setStandings(standingsRes.data);
+      setStandings(Array.isArray(standingsRes.data) ? standingsRes.data : (standingsRes.data?.standings || []));
       setLeague(prev => ({ ...prev, current_teams: prev.current_teams + 1 }));
       setJoinModalOpen(false);
       setTeamName('');

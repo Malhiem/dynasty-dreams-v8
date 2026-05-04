@@ -1539,337 +1539,6 @@ async def get_team_week_summary(team_id: str, request: Request):
     }
 
 
-@api_router.get("/users/me/week-at-a-glance")
-async def get_my_week_at_a_glance(request: Request):
-    """Return week-at-a-glance summary for every team owned by the current user."""
-    user = await get_current_user(request)
-    teams = await db.teams.find({"owner_id": user["_id"]}, {"_id": 1, "league_id": 1, "name": 1}).to_list(50)
-    if not teams:
-        return {"summaries": []}
-    summaries = []
-    for t in teams:
-        try:
-            # Reuse the single-team endpoint logic by simulating the request
-            res = await get_team_week_summary(str(t["_id"]), request)
-            summaries.append(res)
-        except HTTPException:
-            continue
-    return {"summaries": summaries}
-
-
-# ─── Fantasy Level / Gamification ────────────────────────────
-
-LEVEL_TITLES = [
-    (1, 5, "Bench Warmer"),
-    (6, 15, "Rink Regular"),
-    (16, 30, "Line Captain"),
-    (31, 50, "Hat Trick Hero"),
-    (51, 75, "Playoff Contender"),
-    (76, 999, "Stanley Cup Dynasty"),
-]
-
-
-def _title_for_level(level: int) -> str:
-    for lo, hi, title in LEVEL_TITLES:
-        if lo <= level <= hi:
-            return title
-    return "Rookie"
-
-
-@api_router.get("/users/me/level")
-async def get_my_level(request: Request):
-    """Yahoo-style fantasy level based on career activity:
-       trades executed, drafts completed, teams managed, accumulated live points."""
-    user = await get_current_user(request)
-    user_id = user["_id"]
-
-    teams = await db.teams.find({"owner_id": user_id}).to_list(100)
-    total_team_count = len(teams)
-    total_wins = sum(t.get("wins", 0) or 0 for t in teams)
-    total_points_for = sum(t.get("points_for", 0.0) or 0.0 for t in teams)
-    total_live_points = sum(t.get("live_points", 0.0) or 0.0 for t in teams)
-
-    # Trade + draft activity
-    trades_executed = await db.trades.count_documents({
-        "$or": [{"proposer_id": user_id}, {"recipient_id": user_id}],
-        "status": "accepted",
-    })
-    drafts_completed = await db.drafts.count_documents({
-        "participants": {"$in": [str(t["_id"]) for t in teams]},
-        "status": "complete",
-    }) if teams else 0
-    waiver_claims = await db.waiver_claims.count_documents({
-        "team_id": {"$in": [str(t["_id"]) for t in teams]},
-    }) if teams else 0
-
-    # XP formula — calibrated so an active user hits lvl 15-ish after a full season
-    xp = int(
-        total_team_count * 50
-        + total_wins * 20
-        + trades_executed * 25
-        + drafts_completed * 40
-        + waiver_claims * 5
-        + (total_points_for + total_live_points) / 5
-    )
-
-    # Level curve: each level requires 100 + level*50 XP cumulatively
-    level = 1
-    xp_remaining = xp
-    while True:
-        cost = 100 + level * 50
-        if xp_remaining < cost:
-            break
-        xp_remaining -= cost
-        level += 1
-    xp_to_next = (100 + level * 50) - xp_remaining
-
-    title = _title_for_level(level)
-
-    return {
-        "user_id": str(user_id),
-        "level": level,
-        "title": title,
-        "xp_total": xp,
-        "xp_in_level": xp_remaining,
-        "xp_to_next_level": xp_to_next,
-        "xp_required_for_next": 100 + level * 50,
-        "progress_pct": round((xp_remaining / (100 + level * 50)) * 100, 1),
-        "stats": {
-            "teams_managed": total_team_count,
-            "total_wins": total_wins,
-            "trades_accepted": trades_executed,
-            "drafts_completed": drafts_completed,
-            "waiver_claims": waiver_claims,
-            "total_points_for": round(total_points_for + total_live_points, 2),
-        },
-    }
-
-
-# ─── Public Profile ──────────────────────────────────────────
-
-@api_router.get("/u/{username}")
-async def get_public_profile(username: str):
-    """Shareable public profile snapshot for a username. No auth required."""
-    username = username.strip()
-    user = await db.users.find_one(
-        {"username": {"$regex": f"^{re.escape(username)}$", "$options": "i"}},
-        {"password_hash": 0},
-    )
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    user_id = str(user["_id"])
-
-    # All teams + league info
-    teams = await db.teams.find({"owner_id": user_id}).to_list(100)
-    league_ids = list({t["league_id"] for t in teams})
-    leagues = await db.leagues.find(
-        {"_id": {"$in": [ObjectId(lid) for lid in league_ids]}}
-    ).to_list(100)
-    leagues_by_id = {str(l["_id"]): l for l in leagues}
-
-    team_cards = []
-    trophies = []  # current 1st place finishes — our "championships in progress"
-    championships_won = 0
-    division_titles = 0
-    conference_titles = 0
-    consolations_won = 0
-    playoff_appearances = 0
-    total_wins = total_losses = total_ties = 0
-    total_points_for = 0.0
-
-    for t in teams:
-        lg = leagues_by_id.get(t["league_id"]) or {}
-        # Compute current league rank from points_for desc
-        league_teams = await db.teams.find(
-            {"league_id": t["league_id"]},
-            {"_id": 1, "points_for": 1, "live_points": 1},
-        ).to_list(100)
-        ranked = sorted(
-            league_teams,
-            key=lambda x: (x.get("points_for", 0.0) or 0.0) + (x.get("live_points", 0.0) or 0.0),
-            reverse=True,
-        )
-        rank = next((i + 1 for i, x in enumerate(ranked) if x["_id"] == t["_id"]), None)
-
-        total_wins += t.get("wins", 0) or 0
-        total_losses += t.get("losses", 0) or 0
-        total_ties += t.get("ties", 0) or 0
-        total_points_for += (t.get("points_for", 0.0) or 0.0) + (t.get("live_points", 0.0) or 0.0)
-
-        champ_at = t.get("championship_won_at")
-        div_at = t.get("division_winner_at")
-        conf_at = t.get("conference_winner_at")
-        cons_at = t.get("consolation_won_at")
-        playoffs_at = t.get("playoffs_reached_at")
-        if champ_at: championships_won += 1
-        if div_at: division_titles += 1
-        if conf_at: conference_titles += 1
-        if cons_at: consolations_won += 1
-        if playoffs_at: playoff_appearances += 1
-
-        card = {
-            "team_id": str(t["_id"]),
-            "team_name": t["name"],
-            "league_id": t["league_id"],
-            "league_name": lg.get("name", "Unknown league"),
-            "league_format": lg.get("format"),
-            "league_sport": lg.get("sport", "nhl"),
-            "wins": t.get("wins", 0),
-            "losses": t.get("losses", 0),
-            "ties": t.get("ties", 0),
-            "points_for": round((t.get("points_for", 0.0) or 0.0) + (t.get("live_points", 0.0) or 0.0), 2),
-            "rank": rank,
-            "total_teams": len(league_teams),
-            "live_points": round(t.get("live_points", 0.0) or 0.0, 2),
-            "championship_won_at": champ_at,
-            "division_winner_at": div_at,
-            "conference_winner_at": conf_at,
-            "consolation_won_at": cons_at,
-            "playoffs_reached_at": playoffs_at,
-        }
-        team_cards.append(card)
-
-        # Permanent career trophies (most visible first)
-        if champ_at:
-            trophies.append({
-                "league_id": t["league_id"], "league_name": lg.get("name"),
-                "team_name": t["name"], "label": "League Champion",
-                "type": "championship", "earned_at": champ_at,
-            })
-        if conf_at:
-            trophies.append({
-                "league_id": t["league_id"], "league_name": lg.get("name"),
-                "team_name": t["name"], "label": "Conference Champion",
-                "type": "conference", "earned_at": conf_at,
-            })
-        if div_at:
-            trophies.append({
-                "league_id": t["league_id"], "league_name": lg.get("name"),
-                "team_name": t["name"], "label": "Division Champion",
-                "type": "division", "earned_at": div_at,
-            })
-        if cons_at:
-            trophies.append({
-                "league_id": t["league_id"], "league_name": lg.get("name"),
-                "team_name": t["name"], "label": "Consolation Winner",
-                "type": "consolation", "earned_at": cons_at,
-            })
-
-        # Current-standing trophies (non-permanent)
-        if rank == 1:
-            trophies.append({
-                "league_id": t["league_id"],
-                "league_name": lg.get("name"),
-                "team_name": t["name"],
-                "label": "1st Place (current)",
-                "type": "lead",
-            })
-        elif rank and rank <= 3:
-            trophies.append({
-                "league_id": t["league_id"],
-                "league_name": lg.get("name"),
-                "team_name": t["name"],
-                "label": f"Top 3 (#{rank})",
-                "type": "top3",
-            })
-
-    # Lifetime top performer — highest single-game fpts across all rostered players
-    lifetime_best = None
-    if teams:
-        from live_scoring_worker import _fantasy_points_from_live
-        roster_ids = set()
-        for t in teams:
-            roster_ids.update(t.get("roster") or [])
-        if roster_ids:
-            players = await db.players.find(
-                {"_id": {"$in": [ObjectId(p) for p in list(roster_ids)[:500]]}},
-                {"name": 1, "team": 1, "position": 1, "player_type": 1, "live_stats": 1},
-            ).to_list(500)
-            for p in players:
-                is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
-                for _gid, ls in (p.get("live_stats") or {}).items():
-                    fpts = _fantasy_points_from_live(ls, is_g)
-                    if not lifetime_best or fpts > lifetime_best["fpts"]:
-                        lifetime_best = {
-                            "id": str(p["_id"]),
-                            "name": p.get("name"),
-                            "team": p.get("team"),
-                            "position": p.get("position"),
-                            "is_goalie": is_g,
-                            "goals": ls.get("goals", 0) or 0,
-                            "assists": ls.get("assists", 0) or 0,
-                            "shots": ls.get("shots", 0) or 0,
-                            "saves": ls.get("saves", 0) or 0,
-                            "goals_against": ls.get("goals_against", 0) or 0,
-                            "fpts": round(fpts, 2),
-                        }
-
-    # Level data (reuse the same formula used by /users/me/level so numbers match)
-    trades_executed = await db.trades.count_documents({
-        "$or": [{"proposer_id": user_id}, {"recipient_id": user_id}],
-        "status": "accepted",
-    })
-    drafts_completed = await db.drafts.count_documents({
-        "participants": {"$in": [str(t["_id"]) for t in teams]},
-        "status": "complete",
-    }) if teams else 0
-    waiver_claims = await db.waiver_claims.count_documents({
-        "team_id": {"$in": [str(t["_id"]) for t in teams]},
-    }) if teams else 0
-
-    xp = int(
-        len(teams) * 50
-        + total_wins * 20
-        + trades_executed * 25
-        + drafts_completed * 40
-        + waiver_claims * 5
-        + total_points_for / 5
-        + championships_won * 500
-        + conference_titles * 250
-        + division_titles * 150
-        + consolations_won * 100
-        + playoff_appearances * 75
-    )
-    level = 1
-    xp_rem = xp
-    while True:
-        cost = 100 + level * 50
-        if xp_rem < cost:
-            break
-        xp_rem -= cost
-        level += 1
-
-    return {
-        "username": user.get("username"),
-        "display_name": user.get("name") or user.get("username"),
-        "member_since": user.get("created_at"),
-        "level": level,
-        "title": _title_for_level(level),
-        "xp_in_level": xp_rem,
-        "xp_required_for_next": 100 + level * 50,
-        "progress_pct": round((xp_rem / (100 + level * 50)) * 100, 1),
-        "stats": {
-            "leagues_joined": len(teams),
-            "total_wins": total_wins,
-            "total_losses": total_losses,
-            "total_ties": total_ties,
-            "total_points": round(total_points_for, 2),
-            "trades_accepted": trades_executed,
-            "drafts_completed": drafts_completed,
-            "waiver_claims": waiver_claims,
-            "championships_won": championships_won,
-            "conference_titles": conference_titles,
-            "division_titles": division_titles,
-            "consolations_won": consolations_won,
-            "playoff_appearances": playoff_appearances,
-        },
-        "teams": team_cards,
-        "trophies": trophies,
-        "lifetime_top_performer": lifetime_best,
-    }
-
-
 # ─── Sport-Agnostic Player Fetch ──────────────────────────────
 
 @api_router.get("/sports")
@@ -5245,78 +4914,6 @@ async def stripe_webhook(request: Request):
 # ═══════════════════════════════════════════════════════════════
 
 
-# Standings
-@api_router.get("/leagues/{league_id}/standings")
-async def get_standings(league_id: str):
-    """Standings with live cap remaining + REAL last-5 W/L/T sequence
-    pulled from `db.matchups`. The frontend Sparkline reads `last_5` to
-    paint the 5 dots in the actual order the team played.
-    """
-    teams = await db.teams.find({"league_id": league_id}).to_list(100)
-
-    # League-level cap context
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
-    cap_enabled = bool((league or {}).get("salary_cap_enabled"))
-    league_cap = float((league or {}).get("salary_cap") or 0.0)
-
-    # Sort by wins, then points_for
-    teams.sort(key=lambda t: (t.get("wins", 0), t.get("points_for", 0)), reverse=True)
-
-    standings = []
-    for i, team in enumerate(teams):
-        tid = str(team["_id"])
-
-        # Live cap usage (matches /compliance + /salary-cap)
-        cap_used = 0.0
-        cap_remaining: Optional[float] = None
-        if cap_enabled and league_cap > 0:
-            try:
-                cap_used = await _recompute_team_salary_used(tid)
-                cap_remaining = league_cap - cap_used
-            except Exception:
-                cap_used = float(team.get("salary_used") or 0.0)
-                cap_remaining = league_cap - cap_used
-
-        # Last-5 W/L/T from completed matchups (most recent week first → reverse to chronological)
-        history_cursor = db.matchups.find({
-            "league_id": league_id,
-            "$or": [{"home_team_id": tid}, {"away_team_id": tid}],
-            "status": {"$in": ["completed", "final"]},
-        }).sort("week", -1).limit(5)
-        last_5: list[str] = []
-        async for m in history_cursor:
-            home_score = float(m.get("home_score") or 0)
-            away_score = float(m.get("away_score") or 0)
-            is_home = m.get("home_team_id") == tid
-            my_score = home_score if is_home else away_score
-            opp_score = away_score if is_home else home_score
-            if abs(my_score - opp_score) < 0.01:
-                last_5.append("T")
-            elif my_score > opp_score:
-                last_5.append("W")
-            else:
-                last_5.append("L")
-        last_5.reverse()  # chronological: oldest → newest
-
-        standings.append({
-            "rank": i + 1,
-            "team_id": tid,
-            "team_name": team["name"],
-            "owner_name": team["owner_name"],
-            "wins": team.get("wins", 0),
-            "losses": team.get("losses", 0),
-            "ties": team.get("ties", 0),
-            "points_for": team.get("points_for", 0),
-            "points_against": team.get("points_against", 0),
-            "salary_cap_enabled": cap_enabled,
-            "salary_cap": league_cap if cap_enabled else None,
-            "salary_used": round(cap_used, 2) if cap_enabled else None,
-            "salary_cap_remaining": round(cap_remaining, 2) if (cap_enabled and cap_remaining is not None) else None,
-            "last_5": last_5,
-        })
-
-    return standings
-
 # Health check
 @api_router.get("/")
 async def root():
@@ -5327,7 +4924,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes
 
 _router_deps = {
     "db": db,
@@ -5338,6 +4935,8 @@ _router_deps = {
     "_evaluate_conditions": _evaluate_conditions,
     "_execute_trade": _execute_trade,
     "_apply_pick_upgrades": _apply_pick_upgrades,
+    "_recompute_team_salary_used": _recompute_team_salary_used,
+    "get_team_week_summary": None,  # set after endpoint defined below (late-bind via module lookup)
     "calculate_fantasy_points": calculate_fantasy_points,
     "broadcast_to_room": broadcast_to_room,
     "log_activity": log_activity,
@@ -5368,6 +4967,10 @@ comparisons_routes.setup(_router_deps)
 chat_routes.setup(_router_deps)
 auth_routes.setup(_router_deps)
 trade_analyzer_routes.setup(_router_deps)
+# Late-bind get_team_week_summary (defined above as an endpoint handler)
+_router_deps["get_team_week_summary"] = get_team_week_summary
+users_routes.setup(_router_deps)
+leagues_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -5379,6 +4982,8 @@ api_router.include_router(comparisons_routes.router)
 api_router.include_router(chat_routes.router)
 api_router.include_router(auth_routes.router)
 api_router.include_router(trade_analyzer_routes.router)
+api_router.include_router(users_routes.router)
+api_router.include_router(leagues_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")
