@@ -24,7 +24,6 @@ const userItems = [
 const leagueHubStatic = [
   { title: "Live Scoring", url: "/matchup", icon: Radio },
   { title: "Standings", url: "/standings", icon: Trophy },
-  { title: "Playoff Tree", url: "/playoffs", icon: Medal },
   { title: "Transactions", url: "/transactions", icon: ArrowRightLeft },
   { title: "League Information", url: "/league-info", icon: ScrollText },
   { title: "League History", url: "/league-history", icon: History },

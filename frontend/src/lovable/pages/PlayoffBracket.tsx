@@ -1,9 +1,7 @@
 // @ts-nocheck
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
-import { AppLayout } from "@/components/layout/AppLayout";
 import TeamLogo from "@/lovable/components/TeamLogo";
 import { Trophy, Crown, ChevronRight } from "lucide-react";
 
@@ -43,14 +41,14 @@ interface BracketData {
   playoff_teams: BracketTeam[];
   bye_teams: BracketTeam[];
   rounds: Round[];
-  status: string; // "projected" | "actual"
+  status: string;
 }
 
 const SEED_COLOR = [
-  "text-accent",          // 1 gold
-  "text-primary",         // 2 cyan
-  "text-success",         // 3 green
-  "text-foreground",      // 4
+  "text-accent",
+  "text-primary",
+  "text-success",
+  "text-foreground",
   "text-muted-foreground",
   "text-muted-foreground",
   "text-muted-foreground",
@@ -127,39 +125,38 @@ const MatchupCard = ({ mu, status }: { mu: Matchup; status: string }) => {
   );
 };
 
-export default function PlayoffBracket() {
+/**
+ * Embeddable playoff tree view (no page chrome).
+ * Used inside Standings → Playoffs tab.
+ */
+export const PlayoffBracketView = ({ leagueId }: { leagueId?: string | null }) => {
   const navigate = useNavigate();
-  const { leagueId: activeLeagueId, league: activeLeague } = useActiveLeague();
   const [bracket, setBracket] = useState<BracketData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!activeLeagueId) { setLoading(false); return; }
+    if (!leagueId) { setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
-    api.get(`/leagues/${activeLeagueId}/playoff-bracket`)
+    api.get(`/leagues/${leagueId}/playoff-bracket`)
       .then(({ data }) => { if (!cancelled) setBracket(data); })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [activeLeagueId]);
+  }, [leagueId]);
 
   if (loading) {
-    return <AppLayout><div className="p-6 text-muted-foreground">Loading playoff tree...</div></AppLayout>;
+    return <div className="p-4 text-muted-foreground text-sm">Loading playoff tree...</div>;
   }
 
   if (!bracket || (bracket.rounds?.length || 0) === 0) {
     return (
-      <AppLayout>
-        <div className="p-6 space-y-3" data-testid="playoff-bracket-empty">
-          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-            <Trophy className="h-6 w-6 text-accent" /> Playoff Tree
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Not enough teams to generate a playoff bracket yet.
-          </p>
-        </div>
-      </AppLayout>
+      <div className="stat-card p-6 text-center" data-testid="playoff-bracket-empty">
+        <Trophy className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+        <p className="text-sm text-muted-foreground">
+          Not enough teams to generate a playoff bracket yet.
+        </p>
+      </div>
     );
   }
 
@@ -168,93 +165,89 @@ export default function PlayoffBracket() {
     : "bg-primary/15 text-primary border-primary/30";
 
   return (
-    <AppLayout>
-      <div className="space-y-6 p-6" data-testid="playoff-bracket-page">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-              <Trophy className="h-6 w-6 text-accent" /> Playoff Tree
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {activeLeague?.name} · {bracket.playoff_size}-team bracket
-            </p>
-          </div>
-          <span
-            className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${badgeColor}`}
-            data-testid="playoff-bracket-status"
-          >
-            {bracket.status === "actual" ? "LIVE · Actual Playoffs" : "PROJECTED · If season ended today"}
-          </span>
+    <div className="space-y-5" data-testid="playoff-bracket-page">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <Trophy className="h-5 w-5 text-accent" />
+          <h2 className="text-lg font-bold text-foreground">
+            Playoff Tree <span className="text-sm font-normal text-muted-foreground">· {bracket.playoff_size}-team bracket</span>
+          </h2>
         </div>
+        <span
+          className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${badgeColor}`}
+          data-testid="playoff-bracket-status"
+        >
+          {bracket.status === "actual" ? "LIVE · Actual Playoffs" : "PROJECTED · If season ended today"}
+        </span>
+      </div>
 
-        {/* Bracket columns */}
-        <div className="overflow-x-auto" data-testid="playoff-bracket-rounds">
-          <div className="flex gap-4 min-w-max items-stretch">
-            {bracket.rounds.map((rd, rdx) => (
-              <div
-                key={rd.name}
-                className="flex-1 min-w-[260px] space-y-3"
-                data-testid={`bracket-round-${rdx}`}
-              >
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">
-                    {rd.name}
-                  </h3>
-                  {rdx < bracket.rounds.length - 1 && (
-                    <ChevronRight className="h-4 w-4 text-muted-foreground/40" />
-                  )}
-                </div>
-                {rd.byes && rd.byes.length > 0 && (
-                  <div className="space-y-1.5">
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
-                      Byes to Semis
-                    </div>
-                    {rd.byes.map(t => (
-                      <div
-                        key={t.team_id}
-                        className="flex items-center gap-2 rounded-md px-2.5 py-1.5 bg-accent/10 border border-accent/30"
-                        data-testid={`bracket-bye-${t.team_id}`}
-                      >
-                        <span className="text-xs font-bold text-accent w-5 text-center">{t.seed}</span>
-                        <TeamLogo logo={t.team_logo_url} name={t.team_name} abbr={t.team_abbr} size="xs" />
-                        <span className="text-xs font-medium truncate">{t.team_name}</span>
-                      </div>
-                    ))}
-                  </div>
+      <div className="overflow-x-auto" data-testid="playoff-bracket-rounds">
+        <div className="flex gap-4 min-w-max items-stretch">
+          {bracket.rounds.map((rd, rdx) => (
+            <div
+              key={rd.name}
+              className="flex-1 min-w-[260px] space-y-3"
+              data-testid={`bracket-round-${rdx}`}
+            >
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">
+                  {rd.name}
+                </h3>
+                {rdx < bracket.rounds.length - 1 && (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground/40" />
                 )}
-                <div
-                  className="space-y-4 justify-around flex flex-col"
-                  style={{ minHeight: `${120 * (bracket.rounds[0]?.matchups.length || 1)}px` }}
-                >
-                  {rd.matchups.map((mu, i) => (
-                    <MatchupCard key={i} mu={mu} status={bracket.status} />
+              </div>
+              {rd.byes && rd.byes.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
+                    Byes to Semis
+                  </div>
+                  {rd.byes.map(t => (
+                    <div
+                      key={t.team_id}
+                      className="flex items-center gap-2 rounded-md px-2.5 py-1.5 bg-accent/10 border border-accent/30"
+                      data-testid={`bracket-bye-${t.team_id}`}
+                    >
+                      <span className="text-xs font-bold text-accent w-5 text-center">{t.seed}</span>
+                      <TeamLogo logo={t.team_logo_url} name={t.team_name} abbr={t.team_abbr} size="xs" />
+                      <span className="text-xs font-medium truncate">{t.team_name}</span>
+                    </div>
                   ))}
                 </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Seed legend */}
-        <div className="stat-card p-4 space-y-2">
-          <h3 className="text-sm font-bold text-foreground">Playoff Seeds</h3>
-          <div className="flex flex-wrap gap-2">
-            {bracket.playoff_teams.map((t) => (
-              <button
-                key={t.team_id}
-                onClick={() => navigate(`/teams/${t.team_id}`)}
-                className="flex items-center gap-2 rounded-md px-2.5 py-1.5 bg-secondary/30 border border-border hover:bg-secondary/50 transition-colors text-xs"
-                data-testid={`bracket-seed-chip-${t.seed}`}
+              )}
+              <div
+                className="space-y-4 justify-around flex flex-col"
+                style={{ minHeight: `${120 * (bracket.rounds[0]?.matchups.length || 1)}px` }}
               >
-                <span className={`font-bold ${SEED_COLOR[t.seed - 1] || "text-muted-foreground"}`}>#{t.seed}</span>
-                <TeamLogo logo={t.team_logo_url} name={t.team_name} abbr={t.team_abbr} size="xs" />
-                <span className="font-medium">{t.team_name}</span>
-                <span className="text-muted-foreground">({t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ""})</span>
-              </button>
-            ))}
-          </div>
+                {rd.matchups.map((mu, i) => (
+                  <MatchupCard key={i} mu={mu} status={bracket.status} />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
-    </AppLayout>
+
+      <div className="stat-card p-4 space-y-2">
+        <h3 className="text-sm font-bold text-foreground">Playoff Seeds</h3>
+        <div className="flex flex-wrap gap-2">
+          {bracket.playoff_teams.map((t) => (
+            <button
+              key={t.team_id}
+              onClick={() => navigate(`/teams/${t.team_id}`)}
+              className="flex items-center gap-2 rounded-md px-2.5 py-1.5 bg-secondary/30 border border-border hover:bg-secondary/50 transition-colors text-xs"
+              data-testid={`bracket-seed-chip-${t.seed}`}
+            >
+              <span className={`font-bold ${SEED_COLOR[t.seed - 1] || "text-muted-foreground"}`}>#{t.seed}</span>
+              <TeamLogo logo={t.team_logo_url} name={t.team_name} abbr={t.team_abbr} size="xs" />
+              <span className="font-medium">{t.team_name}</span>
+              <span className="text-muted-foreground">({t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ""})</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   );
-}
+};
+
+export default PlayoffBracketView;

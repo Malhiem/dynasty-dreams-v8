@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
 import TeamsTab from "@/lovable/components/admin/TeamsTab";
+import DivisionsTab from "@/lovable/pages/commissioner/DivisionsTab";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
 import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
 
@@ -1121,6 +1122,10 @@ const CommissionerSettings = () => {
             <TabsTrigger value="rosters" className="data-[state=active]:bg-primary/20">
               <Shield className="h-4 w-4 mr-2" />
               Rosters
+            </TabsTrigger>
+            <TabsTrigger value="divisions" className="data-[state=active]:bg-primary/20" data-testid="tab-divisions">
+              <Trophy className="h-4 w-4 mr-2" />
+              Divisions
             </TabsTrigger>
             <TabsTrigger value="scoring" className="data-[state=active]:bg-primary/20">
               <Target className="h-4 w-4 mr-2" />
@@ -2278,6 +2283,11 @@ const CommissionerSettings = () => {
               <Button variant="outline">Reset to Defaults</Button>
               <Button>Save Settings</Button>
             </div>
+          </TabsContent>
+
+          {/* Divisions Tab */}
+          <TabsContent value="divisions" className="space-y-6">
+            <DivisionsTab leagueId={activeLeague?.id} />
           </TabsContent>
 
           {/* Scoring Tab */}

@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Settings, ChevronUp, ChevronDown, Minus } from "lucide-react";
 import TeamLogo from "@/lovable/components/TeamLogo";
+import { PlayoffBracketView } from "@/lovable/pages/PlayoffBracket";
 import {
   LineChart,
   Line,
@@ -844,11 +845,7 @@ const StandingsPage = () => {
 
           {/* ── Playoffs Tab ── */}
           <TabsContent value="playoffs" className="space-y-4">
-            <div className="flex items-center gap-3">
-              <Switch id="projections" checked={showProjections} onCheckedChange={setShowProjections} />
-              <Label htmlFor="projections" className="text-sm cursor-pointer">Show projected playoffs based on current performance</Label>
-            </div>
-            <PlayoffBracket teams={liveTeams} showProjections={showProjections} />
+            <PlayoffBracketView leagueId={leagueId} />
           </TabsContent>
         </Tabs>
       </div>
