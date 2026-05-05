@@ -78,23 +78,24 @@ const Banner = ({ banner, onClick }: { banner: BannerData; onClick?: () => void 
   );
 };
 
-const TrophyDisplay = ({ trophy }: { trophy: any }) => {
+const TrophyDisplay = ({ trophy, year }: { trophy: any; year?: number | string }) => {
   if (!trophy) return null;
   const Icon = TROPHY_ICON[trophy.label] || Trophy;
   const navigate = useNavigate();
+  const slug = (trophy.label || "").toLowerCase().replace(/\s+/g, "-");
   return (
     <button
       type="button"
       className="trophy-item group"
       onClick={() => trophy.player_id && navigate(`/players/${trophy.player_id}`)}
-      data-testid={`trophy-item-${(trophy.label || "").toLowerCase().replace(/\s+/g, "-")}`}
+      data-testid={`trophy-item-${slug}${year ? `-${year}` : ""}`}
     >
       <div className="trophy-icon">
         <Icon className="h-7 w-7 text-amber-300" strokeWidth={1.5} />
         <div className="trophy-glow" />
       </div>
       <div className="trophy-plaque">
-        <div className="trophy-plaque-name">{trophy.label}</div>
+        <div className="trophy-plaque-name">{trophy.label}{year ? ` · ${year}` : ""}</div>
         <div className="trophy-plaque-stat">
           {trophy.player_name}{trophy.position ? ` · ${trophy.position}` : ""}
         </div>
@@ -175,9 +176,9 @@ export default function TrophyRoom() {
     if (!data) return [];
     const out: any[] = [];
     for (const s of data.seasons) {
-      if (s.season_mvp) out.push(s.season_mvp);
-      if (s.best_goalie) out.push(s.best_goalie);
-      if (s.best_defenseman) out.push(s.best_defenseman);
+      if (s.season_mvp) out.push({ ...s.season_mvp, _year: s.season_year });
+      if (s.best_goalie) out.push({ ...s.best_goalie, _year: s.season_year });
+      if (s.best_defenseman) out.push({ ...s.best_defenseman, _year: s.season_year });
     }
     return filter === "all" ? out : out.slice(0, 9);
   }, [data, filter]);
@@ -231,11 +232,12 @@ export default function TrophyRoom() {
                   <TrophyDisplay
                     key={i}
                     trophy={{
-                      label: `${a.label} ${a.year}`,
+                      label: a.label,
                       player_name: a.player_name,
                       position: a.position,
                       player_id: a.player_id,
                     }}
+                    year={a.year}
                   />
                 ))}
                 <div className="shelf-shadow" />
@@ -270,7 +272,7 @@ export default function TrophyRoom() {
                   <p className="text-amber-200/40 italic text-xs px-3 py-2">Awaiting end-of-season MVP balloting.</p>
                 )}
                 {trophies.map((t, i) => (
-                  <TrophyDisplay key={i} trophy={{ ...t, label: `${t.label} ${t.season_year || ""}` }} />
+                  <TrophyDisplay key={i} trophy={t} year={t._year} />
                 ))}
                 <div className="shelf-shadow" />
               </div>
