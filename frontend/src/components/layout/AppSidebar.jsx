@@ -27,6 +27,7 @@ const leagueHubStatic = [
   { title: "Transactions", url: "/transactions", icon: ArrowRightLeft },
   { title: "League Information", url: "/league-info", icon: ScrollText },
   { title: "League History", url: "/league-history", icon: History },
+  { title: "Trophy Room", url: "/trophy-room", icon: Trophy },
 ];
 
 const socialItems = [

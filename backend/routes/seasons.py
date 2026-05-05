@@ -461,3 +461,243 @@ async def get_setup_suggestions(league_id: str):
         "scoring_format": snap.get("scoring_format"),
         "champion": snap.get("champion_team_name"),
     }
+
+
+# ─── Trophy Room ────────────────────────────────────────────
+def _player_points(p: dict) -> float:
+    """Best-effort fantasy point proxy from a player's season_stats."""
+    ss = p.get("season_stats") or {}
+    pos = (p.get("position") or "").upper()
+    if pos == "G":
+        # Goalie: 4×W + 0.6×Sv − 1×GA (approximation)
+        return float(
+            4 * (ss.get("wins") or 0)
+            + 0.6 * (ss.get("saves") or 0)
+            - 1 * (ss.get("goals_against") or 0)
+            + 5 * (ss.get("shutouts") or 0)
+        )
+    return float(ss.get("points") or 0) + 0.1 * float(ss.get("plus_minus") or 0)
+
+
+def _build_season_trophies(snapshot: dict) -> dict:
+    """Compute per-season trophy assignments from a league_seasons snapshot."""
+    teams = snapshot.get("teams") or []
+    players = snapshot.get("players") or []
+
+    # Team-level trophies
+    champion = None
+    if snapshot.get("champion_team_name"):
+        champion = next((t for t in teams if t.get("team_name") == snapshot["champion_team_name"]), None)
+
+    # President's Trophy = best regular-season points_for
+    presidents = max(teams, key=lambda t: float(t.get("points_for", 0)), default=None) if teams else None
+
+    division_winners = [t for t in teams if (t.get("awards") or {}).get("division_winner_at")]
+    conference_winners = [t for t in teams if (t.get("awards") or {}).get("conference_winner_at")]
+    consolation = next((t for t in teams if (t.get("awards") or {}).get("consolation_won_at")), None)
+
+    # Player-level trophies
+    if players:
+        skaters = [p for p in players if (p.get("position") or "").upper() != "G"]
+        goalies = [p for p in players if (p.get("position") or "").upper() == "G"]
+        defensemen = [p for p in skaters if (p.get("position") or "").upper() == "D"]
+        season_mvp = max(skaters, key=_player_points, default=None) if skaters else None
+        best_goalie = max(goalies, key=_player_points, default=None) if goalies else None
+        best_defender = max(defensemen, key=_player_points, default=None) if defensemen else None
+    else:
+        season_mvp = best_goalie = best_defender = None
+
+    # Owner lookup so each player trophy can attribute to their team
+    player_to_team = {}
+    for t in teams:
+        for pid in (t.get("roster") or []):
+            player_to_team[str(pid)] = {
+                "team_id": t.get("team_id"),
+                "team_name": t.get("team_name"),
+            }
+
+    def _player_card(p, label):
+        if not p:
+            return None
+        owner = player_to_team.get(p.get("player_id"), {})
+        return {
+            "label": label,
+            "player_id": p.get("player_id"),
+            "player_name": p.get("name"),
+            "position": p.get("position"),
+            "team": p.get("team"),
+            "season_stats": p.get("season_stats") or {},
+            "points": round(_player_points(p), 2),
+            "owner_team_id": owner.get("team_id"),
+            "owner_team_name": owner.get("team_name"),
+        }
+
+    return {
+        "season_year": snapshot.get("season_year"),
+        "champion": (
+            {"team_id": champion["team_id"], "team_name": champion["team_name"], "logo_url": champion.get("logo_url")}
+            if champion else None
+        ),
+        "presidents_trophy": (
+            {"team_id": presidents["team_id"], "team_name": presidents["team_name"], "logo_url": presidents.get("logo_url"), "points_for": presidents.get("points_for")}
+            if presidents else None
+        ),
+        "division_winners": [
+            {"team_id": t["team_id"], "team_name": t["team_name"], "logo_url": t.get("logo_url"), "division": t.get("division")}
+            for t in division_winners
+        ],
+        "conference_winners": [
+            {"team_id": t["team_id"], "team_name": t["team_name"], "logo_url": t.get("logo_url"), "conference": t.get("conference")}
+            for t in conference_winners
+        ],
+        "consolation_winner": (
+            {"team_id": consolation["team_id"], "team_name": consolation["team_name"], "logo_url": consolation.get("logo_url")}
+            if consolation else None
+        ),
+        "season_mvp": _player_card(season_mvp, "Season MVP"),
+        "best_goalie": _player_card(best_goalie, "Best Goalie"),
+        "best_defenseman": _player_card(best_defender, "Best Defenseman"),
+    }
+
+
+@router.get("/leagues/{league_id}/trophy-room")
+async def get_league_trophy_room(league_id: str):
+    """Return all-time trophies + hall of fame for the league."""
+    db = _deps["db"]
+    await _league_or_404(league_id)
+
+    cursor = db.league_seasons.find({"league_id": league_id}).sort("season_year", -1)
+    season_trophies: list = []
+    async for snap in cursor:
+        season_trophies.append(_build_season_trophies(snap))
+
+    # Aggregate banners per team
+    team_banners: dict = {}
+    def _add_banner(team, btype, year, extra=None):
+        if not team or not team.get("team_id"):
+            return
+        tb = team_banners.setdefault(team["team_id"], {
+            "team_id": team["team_id"],
+            "team_name": team.get("team_name"),
+            "logo_url": team.get("logo_url"),
+            "banners": [],
+        })
+        tb["banners"].append({
+            "type": btype, "year": year, **(extra or {}),
+        })
+
+    # Hall of fame: aggregate player trophies across seasons
+    hof_counter: dict = {}
+    for s in season_trophies:
+        yr = s["season_year"]
+        if s["champion"]: _add_banner(s["champion"], "championship", yr)
+        if s["presidents_trophy"]: _add_banner(s["presidents_trophy"], "presidents_trophy", yr)
+        for d in s["division_winners"]: _add_banner(d, "division", yr, {"division": d.get("division")})
+        for c in s["conference_winners"]: _add_banner(c, "conference", yr, {"conference": c.get("conference")})
+        if s["consolation_winner"]: _add_banner(s["consolation_winner"], "consolation", yr)
+
+        for ptrophy in (s["season_mvp"], s["best_goalie"], s["best_defenseman"]):
+            if not ptrophy or not ptrophy.get("player_id"):
+                continue
+            pid = ptrophy["player_id"]
+            entry = hof_counter.setdefault(pid, {
+                "player_id": pid,
+                "player_name": ptrophy["player_name"],
+                "position": ptrophy["position"],
+                "team": ptrophy["team"],
+                "trophies": [],
+            })
+            entry["trophies"].append({
+                "label": ptrophy["label"],
+                "year": yr,
+                "owner_team_id": ptrophy.get("owner_team_id"),
+                "owner_team_name": ptrophy.get("owner_team_name"),
+            })
+
+    # Top-3 hall of fame (by trophy count desc, then most recent first)
+    hall_of_fame = sorted(
+        hof_counter.values(),
+        key=lambda x: (-len(x["trophies"]), -max((t["year"] or 0) for t in x["trophies"]) if x["trophies"] else 0),
+    )[:8]
+
+    return {
+        "league_id": league_id,
+        "seasons": season_trophies,
+        "team_banners": list(team_banners.values()),
+        "hall_of_fame": hall_of_fame,
+    }
+
+
+@router.get("/teams/{team_id}/trophy-room")
+async def get_team_trophy_room(team_id: str):
+    """Return all-time trophies for a single team."""
+    db = _deps["db"]
+    try:
+        toid = ObjectId(team_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid team id")
+
+    team = await db.teams.find_one({"_id": toid})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    league_id = team["league_id"]
+    cursor = db.league_seasons.find({"league_id": league_id}).sort("season_year", -1)
+    banners: list = []
+    individual_awards: list = []
+    seasons_played: list = []
+
+    async for snap in cursor:
+        yr = snap.get("season_year")
+        my_team = next((t for t in (snap.get("teams") or []) if t.get("team_id") == team_id), None)
+        if not my_team:
+            continue
+        seasons_played.append({
+            "year": yr,
+            "wins": my_team.get("wins"),
+            "losses": my_team.get("losses"),
+            "ties": my_team.get("ties"),
+            "points_for": my_team.get("points_for"),
+            "rank": None,  # could be computed if needed
+        })
+        awards = my_team.get("awards") or {}
+        if awards.get("championship_won_at"):
+            banners.append({"type": "championship", "year": yr})
+        # President's Trophy: did this team have the highest points_for that year?
+        teams_in_season = snap.get("teams") or []
+        if teams_in_season:
+            top_pf_team = max(teams_in_season, key=lambda t: float(t.get("points_for", 0)))
+            if top_pf_team.get("team_id") == team_id:
+                banners.append({"type": "presidents_trophy", "year": yr})
+        if awards.get("division_winner_at"):
+            banners.append({"type": "division", "year": yr, "division": my_team.get("division")})
+        if awards.get("conference_winner_at"):
+            banners.append({"type": "conference", "year": yr, "conference": my_team.get("conference")})
+        if awards.get("consolation_won_at"):
+            banners.append({"type": "consolation", "year": yr})
+
+        # Individual: which of MY rostered players won league-wide trophies that year?
+        my_pids = set(map(str, my_team.get("roster") or []))
+        season_card = _build_season_trophies(snap)
+        for ptrophy_key in ("season_mvp", "best_goalie", "best_defenseman"):
+            ptrophy = season_card.get(ptrophy_key)
+            if ptrophy and ptrophy.get("player_id") in my_pids:
+                individual_awards.append({
+                    "label": ptrophy["label"],
+                    "year": yr,
+                    "player_id": ptrophy["player_id"],
+                    "player_name": ptrophy["player_name"],
+                    "position": ptrophy.get("position"),
+                    "team": ptrophy.get("team"),
+                })
+
+    return {
+        "team_id": team_id,
+        "team_name": team.get("name"),
+        "logo_url": team.get("logo_url"),
+        "logo_abbr": team.get("logo_abbr"),
+        "league_id": league_id,
+        "seasons_played": seasons_played,
+        "banners": banners,
+        "individual_awards": individual_awards,
+    }

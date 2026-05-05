@@ -45,6 +45,7 @@ import LovableDraftBoard from "@/lovable/pages/DraftBoard";
 import LovableDraftRoom from "@/lovable/pages/DraftRoom";
 import LovableDraftLottery from "@/lovable/pages/DraftLottery";
 import LovableLeagueHistory from "@/lovable/pages/LeagueHistory";
+import LovableTrophyRoom from "@/lovable/pages/TrophyRoom";
 import LovableFranchiseRecords from "@/lovable/pages/FranchiseRecords";
 import LovableAnalytics from "@/lovable/pages/Analytics";
 import LovableChat from "@/lovable/pages/Chat";
@@ -109,6 +110,8 @@ function App() {
           <Route path="/draft-room" element={<ProtectedRoute><LovableDraftRoom /></ProtectedRoute>} />
           <Route path="/draft-lottery" element={<ProtectedRoute><LovableDraftLottery /></ProtectedRoute>} />
           <Route path="/league-history" element={<ProtectedRoute><LovableLeagueHistory /></ProtectedRoute>} />
+          <Route path="/trophy-room" element={<ProtectedRoute><LovableTrophyRoom /></ProtectedRoute>} />
+          <Route path="/trophy-room/team/:teamId" element={<ProtectedRoute><LovableTrophyRoom /></ProtectedRoute>} />
           <Route path="/franchise-records" element={<ProtectedRoute><LovableFranchiseRecords /></ProtectedRoute>} />
           <Route path="/analytics" element={<ProtectedRoute><LovableAnalytics /></ProtectedRoute>} />
           <Route path="/chat" element={<ProtectedRoute><LovableChat /></ProtectedRoute>} />
