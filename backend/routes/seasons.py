@@ -628,6 +628,257 @@ async def get_league_trophy_room(league_id: str):
     }
 
 
+@router.get("/players/{player_id}/dynasty-career")
+async def get_player_dynasty_career(player_id: str):
+    """Return a player's dynasty-league career: every league_seasons snapshot
+    where this player was rostered, with the team that owned them + any
+    individual awards (Season MVP / Best Goalie / Best Defenseman) won that year.
+    """
+    db = _deps["db"]
+    cursor = db.league_seasons.find(
+        {"players.player_id": player_id},
+    ).sort("season_year", -1)
+
+    history: list = []
+    league_ids: set = set()
+    async for snap in cursor:
+        league_ids.add(snap["league_id"])
+        # Locate this player's snapshot row
+        prow = next((p for p in (snap.get("players") or []) if p.get("player_id") == player_id), None)
+        if not prow:
+            continue
+        # Locate the team that owned them
+        owner_team = None
+        for t in (snap.get("teams") or []):
+            if player_id in [str(rid) for rid in (t.get("roster") or [])]:
+                owner_team = t
+                break
+        # Award detection: did this player win a per-season trophy?
+        awards = []
+        season_card = _build_season_trophies(snap)
+        for key in ("season_mvp", "best_goalie", "best_defenseman"):
+            ptrophy = season_card.get(key)
+            if ptrophy and ptrophy.get("player_id") == player_id:
+                awards.append({"label": ptrophy["label"], "year": snap.get("season_year")})
+
+        history.append({
+            "league_id": snap["league_id"],
+            "season_year": snap.get("season_year"),
+            "season_stats": prow.get("season_stats") or {},
+            "fantasy_points": round(_player_points(prow), 2),
+            "owner_team_id": (owner_team or {}).get("team_id"),
+            "owner_team_name": (owner_team or {}).get("team_name"),
+            "awards": awards,
+            "champion": (snap.get("champion_team_name") and (owner_team or {}).get("team_name") == snap.get("champion_team_name")),
+        })
+
+    # Resolve league names
+    leagues_by_id: dict = {}
+    if league_ids:
+        async for lg in db.leagues.find(
+            {"_id": {"$in": [ObjectId(lid) for lid in league_ids if ObjectId.is_valid(lid)]}},
+            {"name": 1},
+        ):
+            leagues_by_id[str(lg["_id"])] = lg.get("name")
+    for h in history:
+        h["league_name"] = leagues_by_id.get(h["league_id"])
+
+    # Career totals
+    total_awards = sum(len(h["awards"]) for h in history)
+    total_championships = sum(1 for h in history if h["champion"])
+    total_seasons = len(history)
+    return {
+        "player_id": player_id,
+        "history": history,
+        "totals": {
+            "seasons": total_seasons,
+            "leagues": len(league_ids),
+            "awards": total_awards,
+            "championships": total_championships,
+        },
+    }
+
+
+# ─── Auto-snapshot trigger (called from matchups.simulate_week) ─────────
+async def _maybe_auto_snapshot_season(league_id: str):
+    """Internal helper: when a league's last playoff matchup transitions
+    to completed/final, automatically run complete-season.
+    Called from matchups.simulate_week.
+    Idempotent — checks current_season_status before snapshotting.
+    """
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        return None
+    # Already complete? Skip.
+    if league.get("current_season_status") == "complete":
+        return None
+
+    # Are there ANY playoff matchups for this league?
+    has_playoffs = await db.matchups.find_one({"league_id": league_id, "is_playoff": True})
+    if not has_playoffs:
+        return None
+    # Final playoff week = max week among is_playoff matchups
+    agg = await db.matchups.aggregate([
+        {"$match": {"league_id": league_id, "is_playoff": True}},
+        {"$group": {"_id": None, "max_week": {"$max": "$week"}}},
+    ]).to_list(1)
+    if not agg:
+        return None
+    final_week = agg[0]["max_week"]
+    # Are ALL playoff matchups in the final week completed?
+    pending = await db.matchups.count_documents({
+        "league_id": league_id,
+        "is_playoff": True,
+        "week": final_week,
+        "status": {"$nin": ["completed", "final"]},
+    })
+    if pending > 0:
+        return None
+
+    # Trigger the snapshot using the same logic as POST /complete-season
+    season_year = league.get("current_season_year") or datetime.now(timezone.utc).year
+    now = datetime.now(timezone.utc)
+    teams = await db.teams.find({"league_id": league_id}).to_list(200)
+
+    teams_snapshot = []
+    champion = None
+    for t in teams:
+        owner = await db.users.find_one(
+            {"_id": t.get("owner_id")},
+            {"username": 1, "name": 1},
+        ) if t.get("owner_id") else None
+        ts = {
+            "team_id": str(t["_id"]),
+            "team_name": t.get("name"),
+            "logo_abbr": t.get("logo_abbr"),
+            "logo_url": t.get("logo_url"),
+            "owner_id": t.get("owner_id"),
+            "owner_username": (owner or {}).get("username"),
+            "owner_name": (owner or {}).get("name"),
+            "wins": t.get("wins", 0),
+            "losses": t.get("losses", 0),
+            "ties": t.get("ties", 0),
+            "points_for": float(t.get("points_for", 0.0) or 0.0),
+            "points_against": float(t.get("points_against", 0.0) or 0.0),
+            "live_points": float(t.get("live_points", 0.0) or 0.0),
+            "division": t.get("division"),
+            "conference": t.get("conference"),
+            "salary_used": float(t.get("salary_used", 0.0) or 0.0),
+            "roster": list(t.get("roster") or []),
+            "awards": {
+                "championship_won_at": t.get("championship_won_at"),
+                "consolation_won_at": t.get("consolation_won_at"),
+                "division_winner_at": t.get("division_winner_at"),
+                "conference_winner_at": t.get("conference_winner_at"),
+                "playoffs_reached_at": t.get("playoffs_reached_at"),
+            },
+        }
+        if t.get("championship_won_at"):
+            champion = ts["team_name"]
+        teams_snapshot.append(ts)
+
+    # Awards
+    activity_cursor = db.activity_feed.find({
+        "league_id": league_id,
+        "event_type": {"$in": [
+            "championship_awarded", "division_awarded",
+            "conference_awarded", "consolation_awarded",
+        ]},
+    }).sort("created_at", -1)
+    awards = []
+    async for a in activity_cursor:
+        awards.append({
+            "event_type": a.get("event_type"),
+            "description": a.get("description"),
+            "created_at": a.get("created_at"),
+        })
+
+    # Players
+    player_ids = list({pid for t in teams for pid in (t.get("roster") or [])})
+    player_snapshot = []
+    if player_ids:
+        try:
+            oids = [ObjectId(p) for p in player_ids if ObjectId.is_valid(p)]
+            async for p in db.players.find(
+                {"_id": {"$in": oids}},
+                {"name": 1, "position": 1, "team": 1, "season_stats": 1},
+            ):
+                player_snapshot.append({
+                    "player_id": str(p["_id"]),
+                    "name": p.get("name"),
+                    "team": p.get("team"),
+                    "position": p.get("position"),
+                    "season_stats": p.get("season_stats"),
+                })
+        except Exception:
+            pass
+
+    snapshot_doc = {
+        "league_id": league_id,
+        "season_year": season_year,
+        "status": "complete",
+        "snapshot_at": now,
+        "completed_by": "system",
+        "completed_by_name": "System (auto-snapshot)",
+        "champion_team_name": champion,
+        "salary_cap_config": {
+            "enabled": bool(league.get("salary_cap_enabled")),
+            "amount": league.get("salary_cap"),
+            "retention_slots": league.get("salary_retention_slots", 3),
+        },
+        "schedule_config": league.get("schedule_config"),
+        "playoff_config": {
+            "playoff_teams": league.get("playoff_teams"),
+            "playoff_weeks": league.get("playoff_weeks"),
+        },
+        "regular_season_weeks": league.get("regular_season_weeks"),
+        "scoring_format": league.get("scoring_format"),
+        "format": league.get("format"),
+        "teams": teams_snapshot,
+        "awards": awards,
+        "players": player_snapshot,
+        "auto_triggered": True,
+    }
+    await db.league_seasons.update_one(
+        {"league_id": league_id, "season_year": season_year},
+        {"$set": snapshot_doc},
+        upsert=True,
+    )
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {
+            "current_season_year": season_year,
+            "current_season_status": "complete",
+            "season_completed_at": now,
+            "auto_snapshot_at": now,
+        }, "$push": {"audit_log": {
+            "action": "season_auto_snapshotted",
+            "by": "system",
+            "season_year": season_year,
+            "champion": champion,
+            "trigger": "final_playoff_week_completed",
+        }}},
+    )
+    # Best-effort socket emit so UI refreshes Health Card
+    try:
+        sio = _deps.get("sio")
+        if sio:
+            await sio.emit("season_auto_snapshotted", {
+                "league_id": league_id,
+                "season_year": season_year,
+                "champion": champion,
+            })
+    except Exception:
+        pass
+    return {
+        "league_id": league_id,
+        "season_year": season_year,
+        "champion": champion,
+        "auto": True,
+    }
+
+
 @router.get("/teams/{team_id}/trophy-room")
 async def get_team_trophy_room(team_id: str):
     """Return all-time trophies for a single team."""

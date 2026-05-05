@@ -88,6 +88,7 @@ export default function PlayerDetailPage() {
   const [transactions, setTransactions] = useState([]);
   const [usage, setUsage] = useState([]);
   const [projections, setProjections] = useState(null);
+  const [dynastyCareer, setDynastyCareer] = useState(null);
 
   useEffect(() => {
     if (!id) return;
@@ -114,6 +115,10 @@ export default function PlayerDetailPage() {
     if (tab === "stats" && history.seasons.length === 0) {
       api.get(`/players/${id}/historical-stats${leagueId ? `?league_id=${leagueId}` : ""}`)
          .then(({ data }) => setHistory(data || { seasons: [] })).catch(() => {});
+    }
+    if (tab === "stats" && !dynastyCareer) {
+      api.get(`/players/${id}/dynasty-career`)
+         .then(({ data }) => setDynastyCareer(data || { history: [], totals: {} })).catch(() => {});
     }
     if (tab === "performance" && !perf) {
       api.get(`/players/${id}/recent-performance${leagueId ? `?league_id=${leagueId}` : ""}`)
@@ -521,9 +526,90 @@ export default function PlayerDetailPage() {
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
 
-          {/* RECENT PERFORMANCE — windows */}
+            {/* Dynasty-league career — sourced from league_seasons snapshots */}
+            <Card className="border-white/10 mt-4" data-testid="player-dynasty-career">
+              <CardHeader>
+                <CardTitle className="text-white text-base flex items-center gap-2">
+                  <Trophy className="h-4 w-4 text-amber-400" /> Dynasty Career
+                </CardTitle>
+                <p className="text-xs text-[#A1A1AA]">
+                  Per-season ownership + fantasy production across every Dynasty Dreams league this player has been on.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {!dynastyCareer ? (
+                  <p className="text-sm text-[#A1A1AA] py-3">Loading dynasty history…</p>
+                ) : dynastyCareer.history.length === 0 ? (
+                  <p className="text-sm text-[#A1A1AA] py-3">No completed Dynasty Dreams seasons featuring this player yet.</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                      <div className="rounded-md border border-white/10 bg-white/5 p-3">
+                        <p className="text-[10px] uppercase tracking-wider text-[#A1A1AA]">Seasons</p>
+                        <p className="text-2xl font-bold text-white" data-testid="dynasty-totals-seasons">{dynastyCareer.totals?.seasons || 0}</p>
+                      </div>
+                      <div className="rounded-md border border-white/10 bg-white/5 p-3">
+                        <p className="text-[10px] uppercase tracking-wider text-[#A1A1AA]">Leagues</p>
+                        <p className="text-2xl font-bold text-white">{dynastyCareer.totals?.leagues || 0}</p>
+                      </div>
+                      <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+                        <p className="text-[10px] uppercase tracking-wider text-amber-300">Awards</p>
+                        <p className="text-2xl font-bold text-amber-200">{dynastyCareer.totals?.awards || 0}</p>
+                      </div>
+                      <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3">
+                        <p className="text-[10px] uppercase tracking-wider text-emerald-300">Championships</p>
+                        <p className="text-2xl font-bold text-emerald-200">{dynastyCareer.totals?.championships || 0}</p>
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="text-[#A1A1AA] text-xs uppercase tracking-wider">
+                          <tr className="border-b border-white/5">
+                            <th className="text-left py-2 pr-3">Year</th>
+                            <th className="text-left py-2 pr-3">League</th>
+                            <th className="text-left py-2 pr-3">Owner</th>
+                            <th className="text-right py-2 pr-3">FPTS</th>
+                            <th className="text-left py-2">Honors</th>
+                          </tr>
+                        </thead>
+                        <tbody className="text-white">
+                          {dynastyCareer.history.map((row, i) => (
+                            <tr key={i} className="border-b border-white/5" data-testid={`dynasty-season-${row.season_year}`}>
+                              <td className="py-2 pr-3 font-semibold">{row.season_year}</td>
+                              <td className="py-2 pr-3 text-[#A1A1AA] truncate max-w-[180px]">{row.league_name || "—"}</td>
+                              <td className="py-2 pr-3 truncate max-w-[180px]">
+                                {row.owner_team_id ? (
+                                  <a className="text-[#00D2FF] hover:underline" href={`/trophy-room/team/${row.owner_team_id}`}>
+                                    {row.owner_team_name || "—"}
+                                  </a>
+                                ) : (
+                                  <span className="text-[#A1A1AA]">FA</span>
+                                )}
+                              </td>
+                              <td className="py-2 pr-3 text-right tabular-nums font-semibold text-[#00D2FF]">{row.fantasy_points?.toFixed(1) ?? "—"}</td>
+                              <td className="py-2">
+                                <div className="flex flex-wrap gap-1">
+                                  {row.champion && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/40 text-emerald-200">🏆 Cup</span>
+                                  )}
+                                  {row.awards.map((a, ai) => (
+                                    <span key={ai} className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 border border-amber-500/40 text-amber-200">
+                                      {a.label}
+                                    </span>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
           <TabsContent value="performance">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" data-testid="player-recent-performance">
               {(perf?.windows ? Object.entries(perf.windows) : []).map(([label, w]) => (

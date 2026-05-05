@@ -614,4 +614,11 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
     except Exception as e:
         logger.warning(f"Division auto-crown skipped: {e}")
 
+    # ─── Auto-snapshot season when last playoff week completes ──────
+    try:
+        from routes.seasons import _maybe_auto_snapshot_season
+        await _maybe_auto_snapshot_season(input.league_id)
+    except Exception as e:
+        logger.warning(f"Auto-snapshot skipped: {e}")
+
     return {"week": input.week, "results": results, "matchups_simulated": len(matchups)}

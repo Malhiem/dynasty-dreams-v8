@@ -97,6 +97,13 @@ export default function TeamDetailPage() {
               <span>·</span>
               <span>{team.points_for.toFixed(1)} PF</span>
             </p>
+            <Link
+              to={`/trophy-room/team/${team.id}`}
+              data-testid="team-trophy-room-link"
+              className="inline-flex items-center gap-1.5 mt-3 text-xs px-3 py-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20 hover:border-amber-500/60 transition-colors"
+            >
+              <Trophy size={13} /> Trophy Room
+            </Link>
           </div>
           {weekData && (
             <div className="flex gap-3">
