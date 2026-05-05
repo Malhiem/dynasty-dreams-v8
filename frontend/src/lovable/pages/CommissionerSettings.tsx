@@ -21,6 +21,7 @@ import api from "@/lib/api";
 import TeamsTab from "@/lovable/components/admin/TeamsTab";
 import DivisionsTab from "@/lovable/pages/commissioner/DivisionsTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
+import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
 import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
 
@@ -1150,6 +1151,16 @@ const CommissionerSettings = () => {
           onClose={handleWizardClose}
           leagueId={activeLeague?.id}
           onComplete={() => { /* No-op; next page load will see setup_wizard_complete=true */ }}
+        />
+
+        {/* League Health Score (top of page, above tabs) */}
+        <LeagueHealthCard
+          leagueId={activeLeague?.id}
+          onJumpToTab={(tab) => {
+            const trigger = document.querySelector(`[data-state] [value="${tab}"], [role="tab"][value="${tab}"]`);
+            if (trigger instanceof HTMLElement) trigger.click();
+          }}
+          onReopenWizard={reopenWizard}
         />
 
         <Tabs defaultValue="league-setup" className="space-y-6">

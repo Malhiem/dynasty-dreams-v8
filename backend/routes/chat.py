@@ -291,6 +291,55 @@ async def post_message(channel_id: str, payload: dict, request: Request):
         {"$set": {"user_id": user["_id"], "channel_id": channel_id, "last_read_at": msg["created_at"]}},
         upsert=True,
     )
+
+    # ─── @mention push notifications ─────────────────────────────
+    # Parse @username and @teamname tokens; fire one Expo push per unique
+    # mentioned user (excluding the sender). Best-effort, non-blocking.
+    try:
+        import re as _re
+        import asyncio as _asyncio
+        from routes.push import send_push
+        mentioned_handles = {m.lower() for m in _re.findall(r"@([\w-]+)", text)}
+        if mentioned_handles:
+            target_ids: set = set()
+            league_teams = await db.teams.find(
+                {"league_id": chan["league_id"]},
+                {"_id": 1, "owner_id": 1, "name": 1},
+            ).to_list(200)
+            owner_ids = list({t["owner_id"] for t in league_teams})
+            users_by_id = {}
+            if owner_ids:
+                async for u in db.users.find(
+                    {"_id": {"$in": owner_ids}},
+                    {"username": 1, "name": 1, "email": 1},
+                ):
+                    users_by_id[u["_id"]] = u
+            for t in league_teams:
+                tname = (t.get("name") or "").lower().replace(" ", "-")
+                u = users_by_id.get(t["owner_id"]) or {}
+                handles = {
+                    tname,
+                    (u.get("username") or "").lower(),
+                    (u.get("name") or "").lower().replace(" ", "-"),
+                }
+                if handles & mentioned_handles and t["owner_id"] != user["_id"]:
+                    target_ids.add(t["owner_id"])
+            if target_ids:
+                _asyncio.create_task(send_push(
+                    list(target_ids),
+                    title=f"💬 {sender_name} mentioned you",
+                    body=text[:140],
+                    data={
+                        "type": "chat_mention",
+                        "channel_id": channel_id,
+                        "league_id": chan["league_id"],
+                        "link": f"/chat?channel={channel_id}",
+                    },
+                ))
+    except Exception:
+        # @mention push is best-effort; never break message posting.
+        pass
+
     return _serialize(msg)
 
 

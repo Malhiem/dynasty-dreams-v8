@@ -33,6 +33,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   const [schedule, setSchedule] = useState({ intra_division_games: 2, intra_conference_games: 1, inter_conference_games: 1 });
   const [numWeeks, setNumWeeks] = useState(18);
   const [scheduleMode, setScheduleMode] = useState(null);
+  const [previousSeasonSuggestion, setPreviousSeasonSuggestion] = useState(null);
 
   // Load everything once when wizard opens
   useEffect(() => {
@@ -40,26 +41,33 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     let cancelled = false;
     (async () => {
       try {
-        const [lgR, teamsR, cfgR] = await Promise.all([
+        const [lgR, teamsR, cfgR, sugR] = await Promise.all([
           api.get(`/leagues/${leagueId}`),
           api.get(`/teams?league_id=${leagueId}`),
           api.get(`/leagues/${leagueId}/schedule-config`).catch(() => ({ data: null })),
+          api.get(`/leagues/${leagueId}/setup-suggestions`).catch(() => ({ data: null })),
         ]);
         if (cancelled) return;
         setLeague(lgR.data);
-        setCapEnabled(!!lgR.data?.salary_cap_enabled);
-        setCapAmount(lgR.data?.salary_cap || 82500000);
-        setRetentionSlots(lgR.data?.salary_retention_slots ?? 3);
+        const sug = sugR?.data?.has_previous_season ? sugR.data : null;
+        setPreviousSeasonSuggestion(sug);
+        // Prefer previous-season cap config when present
+        const capCfg = sug?.salary_cap_config;
+        setCapEnabled(capCfg ? !!capCfg.enabled : !!lgR.data?.salary_cap_enabled);
+        setCapAmount(capCfg?.amount || lgR.data?.salary_cap || 82500000);
+        setRetentionSlots(capCfg?.retention_slots ?? lgR.data?.salary_retention_slots ?? 3);
         setTeams(teamsR.data || []);
         const seeded = {};
         (teamsR.data || []).forEach((t) => {
           seeded[t.id] = { division: t.division || "", conference: t.conference || "" };
         });
         setDivisionAssignments(seeded);
-        if (cfgR?.data) setSchedule({
-          intra_division_games: cfgR.data.intra_division_games,
-          intra_conference_games: cfgR.data.intra_conference_games,
-          inter_conference_games: cfgR.data.inter_conference_games,
+        // Prefer previous-season schedule_config when present
+        const schCfg = sug?.schedule_config || cfgR?.data;
+        if (schCfg) setSchedule({
+          intra_division_games: schCfg.intra_division_games ?? 2,
+          intra_conference_games: schCfg.intra_conference_games ?? 1,
+          inter_conference_games: schCfg.inter_conference_games ?? 1,
         });
       } catch (e) {
         toast.error("Failed to load league for setup wizard");
