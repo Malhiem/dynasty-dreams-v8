@@ -218,6 +218,19 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         {/* Step body */}
         {step.id === "basics" && (
           <div className="space-y-3" data-testid="wizard-body-basics">
+            {previousSeasonSuggestion && (
+              <div className="rounded-md border border-accent/40 bg-accent/10 p-3 text-xs flex items-start gap-2" data-testid="wizard-prev-season-banner">
+                <Trophy className="h-4 w-4 text-accent mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-semibold text-accent">Suggesting last year&apos;s setup</p>
+                  <p className="text-muted-foreground mt-0.5">
+                    Pre-filled from your <strong>{previousSeasonSuggestion.previous_season_year}</strong> season
+                    {previousSeasonSuggestion.champion ? ` (champion: ${previousSeasonSuggestion.champion})` : ""}.
+                    You can override anything below.
+                  </p>
+                </div>
+              </div>
+            )}
             <p className="text-sm text-muted-foreground">
               Welcome to <strong>{league?.name || "your league"}</strong>! We&apos;ll walk you through the core setup.
               You can revisit each step anytime from Commissioner Settings.
