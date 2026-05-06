@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Plus, ArrowRightLeft, MessageSquare, TrendingUp, TrendingDown, Filter, X, Send } from "lucide-react";
+import { Plus, ArrowRightLeft, MessageSquare, TrendingUp, TrendingDown, Filter, X, Send, Crown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -152,7 +153,19 @@ export default function TradeBlockPage() {
                     </div>
                   </div>
                   <div className="flex flex-col items-end gap-3">
-                    <span className="text-sm text-[#A1A1AA]">{item.owner_name}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-[#A1A1AA]">{item.owner_name}</span>
+                      {item.team_id && (
+                        <Link
+                          to={`/trophy-room/team/${item.team_id}`}
+                          title={`${item.owner_name} trophy room`}
+                          data-testid={`trade-block-trophy-link-${item.team_id}`}
+                          className="text-amber-400/70 hover:text-amber-300 inline-flex"
+                        >
+                          <Crown className="h-3.5 w-3.5" />
+                        </Link>
+                      )}
+                    </div>
                     <div className="flex gap-2">
                       {item.owner_id === user?.id && (
                         <Button variant="outline" size="sm" className="text-[#FF3B30] border-[#FF3B30]/30" onClick={() => handleRemoveFromBlock(item._id)} data-testid={`remove-${item._id}`}>

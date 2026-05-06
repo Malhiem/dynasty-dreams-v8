@@ -1,19 +1,21 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
-import { Users, Plus, X, Search, ArrowUpDown } from "lucide-react";
+import { Users, Plus, X, Search, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import TeamLogo from "@/lovable/components/TeamLogo";
 import TeamLogoUploader from "@/lovable/components/TeamLogoUploader";
+import { TrophyRoomView } from "@/lovable/pages/TrophyRoom";
 
 const positionColors = {
   C: "bg-blue-600/80 text-blue-100",
@@ -187,77 +189,110 @@ export default function RosterPage() {
           </Button>
         </div>
 
+        {team && (
+          <div className="flex items-center gap-2">
+            <Link
+              to={`/trophy-room/team/${team.id}`}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-xs font-semibold uppercase tracking-wider"
+              data-testid="roster-team-trophy-link"
+            >
+              <Trophy className="h-3.5 w-3.5" /> Visit Trophy Room
+            </Link>
+          </div>
+        )}
+
         {loading ? (
           <Card className="border-white/10"><CardContent className="p-8 text-center text-[#A1A1AA]">Loading roster...</CardContent></Card>
         ) : !team ? (
           <Card className="border-white/10"><CardContent className="p-8 text-center text-[#A1A1AA]">Join a league and create a team first</CardContent></Card>
-        ) : roster.length === 0 ? (
-          <Card className="border-white/10">
-            <CardContent className="p-12 text-center">
-              <Users className="h-16 w-16 text-[#52525B] mx-auto mb-4" />
-              <h3 className="text-xl text-white mb-2">Empty Roster</h3>
-              <p className="text-[#A1A1AA] mb-4">Add players to build your team</p>
-              <Button className="bg-[#00D2FF] text-black" onClick={() => setAddModalOpen(true)}>Add Players</Button>
-            </CardContent>
-          </Card>
         ) : (
-          <>
-            {/* Forwards */}
-            {forwards.length > 0 && (
-              <Card className="border-white/10" data-testid="roster-section-forwards">
-                <CardHeader className="pb-2"><CardTitle className="text-base text-white">Forwards ({forwards.length})</CardTitle></CardHeader>
-                <CardContent className="p-0">
-                  <SkaterTable players={forwards} onDrop={setDropConfirm} />
-                </CardContent>
-              </Card>
-            )}
-            {/* Defense */}
-            {defensemen.length > 0 && (
-              <Card className="border-white/10" data-testid="roster-section-defense">
-                <CardHeader className="pb-2"><CardTitle className="text-base text-white">Defense ({defensemen.length})</CardTitle></CardHeader>
-                <CardContent className="p-0">
-                  <SkaterTable players={defensemen} onDrop={setDropConfirm} />
-                </CardContent>
-              </Card>
-            )}
-            {/* Skater Minors pool */}
-            {skaterMinors.length > 0 && (
-              <Card className="border-white/10 border-dashed" data-testid="roster-section-minors">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base text-white flex items-center gap-2">
-                    Minors Pool
-                    <Badge variant="outline" className="text-[10px] h-4 border-amber-500/30 text-amber-400">PROSPECTS</Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <SkaterTable players={skaterMinors} onDrop={setDropConfirm} />
-                </CardContent>
-              </Card>
-            )}
-            {/* Goalies (active) */}
-            {goalies.length > 0 && (
-              <Card className="border-white/10" data-testid="roster-section-goalies">
-                <CardHeader className="pb-2"><CardTitle className="text-base text-white">Goalies ({goalies.length})</CardTitle></CardHeader>
-                <CardContent className="p-0">
-                  <GoalieTable players={goalies} onDrop={setDropConfirm} />
-                </CardContent>
-              </Card>
-            )}
-            {/* Goalie Minors pool */}
-            {goalieMinors.length > 0 && (
-              <Card className="border-white/10 border-dashed" data-testid="roster-section-goalies-minors">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-base text-white flex items-center gap-2">
-                    Goalies — Minors Pool
-                    <Badge variant="outline" className="text-[10px] h-4 border-amber-500/30 text-amber-400">PROSPECTS</Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-0">
-                  <GoalieTable players={goalieMinors} onDrop={setDropConfirm} />
-                </CardContent>
-              </Card>
-            )}
-          </>
+          <Tabs defaultValue="roster" className="space-y-4">
+            <TabsList className="bg-[#0A0A0A] border border-white/10">
+              <TabsTrigger value="roster" data-testid="roster-tab-roster">
+                <Users className="h-4 w-4 mr-2" /> Roster
+              </TabsTrigger>
+              <TabsTrigger value="trophy-room" data-testid="roster-tab-trophy-room">
+                <Trophy className="h-4 w-4 mr-2" /> Franchise Trophy Room
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="roster" className="space-y-4">
+              {roster.length === 0 ? (
+                <Card className="border-white/10">
+                  <CardContent className="p-12 text-center">
+                    <Users className="h-16 w-16 text-[#52525B] mx-auto mb-4" />
+                    <h3 className="text-xl text-white mb-2">Empty Roster</h3>
+                    <p className="text-[#A1A1AA] mb-4">Add players to build your team</p>
+                    <Button className="bg-[#00D2FF] text-black" onClick={() => setAddModalOpen(true)}>Add Players</Button>
+                  </CardContent>
+                </Card>
+              ) : (
+                <>
+                  {/* Forwards */}
+                  {forwards.length > 0 && (
+                    <Card className="border-white/10" data-testid="roster-section-forwards">
+                      <CardHeader className="pb-2"><CardTitle className="text-base text-white">Forwards ({forwards.length})</CardTitle></CardHeader>
+                      <CardContent className="p-0">
+                        <SkaterTable players={forwards} onDrop={setDropConfirm} />
+                      </CardContent>
+                    </Card>
+                  )}
+                  {/* Defense */}
+                  {defensemen.length > 0 && (
+                    <Card className="border-white/10" data-testid="roster-section-defense">
+                      <CardHeader className="pb-2"><CardTitle className="text-base text-white">Defense ({defensemen.length})</CardTitle></CardHeader>
+                      <CardContent className="p-0">
+                        <SkaterTable players={defensemen} onDrop={setDropConfirm} />
+                      </CardContent>
+                    </Card>
+                  )}
+                  {/* Skater Minors pool */}
+                  {skaterMinors.length > 0 && (
+                    <Card className="border-white/10 border-dashed" data-testid="roster-section-minors">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-base text-white flex items-center gap-2">
+                          Minors Pool
+                          <Badge variant="outline" className="text-[10px] h-4 border-amber-500/30 text-amber-400">PROSPECTS</Badge>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-0">
+                        <SkaterTable players={skaterMinors} onDrop={setDropConfirm} />
+                      </CardContent>
+                    </Card>
+                  )}
+                  {/* Goalies (active) */}
+                  {goalies.length > 0 && (
+                    <Card className="border-white/10" data-testid="roster-section-goalies">
+                      <CardHeader className="pb-2"><CardTitle className="text-base text-white">Goalies ({goalies.length})</CardTitle></CardHeader>
+                      <CardContent className="p-0">
+                        <GoalieTable players={goalies} onDrop={setDropConfirm} />
+                      </CardContent>
+                    </Card>
+                  )}
+                  {/* Goalie Minors pool */}
+                  {goalieMinors.length > 0 && (
+                    <Card className="border-white/10 border-dashed" data-testid="roster-section-goalies-minors">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-base text-white flex items-center gap-2">
+                          Goalies — Minors Pool
+                          <Badge variant="outline" className="text-[10px] h-4 border-amber-500/30 text-amber-400">PROSPECTS</Badge>
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-0">
+                        <GoalieTable players={goalieMinors} onDrop={setDropConfirm} />
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
+              )}
+            </TabsContent>
+
+            <TabsContent value="trophy-room" className="space-y-4">
+              <div data-testid="roster-trophy-room-content">
+                <TrophyRoomView leagueId={league?.id} teamId={team.id} leagueName={league?.name} embedded />
+              </div>
+            </TabsContent>
+          </Tabs>
         )}
 
         {/* Add Player Modal */}

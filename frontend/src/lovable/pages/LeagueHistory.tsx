@@ -1,295 +1,232 @@
 // @ts-nocheck
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trophy, Crown, Award, TrendingUp, TrendingDown, Target, Users, BarChart3, Calendar, Star, Shield, Medal, Stars, Gift } from "lucide-react";
-import { allStarTeams } from "@/lovable/data/playerAwardsData";
+import { Trophy, Crown, Award, TrendingUp, TrendingDown, Target, Users, BarChart3, Medal, Gift } from "lucide-react";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
-
-// Mock data for league history
-const lifetimeTeamRecords = [
-  { rank: 1, team: "Team Frostbite", seasons: 8, wins: 89, losses: 47, ties: 0, winPct: ".654", totalPoints: 52100, championships: 3, presidentsTrophies: 2, divisionWins: 4 },
-  { rank: 2, team: "Arctic Thunder", seasons: 8, wins: 82, losses: 54, ties: 0, winPct: ".603", totalPoints: 48900, championships: 2, presidentsTrophies: 1, divisionWins: 3 },
-  { rank: 3, team: "Ice Wolves", seasons: 8, wins: 78, losses: 58, ties: 0, winPct: ".574", totalPoints: 46200, championships: 1, presidentsTrophies: 2, divisionWins: 2 },
-  { rank: 4, team: "Polar Dynasty", seasons: 8, wins: 75, losses: 61, ties: 0, winPct: ".551", totalPoints: 44800, championships: 1, presidentsTrophies: 1, divisionWins: 2 },
-  { rank: 5, team: "Glacier Kings", seasons: 8, wins: 71, losses: 65, ties: 0, winPct: ".522", totalPoints: 43100, championships: 1, presidentsTrophies: 1, divisionWins: 1 },
-  { rank: 6, team: "Frozen Elite", seasons: 7, wins: 62, losses: 57, ties: 0, winPct: ".521", totalPoints: 38200, championships: 0, presidentsTrophies: 0, divisionWins: 1 },
-  { rank: 7, team: "Blizzard Force", seasons: 8, wins: 68, losses: 68, ties: 0, winPct: ".500", totalPoints: 41500, championships: 0, presidentsTrophies: 1, divisionWins: 2 },
-  { rank: 8, team: "Tundra Titans", seasons: 6, wins: 48, losses: 51, ties: 0, winPct: ".485", totalPoints: 29800, championships: 0, presidentsTrophies: 0, divisionWins: 1 },
-  { rank: 9, team: "Snow Storm", seasons: 8, wins: 59, losses: 77, ties: 0, winPct: ".434", totalPoints: 36100, championships: 0, presidentsTrophies: 0, divisionWins: 0 },
-  { rank: 10, team: "Winter Hawks", seasons: 5, wins: 35, losses: 50, ties: 0, winPct: ".412", totalPoints: 21500, championships: 0, presidentsTrophies: 0, divisionWins: 0 },
-  { rank: 11, team: "Avalanche", seasons: 4, wins: 24, losses: 44, ties: 0, winPct: ".353", totalPoints: 15200, championships: 0, presidentsTrophies: 0, divisionWins: 0 },
-  { rank: 12, team: "Cold Front", seasons: 3, wins: 15, losses: 36, ties: 0, winPct: ".294", totalPoints: 9800, championships: 0, presidentsTrophies: 0, divisionWins: 0 },
-];
-
-const leagueRecords = {
-  highestSeasonPoints: { team: "Team Frostbite", value: 8240, season: "2023-24" },
-  lowestSeasonPoints: { team: "Cold Front", value: 2890, season: "2022-23" },
-  bestWinLossRecord: { team: "Team Frostbite", value: "14-3", season: "2023-24" },
-  worstWinLossRecord: { team: "Avalanche", value: "3-14", season: "2020-21" },
-  mostChampionships: { team: "Team Frostbite", value: 3, seasons: ["2019-20", "2022-23", "2023-24"] },
-  longestWinStreak: { team: "Arctic Thunder", value: 9, season: "2021-22" },
-  highestSingleWeek: { team: "Ice Wolves", value: 892, week: "Week 12, 2022-23" },
-};
-
-interface StatRecord {
-  category: string;
-  abbr: string;
-  record: number;
-  player: string;
-  team: string;
-  context: string;
-}
-
-const weeklyMatchupRecords: StatRecord[] = [
-  { category: "Goals", abbr: "G", record: 7, player: "Auston Matthews", team: "Puck Dynasty", context: "Week 4, 2023-24" },
-  { category: "Assists", abbr: "A", record: 9, player: "Connor McDavid", team: "Team Frostbite", context: "Week 11, 2022-23" },
-  { category: "Powerplay Points", abbr: "PPP", record: 6, player: "Nikita Kucherov", team: "Ice Wolves", context: "Week 8, 2023-24" },
-  { category: "Shorthanded Points", abbr: "SHP", record: 3, player: "Brad Marchand", team: "Arctic Thunder", context: "Week 14, 2021-22" },
-  { category: "Game Winning Goals", abbr: "GWG", record: 3, player: "Leon Draisaitl", team: "Glacier Kings", context: "Week 6, 2023-24" },
-  { category: "Shots on Goal", abbr: "SOG", record: 32, player: "Alex Ovechkin", team: "Blizzard Force", context: "Week 2, 2020-21" },
-  { category: "Hits", abbr: "HIT", record: 28, player: "Ryan Reaves", team: "Tundra Titans", context: "Week 9, 2022-23" },
-  { category: "Blocked Shots", abbr: "BLK", record: 22, player: "Cale Makar", team: "Team Frostbite", context: "Week 15, 2023-24" },
-  { category: "Plus/Minus", abbr: "+/-", record: 10, player: "Nathan MacKinnon", team: "Polar Dynasty", context: "Week 7, 2022-23" },
-  { category: "Goalie Wins", abbr: "W", record: 4, player: "Connor Hellebuyck", team: "Arctic Thunder", context: "Week 3, 2023-24" },
-  { category: "Saves", abbr: "SV", record: 148, player: "Igor Shesterkin", team: "Frozen Elite", context: "Week 12, 2022-23" },
-  { category: "Shutouts", abbr: "SO", record: 3, player: "Andrei Vasilevskiy", team: "Ice Wolves", context: "Week 5, 2021-22" },
-  { category: "Goals Against (fewest)", abbr: "GA", record: 2, player: "Jake Oettinger", team: "Glacier Kings", context: "Week 10, 2023-24" },
-];
-
-const seasonRecords: StatRecord[] = [
-  { category: "Goals", abbr: "G", record: 58, player: "Auston Matthews", team: "Puck Dynasty", context: "2023-24" },
-  { category: "Assists", abbr: "A", record: 82, player: "Connor McDavid", team: "Team Frostbite", context: "2022-23" },
-  { category: "Powerplay Points", abbr: "PPP", record: 48, player: "Nikita Kucherov", team: "Ice Wolves", context: "2023-24" },
-  { category: "Shorthanded Points", abbr: "SHP", record: 12, player: "Brad Marchand", team: "Arctic Thunder", context: "2021-22" },
-  { category: "Game Winning Goals", abbr: "GWG", record: 14, player: "Leon Draisaitl", team: "Glacier Kings", context: "2023-24" },
-  { category: "Shots on Goal", abbr: "SOG", record: 348, player: "Alex Ovechkin", team: "Blizzard Force", context: "2020-21" },
-  { category: "Hits", abbr: "HIT", record: 312, player: "Tom Wilson", team: "Tundra Titans", context: "2022-23" },
-  { category: "Blocked Shots", abbr: "BLK", record: 198, player: "Cale Makar", team: "Team Frostbite", context: "2023-24" },
-  { category: "Plus/Minus", abbr: "+/-", record: 42, player: "Nathan MacKinnon", team: "Polar Dynasty", context: "2022-23" },
-  { category: "Goalie Wins", abbr: "W", record: 38, player: "Connor Hellebuyck", team: "Arctic Thunder", context: "2023-24" },
-  { category: "Saves", abbr: "SV", record: 1842, player: "Igor Shesterkin", team: "Frozen Elite", context: "2022-23" },
-  { category: "Shutouts", abbr: "SO", record: 9, player: "Andrei Vasilevskiy", team: "Ice Wolves", context: "2021-22" },
-  { category: "Goals Against (fewest)", abbr: "GA", record: 98, player: "Jake Oettinger", team: "Glacier Kings", context: "2023-24" },
-];
-
-const hallOfFameSkaters = [
-  { rank: 1, player: "Connor McDavid", position: "C", totalPoints: 2840, seasons: 5, avgPPG: 8.2, bestSeason: 612 },
-  { rank: 2, player: "Nathan MacKinnon", position: "C", totalPoints: 2680, seasons: 6, avgPPG: 7.8, bestSeason: 589 },
-  { rank: 3, player: "Leon Draisaitl", position: "C", totalPoints: 2590, seasons: 5, avgPPG: 7.5, bestSeason: 578 },
-  { rank: 4, player: "Nikita Kucherov", position: "RW", totalPoints: 2410, seasons: 6, avgPPG: 7.0, bestSeason: 542 },
-  { rank: 5, player: "Auston Matthews", position: "C", totalPoints: 2380, seasons: 5, avgPPG: 6.9, bestSeason: 534 },
-  { rank: 6, player: "Cale Makar", position: "D", totalPoints: 2290, seasons: 4, avgPPG: 6.6, bestSeason: 521 },
-  { rank: 7, player: "David Pastrnak", position: "RW", totalPoints: 2180, seasons: 5, avgPPG: 6.3, bestSeason: 498 },
-  { rank: 8, player: "Artemi Panarin", position: "LW", totalPoints: 2090, seasons: 6, avgPPG: 6.1, bestSeason: 476 },
-  { rank: 9, player: "Mitch Marner", position: "RW", totalPoints: 1980, seasons: 5, avgPPG: 5.7, bestSeason: 445 },
-  { rank: 10, player: "Kirill Kaprizov", position: "LW", totalPoints: 1890, seasons: 4, avgPPG: 5.5, bestSeason: 512 },
-];
-
-interface AwardEntry {
-  season: string;
-  player: string;
-  position: string;
-  team: string;
-  fantasyPoints: number;
-}
-
-interface AwardCategory {
-  name: string;
-  description: string;
-  icon: React.ReactNode;
-  winners: AwardEntry[];
-}
-
-const playerAwards: AwardCategory[] = [
-  {
-    name: "Art Ross Trophy",
-    description: "Season MVP — most fantasy points in the regular season",
-    icon: <Trophy className="h-5 w-5 text-yellow-500" />,
-    winners: [
-      { season: "2025-26", player: "Connor McDavid", position: "C", team: "Team Frostbite", fantasyPoints: 648 },
-      { season: "2024-25", player: "Nathan MacKinnon", position: "C", team: "Polar Dynasty", fantasyPoints: 612 },
-      { season: "2023-24", player: "Connor McDavid", position: "C", team: "Team Frostbite", fantasyPoints: 634 },
-      { season: "2022-23", player: "Connor McDavid", position: "C", team: "Team Frostbite", fantasyPoints: 621 },
-      { season: "2021-22", player: "Leon Draisaitl", position: "C", team: "Glacier Kings", fantasyPoints: 578 },
-      { season: "2020-21", player: "Auston Matthews", position: "C", team: "Arctic Thunder", fantasyPoints: 556 },
-      { season: "2019-20", player: "Leon Draisaitl", position: "C", team: "Glacier Kings", fantasyPoints: 542 },
-      { season: "2018-19", player: "Nikita Kucherov", position: "RW", team: "Ice Wolves", fantasyPoints: 538 },
-    ],
-  },
-  {
-    name: "Conn Smythe Trophy",
-    description: "Playoff MVP — most fantasy points by a player on the championship or runner-up team",
-    icon: <Star className="h-5 w-5 text-primary" />,
-    winners: [
-      { season: "2025-26", player: "Nathan MacKinnon", position: "C", team: "Polar Dynasty", fantasyPoints: 189 },
-      { season: "2024-25", player: "Connor McDavid", position: "C", team: "Team Frostbite", fantasyPoints: 201 },
-      { season: "2023-24", player: "Nikita Kucherov", position: "RW", team: "Ice Wolves", fantasyPoints: 178 },
-      { season: "2022-23", player: "Leon Draisaitl", position: "C", team: "Glacier Kings", fantasyPoints: 184 },
-      { season: "2021-22", player: "Cale Makar", position: "D", team: "Team Frostbite", fantasyPoints: 162 },
-      { season: "2020-21", player: "Andrei Vasilevskiy", position: "G", team: "Ice Wolves", fantasyPoints: 148 },
-      { season: "2019-20", player: "Nathan MacKinnon", position: "C", team: "Polar Dynasty", fantasyPoints: 172 },
-      { season: "2018-19", player: "Ryan O'Reilly", position: "C", team: "Arctic Thunder", fantasyPoints: 145 },
-    ],
-  },
-  {
-    name: "Hart Trophy",
-    description: "Best forward — most fantasy points by a forward (C/LW/RW) for the season",
-    icon: <Award className="h-5 w-5 text-accent" />,
-    winners: [
-      { season: "2025-26", player: "Connor McDavid", position: "C", team: "Team Frostbite", fantasyPoints: 648 },
-      { season: "2024-25", player: "Nathan MacKinnon", position: "C", team: "Polar Dynasty", fantasyPoints: 612 },
-      { season: "2023-24", player: "Nikita Kucherov", position: "RW", team: "Ice Wolves", fantasyPoints: 598 },
-      { season: "2022-23", player: "Connor McDavid", position: "C", team: "Team Frostbite", fantasyPoints: 621 },
-      { season: "2021-22", player: "Auston Matthews", position: "C", team: "Arctic Thunder", fantasyPoints: 534 },
-      { season: "2020-21", player: "Auston Matthews", position: "C", team: "Arctic Thunder", fantasyPoints: 556 },
-      { season: "2019-20", player: "Leon Draisaitl", position: "C", team: "Glacier Kings", fantasyPoints: 542 },
-      { season: "2018-19", player: "Nikita Kucherov", position: "RW", team: "Ice Wolves", fantasyPoints: 538 },
-    ],
-  },
-  {
-    name: "Norris Trophy",
-    description: "Best defenseman — most fantasy points by a defenseman for the season",
-    icon: <Shield className="h-5 w-5 text-green-500" />,
-    winners: [
-      { season: "2025-26", player: "Cale Makar", position: "D", team: "Team Frostbite", fantasyPoints: 478 },
-      { season: "2024-25", player: "Cale Makar", position: "D", team: "Team Frostbite", fantasyPoints: 521 },
-      { season: "2023-24", player: "Quinn Hughes", position: "D", team: "Blizzard Force", fantasyPoints: 462 },
-      { season: "2022-23", player: "Erik Karlsson", position: "D", team: "Snow Storm", fantasyPoints: 489 },
-      { season: "2021-22", player: "Cale Makar", position: "D", team: "Team Frostbite", fantasyPoints: 498 },
-      { season: "2020-21", player: "Adam Fox", position: "D", team: "Frozen Elite", fantasyPoints: 445 },
-      { season: "2019-20", player: "Roman Josi", position: "D", team: "Tundra Titans", fantasyPoints: 432 },
-      { season: "2018-19", player: "Brent Burns", position: "D", team: "Polar Dynasty", fantasyPoints: 418 },
-    ],
-  },
-  {
-    name: "Vezina Trophy",
-    description: "Best goalie — most fantasy points by a goaltender for the season",
-    icon: <Medal className="h-5 w-5 text-destructive" />,
-    winners: [
-      { season: "2025-26", player: "Connor Hellebuyck", position: "G", team: "Arctic Thunder", fantasyPoints: 312 },
-      { season: "2024-25", player: "Igor Shesterkin", position: "G", team: "Frozen Elite", fantasyPoints: 345 },
-      { season: "2023-24", player: "Connor Hellebuyck", position: "G", team: "Arctic Thunder", fantasyPoints: 298 },
-      { season: "2022-23", player: "Linus Ullmark", position: "G", team: "Snow Storm", fantasyPoints: 289 },
-      { season: "2021-22", player: "Igor Shesterkin", position: "G", team: "Frozen Elite", fantasyPoints: 324 },
-      { season: "2020-21", player: "Andrei Vasilevskiy", position: "G", team: "Ice Wolves", fantasyPoints: 298 },
-      { season: "2019-20", player: "Connor Hellebuyck", position: "G", team: "Arctic Thunder", fantasyPoints: 278 },
-      { season: "2018-19", player: "Andrei Vasilevskiy", position: "G", team: "Ice Wolves", fantasyPoints: 265 },
-    ],
-  },
-];
-
-const hallOfFameGoalies = [
-  { rank: 1, player: "Connor Hellebuyck", totalPoints: 1420, seasons: 6, avgPPG: 4.1, bestSeason: 312, wins: 198 },
-  { rank: 2, player: "Igor Shesterkin", totalPoints: 1280, seasons: 4, avgPPG: 3.7, bestSeason: 345, wins: 142 },
-  { rank: 3, player: "Andrei Vasilevskiy", totalPoints: 1190, seasons: 5, avgPPG: 3.4, bestSeason: 298, wins: 168 },
-  { rank: 4, player: "Jake Oettinger", totalPoints: 980, seasons: 3, avgPPG: 2.8, bestSeason: 289, wins: 98 },
-  { rank: 5, player: "Ilya Sorokin", totalPoints: 920, seasons: 4, avgPPG: 2.7, bestSeason: 276, wins: 112 },
-];
-
-const positionOrder = ["C", "LW", "RW", "D", "G"];
-const positionLabels: Record<string, string> = { C: "Center", LW: "Left Wing", RW: "Right Wing", D: "Defense", G: "Goalie" };
-
-const AllStarTeamsSection = () => {
-  const [selectedSeason, setSelectedSeason] = useState(allStarTeams[0].season);
-  const seasonData = allStarTeams.find(s => s.season === selectedSeason) || allStarTeams[0];
-
-  const sortByPosition = (players: typeof seasonData.firstTeam) =>
-    [...players].sort((a, b) => positionOrder.indexOf(a.position) - positionOrder.indexOf(b.position));
-
-  const renderTeam = (label: string, players: typeof seasonData.firstTeam, accent: boolean) => (
-    <Card className="bg-card/50 backdrop-blur border-border/50">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-lg">
-          {accent ? <Star className="h-5 w-5 text-yellow-500" /> : <Star className="h-5 w-5 text-muted-foreground" />}
-          {label}
-        </CardTitle>
-        <CardDescription>Best lineup: 1C · 1LW · 1RW · 2D · 1G</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="grid gap-3">
-          {sortByPosition(players).map((p) => (
-            <div key={p.player} className="flex items-center justify-between p-3 rounded-lg bg-secondary/20 border border-border/50">
-              <div className="flex items-center gap-3">
-                <Badge variant="outline" className="w-10 justify-center text-xs font-bold">{p.position}</Badge>
-                <div>
-                  <p className="font-semibold text-sm">{p.player}</p>
-                  <p className="text-xs text-muted-foreground">{p.team}</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="font-bold text-primary">{p.fantasyPoints.toLocaleString()}</p>
-                <p className="text-[10px] text-muted-foreground">FPTS</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-lg font-semibold">Season All-Star Teams</h3>
-          <p className="text-sm text-muted-foreground">Best performing lineup at each position</p>
-        </div>
-        <Select value={selectedSeason} onValueChange={setSelectedSeason}>
-          <SelectTrigger className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {allStarTeams.map(s => (
-              <SelectItem key={s.season} value={s.season}>{s.season}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <div className="grid md:grid-cols-2 gap-6">
-        {renderTeam("1st Team All-Stars", seasonData.firstTeam, true)}
-        {renderTeam("2nd Team All-Stars", seasonData.secondTeam, false)}
-      </div>
-    </div>
-  );
-};
+import { TrophyRoomView } from "@/lovable/pages/TrophyRoom";
 
 const LeagueHistory = () => {
   const { league, leagueTeams } = useActiveLeague();
+  const [seasons, setSeasons] = useState<any[]>([]);
+  const [trophyData, setTrophyData] = useState<any>(null);
   const [recentChampions, setRecentChampions] = useState<any[]>([]);
   const [consolationWinners, setConsolationWinners] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!league?.id) return;
-    // Live champions = teams with championship_won_at populated
+    setLoading(true);
+    Promise.all([
+      api.get(`/leagues/${league.id}/seasons`).then((r) => r.data?.seasons || []).catch(() => []),
+      api.get(`/leagues/${league.id}/trophy-room`).then((r) => r.data || null).catch(() => null),
+      api.get(`/leagues/${league.id}/team-rewards`)
+        .then(({ data }) => (data?.rewards || []).filter((r: any) => r.source === "consolation_winner"))
+        .catch(() => []),
+    ]).then(([s, t, c]) => {
+      setSeasons(s);
+      setTrophyData(t);
+      setConsolationWinners(c);
+    }).finally(() => setLoading(false));
+  }, [league?.id]);
+
+  // Live champions = teams with championship_won_at populated (in current season)
+  useEffect(() => {
     const champs = (leagueTeams || [])
       .filter((t: any) => t.championship_won_at)
       .sort((a: any, b: any) => new Date(b.championship_won_at).getTime() - new Date(a.championship_won_at).getTime());
     setRecentChampions(champs);
+  }, [leagueTeams]);
 
-    api.get(`/leagues/${league.id}/team-rewards`)
-      .then(({ data }) => {
-        const list = (data?.rewards || []).filter((r: any) => r.source === "consolation_winner");
-        setConsolationWinners(list);
-      })
-      .catch(() => {});
-  }, [league?.id, leagueTeams]);
+  // ─── Lifetime Team Records (computed from snapshots) ───
+  const lifetimeTeamRecords = useMemo(() => {
+    if (!trophyData) return [];
+    const tally: Record<string, any> = {};
+
+    // Pre-seed every team that has appeared in any season snapshot OR currently in league
+    for (const tb of trophyData.team_banners || []) {
+      tally[tb.team_id] = {
+        team_id: tb.team_id,
+        team: tb.team_name,
+        seasons: 0,
+        wins: 0,
+        losses: 0,
+        ties: 0,
+        totalPoints: 0,
+        championships: 0,
+        presidentsTrophies: 0,
+        divisionWins: 0,
+        conferenceWins: 0,
+      };
+    }
+
+    // Walk every season trophy doc
+    for (const s of trophyData.seasons || []) {
+      // Champion
+      if (s.champion?.team_id) {
+        const r = (tally[s.champion.team_id] = tally[s.champion.team_id] || {
+          team_id: s.champion.team_id, team: s.champion.team_name,
+          seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
+          championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
+        });
+        r.championships += 1;
+      }
+      // President's Trophy
+      if (s.presidents_trophy?.team_id) {
+        const r = (tally[s.presidents_trophy.team_id] = tally[s.presidents_trophy.team_id] || {
+          team_id: s.presidents_trophy.team_id, team: s.presidents_trophy.team_name,
+          seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
+          championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
+        });
+        r.presidentsTrophies += 1;
+      }
+      // Division wins
+      for (const d of s.division_winners || []) {
+        const r = (tally[d.team_id] = tally[d.team_id] || {
+          team_id: d.team_id, team: d.team_name,
+          seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
+          championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
+        });
+        r.divisionWins += 1;
+      }
+      // Conference wins
+      for (const c of s.conference_winners || []) {
+        const r = (tally[c.team_id] = tally[c.team_id] || {
+          team_id: c.team_id, team: c.team_name,
+          seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
+          championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
+        });
+        r.conferenceWins += 1;
+      }
+    }
+
+    // Pull W/L/PF from raw seasons snapshots (server returns minimal list, so fetch isn't there;
+    // use teams stored within trophy_room.team_banners as proxy if richer endpoint isn't called).
+    // The raw `/leagues/{id}/seasons` only returns ids — fall back to current league team stats.
+    for (const t of leagueTeams || []) {
+      const r = (tally[t.id] = tally[t.id] || {
+        team_id: t.id, team: t.name,
+        seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
+        championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
+      });
+      r.team = t.name; // freshest name
+      // Live current-season totals (best-effort baseline)
+      r.wins += t.wins || 0;
+      r.losses += t.losses || 0;
+      r.ties += t.ties || 0;
+      r.totalPoints += t.points_for || 0;
+      if (r.seasons === 0) r.seasons = 1;
+    }
+
+    // Each historical season the team appeared in adds 1 to seasons count
+    for (const s of trophyData.seasons || []) {
+      // Use champion + presidents + division/conference + consolation team_ids as members
+      const members = new Set<string>([
+        ...(s.champion ? [s.champion.team_id] : []),
+        ...(s.presidents_trophy ? [s.presidents_trophy.team_id] : []),
+        ...(s.division_winners || []).map((x: any) => x.team_id),
+        ...(s.conference_winners || []).map((x: any) => x.team_id),
+        ...(s.consolation_winner ? [s.consolation_winner.team_id] : []),
+      ]);
+      for (const tid of members) {
+        if (!tid) continue;
+        const r = tally[tid];
+        if (r) r.seasons = (r.seasons || 0) + 1;
+      }
+    }
+
+    const arr = Object.values(tally).map((r: any) => {
+      const total = (r.wins || 0) + (r.losses || 0);
+      const winPct = total > 0 ? (r.wins / total).toFixed(3).replace(/^0/, "") : ".000";
+      return { ...r, winPct };
+    });
+    arr.sort((a: any, b: any) => (b.championships - a.championships) || (b.wins - a.wins) || (b.totalPoints - a.totalPoints));
+    return arr.map((r: any, i: number) => ({ ...r, rank: i + 1 }));
+  }, [trophyData, leagueTeams]);
+
+  // ─── League Records (computed from snapshots + live team data) ───
+  const leagueRecords = useMemo(() => {
+    if (!trophyData || !lifetimeTeamRecords.length) return null;
+    const seasonsList = trophyData.seasons || [];
+    // Highest season points → from each season's president's trophy team (highest PF that year)
+    let highest = { team: "—", value: 0, season: "—" };
+    for (const s of seasonsList) {
+      const pf = s.presidents_trophy?.points_for || 0;
+      if (pf > highest.value) {
+        highest = { team: s.presidents_trophy?.team_name || "—", value: pf, season: String(s.season_year) };
+      }
+    }
+    // Most championships
+    const champLeader = lifetimeTeamRecords[0];
+    const champSeasons = seasonsList
+      .filter((s: any) => s.champion?.team_id === champLeader?.team_id)
+      .map((s: any) => String(s.season_year));
+    return {
+      highestSeasonPoints: highest,
+      mostChampionships: {
+        team: champLeader?.team || "—",
+        value: champLeader?.championships || 0,
+        seasons: champSeasons,
+      },
+      totalSeasons: seasonsList.length,
+    };
+  }, [trophyData, lifetimeTeamRecords]);
+
+  // ─── Player Awards (per-trophy winners across seasons) ───
+  const playerAwards = useMemo(() => {
+    if (!trophyData) return [];
+    const buckets: Record<string, { name: string; description: string; winners: any[] }> = {
+      "Season MVP": {
+        name: "Season MVP — Hart Trophy",
+        description: "Most fantasy points by a skater across the regular season",
+        winners: [],
+      },
+      "Best Goalie": {
+        name: "Best Goalie — Vezina Trophy",
+        description: "Most fantasy points by a goaltender",
+        winners: [],
+      },
+      "Best Defenseman": {
+        name: "Best Defenseman — Norris Trophy",
+        description: "Most fantasy points by a defenseman",
+        winners: [],
+      },
+    };
+    for (const s of trophyData.seasons || []) {
+      for (const key of ["season_mvp", "best_goalie", "best_defenseman"] as const) {
+        const t = s[key];
+        if (!t) continue;
+        const bucket = buckets[t.label];
+        if (!bucket) continue;
+        bucket.winners.push({
+          season: String(s.season_year),
+          player: t.player_name,
+          position: t.position,
+          team: t.owner_team_name || "—",
+          fantasyPoints: t.points || 0,
+        });
+      }
+    }
+    return Object.values(buckets).filter((b) => b.winners.length > 0);
+  }, [trophyData]);
 
   return (
     <AppLayout>
-      <div className="container py-8">
+      <div className="container py-8" data-testid="league-history-page">
         <div className="mb-8 animate-fade-in">
           <h1 className="text-3xl font-bold mb-2 flex items-center gap-3">
             <Trophy className="h-8 w-8 text-primary" />
             League History
           </h1>
-          <p className="text-muted-foreground">
-            Celebrating 8 seasons of dynasty hockey excellence
+          <p className="text-muted-foreground" data-testid="league-history-subtitle">
+            {leagueRecords?.totalSeasons
+              ? `Celebrating ${leagueRecords.totalSeasons} season${leagueRecords.totalSeasons === 1 ? "" : "s"} of ${league?.name || "dynasty"} hockey`
+              : "Records will appear here after the first season is completed"}
           </p>
         </div>
 
@@ -325,7 +262,12 @@ const LeagueHistory = () => {
                         >
                           <Trophy className="h-4 w-4 text-yellow-500 shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold truncate">{t.name}</p>
+                            <Link
+                              to={`/trophy-room/team/${t.id}`}
+                              className="text-sm font-semibold truncate hover:text-amber-300"
+                            >
+                              {t.name}
+                            </Link>
                             <p className="text-[10px] text-muted-foreground">
                               {new Date(t.championship_won_at).toLocaleDateString()} · {t.owner_name || ""}
                             </p>
@@ -366,30 +308,22 @@ const LeagueHistory = () => {
               </CardContent>
             </Card>
           )}
-          <TabsList className="grid w-full grid-cols-6 lg:w-auto lg:inline-grid">
-            <TabsTrigger value="lifetime" className="flex items-center gap-2">
+          <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
+            <TabsTrigger value="lifetime" className="flex items-center gap-2" data-testid="league-history-tab-lifetime">
               <Users className="h-4 w-4" />
               Lifetime Records
             </TabsTrigger>
-            <TabsTrigger value="records" className="flex items-center gap-2">
+            <TabsTrigger value="records" className="flex items-center gap-2" data-testid="league-history-tab-records">
               <Target className="h-4 w-4" />
               League Records
             </TabsTrigger>
-            <TabsTrigger value="statrecords" className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4" />
-              Stat Records
-            </TabsTrigger>
-            <TabsTrigger value="awards" className="flex items-center gap-2">
+            <TabsTrigger value="awards" className="flex items-center gap-2" data-testid="league-history-tab-awards">
               <Award className="h-4 w-4" />
               Player Awards
             </TabsTrigger>
-            <TabsTrigger value="allstars" className="flex items-center gap-2">
-              <Stars className="h-4 w-4" />
-              All-Star Teams
-            </TabsTrigger>
-            <TabsTrigger value="halloffame" className="flex items-center gap-2">
+            <TabsTrigger value="trophyroom" className="flex items-center gap-2" data-testid="league-history-tab-trophy-room">
               <Crown className="h-4 w-4" />
-              Hall of Fame
+              Trophy Room
             </TabsTrigger>
           </TabsList>
 
@@ -402,450 +336,241 @@ const LeagueHistory = () => {
                   All-Time Team Standings
                 </CardTitle>
                 <CardDescription>
-                  Lifetime performance records for all franchise owners
+                  Lifetime performance records aggregated from completed seasons
                 </CardDescription>
               </CardHeader>
               <CardContent>
-              <div className="flex flex-wrap gap-4 mb-4 text-sm text-muted-foreground">
-                <span className="flex items-center gap-1">🏆 Championship</span>
-                <span className="flex items-center gap-1">🏅 President's Trophy</span>
-                <span className="flex items-center gap-1">🥇 Division Win</span>
-              </div>
-              <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-12">Rank</TableHead>
-                      <TableHead>Team</TableHead>
-                      <TableHead className="text-center">Seasons</TableHead>
-                      <TableHead className="text-center">W</TableHead>
-                      <TableHead className="text-center">L</TableHead>
-                      <TableHead className="text-center">Win %</TableHead>
-                      <TableHead className="text-right">Total Pts</TableHead>
-                      <TableHead className="text-center">🏆</TableHead>
-                      <TableHead className="text-center" title="President's Trophy">🏅</TableHead>
-                      <TableHead className="text-center" title="Division Wins">🥇</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {lifetimeTeamRecords.map((team) => (
-                      <TableRow key={team.rank} className={team.rank <= 3 ? "bg-primary/5" : ""}>
-                        <TableCell>
-                          {team.rank <= 3 ? (
-                            <Badge variant={team.rank === 1 ? "default" : "secondary"} className={
-                              team.rank === 1 ? "bg-yellow-500/20 text-yellow-500" :
-                              team.rank === 2 ? "bg-gray-400/20 text-gray-400" :
-                              "bg-amber-600/20 text-amber-600"
-                            }>
-                              #{team.rank}
-                            </Badge>
-                          ) : (
-                            <span className="text-muted-foreground">#{team.rank}</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="font-medium">{team.team}</TableCell>
-                        <TableCell className="text-center">{team.seasons}</TableCell>
-                        <TableCell className="text-center text-green-500">{team.wins}</TableCell>
-                        <TableCell className="text-center text-red-500">{team.losses}</TableCell>
-                        <TableCell className="text-center">{team.winPct}</TableCell>
-                        <TableCell className="text-right font-semibold">{team.totalPoints.toLocaleString()}</TableCell>
-                        <TableCell className="text-center">
-                          {team.championships > 0 ? (
-                            <span className="text-yellow-500">{"🏆".repeat(team.championships)}</span>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {team.presidentsTrophies > 0 ? (
-                            <span>{"🏅".repeat(team.presidentsTrophies)}</span>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-center">
-                          {team.divisionWins > 0 ? (
-                            <span>{"🥇".repeat(team.divisionWins)}</span>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
+                <div className="flex flex-wrap gap-4 mb-4 text-sm text-muted-foreground">
+                  <span className="flex items-center gap-1">🏆 Championship</span>
+                  <span className="flex items-center gap-1">🏅 President's Trophy</span>
+                  <span className="flex items-center gap-1">🥇 Division Win</span>
+                  <span className="flex items-center gap-1">🎯 Conference Win</span>
+                </div>
+                {loading ? (
+                  <p className="text-center text-muted-foreground py-8">Loading…</p>
+                ) : lifetimeTeamRecords.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8" data-testid="lifetime-records-empty">
+                    No team records yet — complete a season to see lifetime stats here.
+                  </p>
+                ) : (
+                  <Table data-testid="lifetime-records-table">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-12">Rank</TableHead>
+                        <TableHead>Team</TableHead>
+                        <TableHead className="text-center">Seasons</TableHead>
+                        <TableHead className="text-center">W</TableHead>
+                        <TableHead className="text-center">L</TableHead>
+                        <TableHead className="text-center">Win %</TableHead>
+                        <TableHead className="text-right">Total Pts</TableHead>
+                        <TableHead className="text-center" title="Championships">🏆</TableHead>
+                        <TableHead className="text-center" title="President's Trophy">🏅</TableHead>
+                        <TableHead className="text-center" title="Division Wins">🥇</TableHead>
+                        <TableHead className="text-center" title="Conference Wins">🎯</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                    </TableHeader>
+                    <TableBody>
+                      {lifetimeTeamRecords.map((team: any) => (
+                        <TableRow
+                          key={team.team_id}
+                          className={team.rank <= 3 ? "bg-primary/5" : ""}
+                          data-testid={`lifetime-row-${team.team_id}`}
+                        >
+                          <TableCell>
+                            {team.rank <= 3 ? (
+                              <Badge variant={team.rank === 1 ? "default" : "secondary"} className={
+                                team.rank === 1 ? "bg-yellow-500/20 text-yellow-500" :
+                                team.rank === 2 ? "bg-gray-400/20 text-gray-400" :
+                                "bg-amber-600/20 text-amber-600"
+                              }>
+                                #{team.rank}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">#{team.rank}</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            <Link
+                              to={`/trophy-room/team/${team.team_id}`}
+                              className="hover:text-primary"
+                              data-testid={`lifetime-team-link-${team.team_id}`}
+                            >
+                              {team.team}
+                            </Link>
+                          </TableCell>
+                          <TableCell className="text-center">{team.seasons}</TableCell>
+                          <TableCell className="text-center text-green-500">{team.wins}</TableCell>
+                          <TableCell className="text-center text-red-500">{team.losses}</TableCell>
+                          <TableCell className="text-center">{team.winPct}</TableCell>
+                          <TableCell className="text-right font-semibold">{(team.totalPoints || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}</TableCell>
+                          <TableCell className="text-center">
+                            {team.championships > 0
+                              ? <span className="text-yellow-500">{"🏆".repeat(team.championships)}</span>
+                              : <span className="text-muted-foreground">-</span>}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {team.presidentsTrophies > 0
+                              ? <span>{"🏅".repeat(team.presidentsTrophies)}</span>
+                              : <span className="text-muted-foreground">-</span>}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {team.divisionWins > 0
+                              ? <span>{"🥇".repeat(team.divisionWins)}</span>
+                              : <span className="text-muted-foreground">-</span>}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {team.conferenceWins > 0
+                              ? <span>{"🎯".repeat(team.conferenceWins)}</span>
+                              : <span className="text-muted-foreground">-</span>}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
 
           {/* League Records Tab */}
           <TabsContent value="records" className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {!leagueRecords ? (
               <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4 text-green-500" />
-                    Highest Season Points
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-green-500">{leagueRecords.highestSeasonPoints.value.toLocaleString()}</div>
-                  <p className="text-sm text-muted-foreground">{leagueRecords.highestSeasonPoints.team}</p>
-                  <Badge variant="outline" className="mt-2">{leagueRecords.highestSeasonPoints.season}</Badge>
+                <CardContent className="p-8 text-center text-muted-foreground" data-testid="league-records-empty">
+                  No completed seasons yet — records appear here after the first season snapshot.
                 </CardContent>
               </Card>
+            ) : (
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <TrendingUp className="h-4 w-4 text-green-500" />
+                      Highest Season Points
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-green-500" data-testid="record-highest-pts-value">
+                      {leagueRecords.highestSeasonPoints.value.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+                    </div>
+                    <p className="text-sm text-muted-foreground">{leagueRecords.highestSeasonPoints.team}</p>
+                    <Badge variant="outline" className="mt-2">{leagueRecords.highestSeasonPoints.season}</Badge>
+                  </CardContent>
+                </Card>
 
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <TrendingDown className="h-4 w-4 text-red-500" />
-                    Lowest Season Points
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-red-500">{leagueRecords.lowestSeasonPoints.value.toLocaleString()}</div>
-                  <p className="text-sm text-muted-foreground">{leagueRecords.lowestSeasonPoints.team}</p>
-                  <Badge variant="outline" className="mt-2">{leagueRecords.lowestSeasonPoints.season}</Badge>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <Trophy className="h-4 w-4 text-yellow-500" />
-                    Most Championships
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-yellow-500">{leagueRecords.mostChampionships.value}</div>
-                  <p className="text-sm text-muted-foreground">{leagueRecords.mostChampionships.team}</p>
-                  <div className="flex flex-wrap gap-1 mt-2">
-                    {leagueRecords.mostChampionships.seasons.map((s) => (
-                      <Badge key={s} variant="outline" className="text-xs">{s}</Badge>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <Award className="h-4 w-4 text-green-500" />
-                    Best Season Record
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-green-500">{leagueRecords.bestWinLossRecord.value}</div>
-                  <p className="text-sm text-muted-foreground">{leagueRecords.bestWinLossRecord.team}</p>
-                  <Badge variant="outline" className="mt-2">{leagueRecords.bestWinLossRecord.season}</Badge>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <TrendingDown className="h-4 w-4 text-red-500" />
-                    Worst Season Record
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-red-500">{leagueRecords.worstWinLossRecord.value}</div>
-                  <p className="text-sm text-muted-foreground">{leagueRecords.worstWinLossRecord.team}</p>
-                  <Badge variant="outline" className="mt-2">{leagueRecords.worstWinLossRecord.season}</Badge>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <Target className="h-4 w-4 text-primary" />
-                    Longest Win Streak
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-primary">{leagueRecords.longestWinStreak.value} games</div>
-                  <p className="text-sm text-muted-foreground">{leagueRecords.longestWinStreak.team}</p>
-                  <Badge variant="outline" className="mt-2">{leagueRecords.longestWinStreak.season}</Badge>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card/50 backdrop-blur border-border/50 md:col-span-2 lg:col-span-3">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium flex items-center gap-2">
-                    <TrendingUp className="h-4 w-4 text-primary" />
-                    Highest Single Week Score
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-primary">{leagueRecords.highestSingleWeek.value} pts</div>
-                  <p className="text-sm text-muted-foreground">{leagueRecords.highestSingleWeek.team}</p>
-                  <Badge variant="outline" className="mt-2">{leagueRecords.highestSingleWeek.week}</Badge>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* Stat Records Tab */}
-          <TabsContent value="statrecords" className="space-y-6">
-            <div className="grid gap-6 lg:grid-cols-2">
-              {/* Weekly Matchup Records */}
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Calendar className="h-5 w-5 text-primary" />
-                    Weekly Matchup Records
-                  </CardTitle>
-                  <CardDescription>
-                    Single-week record performances by scoring category
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Category</TableHead>
-                        <TableHead className="text-right">Record</TableHead>
-                        <TableHead>Player</TableHead>
-                        <TableHead className="hidden md:table-cell">Team</TableHead>
-                        <TableHead className="hidden sm:table-cell text-right">When</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {weeklyMatchupRecords.map((rec) => (
-                        <TableRow key={rec.abbr}>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline" className="font-mono text-xs">{rec.abbr}</Badge>
-                              <span className="text-xs text-muted-foreground hidden lg:inline">{rec.category}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right font-bold text-primary">{rec.record.toLocaleString()}</TableCell>
-                          <TableCell className="font-medium">{rec.player}</TableCell>
-                          <TableCell className="hidden md:table-cell text-muted-foreground text-sm">{rec.team}</TableCell>
-                          <TableCell className="hidden sm:table-cell text-right">
-                            <Badge variant="outline" className="text-xs">{rec.context}</Badge>
-                          </TableCell>
-                        </TableRow>
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <Trophy className="h-4 w-4 text-yellow-500" />
+                      Most Championships
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-yellow-500" data-testid="record-most-champs-value">
+                      {leagueRecords.mostChampionships.value}
+                    </div>
+                    <p className="text-sm text-muted-foreground">{leagueRecords.mostChampionships.team}</p>
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {leagueRecords.mostChampionships.seasons.map((s: string) => (
+                        <Badge key={s} variant="outline" className="text-xs">{s}</Badge>
                       ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
+                    </div>
+                  </CardContent>
+                </Card>
 
-              {/* Season Records */}
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <BarChart3 className="h-5 w-5 text-accent" />
-                    Season Records
-                  </CardTitle>
-                  <CardDescription>
-                    Full-season record totals by scoring category
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Category</TableHead>
-                        <TableHead className="text-right">Record</TableHead>
-                        <TableHead>Player</TableHead>
-                        <TableHead className="hidden md:table-cell">Team</TableHead>
-                        <TableHead className="hidden sm:table-cell text-right">Season</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {seasonRecords.map((rec) => (
-                        <TableRow key={rec.abbr}>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline" className="font-mono text-xs">{rec.abbr}</Badge>
-                              <span className="text-xs text-muted-foreground hidden lg:inline">{rec.category}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right font-bold text-accent">{rec.record.toLocaleString()}</TableCell>
-                          <TableCell className="font-medium">{rec.player}</TableCell>
-                          <TableCell className="hidden md:table-cell text-muted-foreground text-sm">{rec.team}</TableCell>
-                          <TableCell className="hidden sm:table-cell text-right">
-                            <Badge variant="outline" className="text-xs">{rec.context}</Badge>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* Hall of Fame Tab */}
-          <TabsContent value="halloffame" className="space-y-6">
-            <div className="grid gap-6 lg:grid-cols-2">
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Crown className="h-5 w-5 text-yellow-500" />
-                    Skaters - All-Time Point Production
-                  </CardTitle>
-                  <CardDescription>
-                    Top 10 skaters by lifetime fantasy points
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-12">#</TableHead>
-                        <TableHead>Player</TableHead>
-                        <TableHead className="text-center">Pos</TableHead>
-                        <TableHead className="text-right">Total Pts</TableHead>
-                        <TableHead className="text-right">Best Szn</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {hallOfFameSkaters.map((player) => (
-                        <TableRow key={player.rank} className={player.rank <= 3 ? "bg-primary/5" : ""}>
-                          <TableCell>
-                            {player.rank <= 3 ? (
-                              <span className={
-                                player.rank === 1 ? "text-yellow-500 font-bold" :
-                                player.rank === 2 ? "text-gray-400 font-bold" :
-                                "text-amber-600 font-bold"
-                              }>
-                                {player.rank === 1 ? "🥇" : player.rank === 2 ? "🥈" : "🥉"}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground">{player.rank}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="font-medium">{player.player}</TableCell>
-                          <TableCell className="text-center">
-                            <Badge variant="outline">{player.position}</Badge>
-                          </TableCell>
-                          <TableCell className="text-right font-semibold">{player.totalPoints.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-muted-foreground">{player.bestSeason}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-
-              <Card className="bg-card/50 backdrop-blur border-border/50">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Crown className="h-5 w-5 text-yellow-500" />
-                    Goalies - All-Time Point Production
-                  </CardTitle>
-                  <CardDescription>
-                    Top 5 goalies by lifetime fantasy points
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-12">#</TableHead>
-                        <TableHead>Player</TableHead>
-                        <TableHead className="text-right">Total Pts</TableHead>
-                        <TableHead className="text-right">Wins</TableHead>
-                        <TableHead className="text-right">Best Szn</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {hallOfFameGoalies.map((player) => (
-                        <TableRow key={player.rank} className={player.rank <= 3 ? "bg-primary/5" : ""}>
-                          <TableCell>
-                            {player.rank <= 3 ? (
-                              <span className={
-                                player.rank === 1 ? "text-yellow-500 font-bold" :
-                                player.rank === 2 ? "text-gray-400 font-bold" :
-                                "text-amber-600 font-bold"
-                              }>
-                                {player.rank === 1 ? "🥇" : player.rank === 2 ? "🥈" : "🥉"}
-                              </span>
-                            ) : (
-                              <span className="text-muted-foreground">{player.rank}</span>
-                            )}
-                          </TableCell>
-                          <TableCell className="font-medium">{player.player}</TableCell>
-                          <TableCell className="text-right font-semibold">{player.totalPoints.toLocaleString()}</TableCell>
-                          <TableCell className="text-right text-green-500">{player.wins}</TableCell>
-                          <TableCell className="text-right text-muted-foreground">{player.bestSeason}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          {/* All-Star Teams Tab */}
-          <TabsContent value="allstars" className="space-y-6">
-            <AllStarTeamsSection />
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm font-medium flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-primary" />
+                      Total Seasons Played
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-primary" data-testid="record-total-seasons-value">
+                      {leagueRecords.totalSeasons}
+                    </div>
+                    <p className="text-sm text-muted-foreground">Completed dynasty seasons</p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
           </TabsContent>
 
           {/* Player Awards Tab */}
           <TabsContent value="awards" className="space-y-6">
             <div className="grid gap-6">
-              {playerAwards.map((award) => {
-                const mostWins = award.winners.reduce<Record<string, number>>((acc, w) => {
-                  acc[w.player] = (acc[w.player] || 0) + 1;
-                  return acc;
-                }, {});
-                const topWinner = Object.entries(mostWins).sort((a, b) => b[1] - a[1])[0];
-
-                return (
-                  <Card key={award.name} className="bg-card/50 backdrop-blur border-border/50">
-                    <CardHeader>
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <CardTitle className="flex items-center gap-2">
-                            {award.icon}
-                            {award.name}
-                          </CardTitle>
-                          <CardDescription>{award.description}</CardDescription>
+              {playerAwards.length === 0 ? (
+                <Card className="bg-card/50 backdrop-blur border-border/50">
+                  <CardContent className="p-8 text-center text-muted-foreground" data-testid="player-awards-empty">
+                    No player awards yet — they're auto-computed at season completion.
+                  </CardContent>
+                </Card>
+              ) : (
+                playerAwards.map((award: any) => {
+                  const mostWins = award.winners.reduce<Record<string, number>>((acc: any, w: any) => {
+                    acc[w.player] = (acc[w.player] || 0) + 1;
+                    return acc;
+                  }, {});
+                  const topWinner = Object.entries(mostWins).sort((a: any, b: any) => b[1] - a[1])[0];
+                  return (
+                    <Card key={award.name} className="bg-card/50 backdrop-blur border-border/50" data-testid={`player-award-${award.name.replace(/\s+/g, "-").toLowerCase()}`}>
+                      <CardHeader>
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <CardTitle className="flex items-center gap-2">
+                              <Award className="h-5 w-5 text-amber-400" />
+                              {award.name}
+                            </CardTitle>
+                            <CardDescription>{award.description}</CardDescription>
+                          </div>
+                          {topWinner && topWinner[1] > 1 && (
+                            <Badge variant="outline" className="shrink-0 border-primary/30 text-primary">
+                              {topWinner[0]} — {topWinner[1]}× winner
+                            </Badge>
+                          )}
                         </div>
-                        {topWinner && topWinner[1] > 1 && (
-                          <Badge variant="outline" className="shrink-0 border-primary/30 text-primary">
-                            {topWinner[0]} — {topWinner[1]}x winner
-                          </Badge>
-                        )}
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Season</TableHead>
-                            <TableHead>Player</TableHead>
-                            <TableHead className="text-center">Pos</TableHead>
-                            <TableHead>Fantasy Team</TableHead>
-                            <TableHead className="text-right">Fantasy Points</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {award.winners.map((w, i) => (
-                            <TableRow key={w.season} className={i === 0 ? "bg-primary/5" : ""}>
-                              <TableCell>
-                                <Badge variant={i === 0 ? "default" : "outline"} className={i === 0 ? "bg-primary/20 text-primary" : ""}>
-                                  {w.season}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="font-medium">{w.player}</TableCell>
-                              <TableCell className="text-center">
-                                <Badge variant="outline">{w.position}</Badge>
-                              </TableCell>
-                              <TableCell className="text-muted-foreground">{w.team}</TableCell>
-                              <TableCell className="text-right font-semibold">{w.fantasyPoints.toLocaleString()}</TableCell>
+                      </CardHeader>
+                      <CardContent>
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Season</TableHead>
+                              <TableHead>Player</TableHead>
+                              <TableHead className="text-center">Pos</TableHead>
+                              <TableHead>Fantasy Team</TableHead>
+                              <TableHead className="text-right">FPTS</TableHead>
                             </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </CardContent>
-                  </Card>
-                );
-              })}
+                          </TableHeader>
+                          <TableBody>
+                            {award.winners.map((w: any, i: number) => (
+                              <TableRow key={`${w.season}-${w.player}`} className={i === 0 ? "bg-primary/5" : ""}>
+                                <TableCell>
+                                  <Badge variant={i === 0 ? "default" : "outline"} className={i === 0 ? "bg-primary/20 text-primary" : ""}>
+                                    {w.season}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="font-medium">{w.player}</TableCell>
+                                <TableCell className="text-center">
+                                  <Badge variant="outline">{w.position}</Badge>
+                                </TableCell>
+                                <TableCell className="text-muted-foreground">{w.team}</TableCell>
+                                <TableCell className="text-right font-semibold">{(w.fantasyPoints || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </CardContent>
+                    </Card>
+                  );
+                })
+              )}
+            </div>
+          </TabsContent>
+
+          {/* Trophy Room Tab */}
+          <TabsContent value="trophyroom" className="space-y-6">
+            <div data-testid="league-history-trophy-room">
+              <TrophyRoomView leagueId={league?.id} leagueName={league?.name} embedded />
             </div>
           </TabsContent>
         </Tabs>

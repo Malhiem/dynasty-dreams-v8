@@ -1,6 +1,7 @@
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "./AppSidebar";
-import { Search, Settings } from "lucide-react";
+import { Search, Settings, Users as UsersIcon } from "lucide-react";
+import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,9 +9,11 @@ import { NotificationsPanel } from "@/components/NotificationsPanel";
 import { useGlobalSocketEvent } from "@/hooks/use-global-socket";
 import { toast } from "sonner";
 import GlobalTradeBuilder from "@/lovable/components/trade/GlobalTradeBuilder";
+import TeamSettingsModal from "@/lovable/components/TeamSettingsModal";
 
 export function AppLayout({ children, onSettingsClick }) {
   const { user } = useAuth();
+  const [teamSettingsOpen, setTeamSettingsOpen] = useState(false);
 
   // Real-time championship / consolation toasts (app-wide)
   useGlobalSocketEvent("championship_crowned", (payload) => {
@@ -47,6 +50,21 @@ export function AppLayout({ children, onSettingsClick }) {
             </div>
             <div className="flex items-center gap-3">
               <NotificationsPanel />
+              {/* Team Settings cog — always visible to logged-in users with a team.
+                  Opens a modal letting users edit team name, abbreviation
+                  (max 3 chars), and logo (URL or file upload). */}
+              {user && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setTeamSettingsOpen(true)}
+                  data-testid="team-settings-cog"
+                  title="Team settings"
+                  className="text-[#A1A1AA] hover:text-white hover:bg-white/5 h-9 w-9"
+                >
+                  <UsersIcon className="h-5 w-5" />
+                </Button>
+              )}
               {/* Page-level "Customize" cog — rendered only when the
                   hosting page wires up an onSettingsClick handler (e.g.
                   League Home → DashboardSettingsModal). Placed next to
@@ -83,6 +101,8 @@ export function AppLayout({ children, onSettingsClick }) {
       </div>
       {/* Persistent floating Trade Builder — survives route changes */}
       <GlobalTradeBuilder />
+      {/* Team Settings modal */}
+      <TeamSettingsModal open={teamSettingsOpen} onOpenChange={setTeamSettingsOpen} />
     </SidebarProvider>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ArrowLeft, User, Trophy, Target, TrendingUp, Shield, Zap, Clock, Newspaper, ExternalLink, Globe, ArrowRightLeft, Home as HomeIcon } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend } from "recharts";
 import { cn } from "@/lib/utils";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
@@ -65,6 +66,113 @@ function StatCard({ icon: Icon, label, value, color }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+const CHART_LINE_CONFIG_SKATER = [
+  { key: "fpts", label: "Fantasy Pts", color: "#00D2FF" },
+  { key: "goals", label: "Goals", color: "#FFB020" },
+  { key: "assists", label: "Assists", color: "#34D399" },
+];
+const CHART_LINE_CONFIG_GOALIE = [
+  { key: "fpts", label: "Fantasy Pts", color: "#00D2FF" },
+  { key: "wins", label: "Wins", color: "#34D399" },
+  { key: "saves", label: "Saves", color: "#FFB020" },
+];
+
+function DynastyCareerChart({ history }) {
+  // Detect if any season had goalie stats — use that to choose lines
+  const isGoalie = history.some(
+    (h) => (h.season_stats?.wins ?? 0) > 0 || (h.season_stats?.saves ?? 0) > 0,
+  );
+  const config = isGoalie ? CHART_LINE_CONFIG_GOALIE : CHART_LINE_CONFIG_SKATER;
+  const [visible, setVisible] = useState(() =>
+    Object.fromEntries(config.map((c) => [c.key, true])),
+  );
+  const toggle = (k) => setVisible((v) => ({ ...v, [k]: !v[k] }));
+
+  // Sort earliest → latest for the chart
+  const data = useMemo(
+    () =>
+      [...history]
+        .reverse()
+        .map((h) => ({
+          year: String(h.season_year),
+          fpts: h.fantasy_points || 0,
+          goals: h.season_stats?.goals || 0,
+          assists: h.season_stats?.assists || 0,
+          wins: h.season_stats?.wins || 0,
+          saves: h.season_stats?.saves || 0,
+        })),
+    [history],
+  );
+
+  if (data.length === 0) return null;
+
+  return (
+    <div data-testid="player-career-graph" className="rounded-md border border-white/10 bg-white/[0.02] p-3 mb-4">
+      <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <p className="text-xs uppercase tracking-wider text-[#A1A1AA]">
+          Dynasty Career Trend
+        </p>
+        <div className="flex items-center gap-1 flex-wrap" data-testid="player-career-graph-toggles">
+          {config.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              onClick={() => toggle(c.key)}
+              data-testid={`career-graph-toggle-${c.key}`}
+              className={cn(
+                "px-2 py-0.5 rounded-full text-[11px] border transition",
+                visible[c.key]
+                  ? "border-white/30 text-white"
+                  : "border-white/10 text-[#52525B] line-through",
+              )}
+              style={{
+                background: visible[c.key] ? `${c.color}15` : "transparent",
+                borderColor: visible[c.key] ? c.color : undefined,
+              }}
+            >
+              <span
+                className="inline-block w-2 h-2 rounded-full mr-1.5"
+                style={{ backgroundColor: visible[c.key] ? c.color : "#52525B" }}
+              />
+              {c.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div style={{ width: "100%", height: 200 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+            <XAxis dataKey="year" stroke="#A1A1AA" fontSize={11} />
+            <YAxis stroke="#A1A1AA" fontSize={11} />
+            <Tooltip
+              contentStyle={{ backgroundColor: "#141414", border: "1px solid #27272a", borderRadius: 6 }}
+              labelStyle={{ color: "#fff" }}
+            />
+            <Legend wrapperStyle={{ display: "none" }} />
+            {config.map(
+              (c) =>
+                visible[c.key] && (
+                  <Line
+                    key={c.key}
+                    type="monotone"
+                    dataKey={c.key}
+                    name={c.label}
+                    stroke={c.color}
+                    strokeWidth={2}
+                    dot={{ r: 3, fill: c.color }}
+                    activeDot={{ r: 5 }}
+                    isAnimationActive={false}
+                  />
+                ),
+            )}
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
   );
 }
 
@@ -562,6 +670,7 @@ export default function PlayerDetailPage() {
                         <p className="text-2xl font-bold text-emerald-200">{dynastyCareer.totals?.championships || 0}</p>
                       </div>
                     </div>
+                    <DynastyCareerChart history={dynastyCareer.history} />
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead className="text-[#A1A1AA] text-xs uppercase tracking-wider">

@@ -140,8 +140,26 @@ const HallPlaque = ({ legend }: { legend: any }) => {
 
 export default function TrophyRoom() {
   const { teamId } = useParams<{ teamId?: string }>();
-  const navigate = useNavigate();
   const { league: activeLeague } = useActiveLeague();
+  return (
+    <AppLayout>
+      <TrophyRoomView leagueId={activeLeague?.id} teamId={teamId} leagueName={activeLeague?.name} />
+    </AppLayout>
+  );
+}
+
+export function TrophyRoomView({
+  leagueId,
+  teamId,
+  leagueName,
+  embedded = false,
+}: {
+  leagueId?: string | null;
+  teamId?: string | null;
+  leagueName?: string | null;
+  embedded?: boolean;
+}) {
+  const navigate = useNavigate();
   const [data, setData] = useState<TrophyData | null>(null);
   const [teamData, setTeamData] = useState<any>(null);
   const [filter, setFilter] = useState<"all" | "recent">("all");
@@ -149,15 +167,15 @@ export default function TrophyRoom() {
 
   // Pull league trophy room
   useEffect(() => {
-    if (!activeLeague?.id) return;
+    if (!leagueId) return;
     setLoading(true);
-    api.get(`/leagues/${activeLeague.id}/trophy-room`)
+    api.get(`/leagues/${leagueId}/trophy-room`)
       .then((res) => setData(res.data))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [activeLeague?.id]);
+  }, [leagueId]);
 
-  // If a teamId is in the URL, pull team trophy room
+  // If a teamId is provided, pull team trophy room
   useEffect(() => {
     if (!teamId) { setTeamData(null); return; }
     api.get(`/teams/${teamId}/trophy-room`)
@@ -184,17 +202,17 @@ export default function TrophyRoom() {
   }, [data, filter]);
 
   return (
-    <AppLayout>
-      <div className="trophy-room" data-testid="trophy-room-page">
+    <>
+    <div className="trophy-room" data-testid="trophy-room-page">
         {/* HEADER */}
         <div className="trophy-room-header">
           <div className="franchise-name">
-            {teamData ? `${teamData.team_name} — Trophy Room` : `${activeLeague?.name || "League"} — Trophy Room`}
+            {teamData ? `${teamData.team_name} — Trophy Room` : `${leagueName || "League"} — Trophy Room`}
           </div>
           <div className="season-selector" data-testid="trophy-room-filter">
             <button onClick={() => setFilter("all")} className={`s-btn ${filter === "all" ? "active" : ""}`} data-testid="filter-all">All Time</button>
             <button onClick={() => setFilter("recent")} className={`s-btn ${filter === "recent" ? "active" : ""}`} data-testid="filter-recent">Last 3 Seasons</button>
-            {teamData && (
+            {teamData && !embedded && (
               <button
                 className="s-btn"
                 onClick={() => navigate("/trophy-room")}
@@ -510,6 +528,6 @@ export default function TrophyRoom() {
           to { transform: translateY(0); opacity: 1; }
         }
       `}</style>
-    </AppLayout>
+    </>
   );
 }

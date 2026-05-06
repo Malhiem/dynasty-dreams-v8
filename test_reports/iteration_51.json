@@ -1,0 +1,44 @@
+{
+  "summary": "Iter 51 — tested 4 enhancements: PUT /api/teams/{id} backend endpoint, Team Settings cog/modal, LeagueHistory page, RosterPage tabs, Standings/TradeBlock Crown links, PlayerDetailPage career graph. Backend 17/17 pytest pass (test_team_update.py 5/5 + test_team_logo.py 5/5 + test_trophy_room.py 7/7). Frontend partially passing: Team Settings cog+modal works, LeagueHistory + Trophy Room tab works, Player Career Graph + 3 toggles works on McDavid. CRITICAL: Roster/Standings/TradeBlock changes were applied to the WRONG component files — see action items.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "RosterPage (route /roster)", "issue": "Route uses LovableTeam (lovable/pages/Team.tsx), NOT /app/frontend/src/pages/RosterPage.jsx. The new tabs (roster-tab-roster, roster-tab-trophy-room) and roster-team-trophy-link / roster-trophy-room-content testids are NOT rendered because the wrong file was edited.", "selector": "[data-testid=\"roster-tab-trophy-room\"]", "priority": "HIGH"},
+      {"component": "StandingsPage (route /standings)", "issue": "Route uses LovableStandings (lovable/pages/Standings.tsx), NOT /app/frontend/src/pages/StandingsPage.jsx. Crown icon link standings-trophy-link-{teamId} is NOT rendered on any team row because the wrong file was edited.", "selector": "[data-testid^=\"standings-trophy-link-\"]", "priority": "HIGH"},
+      {"component": "TradeBlockPage (route /trade-block)", "issue": "Route uses LovableTradeBlock (lovable/pages/TradeBlock.tsx — actual component file lovable/components/TradeBlock.tsx confirmed via x-file-name attribute on rendered DOM), NOT /app/frontend/src/pages/TradeBlockPage.jsx. Crown icon trade-block-trophy-link-{teamId} is NOT rendered on any item.", "selector": "[data-testid^=\"trade-block-trophy-link-\"]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "PlayerDetailPage Stats", "issues": ["Recharts ResponsiveContainer warns 'width(-1) and height(-1) of chart should be greater than 0' once on initial paint — chart still renders correctly after layout settles. Cosmetic only."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_team_update.py",
+    "/app/backend/tests/test_team_logo.py",
+    "/app/backend/tests/test_trophy_room.py",
+    "/app/test_reports/pytest/iter51_team_update.xml",
+    "/app/test_reports/pytest/iter51_supporting.xml"
+  ],
+  "action_items": [
+    "MOVE the Roster trophy-room tab logic from /app/frontend/src/pages/RosterPage.jsx into the actually-routed component (likely /app/frontend/src/lovable/pages/Team.tsx — referenced as LovableTeam in App.js:98). Re-add roster-tab-roster, roster-tab-trophy-room, roster-team-trophy-link, roster-trophy-room-content testids there.",
+    "MOVE the Crown icon link from /app/frontend/src/pages/StandingsPage.jsx into /app/frontend/src/lovable/pages/Standings.tsx (LovableStandings, App.js:101). Re-add standings-trophy-link-{teamId} on each team row.",
+    "MOVE the Crown icon link from /app/frontend/src/pages/TradeBlockPage.jsx into /app/frontend/src/lovable/components/TradeBlock.tsx (rendered for /trade-block via LovableTradeBlock, App.js:104). Re-add trade-block-trophy-link-{teamId} on each item with team_id.",
+    "After moving, re-run the iter51 Playwright validation: standings crown count > 0, trade-block crown count > 0, roster trophy room tab/link visible."
+  ],
+  "critical_code_review_comments": [
+    "Two parallel page implementations exist (lovable/* vs pages/*Page.jsx). The non-routed *Page.jsx files create maintenance hazard — every future enhancement risks being applied to the wrong file (as happened here). Recommend either deleting the unused pages/{Roster,Standings,TradeBlock}Page.jsx files OR routing them and removing the lovable duplicates.",
+    "Backend GET /api/trade-block (no league_id filter) returns ~5 of 43 items with team_id=null. The frontend calls it without league_id, but the page only shows items for the active league (visual filter). Crown rendering checks `item.team_id` so historical items missing team_id silently skip the crown — acceptable degraded behavior but worth backfilling team_id on legacy items.",
+    "DynastyCareerChart renders inside a fixed-height container (h-72) — initial mount produces a one-shot Recharts width/height(-1) warning. Wrap in a deferred mount or pass explicit width/height to ResponsiveContainer to silence the warning."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (17/17 pytest)", "frontend": "60% (3/5 critical UI flows: cog+modal OK, LeagueHistory+TrophyRoom tab OK, Player Career Graph OK; Roster tabs/link MISSING, Standings crown MISSING, TradeBlock crown MISSING)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! used for all UI flows; admin@dynastydreams.com / Admin123! available.",
+  "seed_data_creation": "None — used existing seeded league (Ice Kings Head-to-Head, lid=69e46af167999bfb85c39628) and McDavid (pid=69e43d98b80cbdcecf495246).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent moves the Roster/Standings/TradeBlock changes into the correct lovable/* components, re-run /app/test_reports/iter51 Playwright assertions: (1) /roster shows roster-tab-roster + roster-tab-trophy-room + roster-team-trophy-link + roster-trophy-room-content; (2) /standings has at least 1 [data-testid^=standings-trophy-link-] anchor with href starting /trophy-room/team/; (3) /trade-block has at least 1 [data-testid^=trade-block-trophy-link-] anchor. Backend tests already 100% — no need to re-run unless PUT /teams endpoint is touched. McDavid Stats tab career graph confirmed mounted with 3 toggles (fpts, goals, assists) working.",
+  "rca of the issue": "The frontend has two parallel implementations of these pages: /app/frontend/src/pages/{Roster,Standings,TradeBlock}Page.jsx (NOT routed) and /app/frontend/src/lovable/{pages,components}/{Team,Standings,TradeBlock}.tsx (the actually-routed components, registered in App.js as LovableTeam/LovableStandings/LovableTradeBlock). The main agent applied the new Crown icons + Trophy Room tabs to the non-routed *Page.jsx files. Verification: rendered DOM shows x-file-name=\"TradeBlock\" attribute on the live trade-block DOM (confirmed via JS evaluate); App.js explicitly imports LovableTeam/Standings/TradeBlock and routes /roster, /standings, /trade-block to those. Reproduction: log in as chriszarek and visit each page — none of the new testids render. Mitigation: re-apply the changes inside the lovable/* counterpart files and remove the dead *Page.jsx (or route them and remove the lovable copies)."
+}

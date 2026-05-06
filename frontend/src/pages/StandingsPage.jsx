@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trophy, Swords, Play, Calendar, ChevronLeft, ChevronRight } from "lucide-react";
+import { Trophy, Swords, Play, Calendar, ChevronLeft, ChevronRight, Crown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -134,13 +134,23 @@ export default function StandingsPage() {
                             {team.rank}
                           </span>
                           <div className="flex-1">
-                            <Link
-                              to={`/teams/${team.team_id}`}
-                              data-testid={`standings-team-link-${team.team_id}`}
-                              className="font-medium text-white hover:text-[#00D2FF]"
-                            >
-                              {team.team_name}
-                            </Link>
+                            <div className="flex items-center gap-2">
+                              <Link
+                                to={`/teams/${team.team_id}`}
+                                data-testid={`standings-team-link-${team.team_id}`}
+                                className="font-medium text-white hover:text-[#00D2FF]"
+                              >
+                                {team.team_name}
+                              </Link>
+                              <Link
+                                to={`/trophy-room/team/${team.team_id}`}
+                                title="View trophy room"
+                                data-testid={`standings-trophy-link-${team.team_id}`}
+                                className="text-amber-400/70 hover:text-amber-300 inline-flex"
+                              >
+                                <Crown className="h-3.5 w-3.5" />
+                              </Link>
+                            </div>
                             <p className="text-xs text-[#A1A1AA]">{team.owner_name}</p>
                           </div>
                           <div className="text-right">

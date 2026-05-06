@@ -1623,12 +1623,17 @@ async def get_team(team_id: str):
 
 def _team_to_response(team: dict) -> TeamResponse:
     name = team.get("name", "")
-    # Derive abbreviation from team name (first letters of each significant word)
-    words = [w for w in name.replace("-", " ").split() if w and w[0].isalnum()]
-    if len(words) >= 2:
-        abbr = (words[0][0] + words[1][0] + (words[2][0] if len(words) > 2 else "")).upper()[:3]
+    # Explicit override (set via PUT /teams/{id}) wins over auto-derivation
+    override = (team.get("logo_abbr_override") or "").strip().upper()
+    if override:
+        abbr = override[:3]
     else:
-        abbr = name[:3].upper() if name else "TBD"
+        # Derive abbreviation from team name (first letters of each significant word)
+        words = [w for w in name.replace("-", " ").split() if w and w[0].isalnum()]
+        if len(words) >= 2:
+            abbr = (words[0][0] + words[1][0] + (words[2][0] if len(words) > 2 else "")).upper()[:3]
+        else:
+            abbr = name[:3].upper() if name else "TBD"
     return TeamResponse(
         id=str(team["_id"]),
         name=name,
@@ -4939,7 +4944,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes
 
 _router_deps = {
     "db": db,
@@ -4988,6 +4993,7 @@ users_routes.setup(_router_deps)
 leagues_routes.setup(_router_deps)
 push_routes.setup(_router_deps)
 seasons_routes.setup(_router_deps)
+teams_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -5003,6 +5009,7 @@ api_router.include_router(users_routes.router)
 api_router.include_router(leagues_routes.router)
 api_router.include_router(push_routes.router)
 api_router.include_router(seasons_routes.router)
+api_router.include_router(teams_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")
