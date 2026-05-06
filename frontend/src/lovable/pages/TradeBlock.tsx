@@ -531,6 +531,16 @@ const TradeBlockCard = ({
                 {item.ownerAvatar}
               </div>
               <span className="text-sm text-muted-foreground"><TeamLink name={item.owner} /></span>
+              {item.team_id && (
+                <Link
+                  to={`/trophy-room/team/${item.team_id}`}
+                  title={`${item.owner} trophy room`}
+                  data-testid={`trade-block-trophy-link-${item.team_id}`}
+                  className="text-amber-400/70 hover:text-amber-300 inline-flex"
+                >
+                  <Crown className="h-4 w-4" />
+                </Link>
+              )}
             </div>
 
             <div className="flex gap-2">
