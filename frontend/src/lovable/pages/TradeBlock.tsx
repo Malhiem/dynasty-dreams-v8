@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { useState, useMemo, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
@@ -15,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, ArrowRightLeft, MessageSquare, TrendingUp, TrendingDown, Filter } from "lucide-react";
+import { Plus, ArrowRightLeft, MessageSquare, TrendingUp, TrendingDown, Filter, Crown } from "lucide-react";
 import { TradeProposalModal } from "@/lovable/components/trade/TradeProposalModal";
 import TeamLink from "@/lovable/components/TeamLink";
 
@@ -26,6 +27,7 @@ interface TradeBlockItem {
   name: string;
   position: string;
   team: string;
+  team_id?: string;
   age?: number;
   dynastyValue: number;
   owner: string;
@@ -233,6 +235,7 @@ const TradeBlock = () => {
     name: it.name || "Unknown",
     position: it.position || "—",
     team: it.nhl_team || (it.item_type === "pick" ? "Own" : ""),
+    team_id: it.team_id,
     age: it.age || undefined,
     dynastyValue: Math.round(((it.points || 0) * 80) + 1000),
     owner: ownerNameFor(it.owner_id),

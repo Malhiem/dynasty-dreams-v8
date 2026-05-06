@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { useSearchParams, useNavigate } from "react-router-dom";
+import { useSearchParams, useNavigate, Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import api from "@/lib/api";
 import PlayerRoster from "@/lovable/components/dashboard/PlayerRoster";
@@ -11,7 +11,9 @@ import TeamDraftPicks from "@/lovable/components/dashboard/TeamDraftPicks";
 import TeamSalaryCap from "@/lovable/components/dashboard/TeamSalaryCap";
 import CommissionerPendingTrades from "@/lovable/components/dashboard/CommissionerPendingTrades";
 import StatCard from "@/lovable/components/dashboard/StatCard";
-import { Trophy, TrendingUp, Users, Shield, ArrowRightLeft, X, AlertTriangle, DollarSign, UserMinus, UserPlus, CheckCircle2, ChevronDown } from "lucide-react";
+import { Trophy, TrendingUp, Users, Shield, ArrowRightLeft, X, AlertTriangle, DollarSign, UserMinus, UserPlus, CheckCircle2, ChevronDown, Crown } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TrophyRoomView } from "@/lovable/pages/TrophyRoom";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -778,39 +780,66 @@ const Team = () => {
           <CommissionerPendingTrades teamId={selectedTeamId} teamName={selectedTeam.name} />
         )}
 
-        <PlayerRoster
-          isOwnTeam={!!isOwnTeam}
-          commissionerMode={commissionerMode}
-          onTradePlayer={onTradePlayer}
-          onDropPlayer={handleDropPlayer}
-          onAddToTradeBlock={handleAddToTradeBlock}
-          tradeBlockPlayerIds={tradeBlockPlayerIds}
-          isTradeBuilderOpen={tradeBuilder.open}
-          currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
-          refreshKey={rosterReloadKey}
-          leagueId={league?.id}
-          teamId={selectedTeamId as string}
-        />
+        <Link
+          to={`/trophy-room/team/${selectedTeamId}`}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-xs font-semibold uppercase tracking-wider w-fit"
+          data-testid="roster-team-trophy-link"
+        >
+          <Trophy className="h-3.5 w-3.5" /> Visit Trophy Room
+        </Link>
 
-        <TeamSalaryCap teamId={selectedTeamId || undefined} refreshKey={rosterReloadKey} />
-        <TeamDraftPicks
-          onTradePick={isOwnTeam ? handleAddPickToTrade : handleTradePickFromOtherTeam}
-          isOwnTeam={!!isOwnTeam}
-          currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
-          teamId={selectedTeamId as string}
-        />
+        <Tabs defaultValue="roster" className="space-y-4">
+          <TabsList className="bg-secondary/40 border border-border">
+            <TabsTrigger value="roster" data-testid="roster-tab-roster">
+              <Users className="h-4 w-4 mr-2" /> Roster
+            </TabsTrigger>
+            <TabsTrigger value="trophy-room" data-testid="roster-tab-trophy-room">
+              <Crown className="h-4 w-4 mr-2" /> Franchise Trophy Room
+            </TabsTrigger>
+          </TabsList>
 
-        <TradeBlockManager
-          team={{
-            ...(teamRecord || {}),
-            id: selectedTeamId,
-            name: selectedTeam?.name,
-            salary_retention_pref: teamRecord?.salary_retention_pref || "no_preference",
-            _players: rosterPlayers,
-          }}
-          league={league ? { id: league.id, name: league.name } : null}
-          isOwnTeam={!!isOwnTeam}
-        />
+          <TabsContent value="roster" className="space-y-4">
+            <PlayerRoster
+              isOwnTeam={!!isOwnTeam}
+              commissionerMode={commissionerMode}
+              onTradePlayer={onTradePlayer}
+              onDropPlayer={handleDropPlayer}
+              onAddToTradeBlock={handleAddToTradeBlock}
+              tradeBlockPlayerIds={tradeBlockPlayerIds}
+              isTradeBuilderOpen={tradeBuilder.open}
+              currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
+              refreshKey={rosterReloadKey}
+              leagueId={league?.id}
+              teamId={selectedTeamId as string}
+            />
+
+            <TeamSalaryCap teamId={selectedTeamId || undefined} refreshKey={rosterReloadKey} />
+            <TeamDraftPicks
+              onTradePick={isOwnTeam ? handleAddPickToTrade : handleTradePickFromOtherTeam}
+              isOwnTeam={!!isOwnTeam}
+              currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
+              teamId={selectedTeamId as string}
+            />
+
+            <TradeBlockManager
+              team={{
+                ...(teamRecord || {}),
+                id: selectedTeamId,
+                name: selectedTeam?.name,
+                salary_retention_pref: teamRecord?.salary_retention_pref || "no_preference",
+                _players: rosterPlayers,
+              }}
+              league={league ? { id: league.id, name: league.name } : null}
+              isOwnTeam={!!isOwnTeam}
+            />
+          </TabsContent>
+
+          <TabsContent value="trophy-room" className="space-y-4">
+            <div data-testid="roster-trophy-room-content">
+              <TrophyRoomView leagueId={league?.id} teamId={selectedTeamId as string} leagueName={league?.name} embedded />
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
 
       {/* Trade Builder is mounted globally in AppLayout — no per-page panel here. */}

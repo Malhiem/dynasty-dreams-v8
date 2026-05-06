@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
-import { Settings, ChevronUp, ChevronDown, Minus } from "lucide-react";
+import { Settings, ChevronUp, ChevronDown, Minus, Crown } from "lucide-react";
 import TeamLogo from "@/lovable/components/TeamLogo";
 import { PlayoffBracketView } from "@/lovable/pages/PlayoffBracket";
 import {
@@ -331,6 +331,16 @@ const StandingsTable = ({
                       {team.name}
                       {team.isUser && <span className="ml-1.5 text-xs bg-primary/20 text-primary px-1.5 py-0.5 rounded-full">You</span>}
                     </span>
+                    {team.teamId && (
+                      <Link
+                        to={`/trophy-room/team/${team.teamId}`}
+                        title="View Trophy Room"
+                        data-testid={`standings-trophy-link-${team.teamId}`}
+                        className="text-amber-400/70 hover:text-amber-300 inline-flex"
+                      >
+                        <Crown className="h-3.5 w-3.5" />
+                      </Link>
+                    )}
                     <ClinchBadges statuses={team.clinched} />
                   </div>
                 </td>
