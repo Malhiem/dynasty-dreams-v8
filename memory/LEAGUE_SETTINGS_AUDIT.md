@@ -1,26 +1,44 @@
 # League Settings — Source-of-Truth Audit & Gap List
 
-**As of:** Iter 78 (Feb 11, 2026)
+**As of:** Iter 79 (Feb 11, 2026)
 
 ## TL;DR
 
 League configuration is now consistently sourced from `db.leagues.{field}`.
-The Setup Wizard, Commissioner Settings → **Rules & Schedule** tab, and
-League Structure tab all write to a single `PUT /api/leagues/{id}` endpoint.
-Reads happen lazily at the call-site (no caching layer to invalidate).
+The Setup Wizard (now 6 steps including a dedicated **Trades** step), the
+Commissioner Settings → **Rules & Schedule** tab, and the **League Structure**
+tab all write to a single `PUT /api/leagues/{id}` endpoint. Reads happen
+lazily at the call-site (no caching layer to invalidate).
 
-The **fixed** gaps this iteration (78):
+### Iter 79 additions
 
 | Setting | Was | Now |
 |--|--|--|
-| `LeagueResponse` GET payload | Missing every new wizard field (returned `None`) | Echoes `bench_spots`, `minors_spots`, `trade_*`, `waiver_*`, `playoff_*`, `regular_season_weeks` |
-| `trade_deadline_week` enforcement | Field stored but never read | New `_enforce_trade_deadline()` helper blocks `POST /trades` and `POST /trades/multi` when `current_week > trade_deadline_week` (400) |
-| `waiver_period_days` consumption | Hardcoded `+ timedelta(hours=24)` in `routes/waivers.py` | `processes_at` now reads `league.waiver_period_days` (defaults 1 day) |
-| `waiver_faab_budget` budget seeding | `league` variable was undefined inside `place_waiver_claim` (would have NameErrored on first claim) | League now fetched once at top of handler |
-| `POST /matchups/generate-schedule` default | Hardcoded `num_weeks=18` | Defaults to `league.regular_season_weeks`, then to 18 |
-| `routes/seasons` season snapshot | Stored `playoff_teams`+`playoff_weeks` only | Now also persists `playoff_start_week` and `playoff_rounds` |
-| Commissioner UI for the new fields | No editor anywhere | New **Rules & Schedule** tab (testid `tab-rules-schedule`) with 12 inputs across 4 cards: Roster Shape, Trade Settings, Waivers, Playoffs & Schedule |
-| `useActiveLeague` cache after PUT | Stale until page reload | New `reloadLeague()` method refetches the league doc |
+| `salary_retention_enabled` / `salary_retention_max_pct` | Not stored | New A/B switch in wizard + admin; both fields persisted |
+| `season_start_date` / `season_end_date` | Not stored | Calendar inputs in wizard + admin |
+| `matchup_length_days` | Not stored | Numeric input (default 7) |
+| `opponents_per_matchup_period` | Not stored | Numeric input (default 1) |
+| `playoff_end_week` | Not stored | Numeric input alongside `playoff_start_week` |
+| `consolation_enabled` + `consolation_*_week` + `consolation_uses_playoff_schedule` | Not stored | A/B switch + "Schedule along with playoffs" checkbox |
+| Salary cap step | Plain number input | New `SmartNumberInput` — hold to step $100k → $500k → $1M |
+| League Structure step | Single mixed UI | Split into 2 chip cards (Divisions, Conferences) + per-team dropdowns; new "Auto-assign NHL style" button |
+| Setup Wizard steps | 5 (Basics → Cap → Divisions → Schedule → Generate) | **6** (added dedicated **Trades** step between Schedule and Generate) |
+| Skip / Set Up Later | Only "Skip" | Both buttons now present — "Set Up Later" saves current step's values without marking complete; "Skip" marks complete without saving |
+| Setup-complete error | "Failed to mark setup complete" | Pre-flight `POST /leagues/{id}/validate-setup` returns specific reasons; toast surfaces them |
+| Generate-schedule error | "Failed to generate schedule" | Backend returns clear 400 ("Need at least 2 teams — this league has N") and 403 ("Only the commissioner...") messages |
+| Help tooltip clipping | Clipped by dialog overflow | `TooltipPrimitive.Portal` wrap + z-60 + collisionPadding |
+
+### Iter 78 additions (still in effect)
+
+`LeagueResponse` GET echoes every wizard field; `_enforce_trade_deadline()`
+blocks proposals past the deadline; `waiver_period_days` controls
+`processes_at`; `generate-schedule` defaults `num_weeks` to
+`regular_season_weeks`; season snapshot persists `playoff_start_week` and
+`playoff_rounds`; new Commissioner Settings **Rules & Schedule** tab with
+sparse PUT + `useActiveLeague.reloadLeague()`.
+
+All settings persist in `db.leagues` (single source of truth) and the
+audit log captures every change with actor + diff.
 
 ### Previously fixed gaps (iter 77 — still in effect):
 
