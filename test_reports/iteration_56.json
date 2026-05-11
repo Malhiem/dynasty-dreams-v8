@@ -1,0 +1,23 @@
+{
+  "summary": "iter75 frontend validation: BOTH new testids render with exact expected text. (1) /matchup renders matchup-rating-change-home-69e59b30cbd3fea02a914c61 = '+16.0 → 1516' and matchup-rating-change-away-69e59b30cbd3fea02a914c63 = '-16.0 → 1484' for the seeded completed Week 1 matchup in Ice Kings (league 69e46af167999bfb85c39628). (2) /trade-block renders 2 trade-block-streak-chip-* elements (both for team_id 69e59b30cbd3fea02a914c63) showing '🥶 Cold 7' next to the Crown trophy link. Regression: standings-streak-chip (3 found) and trade-block-trophy-link (6 found) still work. Backend /api/matchups/{league}/current-week confirmed returning elo_home_delta=16, elo_away_delta=-16, elo_home_rating_after=1516, elo_away_rating_after=1484, status=completed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Minor: Matchup.tsx duplicates the IIFE for rating-change badge for home/away (~10 lines each) — could be extracted into a small helper to satisfy DRY, but not blocking.",
+    "Minor: Two trade-block cards belonging to the same team produce two identical [data-testid=trade-block-streak-chip-<teamId>] elements (non-unique testid by design since cards iterate). Acceptable but if test harness wants singleton, switch to a key suffix like trade-block-streak-chip-<teamId>-<itemId>."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only request)", "frontend": "100% on the 2 new acceptance criteria"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (default league = Ice Kings Head-to-Head, default team = Zarek's Frozen)",
+  "seed_data_creation": "None — used pre-seeded synthetic completed matchup in Ice Kings week 1 as documented in the request.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Verified iter75 quick-wins. New testids confirmed: matchup-rating-change-home-<teamId> and matchup-rating-change-away-<teamId> render only when matchup.status==='completed' AND elo_*_rating_after fields present. Badge text format is exactly `${sign}${delta.toFixed(1)} → ${Math.round(ratingAfter)}` from RatingChangeBadge.jsx. TradeBlockCard streak chip wired via streakChipData prop only renders when item.team_id is present AND useSeasonStreaks returns an active streak for that team. The /profile and /lifetime-records routes returned 404 in this run — those iter54/55 testids likely live at different paths (e.g., /my-profile or under standings); not in scope for this iteration so no fix required, but worth flagging if a full regression pass is run later.",
+  "rca of the issue": "N/A — no defects found in the 2 new features under test."
+}

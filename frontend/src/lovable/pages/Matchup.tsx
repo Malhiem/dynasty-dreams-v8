@@ -4,6 +4,7 @@ import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { MatchupSideRail } from "@/lovable/components/matchup/MatchupSideRail";
+import RatingChangeBadge from "@/lovable/components/matchup/RatingChangeBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -291,6 +292,24 @@ const Matchup = () => {
                   ? ` • ${focusedMyTeam.owner_name}`
                   : (league?.name ? ` • ${league.name}` : '')}
               </p>
+              {(() => {
+                // Show rating change after a simulated week. The matchup record carries
+                // `elo_home_delta` + `elo_home_rating_after` (and away equivalents).
+                const m = viewingMatchup || myMatchup;
+                if (!m || m.status !== "completed") return null;
+                const isHome = focusedMyTeam?.id === m.home_team_id;
+                const delta = isHome ? m.elo_home_delta : m.elo_away_delta;
+                const after = isHome ? m.elo_home_rating_after : m.elo_away_rating_after;
+                return (
+                  <div className="mt-2">
+                    <RatingChangeBadge
+                      delta={delta}
+                      ratingAfter={after}
+                      testId={`matchup-rating-change-home-${focusedMyTeam?.id}`}
+                    />
+                  </div>
+                );
+              })()}
             </div>
             
             <div className="text-center px-8">
@@ -331,6 +350,22 @@ const Matchup = () => {
                 {opponentTeam ? `${opponentTeam.wins || 0}-${opponentTeam.losses || 0}-${opponentTeam.ties || 0}` : ''}
                 {opponentTeam?.owner_name ? ` • ${opponentTeam.owner_name}` : ''}
               </p>
+              {(() => {
+                const m = viewingMatchup || myMatchup;
+                if (!m || m.status !== "completed") return null;
+                const isHome = opponentTeam?.id === m.home_team_id;
+                const delta = isHome ? m.elo_home_delta : m.elo_away_delta;
+                const after = isHome ? m.elo_home_rating_after : m.elo_away_rating_after;
+                return (
+                  <div className="mt-2">
+                    <RatingChangeBadge
+                      delta={delta}
+                      ratingAfter={after}
+                      testId={`matchup-rating-change-away-${opponentTeam?.id}`}
+                    />
+                  </div>
+                );
+              })()}
             </div>
           </div>
 

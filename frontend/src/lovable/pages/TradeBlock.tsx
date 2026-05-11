@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
 import api from "@/lib/api";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -190,6 +191,7 @@ const owners = ["All Teams", "Frozen Thunder", "Glacier Kings", "Puck Masters", 
 
 const TradeBlock = () => {
   const { league, leagueTeams, myTeam } = useActiveLeague();
+  const { streaks } = useSeasonStreaks(league?.id);
   const leagueTeamsCount = leagueTeams?.length || 0;
 
   const [positionFilter, setPositionFilter] = useState("All");
@@ -369,6 +371,7 @@ const TradeBlock = () => {
                 <TradeBlockCard 
                   key={item.id} 
                   item={item} 
+                  streakChipData={item.team_id ? streakChip(streaks?.[item.team_id]?.active) : null}
                   onProposeTrade={() => handleProposeTrade(item.owner)} 
                 />
               ))}
@@ -429,10 +432,12 @@ const TradeBlock = () => {
 
 const TradeBlockCard = ({ 
   item, 
-  onProposeTrade 
+  onProposeTrade,
+  streakChipData,
 }: { 
   item: TradeBlockItem; 
   onProposeTrade: () => void;
+  streakChipData?: { emoji: string; label: string; count: number; tone: string } | null;
 }) => {
   const getTypeLabel = () => {
     if (item.type === "prospect") return "Prospect";
@@ -540,6 +545,19 @@ const TradeBlockCard = ({
                 >
                   <Crown className="h-4 w-4" />
                 </Link>
+              )}
+              {streakChipData && (
+                <span
+                  data-testid={`trade-block-streak-chip-${item.team_id}`}
+                  title={`${streakChipData.count} consecutive ${streakChipData.label === "Hot" ? "winning" : "losing"} seasons`}
+                  className={`inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${
+                    streakChipData.tone === "hot"
+                      ? "bg-orange-500/20 text-orange-300 border-orange-400/40"
+                      : "bg-sky-500/20 text-sky-200 border-sky-400/40"
+                  }`}
+                >
+                  {streakChipData.emoji} {streakChipData.label} {streakChipData.count}
+                </span>
               )}
             </div>
 

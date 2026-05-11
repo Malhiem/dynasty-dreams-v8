@@ -142,7 +142,9 @@ async def apply_matchup_elo(league_id: str, matchup: dict) -> Optional[dict]:
             {"_id": matchup["_id"]},
             {"$set": {"elo_applied": True,
                       "elo_home_delta": round(delta_h, 2),
-                      "elo_away_delta": round(-delta_h, 2)}},
+                      "elo_away_delta": round(-delta_h, 2),
+                      "elo_home_rating_after": round(new_h, 1),
+                      "elo_away_rating_after": round(new_a, 1)}},
         )
     return {
         "home_id": home_id, "away_id": away_id,
