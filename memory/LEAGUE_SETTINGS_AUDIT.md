@@ -1,31 +1,41 @@
 # League Settings — Source-of-Truth Audit & Gap List
 
-**As of:** Iter 77 (May 11, 2026)
+**As of:** Iter 78 (Feb 11, 2026)
 
 ## TL;DR
 
 League configuration is now consistently sourced from `db.leagues.{field}`.
-The Setup Wizard and Commissioner Settings UI write to a single
-`PUT /api/leagues/{id}` endpoint that accepts every key the wizard tries to
-write. Reads happen lazily at the call-site (no caching layer to invalidate).
+The Setup Wizard, Commissioner Settings → **Rules & Schedule** tab, and
+League Structure tab all write to a single `PUT /api/leagues/{id}` endpoint.
+Reads happen lazily at the call-site (no caching layer to invalidate).
 
-The **fixed** gaps this iteration:
+The **fixed** gaps this iteration (78):
 
 | Setting | Was | Now |
 |--|--|--|
-| `roster_spots`, `bench_spots`, `minors_spots` | Wizard payload silently dropped | `PUT /leagues/{id}` accepts them, persisted in `db.leagues` |
+| `LeagueResponse` GET payload | Missing every new wizard field (returned `None`) | Echoes `bench_spots`, `minors_spots`, `trade_*`, `waiver_*`, `playoff_*`, `regular_season_weeks` |
+| `trade_deadline_week` enforcement | Field stored but never read | New `_enforce_trade_deadline()` helper blocks `POST /trades` and `POST /trades/multi` when `current_week > trade_deadline_week` (400) |
+| `waiver_period_days` consumption | Hardcoded `+ timedelta(hours=24)` in `routes/waivers.py` | `processes_at` now reads `league.waiver_period_days` (defaults 1 day) |
+| `waiver_faab_budget` budget seeding | `league` variable was undefined inside `place_waiver_claim` (would have NameErrored on first claim) | League now fetched once at top of handler |
+| `POST /matchups/generate-schedule` default | Hardcoded `num_weeks=18` | Defaults to `league.regular_season_weeks`, then to 18 |
+| `routes/seasons` season snapshot | Stored `playoff_teams`+`playoff_weeks` only | Now also persists `playoff_start_week` and `playoff_rounds` |
+| Commissioner UI for the new fields | No editor anywhere | New **Rules & Schedule** tab (testid `tab-rules-schedule`) with 12 inputs across 4 cards: Roster Shape, Trade Settings, Waivers, Playoffs & Schedule |
+| `useActiveLeague` cache after PUT | Stale until page reload | New `reloadLeague()` method refetches the league doc |
+
+### Previously fixed gaps (iter 77 — still in effect):
+
+| Setting | Was | Now |
+|--|--|--|
+| `roster_spots`, `bench_spots`, `minors_spots` | Wizard payload silently dropped | `PUT /leagues/{id}` accepts them |
 | `scoring_format`, `max_teams`, `keepers_allowed`, `entry_fee` | Read-only after league creation | `PUT /leagues/{id}` accepts them |
 | `playoff_teams`, `playoff_start_week`, `playoff_rounds`, `regular_season_weeks` | Read-only after league creation | `PUT /leagues/{id}` accepts them |
-| `trade_review_period_hours` | Hardcoded `72` in 2 places in `routes/trades.py` | Reads from `league.trade_review_period_hours` (defaults 72) |
-| `trade_veto_threshold_pct` | Hardcoded `total_teams // 2` (=50%) in `routes/trades.py` | Reads from `league.trade_veto_threshold_pct` (default 50; 0 disables) |
-| `trade_deadline_week` | No field existed | `PUT /leagues/{id}` accepts it; UI can wire it |
-| `waiver_faab_budget` | Hardcoded `100` on first claim in 2 places (`routes/waivers.py`) | Reads from `league.waiver_faab_budget` (default 100) |
-| `waiver_period_days` | No field existed | `PUT /leagues/{id}` accepts it |
-| **League Structure** (divisions + conferences) | Saved but didn't enforce completeness | `PUT /leagues/{id}/divisions` now 400s when any team is missing div or conf |
-| **Setup Wizard** roster shape inputs | UI present but PUT dropped values | Same PUT now writes; wizard now persists |
+| `trade_review_period_hours` | Hardcoded `72` | Reads from `league.trade_review_period_hours` (default 72) |
+| `trade_veto_threshold_pct` | Hardcoded `total_teams // 2` | Reads from `league.trade_veto_threshold_pct` (default 50; 0 disables) |
+| **League Structure** (divisions + conferences) | Saved but didn't enforce completeness | `PUT /leagues/{id}/divisions` now 400s when any team missing div or conf |
+| **Setup Wizard** roster shape inputs | UI present but PUT dropped values | Same PUT now writes |
 | **Premium feature trial timer** | Didn't exist | 14-day clock via `/leagues/{id}/admin/cap-settings` + `/leagues/{id}/premium-status` |
 
-All of the above are persisted in `db.leagues` (single source of truth) and the
+All settings persist in `db.leagues` (single source of truth) and the
 audit log captures every change with actor + diff.
 
 ## Architecture: where settings live and are read
@@ -66,23 +76,14 @@ audit log captures every change with actor + diff.
 
 ### P0 — Functionally wrong / inconsistent
 
-(none — all P0 gaps were closed in iter 77)
+(none — all P0 gaps were closed in iter 77 and the runtime read-path was
+hardened in iter 78)
 
 ### P1 — Surfaces exist but currently no UI to edit (the API is ready)
 
-1. **Trade Settings tab** in Commissioner Settings → editor for the new
-   `trade_review_period_hours`, `trade_veto_threshold_pct`, `trade_deadline_week`
-   fields. Backend accepts them via `PUT /leagues/{id}` already.
-2. **Waiver Settings tab** in Commissioner Settings → editor for
-   `waiver_faab_budget` + `waiver_period_days`. Same `PUT /leagues/{id}` path.
-3. **Playoff Settings tab** → editor for `playoff_teams`, `playoff_start_week`,
-   `playoff_rounds`, `regular_season_weeks`.
-4. **Roster Shape editor** in CommissionerSettings → already in the Setup
-   Wizard Basics step; mirror the same inputs into a permanent settings tab
-   so commissioners can resize the roster post-setup.
-5. **Setup Wizard "Trades" step** — currently the wizard skips trade settings.
-   Add a step after Schedule Mix with trade review period + veto threshold +
-   deadline week, all writing to the same `PUT /leagues/{id}`.
+(none — the new Commissioner Settings → **Rules & Schedule** tab now exposes
+every wizard-settable field. The Setup Wizard adding a "Trades" step is still
+a nice-to-have, but the same settings are now reachable post-setup.)
 
 ### P2 — Doesn't exist yet (settings not in the model)
 

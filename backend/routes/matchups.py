@@ -21,7 +21,10 @@ def setup(deps: dict) -> None:
 # ─── Pydantic ─────────────────────────────────────────────────
 class GenerateScheduleRequest(BaseModel):
     league_id: str
-    num_weeks: int = Field(default=18, ge=1, le=52)
+    # Defaults to the league's configured `regular_season_weeks` when omitted,
+    # falling back to 18 only if the league has no configured value. This keeps
+    # league administration the single source of truth for schedule length.
+    num_weeks: Optional[int] = Field(default=None, ge=1, le=52)
 
 
 class SimulateWeekRequest(BaseModel):
@@ -139,6 +142,12 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
     team_map = {str(t["_id"]): t["name"] for t in teams}
     scoring_format = league.get("scoring_format", "head_to_head")
 
+    # Resolve schedule length from league config when caller omits it,
+    # so league administration is the single source of truth.
+    num_weeks = input.num_weeks
+    if num_weeks is None:
+        num_weeks = int(league.get("regular_season_weeks") or 18)
+
     # Division-aware? Only opt-in via league.schedule_config AND ≥2 distinct
     # divisions configured. Otherwise fall back to vanilla round-robin.
     schedule_cfg = league.get("schedule_config")
@@ -148,9 +157,9 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
     full_schedule: list = []
     if use_divisional:
         pairings = _build_division_pairings(teams, schedule_cfg)
-        distributed = _distribute_to_weeks(pairings, team_ids, input.num_weeks)
+        distributed = _distribute_to_weeks(pairings, team_ids, num_weeks)
         for week, home_id, away_id in distributed:
-            if week > input.num_weeks:
+            if week > num_weeks:
                 continue
             full_schedule.append({
                 "week": week,
@@ -167,7 +176,7 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
         base_schedule = generate_round_robin(team_ids)
         week = 1
         cycle = itertools.cycle(base_schedule)
-        while week <= input.num_weeks:
+        while week <= num_weeks:
             round_matchups = next(cycle)
             _random.shuffle(round_matchups)
             for home_id, away_id in round_matchups:
@@ -192,8 +201,8 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
         await db.matchups.insert_many(full_schedule)
 
     return {
-        "message": f"Generated {len(full_schedule)} matchups for {input.num_weeks} weeks",
-        "weeks": input.num_weeks,
+        "message": f"Generated {len(full_schedule)} matchups for {num_weeks} weeks",
+        "weeks": num_weeks,
         "mode": "division_aware" if use_divisional else "round_robin",
     }
 

@@ -74,6 +74,7 @@ export function useActiveLeague() {
   };
 
   const reloadTeams = () => setTeamsReloadKey(k => k + 1);
+  const reloadLeague = () => setTeamsReloadKey(k => k + 1);
 
-  return { loading, myLeagues, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams };
+  return { loading, myLeagues, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague };
 }

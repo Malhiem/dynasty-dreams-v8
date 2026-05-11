@@ -36,6 +36,31 @@ async def _execute_trade(trade): return await _deps["_execute_trade"](trade)
 async def _evaluate_conditions(trade): return await _deps["_evaluate_conditions"](trade)
 
 
+def _enforce_trade_deadline(league: dict) -> None:
+    """Reject new trade proposals once the league's trade deadline week has
+    passed. Reads `trade_deadline_week` from `db.leagues` (single source of
+    truth) and the league's `current_week`. No-op when either is unset (i.e.
+    the league hasn't configured a deadline yet — preserves legacy behaviour).
+    """
+    deadline = league.get("trade_deadline_week")
+    current = league.get("current_week")
+    try:
+        deadline_int = int(deadline) if deadline is not None else None
+        current_int = int(current) if current is not None else None
+    except (TypeError, ValueError):
+        return
+    if deadline_int is None or current_int is None:
+        return
+    if current_int > deadline_int:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Trade deadline (week {deadline_int}) has passed; "
+                f"new proposals are locked. Current week: {current_int}."
+            ),
+        )
+
+
 # Notification type literals (kept as strings to avoid importing the server enum)
 NT_TRADE_PROPOSED = "trade_proposed"
 NT_TRADE_ACCEPTED = "trade_accepted"
@@ -50,6 +75,8 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
     league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
+
+    _enforce_trade_deadline(league)
 
     proposer_team = await db.teams.find_one({"league_id": input.league_id, "owner_id": user["_id"]})
     if not proposer_team:
@@ -301,6 +328,8 @@ async def create_multi_party_trade(input: MultiPartyTradeProposalCreate, request
     league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
+
+    _enforce_trade_deadline(league)
 
     if len(input.parties) < 2:
         raise HTTPException(status_code=400, detail="A trade needs at least 2 parties")

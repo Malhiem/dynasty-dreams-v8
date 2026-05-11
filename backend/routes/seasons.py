@@ -339,6 +339,8 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
         "playoff_config": {
             "playoff_teams": league.get("playoff_teams"),
             "playoff_weeks": league.get("playoff_weeks"),
+            "playoff_start_week": league.get("playoff_start_week"),
+            "playoff_rounds": league.get("playoff_rounds"),
         },
         "regular_season_weeks": league.get("regular_season_weeks"),
         "scoring_format": league.get("scoring_format"),
@@ -857,6 +859,8 @@ async def _maybe_auto_snapshot_season(league_id: str):
         "playoff_config": {
             "playoff_teams": league.get("playoff_teams"),
             "playoff_weeks": league.get("playoff_weeks"),
+            "playoff_start_week": league.get("playoff_start_week"),
+            "playoff_rounds": league.get("playoff_rounds"),
         },
         "regular_season_weeks": league.get("regular_season_weeks"),
         "scoring_format": league.get("scoring_format"),

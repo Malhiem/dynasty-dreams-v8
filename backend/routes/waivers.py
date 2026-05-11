@@ -143,6 +143,8 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     if not team:
         raise HTTPException(status_code=403, detail="You don't have a team in this league")
 
+    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)}) or {}
+
     player = await db.players.find_one({"_id": ObjectId(input.player_id)})
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
@@ -189,7 +191,13 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
         "drop_player_name": None,
         "status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "processes_at": (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat(),
+        # `waiver_period_days` is configurable in League Admin. Defaults to 1
+        # day (24h) to preserve legacy behaviour when unset. `0` means claims
+        # process immediately on next worker cycle.
+        "processes_at": (
+            datetime.now(timezone.utc)
+            + timedelta(hours=int((league.get("waiver_period_days") if league.get("waiver_period_days") is not None else 1)) * 24)
+        ).isoformat(),
     }
 
     if input.drop_player_id:

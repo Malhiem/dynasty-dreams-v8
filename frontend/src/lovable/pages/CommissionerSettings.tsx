@@ -20,6 +20,7 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
 import TeamsTab from "@/lovable/components/admin/TeamsTab";
 import DivisionsTab from "@/lovable/pages/commissioner/DivisionsTab";
+import RulesScheduleTab from "@/lovable/pages/commissioner/RulesScheduleTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
 import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
@@ -1180,6 +1181,10 @@ const CommissionerSettings = () => {
             <TabsTrigger value="divisions" className="data-[state=active]:bg-primary/20" data-testid="tab-divisions">
               <Trophy className="h-4 w-4 mr-2" />
               League Structure
+            </TabsTrigger>
+            <TabsTrigger value="rules-schedule" className="data-[state=active]:bg-primary/20" data-testid="tab-rules-schedule">
+              <Sliders className="h-4 w-4 mr-2" />
+              Rules &amp; Schedule
             </TabsTrigger>
             <TabsTrigger value="scoring" className="data-[state=active]:bg-primary/20">
               <Target className="h-4 w-4 mr-2" />
@@ -2342,6 +2347,11 @@ const CommissionerSettings = () => {
           {/* Divisions Tab */}
           <TabsContent value="divisions" className="space-y-6">
             <DivisionsTab leagueId={activeLeague?.id} />
+          </TabsContent>
+
+          {/* Rules & Schedule Tab */}
+          <TabsContent value="rules-schedule" className="space-y-6">
+            <RulesScheduleTab />
           </TabsContent>
 
           {/* Scoring Tab */}
