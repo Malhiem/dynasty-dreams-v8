@@ -172,12 +172,16 @@ export function AppSidebar() {
             <SidebarMenuItem>
               <div className="flex items-center gap-3 px-3 py-2">
                 <Link
-                  to={`/u/${user.username || user.name}`}
+                  to={`/profile/edit`}
                   data-testid="sidebar-profile-link"
-                  className="h-7 w-7 rounded-full bg-[#00D2FF]/20 flex items-center justify-center text-xs font-bold text-[#00D2FF] hover:ring-2 hover:ring-[#00D2FF]/40 transition-all"
-                  title="View your public profile"
+                  className="h-7 w-7 rounded-full bg-[#00D2FF]/20 flex items-center justify-center text-xs font-bold text-[#00D2FF] hover:ring-2 hover:ring-[#00D2FF]/40 transition-all overflow-hidden"
+                  title="Edit your profile"
                 >
-                  {user.name?.[0]?.toUpperCase() || "U"}
+                  {user.avatar_url ? (
+                    <img src={user.avatar_url} alt={user.username} className="h-full w-full object-cover" />
+                  ) : (
+                    (user.username?.[0] || user.name?.[0] || "U").toUpperCase()
+                  )}
                 </Link>
                 {!collapsed && (
                   <div className="flex-1 min-w-0">
@@ -186,11 +190,10 @@ export function AppSidebar() {
                       data-testid="sidebar-username-link"
                       className="text-sm font-medium text-white truncate hover:text-[#00D2FF] block"
                     >
-                      {user.name}
+                      {user.username || user.name}
                     </Link>
                     <div className="flex items-center gap-1.5 mt-0.5">
                       <FantasyLevelBadge compact />
-                      <p className="text-[10px] text-[#A1A1AA] truncate">{user.email}</p>
                     </div>
                   </div>
                 )}

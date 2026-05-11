@@ -1,12 +1,55 @@
-"""Users router: /users/me/week-at-a-glance, /users/me/level, /u/{username}."""
+"""Users router: /users/me/*, /u/{username}, profile edit + avatar."""
+import base64
+import io
+import logging
 import re
+from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 _deps: dict = {}
+
+MAX_AVATAR_BYTES = 1 * 1024 * 1024  # 1 MB
+ALLOWED_AVATAR_MIME = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}
+AVATAR_OUTPUT_SIZE = (256, 256)
+USERNAME_REGEX = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
+
+
+class ProfileUpdate(BaseModel):
+    username: Optional[str] = Field(None, min_length=3, max_length=32)
+    email: Optional[EmailStr] = None
+    favourite_sport: Optional[str] = Field(None, max_length=40)
+    favourite_team: Optional[str] = Field(None, max_length=80)
+    city: Optional[str] = Field(None, max_length=80)
+    province_state: Optional[str] = Field(None, max_length=80)
+    country: Optional[str] = Field(None, max_length=80)
+    avatar_url: Optional[str] = Field(None, max_length=4096)
+
+    @field_validator("username")
+    @classmethod
+    def _valid_username(cls, v):
+        if v is None:
+            return v
+        v = v.strip()
+        if not USERNAME_REGEX.match(v):
+            raise ValueError("Username must be 3-32 chars (letters, numbers, _ . -)")
+        return v
+
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar(cls, v):
+        if v is None or v == "":
+            return None
+        v = v.strip()
+        if not (v.startswith("http://") or v.startswith("https://") or v.startswith("data:image/")):
+            raise ValueError("avatar_url must be an http(s) URL or data:image/ URL")
+        return v
 
 LEVEL_TITLES = [
     (1, 5, "Bench Warmer"),
@@ -383,4 +426,113 @@ async def get_public_profile(username: str):
         "active_leagues": active_leagues,
         "trophies": trophies,
         "lifetime_top_performer": lifetime_best,
+    }
+
+
+# ─── Profile edit + avatar ────────────────────────────────────────────────
+@router.put("/users/me/profile")
+async def update_my_profile(payload: ProfileUpdate, request: Request):
+    """Update the current user's profile fields.
+
+    Validates uniqueness on `username` (case-insensitive) and `email`. The
+    payload is sparse — only provided fields are written. Returns the
+    refreshed user document (excluding password_hash).
+    """
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+
+    updates: dict = {}
+    if payload.username is not None and payload.username != user.get("username"):
+        clash = await db.users.find_one({
+            "username": {"$regex": f"^{re.escape(payload.username)}$", "$options": "i"},
+            "_id": {"$ne": user["_id"]},
+        })
+        if clash:
+            raise HTTPException(status_code=409, detail="Username already taken")
+        updates["username"] = payload.username
+    if payload.email is not None and payload.email.lower() != (user.get("email") or "").lower():
+        clash = await db.users.find_one({
+            "email": {"$regex": f"^{re.escape(payload.email)}$", "$options": "i"},
+            "_id": {"$ne": user["_id"]},
+        })
+        if clash:
+            raise HTTPException(status_code=409, detail="Email already in use")
+        updates["email"] = payload.email.lower()
+    for field in ("favourite_sport", "favourite_team", "city", "province_state", "country", "avatar_url"):
+        value = getattr(payload, field)
+        if value is not None and value != user.get(field):
+            updates[field] = value or None
+
+    if not updates:
+        return {"updated": False, "user": _public_user(user)}
+
+    updates["updated_at"] = datetime.now(timezone.utc)
+    await db.users.update_one({"_id": ObjectId(user["_id"])}, {"$set": updates})
+    fresh = await db.users.find_one({"_id": ObjectId(user["_id"])})
+    return {"updated": True, "user": _public_user(fresh)}
+
+
+@router.post("/users/me/avatar")
+async def upload_my_avatar(request: Request, file: UploadFile = File(...)):
+    """Upload an avatar image (PNG/JPEG/WEBP/GIF, max 1 MB, resized to 256×256 PNG)."""
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+
+    if file.content_type not in ALLOWED_AVATAR_MIME:
+        raise HTTPException(status_code=400, detail="Unsupported image type. Use PNG, JPEG, WEBP, or GIF.")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(raw) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=400, detail="Image too large. Max size is 1 MB.")
+
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+        if img.mode not in ("RGBA", "RGB"):
+            img = img.convert("RGBA")
+        img.thumbnail(AVATAR_OUTPUT_SIZE, Image.LANCZOS)
+        out = io.BytesIO()
+        img.save(out, format="PNG", optimize=True)
+        data_url = f"data:image/png;base64,{base64.b64encode(out.getvalue()).decode('ascii')}"
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("avatar processing failed")
+        raise HTTPException(status_code=400, detail=f"Could not process image: {exc}")
+
+    await db.users.update_one(
+        {"_id": ObjectId(user["_id"])},
+        {"$set": {"avatar_url": data_url, "avatar_updated_at": datetime.now(timezone.utc)}},
+    )
+    return {"avatar_url": data_url}
+
+
+@router.delete("/users/me/avatar")
+async def delete_my_avatar(request: Request):
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await db.users.update_one(
+        {"_id": ObjectId(user["_id"])},
+        {"$unset": {"avatar_url": "", "avatar_updated_at": ""}},
+    )
+    return {"avatar_url": None}
+
+
+def _public_user(user: dict) -> dict:
+    """Strip sensitive fields and reshape for API responses."""
+    return {
+        "id": str(user["_id"]),
+        "username": user.get("username"),
+        "name": user.get("name") or user.get("username"),
+        "email": user.get("email"),
+        "role": user.get("role"),
+        "favourite_sport": user.get("favourite_sport"),
+        "favourite_team": user.get("favourite_team"),
+        "city": user.get("city"),
+        "province_state": user.get("province_state"),
+        "country": user.get("country"),
+        "avatar_url": user.get("avatar_url"),
+        "created_at": user.get("created_at"),
     }

@@ -143,12 +143,22 @@ async def get_me(request: Request):
     get_current_user = _deps["get_current_user"]
     UserResponse = _models()["UserResponse"]
     user = await get_current_user(request)
-    return UserResponse(
+    payload = UserResponse(
         id=user["_id"], email=user["email"],
         username=user.get("username") or user.get("name", ""),
         name=user.get("username") or user.get("name", ""),
         role=user["role"], created_at=user["created_at"],
-    )
+    ).model_dump()
+    # Extended profile fields (not part of the strict UserResponse model)
+    payload.update({
+        "favourite_sport": user.get("favourite_sport"),
+        "favourite_team": user.get("favourite_team"),
+        "city": user.get("city"),
+        "province_state": user.get("province_state"),
+        "country": user.get("country"),
+        "avatar_url": user.get("avatar_url"),
+    })
+    return payload
 
 
 @router.post("/auth/refresh")

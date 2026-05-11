@@ -1179,7 +1179,7 @@ const CommissionerSettings = () => {
             </TabsTrigger>
             <TabsTrigger value="divisions" className="data-[state=active]:bg-primary/20" data-testid="tab-divisions">
               <Trophy className="h-4 w-4 mr-2" />
-              Divisions
+              League Structure
             </TabsTrigger>
             <TabsTrigger value="scoring" className="data-[state=active]:bg-primary/20">
               <Target className="h-4 w-4 mr-2" />

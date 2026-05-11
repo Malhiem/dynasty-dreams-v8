@@ -1,12 +1,12 @@
 """Leagues router: enhanced standings (divisions/conferences/GB/movement) +
 playoff bracket + division management (commissioner-only).
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 _deps: dict = {}
@@ -261,6 +261,34 @@ async def update_divisions(league_id: str, input: DivisionsUpdate, request: Requ
         raise HTTPException(status_code=403, detail="Commissioner only")
 
     updated = 0
+    # ─── Enforce: every team in the league must have BOTH a division and a conference ──
+    # When a commissioner saves League Structure, we refuse the save if any
+    # team in the league would be left unassigned. We compute the post-save
+    # state by overlaying the incoming assignments on the current teams
+    # collection.
+    proposed = {a.team_id: a for a in input.assignments}
+    all_teams = await db.teams.find({"league_id": league_id}, {"_id": 1, "name": 1, "division": 1, "conference": 1}).to_list(200)
+    missing: list = []
+    for t in all_teams:
+        tid = str(t["_id"])
+        if tid in proposed:
+            div = proposed[tid].division or None
+            conf = proposed[tid].conference or None
+        else:
+            div = t.get("division") or None
+            conf = t.get("conference") or None
+        if not div or not conf:
+            missing.append({"team_id": tid, "team_name": t.get("name"), "division": div, "conference": conf})
+    if missing:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "incomplete_league_structure",
+                "message": "Every team needs both a division and a conference before you can save.",
+                "missing": missing,
+            },
+        )
+
     for a in input.assignments:
         try:
             oid = ObjectId(a.team_id)
@@ -573,3 +601,137 @@ async def get_playoff_bracket(league_id: str):
         "rounds": rounds,
         "status": "actual" if actual_matchups else "projected",
     }
+
+
+# ─── Premium feature settings (salary cap, minors) + 14-day trial clock ───
+class CapSettingsUpdate(BaseModel):
+    salary_cap_enabled: Optional[bool] = None
+    salary_cap: Optional[int] = None
+    salary_retention_slots: Optional[int] = Field(None, ge=0, le=10)
+    minors_enabled: Optional[bool] = None  # if your league offers a minor-league/prospects pool
+
+
+def _premium_status(league: dict) -> dict:
+    """Compute trial state for a league with premium features enabled.
+
+    Returns a dict with `paid`, `trial_started_at`, `trial_expires_at`,
+    `trial_seconds_left`, `trial_expired`, and `enabled_features`.
+    The 14-day clock starts when the first premium feature is toggled on
+    AND the league hasn't paid. Last 24 hours: countdown is hourly on the
+    client (server returns full seconds_left).
+    """
+    paid = bool(league.get("premium"))
+    enabled = []
+    if league.get("salary_cap_enabled"):
+        enabled.append("salary_cap")
+    if league.get("minors_enabled"):
+        enabled.append("minors")
+    started = league.get("premium_trial_started_at")
+    if not enabled or paid:
+        return {
+            "paid": paid, "trial_started_at": None, "trial_expires_at": None,
+            "trial_seconds_left": None, "trial_expired": False,
+            "enabled_features": enabled,
+        }
+    if not started:
+        return {
+            "paid": False, "trial_started_at": None, "trial_expires_at": None,
+            "trial_seconds_left": None, "trial_expired": False,
+            "enabled_features": enabled,
+        }
+    if isinstance(started, str):
+        try:
+            started = datetime.fromisoformat(started.replace("Z", "+00:00"))
+        except Exception:
+            started = None
+    if not started:
+        return {
+            "paid": False, "trial_started_at": None, "trial_expires_at": None,
+            "trial_seconds_left": None, "trial_expired": False,
+            "enabled_features": enabled,
+        }
+    # Coerce naive datetimes (MongoDB) to UTC-aware so arithmetic works.
+    if isinstance(started, datetime) and started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    expires = started + timedelta(days=14)
+    now = datetime.now(timezone.utc)
+    seconds_left = int((expires - now).total_seconds())
+    return {
+        "paid": False,
+        "trial_started_at": started.isoformat(),
+        "trial_expires_at": expires.isoformat(),
+        "trial_seconds_left": max(0, seconds_left),
+        "trial_expired": seconds_left <= 0,
+        "enabled_features": enabled,
+    }
+
+
+@router.put("/leagues/{league_id}/admin/cap-settings")
+async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, request: Request):
+    """Commissioner toggles salary cap / minors premium features.
+
+    Starts the 14-day premium trial clock the first time a premium feature
+    is enabled (and the league hasn't already paid). The clock only resets
+    if both premium features get disabled and re-enabled later.
+    """
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+    ):
+        raise HTTPException(status_code=403, detail="Commissioner only")
+
+    updates: dict = {}
+    if payload.salary_cap_enabled is not None:
+        updates["salary_cap_enabled"] = bool(payload.salary_cap_enabled)
+        if not payload.salary_cap_enabled:
+            updates["salary_cap"] = None
+        elif payload.salary_cap is not None:
+            updates["salary_cap"] = int(payload.salary_cap)
+    elif payload.salary_cap is not None:
+        updates["salary_cap"] = int(payload.salary_cap)
+    if payload.salary_retention_slots is not None:
+        updates["salary_retention_slots"] = int(payload.salary_retention_slots)
+    if payload.minors_enabled is not None:
+        updates["minors_enabled"] = bool(payload.minors_enabled)
+
+    # Start the trial clock if any premium feature is now enabled and the
+    # league hasn't paid yet. Idempotent — won't reset an existing clock.
+    new_cap = updates.get("salary_cap_enabled", league.get("salary_cap_enabled"))
+    new_min = updates.get("minors_enabled", league.get("minors_enabled"))
+    any_premium = bool(new_cap or new_min)
+    if any_premium and not league.get("premium") and not league.get("premium_trial_started_at"):
+        updates["premium_trial_started_at"] = datetime.now(timezone.utc)
+    # When all premium features are off, clear the trial timer so re-enabling
+    # later gives a fresh 14-day window.
+    if not any_premium and league.get("premium_trial_started_at"):
+        updates["premium_trial_started_at"] = None
+
+    if updates:
+        await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$set": updates})
+    fresh = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    return {
+        "salary_cap_enabled": bool(fresh.get("salary_cap_enabled")),
+        "salary_cap": fresh.get("salary_cap"),
+        "salary_retention_slots": fresh.get("salary_retention_slots"),
+        "minors_enabled": bool(fresh.get("minors_enabled")),
+        "premium_status": _premium_status(fresh),
+    }
+
+
+@router.get("/leagues/{league_id}/premium-status")
+async def get_premium_status(league_id: str, request: Request):
+    """Public-ish endpoint (any logged-in user) so the banner can render.
+
+    Returns the live trial countdown for the league.
+    """
+    db = _deps["db"]
+    await _deps["get_current_user"](request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    return _premium_status(league)

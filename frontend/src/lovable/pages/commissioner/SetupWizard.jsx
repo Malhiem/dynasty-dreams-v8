@@ -1,30 +1,52 @@
 // @ts-nocheck
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Check, ChevronLeft, ChevronRight, Wand2, Trophy, DollarSign, Network, Calendar, Rocket } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Wand2, Trophy, DollarSign, Network, Calendar, Rocket, SkipForward } from "lucide-react";
+import HelpTooltip from "@/components/ui/help-tooltip";
+import PremiumTrialBanner from "@/lovable/components/PremiumTrialBanner";
 
 const STEPS = [
   { id: "basics", label: "Basics", icon: Wand2 },
   { id: "cap", label: "Salary Cap", icon: DollarSign },
-  { id: "divisions", label: "Divisions", icon: Network },
+  { id: "divisions", label: "League Structure", icon: Network },
   { id: "schedule", label: "Schedule Mix", icon: Calendar },
   { id: "generate", label: "Generate", icon: Rocket },
 ];
+
+const HELP = {
+  rosterSpots: "Total number of active players each team carries on its NHL roster. Skaters + goalies that score points each week.",
+  benchSpots: "Inactive players that don't score this week but stay on the roster — typically for matchup planning or injury cover.",
+  minors: "A separate prospects pool used by Dynasty leagues. Players here don't count against your active roster or salary cap. Available when 'Minors' premium feature is enabled.",
+  capEnable: "Imposes a maximum total contract value across all rostered players. Required for realistic Dynasty cap management. Premium feature.",
+  capAmount: "Maximum aggregate salary across all rostered players. NHL real-world cap for 2025-26 is $82.5M.",
+  retentionSlots: "When you trade a player, you can keep paying a portion of their salary. Each 'slot' lets you retain 1 contract at any time.",
+  divisions: "Group teams into divisions and conferences (e.g. NHL has 4 divisions in 2 conferences). Required for division-aware scheduling, playoff seeding, and President's Trophy calculation.",
+  intraDiv: "Games against teams in your OWN division (default 2 — home-and-home with each rival).",
+  intraConf: "Games against teams in your OWN conference but DIFFERENT division (default 1).",
+  interConf: "Games against teams in the OTHER conference (default 1).",
+  weeks: "Regular season length (recommended 18-22). Playoffs are scheduled separately and don't count toward this number.",
+  skip: "Skip the wizard and configure each setting later from Commissioner Settings. Setup-complete flag still gets recorded so this dialog won't open again automatically.",
+};
 
 export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   const [league, setLeague] = useState(null);
   const [teams, setTeams] = useState([]);
   const [stepIdx, setStepIdx] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [skipConfirmOpen, setSkipConfirmOpen] = useState(false);
 
   // Form state (seeded from backend on open)
+  const [rosterSpots, setRosterSpots] = useState(20);
+  const [benchSpots, setBenchSpots] = useState(5);
+  const [minorsSpots, setMinorsSpots] = useState(5);
+  const [minorsEnabled, setMinorsEnabled] = useState(false);
   const [capEnabled, setCapEnabled] = useState(false);
   const [capAmount, setCapAmount] = useState(82500000);
   const [retentionSlots, setRetentionSlots] = useState(3);
@@ -56,6 +78,10 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         setCapEnabled(capCfg ? !!capCfg.enabled : !!lgR.data?.salary_cap_enabled);
         setCapAmount(capCfg?.amount || lgR.data?.salary_cap || 82500000);
         setRetentionSlots(capCfg?.retention_slots ?? lgR.data?.salary_retention_slots ?? 3);
+        setMinorsEnabled(!!lgR.data?.minors_enabled);
+        setRosterSpots(lgR.data?.roster_spots ?? 20);
+        setBenchSpots(lgR.data?.bench_spots ?? 5);
+        setMinorsSpots(lgR.data?.minors_spots ?? 5);
         setTeams(teamsR.data || []);
         const seeded = {};
         (teamsR.data || []).forEach((t) => {
@@ -94,17 +120,28 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   const saveBasicsAndCap = async () => {
     setBusy(true);
     try {
-      // /leagues/{id} accepts name + is_private only — salary cap lives in separate LA flow.
-      // For the wizard we keep cap state local and push to the league doc via the existing
-      // league-admin endpoint `/leagues/{id}/admin/cap-settings` when present.
+      // Cap + minors settings go through the league admin endpoint. This
+      // also starts the 14-day premium trial clock when either premium
+      // feature is freshly enabled.
       try {
         await api.put(`/leagues/${leagueId}/admin/cap-settings`, {
           salary_cap_enabled: capEnabled,
           salary_cap: capEnabled ? capAmount : null,
           salary_retention_slots: retentionSlots,
+          minors_enabled: minorsEnabled,
         });
       } catch (e) {
         // If that endpoint doesn't exist, silently skip — user can configure in settings.
+      }
+      // Roster shape lives on the league doc.
+      try {
+        await api.put(`/leagues/${leagueId}`, {
+          roster_spots: rosterSpots,
+          bench_spots: benchSpots,
+          minors_spots: minorsEnabled ? minorsSpots : 0,
+        });
+      } catch (e) {
+        // Silent — league update endpoint may not yet accept these fields.
       }
     } finally {
       setBusy(false);
@@ -167,6 +204,20 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     }
   };
 
+  const skipWizard = async () => {
+    setBusy(true);
+    try {
+      // Mark setup complete without saving any pending changes, then close
+      await api.post(`/leagues/${leagueId}/setup-complete`).catch(() => {});
+      toast.info("Setup skipped — you can configure each step later from Commissioner Settings.");
+      onComplete && onComplete();
+      onClose();
+    } finally {
+      setBusy(false);
+      setSkipConfirmOpen(false);
+    }
+  };
+
   const next = async () => {
     if (step.id === "basics") await saveBasicsAndCap();
     else if (step.id === "cap") await saveBasicsAndCap();
@@ -215,6 +266,11 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
           })}
         </div>
 
+        {/* Premium trial banner — visible from step 1 once user toggles a premium feature */}
+        {(capEnabled || minorsEnabled) && (
+          <PremiumTrialBanner leagueId={leagueId} isCommissioner />
+        )}
+
         {/* Step body */}
         {step.id === "basics" && (
           <div className="space-y-3" data-testid="wizard-body-basics">
@@ -241,6 +297,55 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
               <div className="stat-card p-3"><span className="text-muted-foreground">Scoring</span><div className="font-bold">{league?.scoring_format || "head_to_head"}</div></div>
               <div className="stat-card p-3"><span className="text-muted-foreground">Sport</span><div className="font-bold uppercase">{league?.sport || "nhl"}</div></div>
             </div>
+
+            {/* Roster shape configuration */}
+            <div className="space-y-3 border-t border-border pt-3">
+              <h3 className="text-sm font-semibold text-white">Roster Shape</h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label className="text-xs flex items-center" htmlFor="wiz-roster">
+                    Roster spots
+                    <HelpTooltip text={HELP.rosterSpots} testId="help-roster-spots" />
+                  </Label>
+                  <Input
+                    id="wiz-roster" type="number" min={10} max={40} value={rosterSpots}
+                    onChange={(e) => setRosterSpots(Math.max(10, Math.min(40, parseInt(e.target.value || "0", 10))))}
+                    data-testid="wizard-roster-spots"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs flex items-center" htmlFor="wiz-bench">
+                    Bench spots
+                    <HelpTooltip text={HELP.benchSpots} testId="help-bench-spots" />
+                  </Label>
+                  <Input
+                    id="wiz-bench" type="number" min={0} max={20} value={benchSpots}
+                    onChange={(e) => setBenchSpots(Math.max(0, Math.min(20, parseInt(e.target.value || "0", 10))))}
+                    data-testid="wizard-bench-spots"
+                  />
+                </div>
+                {minorsEnabled && (
+                  <div>
+                    <Label className="text-xs flex items-center" htmlFor="wiz-minors">
+                      Minors spots
+                      <HelpTooltip text={HELP.minors} testId="help-minors-spots" />
+                    </Label>
+                    <Input
+                      id="wiz-minors" type="number" min={0} max={20} value={minorsSpots}
+                      onChange={(e) => setMinorsSpots(Math.max(0, Math.min(20, parseInt(e.target.value || "0", 10))))}
+                      data-testid="wizard-minors-spots"
+                    />
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-3 pt-1">
+                <Switch checked={minorsEnabled} onCheckedChange={setMinorsEnabled} id="wiz-minors-enabled" data-testid="wizard-minors-enabled" />
+                <Label htmlFor="wiz-minors-enabled" className="cursor-pointer flex items-center text-sm">
+                  Enable minors pool (Premium)
+                  <HelpTooltip text={HELP.minors} testId="help-minors-toggle" />
+                </Label>
+              </div>
+            </div>
           </div>
         )}
 
@@ -248,16 +353,25 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
           <div className="space-y-4" data-testid="wizard-body-cap">
             <div className="flex items-center gap-3">
               <Switch checked={capEnabled} onCheckedChange={setCapEnabled} id="wiz-cap" />
-              <Label htmlFor="wiz-cap" className="cursor-pointer">Enable salary cap</Label>
+              <Label htmlFor="wiz-cap" className="cursor-pointer flex items-center">
+                Enable salary cap (Premium)
+                <HelpTooltip text={HELP.capEnable} testId="help-cap-enable" />
+              </Label>
             </div>
             {capEnabled && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label htmlFor="wiz-cap-amt" className="text-xs">Cap ($)</Label>
+                  <Label htmlFor="wiz-cap-amt" className="text-xs flex items-center">
+                    Cap ($)
+                    <HelpTooltip text={HELP.capAmount} testId="help-cap-amount" />
+                  </Label>
                   <Input id="wiz-cap-amt" type="number" value={capAmount} onChange={(e) => setCapAmount(parseInt(e.target.value || "0", 10))} />
                 </div>
                 <div>
-                  <Label htmlFor="wiz-ret" className="text-xs">Retention slots</Label>
+                  <Label htmlFor="wiz-ret" className="text-xs flex items-center">
+                    Retention slots
+                    <HelpTooltip text={HELP.retentionSlots} testId="help-retention-slots" />
+                  </Label>
                   <Input id="wiz-ret" type="number" min={0} max={10} value={retentionSlots} onChange={(e) => setRetentionSlots(parseInt(e.target.value || "0", 10))} />
                 </div>
               </div>
@@ -269,6 +383,10 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         {step.id === "divisions" && (
           <div className="space-y-3" data-testid="wizard-body-divisions">
             <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold text-white flex items-center">
+                League Structure
+                <HelpTooltip text={HELP.divisions} testId="help-divisions" />
+              </h3>
               <Button size="sm" variant="outline" onClick={autoAssignNHL} data-testid="wizard-auto-assign-nhl">
                 Auto-assign NHL style
               </Button>
@@ -325,15 +443,24 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
             )}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <Label className="text-xs">Intra-division games</Label>
+                <Label className="text-xs flex items-center">
+                  Intra-division games
+                  <HelpTooltip text={HELP.intraDiv} testId="help-intra-div" />
+                </Label>
                 <Input type="number" min={0} max={10} value={schedule.intra_division_games} onChange={(e) => setSchedule({ ...schedule, intra_division_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) })} data-testid="wizard-schedule-intra-div" />
               </div>
               <div>
-                <Label className="text-xs">Intra-conference games</Label>
+                <Label className="text-xs flex items-center">
+                  Intra-conference games
+                  <HelpTooltip text={HELP.intraConf} testId="help-intra-conf" />
+                </Label>
                 <Input type="number" min={0} max={10} value={schedule.intra_conference_games} onChange={(e) => setSchedule({ ...schedule, intra_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) })} data-testid="wizard-schedule-intra-conf" />
               </div>
               <div>
-                <Label className="text-xs">Inter-conference games</Label>
+                <Label className="text-xs flex items-center">
+                  Inter-conference games
+                  <HelpTooltip text={HELP.interConf} testId="help-inter-conf" />
+                </Label>
                 <Input type="number" min={0} max={10} value={schedule.inter_conference_games} onChange={(e) => setSchedule({ ...schedule, inter_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) })} data-testid="wizard-schedule-inter-conf" />
               </div>
             </div>
@@ -352,7 +479,10 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
               </div>
               <div className="flex items-end gap-2">
                 <div className="flex-1">
-                  <Label className="text-xs">Regular season weeks</Label>
+                  <Label className="text-xs flex items-center">
+                    Regular season weeks
+                    <HelpTooltip text={HELP.weeks} testId="help-weeks" />
+                  </Label>
                   <Input type="number" min={4} max={30} value={numWeeks} onChange={(e) => setNumWeeks(Math.max(4, Math.min(30, parseInt(e.target.value || "0", 10))))} data-testid="wizard-num-weeks" />
                 </div>
                 <Button size="sm" onClick={generateSchedule} disabled={busy} data-testid="wizard-generate-btn">
@@ -368,15 +498,29 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
 
         {/* Nav buttons */}
         <div className="flex justify-between items-center pt-2 border-t border-border">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={stepIdx === 0 || busy}
-            onClick={() => setStepIdx(stepIdx - 1)}
-            data-testid="wizard-back-btn"
-          >
-            <ChevronLeft className="h-4 w-4 mr-1" /> Back
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={stepIdx === 0 || busy}
+              onClick={() => setStepIdx(stepIdx - 1)}
+              data-testid="wizard-back-btn"
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" /> Back
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSkipConfirmOpen(true)}
+              disabled={busy}
+              className="text-muted-foreground hover:text-foreground"
+              data-testid="wizard-skip-btn"
+              title="Skip setup wizard"
+            >
+              <SkipForward className="h-4 w-4 mr-1" /> Skip
+              <HelpTooltip text={HELP.skip} testId="help-skip" />
+            </Button>
+          </div>
           <div className="text-xs text-muted-foreground">Step {stepIdx + 1} of {STEPS.length}</div>
           {!isLast ? (
             <Button size="sm" onClick={next} disabled={busy} data-testid="wizard-next-btn">
@@ -389,6 +533,26 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
           )}
         </div>
       </DialogContent>
+
+      {/* Skip confirmation dialog */}
+      <AlertDialog open={skipConfirmOpen} onOpenChange={setSkipConfirmOpen}>
+        <AlertDialogContent data-testid="wizard-skip-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Skip the setup wizard?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your league will be marked as set up, but none of the unsaved choices on this screen will be persisted.
+              You can configure salary cap, league structure, schedule mix, and roster size later from
+              <strong> Commissioner Settings</strong>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="wizard-skip-cancel">Keep setting up</AlertDialogCancel>
+            <AlertDialogAction onClick={skipWizard} data-testid="wizard-skip-confirm-btn">
+              Yes, skip
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

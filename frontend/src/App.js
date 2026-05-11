@@ -13,6 +13,7 @@ import JoinLeaguePage from "@/pages/JoinLeaguePage";
 import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
 import PaymentCancelPage from "@/pages/PaymentCancelPage";
 import ProfilePage from "@/pages/ProfilePage";
+import EditProfilePage from "@/pages/EditProfilePage";
 
 // Backend-wired pages (our existing, data-driven)
 import DashboardPage from "@/pages/DashboardPage";
@@ -73,6 +74,7 @@ function App() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/join/:code" element={<JoinLeaguePage />} />
           <Route path="/u/:username" element={<ProfilePage />} />
+          <Route path="/profile/edit" element={<ProtectedRoute><EditProfilePage /></ProtectedRoute>} />
 
           {/* Backend-wired (data-driven) */}
           <Route path="/dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
