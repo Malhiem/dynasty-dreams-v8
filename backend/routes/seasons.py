@@ -172,18 +172,44 @@ async def get_health_score(league_id: str):
 
 
 @router.get("/leagues/{league_id}/seasons")
-async def list_seasons(league_id: str):
-    """List all completed seasons for a league (for History/Trophy Room)."""
+async def list_seasons(league_id: str, include_team_stats: bool = False):
+    """List all completed seasons for a league (for History/Trophy Room).
+
+    When `include_team_stats=true`, each returned season also includes a
+    `team_stats` array — one entry per franchise that played that season —
+    with the snapshot-time {wins, losses, ties, points_for, points_against,
+    division, conference}. This lets the League History page sum lifetime
+    records correctly across every completed season instead of relying on
+    just the LIVE current-season totals.
+    """
     db = _deps["db"]
     await _league_or_404(league_id)
-    cursor = db.league_seasons.find(
-        {"league_id": league_id},
-        {"_id": 1, "season_year": 1, "status": 1, "snapshot_at": 1,
-         "champion_team_name": 1, "completed_by": 1},
-    ).sort("season_year", -1)
+    projection = {
+        "_id": 1, "season_year": 1, "status": 1, "snapshot_at": 1,
+        "champion_team_name": 1, "completed_by": 1,
+    }
+    if include_team_stats:
+        projection["teams"] = 1
+    cursor = db.league_seasons.find({"league_id": league_id}, projection).sort("season_year", -1)
     seasons = []
     async for s in cursor:
         s["id"] = str(s.pop("_id"))
+        if include_team_stats:
+            teams = s.pop("teams", []) or []
+            s["team_stats"] = [
+                {
+                    "team_id": t.get("team_id"),
+                    "team_name": t.get("team_name"),
+                    "wins": int(t.get("wins") or 0),
+                    "losses": int(t.get("losses") or 0),
+                    "ties": int(t.get("ties") or 0),
+                    "points_for": float(t.get("points_for") or 0.0),
+                    "points_against": float(t.get("points_against") or 0.0),
+                    "division": t.get("division"),
+                    "conference": t.get("conference"),
+                }
+                for t in teams
+            ]
         seasons.append(s)
     return {"seasons": seasons}
 

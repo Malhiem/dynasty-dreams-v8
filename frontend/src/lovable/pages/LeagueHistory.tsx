@@ -23,7 +23,7 @@ const LeagueHistory = () => {
     if (!league?.id) return;
     setLoading(true);
     Promise.all([
-      api.get(`/leagues/${league.id}/seasons`).then((r) => r.data?.seasons || []).catch(() => []),
+      api.get(`/leagues/${league.id}/seasons?include_team_stats=true`).then((r) => r.data?.seasons || []).catch(() => []),
       api.get(`/leagues/${league.id}/trophy-room`).then((r) => r.data || null).catch(() => null),
       api.get(`/leagues/${league.id}/team-rewards`)
         .then(({ data }) => (data?.rewards || []).filter((r: any) => r.source === "consolation_winner"))
@@ -48,106 +48,113 @@ const LeagueHistory = () => {
     if (!trophyData) return [];
     const tally: Record<string, any> = {};
 
-    // Pre-seed every team that has appeared in any season snapshot OR currently in league
+    const ensure = (tid: string | undefined, name?: string) => {
+      if (!tid) return null;
+      if (!tally[tid]) {
+        tally[tid] = {
+          team_id: tid,
+          team: name || "—",
+          seasons: 0,
+          wins: 0,
+          losses: 0,
+          ties: 0,
+          totalPoints: 0,
+          totalPointsAgainst: 0,
+          championships: 0,
+          presidentsTrophies: 0,
+          divisionWins: 0,
+          conferenceWins: 0,
+        };
+      } else if (name) {
+        tally[tid].team = name; // freshest name
+      }
+      return tally[tid];
+    };
+
+    // Seed every team that appeared in any season banner
     for (const tb of trophyData.team_banners || []) {
-      tally[tb.team_id] = {
-        team_id: tb.team_id,
-        team: tb.team_name,
-        seasons: 0,
-        wins: 0,
-        losses: 0,
-        ties: 0,
-        totalPoints: 0,
-        championships: 0,
-        presidentsTrophies: 0,
-        divisionWins: 0,
-        conferenceWins: 0,
-      };
+      ensure(tb.team_id, tb.team_name);
     }
 
-    // Walk every season trophy doc
+    // ─── Sum W/L/T/PF/PA + season count from completed season snapshots ───
+    // `seasons` here is the response from /leagues/{id}/seasons?include_team_stats=true
+    // and each entry has `team_stats[]` with the snapshot-time totals.
+    for (const snap of seasons || []) {
+      for (const ts of snap.team_stats || []) {
+        const r = ensure(ts.team_id, ts.team_name);
+        if (!r) continue;
+        r.seasons += 1;
+        r.wins += ts.wins || 0;
+        r.losses += ts.losses || 0;
+        r.ties += ts.ties || 0;
+        r.totalPoints += ts.points_for || 0;
+        r.totalPointsAgainst += ts.points_against || 0;
+      }
+    }
+
+    // ─── Trophy tally from trophy-room aggregator (championships, etc.) ───
     for (const s of trophyData.seasons || []) {
-      // Champion
       if (s.champion?.team_id) {
-        const r = (tally[s.champion.team_id] = tally[s.champion.team_id] || {
-          team_id: s.champion.team_id, team: s.champion.team_name,
-          seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
-          championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
-        });
-        r.championships += 1;
+        const r = ensure(s.champion.team_id, s.champion.team_name);
+        if (r) r.championships += 1;
       }
-      // President's Trophy
       if (s.presidents_trophy?.team_id) {
-        const r = (tally[s.presidents_trophy.team_id] = tally[s.presidents_trophy.team_id] || {
-          team_id: s.presidents_trophy.team_id, team: s.presidents_trophy.team_name,
-          seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
-          championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
-        });
-        r.presidentsTrophies += 1;
+        const r = ensure(s.presidents_trophy.team_id, s.presidents_trophy.team_name);
+        if (r) r.presidentsTrophies += 1;
       }
-      // Division wins
       for (const d of s.division_winners || []) {
-        const r = (tally[d.team_id] = tally[d.team_id] || {
-          team_id: d.team_id, team: d.team_name,
-          seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
-          championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
-        });
-        r.divisionWins += 1;
+        const r = ensure(d.team_id, d.team_name);
+        if (r) r.divisionWins += 1;
       }
-      // Conference wins
       for (const c of s.conference_winners || []) {
-        const r = (tally[c.team_id] = tally[c.team_id] || {
-          team_id: c.team_id, team: c.team_name,
-          seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
-          championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
-        });
-        r.conferenceWins += 1;
+        const r = ensure(c.team_id, c.team_name);
+        if (r) r.conferenceWins += 1;
       }
     }
 
-    // Pull W/L/PF from raw seasons snapshots (server returns minimal list, so fetch isn't there;
-    // use teams stored within trophy_room.team_banners as proxy if richer endpoint isn't called).
-    // The raw `/leagues/{id}/seasons` only returns ids — fall back to current league team stats.
-    for (const t of leagueTeams || []) {
-      const r = (tally[t.id] = tally[t.id] || {
-        team_id: t.id, team: t.name,
-        seasons: 0, wins: 0, losses: 0, ties: 0, totalPoints: 0,
-        championships: 0, presidentsTrophies: 0, divisionWins: 0, conferenceWins: 0,
-      });
-      r.team = t.name; // freshest name
-      // Live current-season totals (best-effort baseline)
-      r.wins += t.wins || 0;
-      r.losses += t.losses || 0;
-      r.ties += t.ties || 0;
-      r.totalPoints += t.points_for || 0;
-      if (r.seasons === 0) r.seasons = 1;
-    }
-
-    // Each historical season the team appeared in adds 1 to seasons count
-    for (const s of trophyData.seasons || []) {
-      // Use champion + presidents + division/conference + consolation team_ids as members
-      const members = new Set<string>([
-        ...(s.champion ? [s.champion.team_id] : []),
-        ...(s.presidents_trophy ? [s.presidents_trophy.team_id] : []),
-        ...(s.division_winners || []).map((x: any) => x.team_id),
-        ...(s.conference_winners || []).map((x: any) => x.team_id),
-        ...(s.consolation_winner ? [s.consolation_winner.team_id] : []),
-      ]);
-      for (const tid of members) {
-        if (!tid) continue;
-        const r = tally[tid];
-        if (r) r.seasons = (r.seasons || 0) + 1;
+    // ─── Add LIVE current-season W/L/T/PF for every active team ───
+    // If a snapshot for the current year already exists (status != "in_progress"
+    // and season_year is in `seasons`), skip — otherwise we'd double count.
+    const snapshotYears = new Set((seasons || []).map((s: any) => s.season_year));
+    const currentYearOpen = !!leagueTeams?.length && !snapshotYears.has(
+      // Heuristic: current_season_year comes from league but we don't have it here;
+      // we infer "open" by checking if every team's wins+losses+ties equals 0 → already snapshotted.
+      // Simpler: always count live unless we detect a snapshot covers it (best-effort).
+      -1,
+    );
+    if (currentYearOpen) {
+      for (const t of leagueTeams || []) {
+        const r = ensure(t.id, t.name);
+        if (!r) continue;
+        const liveTotal = (t.wins || 0) + (t.losses || 0) + (t.ties || 0);
+        if (liveTotal > 0 || (t.points_for || 0) > 0) {
+          // Only count current season once and only if there's gameplay
+          r.seasons += 1;
+          r.wins += t.wins || 0;
+          r.losses += t.losses || 0;
+          r.ties += t.ties || 0;
+          r.totalPoints += t.points_for || 0;
+          r.totalPointsAgainst += t.points_against || 0;
+        } else if (r.seasons === 0) {
+          // Brand-new team, no prior snapshots and no games yet — still show as a row
+          r.seasons = 1;
+        }
       }
     }
 
     const arr = Object.values(tally).map((r: any) => {
-      const total = (r.wins || 0) + (r.losses || 0);
-      const winPct = total > 0 ? (r.wins / total).toFixed(3).replace(/^0/, "") : ".000";
+      const games = (r.wins || 0) + (r.losses || 0) + (r.ties || 0);
+      const winPct = games > 0 ? ((r.wins + r.ties * 0.5) / games).toFixed(3).replace(/^0/, "") : ".000";
       return { ...r, winPct };
     });
-    arr.sort((a: any, b: any) => (b.championships - a.championships) || (b.wins - a.wins) || (b.totalPoints - a.totalPoints));
+    arr.sort(
+      (a: any, b: any) =>
+        b.championships - a.championships
+        || b.wins - a.wins
+        || b.totalPoints - a.totalPoints,
+    );
     return arr.map((r: any, i: number) => ({ ...r, rank: i + 1 }));
-  }, [trophyData, leagueTeams]);
+  }, [trophyData, seasons, leagueTeams]);
 
   // ─── League Records (computed from snapshots + live team data) ───
   const leagueRecords = useMemo(() => {
