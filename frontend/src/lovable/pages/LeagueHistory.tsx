@@ -11,6 +11,104 @@ import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { TrophyRoomView } from "@/lovable/pages/TrophyRoom";
 
+// ─── Streak helpers ────────────────────────────────────────────────────
+// A "winning season" = wins > losses; "losing season" = wins < losses;
+// ties (W == L) reset both active and longest counters.
+type SeasonRow = { year: number; wins: number; losses: number; ties: number; pf: number; pa: number; current?: boolean };
+type Streak = { type: "W" | "L"; count: number } | null;
+
+function classifySeason(s: SeasonRow): "W" | "L" | "T" {
+  if (s.wins > s.losses) return "W";
+  if (s.wins < s.losses) return "L";
+  return "T";
+}
+
+function computeStreaks(rows: SeasonRow[]): { active: Streak; longest: Streak } {
+  if (!rows.length) return { active: null, longest: null };
+  // Active streak = trailing run from the latest season backwards
+  let active: Streak = null;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const t = classifySeason(rows[i]);
+    if (t === "T") break;
+    if (!active) {
+      active = { type: t, count: 1 };
+    } else if (active.type === t) {
+      active.count += 1;
+    } else {
+      break;
+    }
+  }
+  // Longest streak = max W or L run anywhere in history
+  let longest: Streak = null;
+  let cur: { type: "W" | "L"; count: number } | null = null;
+  for (const r of rows) {
+    const t = classifySeason(r);
+    if (t === "T") { cur = null; continue; }
+    if (cur && cur.type === t) {
+      cur.count += 1;
+    } else {
+      cur = { type: t, count: 1 };
+    }
+    if (!longest || cur.count > longest.count) {
+      longest = { ...cur };
+    }
+  }
+  return { active, longest };
+}
+
+// ─── Dynasty Arc sparkline ─────────────────────────────────────────────
+// Tiny 60x16 SVG showing the team's points_for trajectory across seasons,
+// with a green/red trend arrow comparing the last 2 seasons. Hover reveals
+// per-season tooltip.
+function DynastyArc({ rows, testId }: { rows: SeasonRow[]; testId?: string }) {
+  if (!rows || rows.length < 1) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+  const W = 60, H = 16, PAD = 1;
+  const max = Math.max(...rows.map((r) => r.pf), 1);
+  const min = Math.min(...rows.map((r) => r.pf), 0);
+  const range = Math.max(max - min, 1);
+  const step = rows.length > 1 ? (W - PAD * 2) / (rows.length - 1) : 0;
+
+  const points = rows.map((r, i) => {
+    const x = PAD + step * i;
+    const y = H - PAD - ((r.pf - min) / range) * (H - PAD * 2);
+    return { x, y, ...r };
+  });
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(" ");
+
+  let trend: "up" | "down" | "flat" = "flat";
+  if (rows.length >= 2) {
+    const a = rows[rows.length - 2].pf;
+    const b = rows[rows.length - 1].pf;
+    if (b > a) trend = "up";
+    else if (b < a) trend = "down";
+  }
+  const stroke = trend === "up" ? "#10B981" : trend === "down" ? "#EF4444" : "#A1A1AA";
+  const tooltip = points
+    .map((p) => `${p.year}: ${Math.round(p.pf)} PF · ${p.wins}-${p.losses}-${p.ties}${p.current ? " (live)" : ""}`)
+    .join("\n");
+
+  return (
+    <span className="inline-flex items-center gap-1" title={tooltip} data-testid={testId}>
+      <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
+        <path d={path} fill="none" stroke={stroke} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />
+        {points.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r={i === points.length - 1 ? 1.6 : 1} fill={stroke} opacity={i === points.length - 1 ? 1 : 0.55} />
+        ))}
+      </svg>
+      <span
+        aria-hidden
+        className="text-[10px] leading-none"
+        style={{ color: stroke }}
+        data-testid={testId ? `${testId}-trend` : undefined}
+      >
+        {trend === "up" ? "▲" : trend === "down" ? "▼" : "—"}
+      </span>
+    </span>
+  );
+}
+
 const LeagueHistory = () => {
   const { league, leagueTeams } = useActiveLeague();
   const [seasons, setSeasons] = useState<any[]>([]);
@@ -64,6 +162,7 @@ const LeagueHistory = () => {
           presidentsTrophies: 0,
           divisionWins: 0,
           conferenceWins: 0,
+          seasonRows: [],
         };
       } else if (name) {
         tally[tid].team = name; // freshest name
@@ -89,6 +188,14 @@ const LeagueHistory = () => {
         r.ties += ts.ties || 0;
         r.totalPoints += ts.points_for || 0;
         r.totalPointsAgainst += ts.points_against || 0;
+        r.seasonRows.push({
+          year: snap.season_year,
+          wins: ts.wins || 0,
+          losses: ts.losses || 0,
+          ties: ts.ties || 0,
+          pf: ts.points_for || 0,
+          pa: ts.points_against || 0,
+        });
       }
     }
 
@@ -135,11 +242,29 @@ const LeagueHistory = () => {
           r.ties += t.ties || 0;
           r.totalPoints += t.points_for || 0;
           r.totalPointsAgainst += t.points_against || 0;
+          // Add the live current season as a "current" row (used for arc + streak)
+          r.seasonRows.push({
+            year: (league?.current_season_year as number) || new Date().getFullYear(),
+            wins: t.wins || 0,
+            losses: t.losses || 0,
+            ties: t.ties || 0,
+            pf: t.points_for || 0,
+            pa: t.points_against || 0,
+            current: true,
+          });
         } else if (r.seasons === 0) {
           // Brand-new team, no prior snapshots and no games yet — still show as a row
           r.seasons = 1;
         }
       }
+    }
+
+    // Sort each team's season rows year ASC for streak + arc rendering
+    for (const r of Object.values(tally) as any[]) {
+      r.seasonRows.sort((a: any, b: any) => a.year - b.year);
+      const streak = computeStreaks(r.seasonRows);
+      r.activeStreak = streak.active;       // e.g. { type: 'W', count: 3 } or null
+      r.longestStreak = streak.longest;     // e.g. { type: 'W', count: 5 } or null
     }
 
     const arr = Object.values(tally).map((r: any) => {
@@ -154,7 +279,7 @@ const LeagueHistory = () => {
         || b.totalPoints - a.totalPoints,
     );
     return arr.map((r: any, i: number) => ({ ...r, rank: i + 1 }));
-  }, [trophyData, seasons, leagueTeams]);
+  }, [trophyData, seasons, leagueTeams, league?.current_season_year]);
 
   // ─── League Records (computed from snapshots + live team data) ───
   const leagueRecords = useMemo(() => {
@@ -352,6 +477,8 @@ const LeagueHistory = () => {
                   <span className="flex items-center gap-1">🏅 President's Trophy</span>
                   <span className="flex items-center gap-1">🥇 Division Win</span>
                   <span className="flex items-center gap-1">🎯 Conference Win</span>
+                  <span className="flex items-center gap-1.5 text-green-400">▲ Arc trending up</span>
+                  <span className="flex items-center gap-1.5 text-red-400">▼ Arc trending down</span>
                 </div>
                 {loading ? (
                   <p className="text-center text-muted-foreground py-8">Loading…</p>
@@ -370,6 +497,9 @@ const LeagueHistory = () => {
                         <TableHead className="text-center">L</TableHead>
                         <TableHead className="text-center">Win %</TableHead>
                         <TableHead className="text-right">Total Pts</TableHead>
+                        <TableHead className="text-center" title="Current trailing run of winning (W>L) or losing (W<L) seasons">Active Streak</TableHead>
+                        <TableHead className="text-center" title="Longest run of consecutive winning or losing seasons">Longest Streak</TableHead>
+                        <TableHead className="text-center" title="Dynasty Arc — year-over-year Points For trend (hover for per-season breakdown)">Arc</TableHead>
                         <TableHead className="text-center" title="Championships">🏆</TableHead>
                         <TableHead className="text-center" title="President's Trophy">🏅</TableHead>
                         <TableHead className="text-center" title="Division Wins">🥇</TableHead>
@@ -410,6 +540,37 @@ const LeagueHistory = () => {
                           <TableCell className="text-center text-red-500">{team.losses}</TableCell>
                           <TableCell className="text-center">{team.winPct}</TableCell>
                           <TableCell className="text-right font-semibold">{(team.totalPoints || 0).toLocaleString(undefined, { maximumFractionDigits: 1 })}</TableCell>
+                          <TableCell className="text-center" data-testid={`lifetime-active-streak-${team.team_id}`}>
+                            {team.activeStreak ? (
+                              <Badge
+                                variant="outline"
+                                className={team.activeStreak.type === "W"
+                                  ? "border-green-500/40 text-green-400"
+                                  : "border-red-500/40 text-red-400"}
+                              >
+                                {team.activeStreak.count}{team.activeStreak.type}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center" data-testid={`lifetime-longest-streak-${team.team_id}`}>
+                            {team.longestStreak ? (
+                              <Badge
+                                variant="outline"
+                                className={team.longestStreak.type === "W"
+                                  ? "border-green-500/30 text-green-300"
+                                  : "border-red-500/30 text-red-300"}
+                              >
+                                {team.longestStreak.count}{team.longestStreak.type}
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <DynastyArc rows={team.seasonRows || []} testId={`lifetime-arc-${team.team_id}`} />
+                          </TableCell>
                           <TableCell className="text-center">
                             {team.championships > 0
                               ? <span className="text-yellow-500">{"🏆".repeat(team.championships)}</span>
