@@ -152,12 +152,15 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
         "league_id": input.league_id,
     })
     if not team_budget:
+        # FAAB budget per team is configurable via League Admin
+        # (`waiver_faab_budget`). Defaults to 100 to preserve legacy behaviour.
+        budget_default = float(league.get("waiver_faab_budget") or 100)
         team_budget = {
             "team_id": str(team["_id"]),
             "league_id": input.league_id,
-            "total_budget": 100.0,
+            "total_budget": budget_default,
             "spent": 0.0,
-            "remaining": 100.0,
+            "remaining": budget_default,
         }
         await db.waiver_budgets.insert_one(team_budget)
 
@@ -257,12 +260,15 @@ async def get_waiver_budget(league_id: str, request: Request = None):
         "league_id": league_id,
     })
     if not budget:
+        # Honour the configured league budget instead of hardcoded $100.
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+        budget_default = float((league or {}).get("waiver_faab_budget") or 100)
         budget = {
             "team_id": str(team["_id"]),
             "league_id": league_id,
-            "total_budget": 100.0,
+            "total_budget": budget_default,
             "spent": 0.0,
-            "remaining": 100.0,
+            "remaining": budget_default,
         }
         await db.waiver_budgets.insert_one(budget)
 

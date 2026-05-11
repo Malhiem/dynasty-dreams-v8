@@ -228,6 +228,18 @@ class LeagueResponse(BaseModel):
     invite_code: Optional[str] = None
     created_at: datetime
     setup_wizard_complete: bool = False
+    # Extended wizard / commissioner-settable fields (single source of truth)
+    bench_spots: Optional[int] = None
+    minors_spots: Optional[int] = None
+    trade_review_period_hours: Optional[int] = None
+    trade_veto_threshold_pct: Optional[int] = None
+    trade_deadline_week: Optional[int] = None
+    waiver_faab_budget: Optional[int] = None
+    waiver_period_days: Optional[int] = None
+    playoff_teams: Optional[int] = None
+    playoff_start_week: Optional[int] = None
+    playoff_rounds: Optional[int] = None
+    regular_season_weeks: Optional[int] = None
 
 class TeamCreate(BaseModel):
     name: str
@@ -458,6 +470,17 @@ async def get_league(league_id: str):
         invite_code=league.get("invite_code"),
         created_at=league["created_at"],
         setup_wizard_complete=bool(league.get("setup_wizard_complete", False)),
+        bench_spots=league.get("bench_spots"),
+        minors_spots=league.get("minors_spots"),
+        trade_review_period_hours=league.get("trade_review_period_hours"),
+        trade_veto_threshold_pct=league.get("trade_veto_threshold_pct"),
+        trade_deadline_week=league.get("trade_deadline_week"),
+        waiver_faab_budget=league.get("waiver_faab_budget"),
+        waiver_period_days=league.get("waiver_period_days"),
+        playoff_teams=league.get("playoff_teams"),
+        playoff_start_week=league.get("playoff_start_week"),
+        playoff_rounds=league.get("playoff_rounds"),
+        regular_season_weeks=league.get("regular_season_weeks"),
     )
 
 # ─── League Invite System ─────────────────────────────────────
@@ -767,13 +790,56 @@ class JoinPublicLeagueRequest(BaseModel):
 
 
 class LeagueUpdate(BaseModel):
+    """Mutable league configuration — single source of truth backing both the
+    Setup Wizard and the Commissioner Settings → League Structure tab.
+
+    Every field is optional; only the keys you send get written. Audit log
+    captures the diff so co-commissioners can see exactly what changed.
+    """
     is_private: Optional[bool] = None
     name: Optional[str] = Field(default=None, max_length=120)
+    # Roster shape (driven by Setup Wizard → Basics step)
+    roster_spots: Optional[int] = Field(default=None, ge=10, le=40)
+    bench_spots: Optional[int] = Field(default=None, ge=0, le=20)
+    minors_spots: Optional[int] = Field(default=None, ge=0, le=20)
+    # Format + scoring (driven by Setup Wizard + Commissioner Settings → Basics)
+    scoring_format: Optional[str] = None
+    max_teams: Optional[int] = Field(default=None, ge=4, le=32)
+    keepers_allowed: Optional[int] = Field(default=None, ge=0, le=30)
+    entry_fee: Optional[float] = Field(default=None, ge=0)
+    # Trade settings (driven by Setup Wizard → Trades step + Commissioner Settings)
+    trade_review_period_hours: Optional[int] = Field(default=None, ge=0, le=168)
+    trade_veto_threshold_pct: Optional[int] = Field(default=None, ge=0, le=100)
+    trade_deadline_week: Optional[int] = Field(default=None, ge=1, le=30)
+    # Waiver settings
+    waiver_faab_budget: Optional[int] = Field(default=None, ge=0, le=10000)
+    waiver_period_days: Optional[int] = Field(default=None, ge=0, le=7)
+    # Playoff settings
+    playoff_teams: Optional[int] = Field(default=None, ge=2, le=16)
+    playoff_start_week: Optional[int] = Field(default=None, ge=1, le=30)
+    playoff_rounds: Optional[int] = Field(default=None, ge=1, le=5)
+    regular_season_weeks: Optional[int] = Field(default=None, ge=4, le=30)
+
+
+_LEAGUE_UPDATE_ALLOWED = {
+    "is_private", "name", "roster_spots", "bench_spots", "minors_spots",
+    "scoring_format", "max_teams", "keepers_allowed", "entry_fee",
+    "trade_review_period_hours", "trade_veto_threshold_pct", "trade_deadline_week",
+    "waiver_faab_budget", "waiver_period_days",
+    "playoff_teams", "playoff_start_week", "playoff_rounds", "regular_season_weeks",
+}
 
 
 @api_router.put("/leagues/{league_id}")
 async def update_league(league_id: str, payload: LeagueUpdate, request: Request):
-    """Commissioner-only: update mutable league settings (currently is_private + name)."""
+    """Commissioner-only: update mutable league settings.
+
+    Single source of truth for every league setting that the wizard or
+    Commissioner Settings UI can change. Sparse payload — only provided
+    keys are written; nulls are preserved (i.e. clearing a value still
+    requires sending the field explicitly with value `null`, you can't
+    overwrite by omitting).
+    """
     user = await get_current_user(request)
     league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
     if not league:
@@ -785,12 +851,19 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
 
     update: dict = {}
     diff: dict = {}
-    if payload.is_private is not None and bool(payload.is_private) != bool(league.get("is_private")):
-        update["is_private"] = bool(payload.is_private)
-        diff["is_private"] = {"from": bool(league.get("is_private")), "to": bool(payload.is_private)}
-    if payload.name and payload.name.strip() and payload.name.strip() != league.get("name"):
-        update["name"] = payload.name.strip()
-        diff["name"] = {"from": league.get("name"), "to": payload.name.strip()}
+    body = payload.model_dump(exclude_unset=True)
+    for field in _LEAGUE_UPDATE_ALLOWED:
+        if field not in body:
+            continue
+        new_val = body[field]
+        if field == "name" and isinstance(new_val, str):
+            new_val = new_val.strip() or None
+            if not new_val:
+                continue
+        old_val = league.get(field)
+        if new_val != old_val:
+            update[field] = new_val
+            diff[field] = {"from": old_val, "to": new_val}
 
     if update:
         await db.leagues.update_one({"_id": league["_id"]}, {"$set": update})
@@ -805,7 +878,29 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
         })
 
     fresh = await db.leagues.find_one({"_id": league["_id"]})
-    return {"league_id": league_id, "is_private": bool(fresh.get("is_private")), "name": fresh.get("name"), "changes": diff}
+    return {
+        "league_id": league_id,
+        "changes": diff,
+        # Echo back the full canonical config so the UI cache stays in sync.
+        "name": fresh.get("name"),
+        "is_private": bool(fresh.get("is_private")),
+        "roster_spots": fresh.get("roster_spots"),
+        "bench_spots": fresh.get("bench_spots"),
+        "minors_spots": fresh.get("minors_spots"),
+        "scoring_format": fresh.get("scoring_format"),
+        "max_teams": fresh.get("max_teams"),
+        "keepers_allowed": fresh.get("keepers_allowed"),
+        "entry_fee": fresh.get("entry_fee"),
+        "playoff_teams": fresh.get("playoff_teams"),
+        "playoff_start_week": fresh.get("playoff_start_week"),
+        "playoff_rounds": fresh.get("playoff_rounds"),
+        "regular_season_weeks": fresh.get("regular_season_weeks"),
+        "trade_review_period_hours": fresh.get("trade_review_period_hours"),
+        "trade_veto_threshold_pct": fresh.get("trade_veto_threshold_pct"),
+        "trade_deadline_week": fresh.get("trade_deadline_week"),
+        "waiver_faab_budget": fresh.get("waiver_faab_budget"),
+        "waiver_period_days": fresh.get("waiver_period_days"),
+    }
 
 
 @api_router.put("/leagues/{league_id}/salary-retention-slots")

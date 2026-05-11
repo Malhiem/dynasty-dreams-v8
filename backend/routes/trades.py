@@ -87,7 +87,7 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
                 detail["assists"] = player.get("assists", 0)
         requested_details.append(detail)
 
-    review_period_hours = 72
+    review_period_hours = int(league.get("trade_review_period_hours") or 72)
     has_conditions = bool(getattr(input, "conditions", None))
     pick_upgrades = [u.dict() if hasattr(u, "dict") else u for u in (getattr(input, "pick_upgrades", None) or [])]
     trade_doc = {
@@ -351,7 +351,7 @@ async def create_multi_party_trade(input: MultiPartyTradeProposalCreate, request
     target_team = parties[legacy_target_idx]
 
     has_conditions = bool(input.conditions)
-    review_period_hours = 72
+    review_period_hours = int(league.get("trade_review_period_hours") or 72)
     trade_doc = {
         "league_id": input.league_id,
         "is_multi_party": len(parties) > 2,
@@ -565,10 +565,16 @@ async def vote_on_trade(trade_id: str, input: TradeVote, request: Request):
 
     league = await db.leagues.find_one({"_id": ObjectId(trade["league_id"])})
     total_teams = league.get("current_teams", 0)
-    veto_threshold = total_teams // 2
+    # Veto threshold is configurable via League Admin (`trade_veto_threshold_pct`,
+    # 0-100). Default = 50% (legacy behaviour). When 0 or unset, vetos are
+    # disabled.
+    veto_pct = league.get("trade_veto_threshold_pct")
+    if veto_pct is None:
+        veto_pct = 50
+    veto_threshold = int(total_teams * veto_pct / 100) if veto_pct > 0 else total_teams + 1
 
     updated_trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
-    if updated_trade["votes"]["veto"] > veto_threshold:
+    if veto_pct > 0 and updated_trade["votes"]["veto"] > veto_threshold:
         await db.trades.update_one(
             {"_id": ObjectId(trade_id)},
             {"$set": {"status": "vetoed", "processed_at": datetime.now(timezone.utc).isoformat()}},
