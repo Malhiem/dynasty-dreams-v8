@@ -298,6 +298,14 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
             }}
         )
 
+        # ─── Apply ELO ratings update for this matchup ──────────────
+        try:
+            from routes.ratings import apply_matchup_elo
+            m_fresh = await db.matchups.find_one({"_id": m["_id"]})
+            await apply_matchup_elo(input.league_id, m_fresh)
+        except Exception as ex:
+            logger.warning("ELO update failed for matchup %s: %s", str(m["_id"]), ex)
+
         # Snapshot per-team week summary for analytics rollup (idempotent upsert)
         from routes.analytics import _current_season
         _season = league.get("season") or _current_season()
@@ -346,6 +354,9 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
             if bracket == "championship":
                 await db.teams.update_one({"_id": ObjectId(winner)},
                                           {"$set": {"championship_won_at": now}})
+                # Mark the runner-up so the profile trophy case can show it
+                await db.teams.update_one({"_id": ObjectId(loser_id)},
+                                          {"$set": {"playoff_runner_up_at": now}})
                 await db.activity_feed.insert_one({
                     "league_id": input.league_id, "event_type": "championship_awarded",
                     "description": f"🏆 {winner_name} won the championship!",

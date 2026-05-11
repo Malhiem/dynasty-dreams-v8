@@ -2,6 +2,7 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
 import api from "@/lib/api";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -257,9 +258,11 @@ const ClinchLegend = () => (
 const StandingsTable = ({
   teams,
   columns,
+  streaks,
 }: {
   teams: (StandingsTeam & { displayRank: number })[];
   columns: ColumnConfig;
+  streaks?: Record<string, any>;
 }) => {
   const navigate = useNavigate();
   return (
@@ -341,6 +344,23 @@ const StandingsTable = ({
                         <Crown className="h-3.5 w-3.5" />
                       </Link>
                     )}
+                    {team.teamId && (() => {
+                      const chip = streakChip(streaks?.[team.teamId]?.active);
+                      if (!chip) return null;
+                      return (
+                        <span
+                          data-testid={`standings-streak-chip-${team.teamId}`}
+                          title={`${chip.count} consecutive ${chip.label === "Hot" ? "winning" : "losing"} seasons`}
+                          className={`inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${
+                            chip.tone === "hot"
+                              ? "bg-orange-500/20 text-orange-300 border-orange-400/40"
+                              : "bg-sky-500/20 text-sky-200 border-sky-400/40"
+                          }`}
+                        >
+                          {chip.emoji} {chip.label} {chip.count}
+                        </span>
+                      );
+                    })()}
                     <ClinchBadges statuses={team.clinched} />
                   </div>
                 </td>
@@ -628,6 +648,7 @@ const PlayoffBracket = ({ teams, showProjections }: { teams: StandingsTeam[]; sh
 const StandingsPage = () => {
   const navigate = useNavigate();
   const { league, leagueTeams, myTeam, myLeagues, leagueId, switchLeague } = useActiveLeague();
+  const { streaks } = useSeasonStreaks(leagueId);
   const [view, setView] = useState<ViewType>("league");
   const viewExplicitlyChanged = useRef(false);
   const [divisionFilter, setDivisionFilter] = useState<string>("all");
@@ -830,7 +851,7 @@ const StandingsPage = () => {
 
             {/* League view */}
 
-            {view === "league" && <StandingsTable teams={getFilteredTeams()} columns={columns} />}
+            {view === "league" && <StandingsTable teams={getFilteredTeams()} columns={columns} streaks={streaks} />}
 
             {/* Division views */}
             {view === "division" && divisionFilter === "all" ? (
@@ -838,12 +859,12 @@ const StandingsPage = () => {
                 {getDivisionGroups().map(group => (
                   <div key={group.name}>
                     <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">{group.name} Division</h3>
-                    <StandingsTable teams={group.teams} columns={columns} />
+                    <StandingsTable teams={group.teams} columns={columns} streaks={streaks} />
                   </div>
                 ))}
               </div>
             ) : view === "division" ? (
-              <StandingsTable teams={getFilteredTeams()} columns={columns} />
+              <StandingsTable teams={getFilteredTeams()} columns={columns} streaks={streaks} />
             ) : null}
 
             {/* Conference views */}
@@ -852,12 +873,12 @@ const StandingsPage = () => {
                 {getConferenceGroups().map(group => (
                   <div key={group.name}>
                     <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">{group.name} Conference</h3>
-                    <StandingsTable teams={group.teams} columns={columns} />
+                    <StandingsTable teams={group.teams} columns={columns} streaks={streaks} />
                   </div>
                 ))}
               </div>
             ) : view === "conference" ? (
-              <StandingsTable teams={getFilteredTeams()} columns={columns} />
+              <StandingsTable teams={getFilteredTeams()} columns={columns} streaks={streaks} />
             ) : null}
           </TabsContent>
 

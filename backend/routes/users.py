@@ -140,18 +140,41 @@ async def get_public_profile(username: str):
     ).to_list(100)
     leagues_by_id = {str(l["_id"]): l for l in leagues}
 
+    # Snapshot points-for ranks per (league, season_year) — used for the
+    # regular-season top-3 trophies. Map[league_id][season_year] -> [team_id ranked desc by PF].
+    rank_index: dict = {}
+    async for snap in db.league_seasons.find(
+        {"league_id": {"$in": league_ids}},
+        {"league_id": 1, "season_year": 1, "teams": 1},
+    ):
+        lid = snap["league_id"]
+        yr = snap.get("season_year")
+        ranked = sorted(
+            snap.get("teams") or [],
+            key=lambda x: float(x.get("points_for") or 0.0),
+            reverse=True,
+        )
+        rank_index.setdefault(lid, {})[yr] = [t.get("team_id") for t in ranked]
+
     team_cards = []
     trophies = []
+    active_leagues = []
     championships_won = 0
     division_titles = 0
     conference_titles = 0
     consolations_won = 0
+    runner_ups = 0
     playoff_appearances = 0
+    regular_season_top3 = 0
     total_wins = total_losses = total_ties = 0
     total_points_for = 0.0
 
     for t in teams:
         lg = leagues_by_id.get(t["league_id"]) or {}
+        league_is_private = bool(lg.get("is_private"))
+        league_status = (lg.get("current_season_status") or "").lower()
+        is_active = league_status != "complete"
+
         league_teams = await db.teams.find(
             {"league_id": t["league_id"]},
             {"_id": 1, "points_for": 1, "live_points": 1},
@@ -172,20 +195,28 @@ async def get_public_profile(username: str):
         div_at = t.get("division_winner_at")
         conf_at = t.get("conference_winner_at")
         cons_at = t.get("consolation_won_at")
+        runner_at = t.get("playoff_runner_up_at")
         playoffs_at = t.get("playoffs_reached_at")
         if champ_at: championships_won += 1
         if div_at: division_titles += 1
         if conf_at: conference_titles += 1
         if cons_at: consolations_won += 1
+        if runner_at: runner_ups += 1
         if playoffs_at: playoff_appearances += 1
 
-        team_cards.append({
+        # Hide league name + don't render a link for private leagues
+        league_display = lg.get("name") if not league_is_private else "Private League"
+
+        team_card = {
             "team_id": str(t["_id"]),
             "team_name": t["name"],
-            "league_id": t["league_id"],
-            "league_name": lg.get("name", "Unknown league"),
+            "league_id": t["league_id"] if not league_is_private else None,
+            "league_name": league_display,
+            "league_is_private": league_is_private,
             "league_format": lg.get("format"),
             "league_sport": lg.get("sport", "nhl"),
+            "league_status": league_status,
+            "is_active": is_active,
             "wins": t.get("wins", 0),
             "losses": t.get("losses", 0),
             "ties": t.get("ties", 0),
@@ -197,50 +228,66 @@ async def get_public_profile(username: str):
             "division_winner_at": div_at,
             "conference_winner_at": conf_at,
             "consolation_won_at": cons_at,
+            "playoff_runner_up_at": runner_at,
             "playoffs_reached_at": playoffs_at,
-        })
+        }
+        team_cards.append(team_card)
+        if is_active:
+            active_leagues.append(team_card)
 
+        # ─── Trophy case entries: playoff winner + runner-up + regular season top 3 ───
+        # Only emit a single playoff trophy per team (winner OR runner-up,
+        # not both) so the trophy case is clean.
+        _trophy_base = {
+            "league_id": team_card["league_id"],
+            "league_name": league_display,
+            "league_is_private": league_is_private,
+            "team_id": str(t["_id"]),
+            "team_name": t["name"],
+        }
         if champ_at:
-            trophies.append({
-                "league_id": t["league_id"], "league_name": lg.get("name"),
-                "team_name": t["name"], "label": "League Champion",
-                "type": "championship", "earned_at": champ_at,
-            })
+            trophies.append({**_trophy_base, "label": "Playoff Champion",
+                             "type": "championship", "place": 1, "earned_at": champ_at})
+        elif runner_at:
+            trophies.append({**_trophy_base, "label": "Playoff Runner-Up",
+                             "type": "runner_up", "place": 2, "earned_at": runner_at})
         if conf_at:
-            trophies.append({
-                "league_id": t["league_id"], "league_name": lg.get("name"),
-                "team_name": t["name"], "label": "Conference Champion",
-                "type": "conference", "earned_at": conf_at,
-            })
+            trophies.append({**_trophy_base, "label": "Conference Champion",
+                             "type": "conference", "earned_at": conf_at})
         if div_at:
-            trophies.append({
-                "league_id": t["league_id"], "league_name": lg.get("name"),
-                "team_name": t["name"], "label": "Division Champion",
-                "type": "division", "earned_at": div_at,
-            })
+            trophies.append({**_trophy_base, "label": "Division Champion",
+                             "type": "division", "earned_at": div_at})
         if cons_at:
-            trophies.append({
-                "league_id": t["league_id"], "league_name": lg.get("name"),
-                "team_name": t["name"], "label": "Consolation Winner",
-                "type": "consolation", "earned_at": cons_at,
-            })
+            trophies.append({**_trophy_base, "label": "Consolation Winner",
+                             "type": "consolation", "earned_at": cons_at})
 
-        if rank == 1:
-            trophies.append({
-                "league_id": t["league_id"],
-                "league_name": lg.get("name"),
-                "team_name": t["name"],
-                "label": "1st Place (current)",
-                "type": "lead",
-            })
-        elif rank and rank <= 3:
-            trophies.append({
-                "league_id": t["league_id"],
-                "league_name": lg.get("name"),
-                "team_name": t["name"],
-                "label": f"Top 3 (#{rank})",
-                "type": "top3",
-            })
+        # ─── Per-completed-season Regular-Season Top 3 ───
+        for yr, team_order in (rank_index.get(t["league_id"]) or {}).items():
+            try:
+                pos = team_order.index(str(t["_id"]))
+            except ValueError:
+                continue
+            if pos == 0:
+                regular_season_top3 += 1
+                trophies.append({**_trophy_base, "label": f"Regular Season 1st ({yr})",
+                                 "type": "regular_season_first", "place": 1,
+                                 "season_year": yr})
+            elif pos == 1:
+                regular_season_top3 += 1
+                trophies.append({**_trophy_base, "label": f"Regular Season 2nd ({yr})",
+                                 "type": "regular_season_second", "place": 2,
+                                 "season_year": yr})
+            elif pos == 2:
+                regular_season_top3 += 1
+                trophies.append({**_trophy_base, "label": f"Regular Season 3rd ({yr})",
+                                 "type": "regular_season_third", "place": 3,
+                                 "season_year": yr})
+
+    # Sort trophies by `earned_at` desc (no date trophies go last)
+    def _trophy_sort_key(tr):
+        dt = tr.get("earned_at") or tr.get("season_year")
+        return (0, dt) if dt else (1, "")
+    trophies.sort(key=_trophy_sort_key, reverse=True)
 
     lifetime_best: Optional[dict] = None
     if teams:
@@ -328,9 +375,12 @@ async def get_public_profile(username: str):
             "conference_titles": conference_titles,
             "division_titles": division_titles,
             "consolations_won": consolations_won,
+            "runner_ups": runner_ups,
+            "regular_season_top3": regular_season_top3,
             "playoff_appearances": playoff_appearances,
         },
         "teams": team_cards,
+        "active_leagues": active_leagues,
         "trophies": trophies,
         "lifetime_top_performer": lifetime_best,
     }

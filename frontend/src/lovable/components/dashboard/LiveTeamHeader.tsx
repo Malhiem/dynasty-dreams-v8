@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowRight, Flame, Radio } from "lucide-react";
 import TeamLogo from "@/lovable/components/TeamLogo";
+import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
 
 /**
  * Live header that sits atop the Lovable Team page.
@@ -15,6 +16,7 @@ import TeamLogo from "@/lovable/components/TeamLogo";
  */
 export default function LiveTeamHeader() {
   const { league, leagueTeams, myTeam, myLeagues, leagueId, switchLeague } = useActiveLeague();
+  const { streaks } = useSeasonStreaks(leagueId);
   const [live, setLive] = useState(null);
   const [week, setWeek] = useState(null);
 
@@ -69,6 +71,25 @@ export default function LiveTeamHeader() {
             >
               {myTeam.name}
             </Link>
+            {(() => {
+              const chip = streakChip(streaks?.[myTeam.id]?.active);
+              if (!chip) return null;
+              return (
+                <div className="mt-1">
+                  <span
+                    data-testid={`dashboard-streak-chip-${myTeam.id}`}
+                    title={`${chip.count} consecutive ${chip.label === "Hot" ? "winning" : "losing"} seasons`}
+                    className={`inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                      chip.tone === "hot"
+                        ? "bg-orange-500/20 text-orange-300 border-orange-400/40"
+                        : "bg-sky-500/20 text-sky-200 border-sky-400/40"
+                    }`}
+                  >
+                    {chip.emoji} {chip.label} streak · {chip.count} seasons
+                  </span>
+                </div>
+              );
+            })()}
             <div className="text-[#A1A1AA] text-sm mt-1">
               Record <span className="text-white">{myTeam.wins || 0}–{myTeam.losses || 0}–{myTeam.ties || 0}</span>
               {' · '}
