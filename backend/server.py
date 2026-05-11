@@ -239,7 +239,22 @@ class LeagueResponse(BaseModel):
     playoff_teams: Optional[int] = None
     playoff_start_week: Optional[int] = None
     playoff_rounds: Optional[int] = None
+    playoff_end_week: Optional[int] = None
     regular_season_weeks: Optional[int] = None
+    # Salary retention controls (toggle + max % of contract retainable)
+    salary_retention_enabled: Optional[bool] = None
+    salary_retention_max_pct: Optional[int] = None
+    salary_retention_slots: Optional[int] = None
+    # Schedule shape — wall-clock start/end + matchup-period config
+    season_start_date: Optional[str] = None
+    season_end_date: Optional[str] = None
+    matchup_length_days: Optional[int] = None
+    opponents_per_matchup_period: Optional[int] = None
+    # Consolation playoff bracket
+    consolation_enabled: Optional[bool] = None
+    consolation_start_week: Optional[int] = None
+    consolation_end_week: Optional[int] = None
+    consolation_uses_playoff_schedule: Optional[bool] = None
 
 class TeamCreate(BaseModel):
     name: str
@@ -480,7 +495,19 @@ async def get_league(league_id: str):
         playoff_teams=league.get("playoff_teams"),
         playoff_start_week=league.get("playoff_start_week"),
         playoff_rounds=league.get("playoff_rounds"),
+        playoff_end_week=league.get("playoff_end_week"),
         regular_season_weeks=league.get("regular_season_weeks"),
+        salary_retention_enabled=league.get("salary_retention_enabled"),
+        salary_retention_max_pct=league.get("salary_retention_max_pct"),
+        salary_retention_slots=league.get("salary_retention_slots"),
+        season_start_date=league.get("season_start_date"),
+        season_end_date=league.get("season_end_date"),
+        matchup_length_days=league.get("matchup_length_days"),
+        opponents_per_matchup_period=league.get("opponents_per_matchup_period"),
+        consolation_enabled=league.get("consolation_enabled"),
+        consolation_start_week=league.get("consolation_start_week"),
+        consolation_end_week=league.get("consolation_end_week"),
+        consolation_uses_playoff_schedule=league.get("consolation_uses_playoff_schedule"),
     )
 
 # ─── League Invite System ─────────────────────────────────────
@@ -818,7 +845,22 @@ class LeagueUpdate(BaseModel):
     playoff_teams: Optional[int] = Field(default=None, ge=2, le=16)
     playoff_start_week: Optional[int] = Field(default=None, ge=1, le=30)
     playoff_rounds: Optional[int] = Field(default=None, ge=1, le=5)
+    playoff_end_week: Optional[int] = Field(default=None, ge=1, le=40)
     regular_season_weeks: Optional[int] = Field(default=None, ge=4, le=30)
+    # Salary retention controls
+    salary_retention_enabled: Optional[bool] = None
+    salary_retention_max_pct: Optional[int] = Field(default=None, ge=0, le=100)
+    salary_retention_slots: Optional[int] = Field(default=None, ge=0, le=10)
+    # Schedule shape (calendar-based)
+    season_start_date: Optional[str] = Field(default=None, max_length=20)
+    season_end_date: Optional[str] = Field(default=None, max_length=20)
+    matchup_length_days: Optional[int] = Field(default=None, ge=1, le=30)
+    opponents_per_matchup_period: Optional[int] = Field(default=None, ge=1, le=10)
+    # Consolation bracket
+    consolation_enabled: Optional[bool] = None
+    consolation_start_week: Optional[int] = Field(default=None, ge=1, le=40)
+    consolation_end_week: Optional[int] = Field(default=None, ge=1, le=40)
+    consolation_uses_playoff_schedule: Optional[bool] = None
 
 
 _LEAGUE_UPDATE_ALLOWED = {
@@ -826,7 +868,13 @@ _LEAGUE_UPDATE_ALLOWED = {
     "scoring_format", "max_teams", "keepers_allowed", "entry_fee",
     "trade_review_period_hours", "trade_veto_threshold_pct", "trade_deadline_week",
     "waiver_faab_budget", "waiver_period_days",
-    "playoff_teams", "playoff_start_week", "playoff_rounds", "regular_season_weeks",
+    "playoff_teams", "playoff_start_week", "playoff_rounds", "playoff_end_week",
+    "regular_season_weeks",
+    "salary_retention_enabled", "salary_retention_max_pct", "salary_retention_slots",
+    "season_start_date", "season_end_date",
+    "matchup_length_days", "opponents_per_matchup_period",
+    "consolation_enabled", "consolation_start_week", "consolation_end_week",
+    "consolation_uses_playoff_schedule",
 }
 
 
@@ -878,29 +926,18 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
         })
 
     fresh = await db.leagues.find_one({"_id": league["_id"]})
-    return {
+    out = {
         "league_id": league_id,
         "changes": diff,
         # Echo back the full canonical config so the UI cache stays in sync.
         "name": fresh.get("name"),
         "is_private": bool(fresh.get("is_private")),
-        "roster_spots": fresh.get("roster_spots"),
-        "bench_spots": fresh.get("bench_spots"),
-        "minors_spots": fresh.get("minors_spots"),
-        "scoring_format": fresh.get("scoring_format"),
-        "max_teams": fresh.get("max_teams"),
-        "keepers_allowed": fresh.get("keepers_allowed"),
-        "entry_fee": fresh.get("entry_fee"),
-        "playoff_teams": fresh.get("playoff_teams"),
-        "playoff_start_week": fresh.get("playoff_start_week"),
-        "playoff_rounds": fresh.get("playoff_rounds"),
-        "regular_season_weeks": fresh.get("regular_season_weeks"),
-        "trade_review_period_hours": fresh.get("trade_review_period_hours"),
-        "trade_veto_threshold_pct": fresh.get("trade_veto_threshold_pct"),
-        "trade_deadline_week": fresh.get("trade_deadline_week"),
-        "waiver_faab_budget": fresh.get("waiver_faab_budget"),
-        "waiver_period_days": fresh.get("waiver_period_days"),
     }
+    for key in _LEAGUE_UPDATE_ALLOWED:
+        if key in ("name", "is_private"):
+            continue
+        out[key] = fresh.get(key)
+    return out
 
 
 @api_router.put("/leagues/{league_id}/salary-retention-slots")

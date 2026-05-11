@@ -410,6 +410,27 @@ async def mark_setup_complete(league_id: str, request: Request):
     return {"setup_wizard_complete": True}
 
 
+@router.post("/leagues/{league_id}/validate-setup")
+async def validate_setup_prerequisites(league_id: str, request: Request):
+    """Pre-flight check before marking a league setup-complete. Returns
+    `{ok: bool, issues: [str]}` so the wizard can surface a specific reason
+    instead of a generic 'Failed to mark setup complete' toast.
+    """
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    issues: list[str] = []
+    # Roster shape sanity
+    if not league.get("roster_spots"):
+        issues.append("Roster size isn't set — pick a non-zero number on the Basics step.")
+    # Teams present
+    teams_count = await db.teams.count_documents({"league_id": league_id})
+    if teams_count < 2:
+        issues.append(f"Only {teams_count} team{'s' if teams_count != 1 else ''} in the league — you need at least 2 before generating a schedule.")
+    return {"ok": len(issues) == 0, "issues": issues, "teams_count": teams_count}
+
+
 @router.post("/leagues/{league_id}/setup-reset")
 async def reset_setup_wizard(league_id: str, request: Request):
     """Re-open the setup wizard (commissioner only)."""

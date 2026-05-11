@@ -131,12 +131,25 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
     league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can generate schedule")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+    )
+    if not is_commish:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the commissioner (or a co-commissioner) can generate the schedule.",
+        )
 
     teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
     if len(teams) < 2:
-        raise HTTPException(status_code=400, detail="Need at least 2 teams")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Need at least 2 teams to generate a schedule — this league has {len(teams)} team{'s' if len(teams) != 1 else ''}. "
+                "Invite or seed more teams first, then retry."
+            ),
+        )
 
     team_ids = [str(t["_id"]) for t in teams]
     team_map = {str(t["_id"]): t["name"] for t in teams}
