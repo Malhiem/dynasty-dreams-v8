@@ -18,6 +18,7 @@ import {
 import HelpTooltip from "@/components/ui/help-tooltip";
 import SmartNumberInput from "@/components/ui/smart-number-input";
 import PremiumTrialBanner from "@/lovable/components/PremiumTrialBanner";
+import CBABadge from "@/lovable/components/CBABadge";
 
 const STEPS = [
   { id: "basics", label: "Basics", icon: Wand2 },
@@ -550,7 +551,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
 
             {/* Salary Retention A/B switch */}
             <div className="space-y-3 border-t border-border pt-3" data-testid="wizard-retention-card">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <Switch
                   checked={retentionEnabled}
                   onCheckedChange={setRetentionEnabled}
@@ -561,6 +562,9 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
                   Allow salary retention in trades?
                   <HelpTooltip text={HELP.retentionEnable} testId="help-retention-enable" />
                 </Label>
+                {retentionEnabled && (
+                  <CBABadge slots={retentionSlots} maxPct={retentionMaxPct} testId="wizard-retention-cba-badge" />
+                )}
               </div>
               {retentionEnabled && (
                 <div className="grid grid-cols-2 gap-3 pl-1">

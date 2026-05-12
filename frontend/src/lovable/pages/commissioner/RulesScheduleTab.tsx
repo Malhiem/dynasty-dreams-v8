@@ -21,6 +21,7 @@ import { ArrowRightLeft, Trophy, Users, Save, Loader2, DollarSign, Calendar } fr
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import SmartNumberInput from "@/components/ui/smart-number-input";
+import CBABadge from "@/lovable/components/CBABadge";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 
@@ -451,13 +452,24 @@ function SalaryRetentionCard({ league, reloadLeague }: any) {
   return (
     <Card className="bg-card border-border" data-testid="rules-schedule-retention-card">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <ArrowRightLeft className="h-5 w-5 text-amber-400" />
-          Salary Retention in Trades
-        </CardTitle>
-        <CardDescription>
-          Toggle whether teams can keep paying part of a traded player's salary.
-        </CardDescription>
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <ArrowRightLeft className="h-5 w-5 text-amber-400" />
+              Salary Retention in Trades
+            </CardTitle>
+            <CardDescription>
+              Toggle whether teams can keep paying part of a traded player's salary.
+            </CardDescription>
+          </div>
+          {enabled && (
+            <CBABadge
+              slots={parseInt(slots, 10) || 0}
+              maxPct={parseInt(maxPct, 10) || 0}
+              testId="rules-schedule-retention-cba-badge"
+            />
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex items-center gap-3">

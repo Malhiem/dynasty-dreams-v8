@@ -1,14 +1,23 @@
 # League Settings — Source-of-Truth Audit & Gap List
 
-**As of:** Iter 79 (Feb 11, 2026)
+**As of:** Iter 80 (Feb 11, 2026)
 
 ## TL;DR
 
 League configuration is now consistently sourced from `db.leagues.{field}`.
 The Setup Wizard (now 6 steps including a dedicated **Trades** step), the
 Commissioner Settings → **Rules & Schedule** tab, and the **League Structure**
-tab all write to a single `PUT /api/leagues/{id}` endpoint. Reads happen
-lazily at the call-site (no caching layer to invalidate).
+tab all write to a single `PUT /api/leagues/{id}` endpoint **now living in
+`routes/leagues.py`** (iter 80 refactor). Reads happen lazily at the
+call-site (no caching layer to invalidate).
+
+### Iter 80 additions
+
+| Change | Was | Now |
+|--|--|--|
+| `PUT /leagues/{id}` handler | Lived in `server.py` lines 880-940 (~5k-line monolith) | Moved to `routes/leagues.py` for parity with sibling endpoints; same URL, payload, response shape — pure refactor |
+| `LeagueUpdate` Pydantic model + `_LEAGUE_UPDATE_ALLOWED` | In `server.py` | Co-located with the handler in `routes/leagues.py` |
+| Salary retention card | No CBA benchmarking | New `CBABadge` component flags settings as **Matches NHL CBA** (3/50), **Stricter than NHL CBA** (e.g. 1/25), or **Exceeds NHL CBA** (e.g. 5/75) with hover tooltip explaining the comparison. Visible in both the Setup Wizard retention step and the Rules & Schedule admin card. |
 
 ### Iter 79 additions
 

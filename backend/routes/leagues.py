@@ -756,3 +756,130 @@ async def get_premium_status(league_id: str, request: Request):
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
     return _premium_status(league)
+
+
+# ─── PUT /leagues/{league_id} ──────────────────────────────────
+# Moved out of `server.py` (iter 80) for parity with the rest of the leagues
+# router. Single source of truth for every mutable league setting that the
+# Setup Wizard or Commissioner Settings UI can change. Sparse payload — only
+# provided keys are written. Audit log captures the diff with actor + role.
+class LeagueUpdate(BaseModel):
+    is_private: Optional[bool] = None
+    name: Optional[str] = Field(default=None, max_length=120)
+    # Roster shape
+    roster_spots: Optional[int] = Field(default=None, ge=10, le=40)
+    bench_spots: Optional[int] = Field(default=None, ge=0, le=20)
+    minors_spots: Optional[int] = Field(default=None, ge=0, le=20)
+    # Format + scoring
+    scoring_format: Optional[str] = None
+    max_teams: Optional[int] = Field(default=None, ge=4, le=32)
+    keepers_allowed: Optional[int] = Field(default=None, ge=0, le=30)
+    entry_fee: Optional[float] = Field(default=None, ge=0)
+    # Trade settings
+    trade_review_period_hours: Optional[int] = Field(default=None, ge=0, le=168)
+    trade_veto_threshold_pct: Optional[int] = Field(default=None, ge=0, le=100)
+    trade_deadline_week: Optional[int] = Field(default=None, ge=1, le=30)
+    # Waiver settings
+    waiver_faab_budget: Optional[int] = Field(default=None, ge=0, le=10000)
+    waiver_period_days: Optional[int] = Field(default=None, ge=0, le=7)
+    # Playoff settings
+    playoff_teams: Optional[int] = Field(default=None, ge=2, le=16)
+    playoff_start_week: Optional[int] = Field(default=None, ge=1, le=30)
+    playoff_rounds: Optional[int] = Field(default=None, ge=1, le=5)
+    playoff_end_week: Optional[int] = Field(default=None, ge=1, le=40)
+    regular_season_weeks: Optional[int] = Field(default=None, ge=4, le=30)
+    # Salary retention controls
+    salary_retention_enabled: Optional[bool] = None
+    salary_retention_max_pct: Optional[int] = Field(default=None, ge=0, le=100)
+    salary_retention_slots: Optional[int] = Field(default=None, ge=0, le=10)
+    # Schedule shape (calendar-based)
+    season_start_date: Optional[str] = Field(default=None, max_length=20)
+    season_end_date: Optional[str] = Field(default=None, max_length=20)
+    matchup_length_days: Optional[int] = Field(default=None, ge=1, le=30)
+    opponents_per_matchup_period: Optional[int] = Field(default=None, ge=1, le=10)
+    # Consolation bracket
+    consolation_enabled: Optional[bool] = None
+    consolation_start_week: Optional[int] = Field(default=None, ge=1, le=40)
+    consolation_end_week: Optional[int] = Field(default=None, ge=1, le=40)
+    consolation_uses_playoff_schedule: Optional[bool] = None
+
+
+_LEAGUE_UPDATE_ALLOWED = {
+    "is_private", "name", "roster_spots", "bench_spots", "minors_spots",
+    "scoring_format", "max_teams", "keepers_allowed", "entry_fee",
+    "trade_review_period_hours", "trade_veto_threshold_pct", "trade_deadline_week",
+    "waiver_faab_budget", "waiver_period_days",
+    "playoff_teams", "playoff_start_week", "playoff_rounds", "playoff_end_week",
+    "regular_season_weeks",
+    "salary_retention_enabled", "salary_retention_max_pct", "salary_retention_slots",
+    "season_start_date", "season_end_date",
+    "matchup_length_days", "opponents_per_matchup_period",
+    "consolation_enabled", "consolation_start_week", "consolation_end_week",
+    "consolation_uses_playoff_schedule",
+}
+
+
+@router.put("/leagues/{league_id}")
+async def update_league(league_id: str, payload: LeagueUpdate, request: Request):
+    """Commissioner / co-commissioner only: update mutable league settings.
+
+    Sparse payload — only provided keys are written; the response echoes the
+    full canonical config so the UI cache can stay in sync without a follow-up
+    GET.
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_comm = league["commissioner_id"] == user["_id"]
+    co_comms = league.get("co_commissioners", []) or []
+    if not (is_comm or user["_id"] in co_comms):
+        raise HTTPException(
+            status_code=403,
+            detail="Only commissioners can update league settings",
+        )
+
+    update: dict = {}
+    diff: dict = {}
+    body = payload.model_dump(exclude_unset=True)
+    for field in _LEAGUE_UPDATE_ALLOWED:
+        if field not in body:
+            continue
+        new_val = body[field]
+        if field == "name" and isinstance(new_val, str):
+            new_val = new_val.strip() or None
+            if not new_val:
+                continue
+        old_val = league.get(field)
+        if new_val != old_val:
+            update[field] = new_val
+            diff[field] = {"from": old_val, "to": new_val}
+
+    if update:
+        await db.leagues.update_one({"_id": league["_id"]}, {"$set": update})
+        await db.audit_log.insert_one({
+            "league_id": league_id,
+            "actor_id": user["_id"],
+            "actor_name": user.get("name", user.get("email", "Unknown")),
+            "action": "league_settings_updated",
+            "role": "commissioner" if is_comm else "co_commissioner",
+            "diff": diff,
+            "created_at": datetime.now(timezone.utc),
+        })
+
+    fresh = await db.leagues.find_one({"_id": league["_id"]})
+    out = {
+        "league_id": league_id,
+        "changes": diff,
+        "name": fresh.get("name"),
+        "is_private": bool(fresh.get("is_private")),
+    }
+    for key in _LEAGUE_UPDATE_ALLOWED:
+        if key in ("name", "is_private"):
+            continue
+        out[key] = fresh.get(key)
+    return out
