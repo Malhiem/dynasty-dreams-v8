@@ -900,3 +900,121 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
             continue
         out[key] = fresh.get(key)
     return out
+
+
+
+# ─── PUT /leagues/{league_id}/salary-retention-slots ───────────
+# Moved out of `server.py` (iter 82) so all `/leagues/...` mutators live in a
+# single router. Same URL, body shape, and response — pure refactor.
+@router.put("/leagues/{league_id}/salary-retention-slots")
+async def set_salary_retention_slots(league_id: str, payload: dict, request: Request):
+    """Commissioner-only setter for the per-team salary retention slot cap.
+
+    Body: ``{"salary_retention_slots": int}``  (0–10)
+    Default value is 3 (mirrors the NHL CBA). `0` disables retention trades
+    entirely; higher values let teams stack more retained contracts.
+
+    Audited via `db.audit_log` with `{from, to}` diff so co-commissioners can
+    see who changed it and when.
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_comm = league["commissioner_id"] == user["_id"]
+    co_comms = league.get("co_commissioners", []) or []
+    if not (is_comm or user["_id"] in co_comms):
+        raise HTTPException(
+            status_code=403,
+            detail="Only commissioners can update league settings",
+        )
+
+    try:
+        new_val = int(payload.get("salary_retention_slots", 3))
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail="salary_retention_slots must be an integer",
+        )
+    if new_val < 0 or new_val > 10:
+        raise HTTPException(
+            status_code=400,
+            detail="salary_retention_slots must be between 0 and 10",
+        )
+
+    old_val = int(league.get("salary_retention_slots", 3))
+    if new_val != old_val:
+        await db.leagues.update_one(
+            {"_id": league["_id"]},
+            {"$set": {"salary_retention_slots": new_val}},
+        )
+        await db.audit_log.insert_one({
+            "league_id": league_id,
+            "actor_id": user["_id"],
+            "actor_name": user.get("name", user.get("email", "Unknown")),
+            "action": "salary_retention_slots_updated",
+            "role": "commissioner" if is_comm else "co_commissioner",
+            "diff": {"salary_retention_slots": {"from": old_val, "to": new_val}},
+            "created_at": datetime.now(timezone.utc),
+        })
+
+    return {
+        "league_id": league_id,
+        "salary_retention_slots": new_val,
+        "previous": old_val,
+        "changed": new_val != old_val,
+    }
+
+
+
+# ─── GET /leagues/{league_id}/veto-threshold-preview ───────────
+@router.get("/leagues/{league_id}/veto-threshold-preview")
+async def veto_threshold_preview(
+    league_id: str,
+    request: Request,
+    pct: Optional[int] = None,
+):
+    """Return the auto-veto math for a league's current (or proposed) veto %.
+
+    Used by the Setup Wizard and Rules & Schedule admin tab to show the
+    commissioner not just the **%** but the absolute **number of teams**
+    required to trigger a veto. Example: 50% of a 12-team league = **6 teams
+    must veto**. Uses `math.ceil` so partial votes round up (strict majority).
+
+    Query params:
+      * `pct` — optional override; if provided, computes preview against this
+        value instead of the saved one. Useful while sliding the threshold
+        input in the UI before saving.
+    """
+    import math
+    db = _deps["db"]
+    await _deps["get_current_user"](request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    total_teams = int(league.get("current_teams") or 0)
+    effective_pct = pct if pct is not None else league.get("trade_veto_threshold_pct")
+    if effective_pct is None:
+        effective_pct = 50
+    effective_pct = max(0, min(100, int(effective_pct)))
+    enabled = effective_pct > 0 and total_teams > 0
+    teams_required = (
+        max(1, math.ceil(total_teams * effective_pct / 100)) if enabled else 0
+    )
+    return {
+        "league_id": league_id,
+        "pct": effective_pct,
+        "total_teams": total_teams,
+        "teams_required": teams_required,
+        "enabled": enabled,
+        "description": (
+            f"{effective_pct}% of {total_teams} teams = {teams_required} team"
+            f"{'s' if teams_required != 1 else ''} required to veto a trade."
+            if enabled else
+            "Vetoes are disabled — trades cannot be blocked by league vote."
+        ),
+    }

@@ -19,6 +19,7 @@ import HelpTooltip from "@/components/ui/help-tooltip";
 import SmartNumberInput from "@/components/ui/smart-number-input";
 import PremiumTrialBanner from "@/lovable/components/PremiumTrialBanner";
 import CBABadge from "@/lovable/components/CBABadge";
+import VetoThresholdPreview from "@/lovable/components/VetoThresholdPreview";
 
 const STEPS = [
   { id: "basics", label: "Basics", icon: Wand2 },
@@ -953,6 +954,13 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
                   value={tradeVetoPct}
                   onChange={(e) => setTradeVetoPct(Math.max(0, Math.min(100, parseInt(e.target.value || "0", 10))))}
                   data-testid="wizard-trade-veto-pct" />
+                <div className="mt-2">
+                  <VetoThresholdPreview
+                    leagueId={leagueId}
+                    pct={tradeVetoPct}
+                    testId="wizard-veto-threshold-preview"
+                  />
+                </div>
               </div>
               <div>
                 <Label className="text-xs flex items-center">

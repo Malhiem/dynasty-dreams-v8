@@ -70,14 +70,21 @@ export function SortableSection({ id, children, className = "", style: extraStyl
     ...extraStyle,
   };
   return (
-    <div ref={setNodeRef} style={style} className={className} data-testid={`sortable-section-${id}`}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      // Reserve 2.5rem on the right so the floating drag handle never overlaps
+      // section titles or pinned content (League Home reorder fix, iter 82).
+      className={`${className} pr-10`}
+      data-testid={`sortable-section-${id}`}
+    >
       <button
         type="button"
         {...attributes}
         {...listeners}
         data-testid={`section-drag-handle-${id}`}
         title="Drag to reorder"
-        className="absolute top-3 right-3 z-20 h-7 w-7 rounded-md bg-white/5 hover:bg-white/15 text-white/50 hover:text-white/90 transition-colors flex items-center justify-center cursor-grab active:cursor-grabbing"
+        className="absolute top-3 right-3 z-20 h-7 w-7 rounded-md bg-background/90 backdrop-blur border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center cursor-grab active:cursor-grabbing"
       >
         <GripVertical className="h-4 w-4" />
       </button>

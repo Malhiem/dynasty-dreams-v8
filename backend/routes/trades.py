@@ -78,6 +78,19 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
 
     _enforce_trade_deadline(league)
 
+    # ── Empty-trade guard (iter 82) ──────────────────────────────
+    # Reject proposals with zero assets on BOTH sides. A trade must move at
+    # least one player or pick. This stops the long-standing bug where
+    # accidental empty trades clutter the Transactions feed.
+    if not input.assets_offered and not input.assets_requested:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A trade must include at least one player or draft pick. "
+                "Add an asset on either side before proposing."
+            ),
+        )
+
     proposer_team = await db.teams.find_one({"league_id": input.league_id, "owner_id": user["_id"]})
     if not proposer_team:
         raise HTTPException(status_code=403, detail="You don't have a team in this league")
@@ -571,6 +584,19 @@ async def evaluate_trade_conditions_endpoint(trade_id: str):
 
 @router.post("/trades/{trade_id}/vote")
 async def vote_on_trade(trade_id: str, input: TradeVote, request: Request):
+    """Cast or change a vote on a pending trade.
+
+    Behaviour (iter 82 update):
+    * Each voter is tracked by user_id with their current choice in
+      `votes.choices` ({user_id: "approve"|"veto"}). Counts in
+      `votes.approve` / `votes.veto` are derived from this map so they stay
+      consistent if a voter changes their mind.
+    * A user may **change** their vote at any time while the trade is still
+      open. Submitting the same vote twice is a no-op (idempotent).
+    * The trade is auto-vetoed once **strict majority** of the league's
+      `trade_veto_threshold_pct` is met. The threshold is presented in the
+      UI both as a % and as an absolute team count.
+    """
     db = _db()
     user = await _get_user(request)
     trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
@@ -578,37 +604,110 @@ async def vote_on_trade(trade_id: str, input: TradeVote, request: Request):
         raise HTTPException(status_code=404, detail="Trade not found")
     if trade["status"] not in ["pending", "accepted"]:
         raise HTTPException(status_code=400, detail="Trade is not open for voting")
+    if input.vote not in ("approve", "veto"):
+        raise HTTPException(status_code=400, detail="vote must be 'approve' or 'veto'")
 
-    voters = trade.get("votes", {}).get("voters", [])
-    if user["_id"] in voters:
-        raise HTTPException(status_code=400, detail="Already voted on this trade")
-
-    vote_field = "votes.approve" if input.vote == "approve" else "votes.veto"
+    voter_id = user["_id"]
+    choices = (trade.get("votes") or {}).get("choices") or {}
+    prev_choice = choices.get(str(voter_id))
+    # Idempotent: same vote → just echo current counts.
+    if prev_choice == input.vote:
+        return {
+            "message": "Vote unchanged",
+            "votes": _recount_votes(choices),
+            "your_vote": prev_choice,
+        }
+    choices[str(voter_id)] = input.vote
+    counts = _recount_votes(choices)
     await db.trades.update_one(
         {"_id": ObjectId(trade_id)},
-        {
-            "$inc": {vote_field: 1},
-            "$push": {"votes.voters": user["_id"]},
-        },
+        {"$set": {
+            "votes.choices": choices,
+            "votes.approve": counts["approve"],
+            "votes.veto": counts["veto"],
+            "votes.voters": list(choices.keys()),  # legacy field — kept in sync
+        }},
     )
 
     league = await db.leagues.find_one({"_id": ObjectId(trade["league_id"])})
-    total_teams = league.get("current_teams", 0)
-    # Veto threshold is configurable via League Admin (`trade_veto_threshold_pct`,
-    # 0-100). Default = 50% (legacy behaviour). When 0 or unset, vetos are
-    # disabled.
-    veto_pct = league.get("trade_veto_threshold_pct")
-    if veto_pct is None:
-        veto_pct = 50
-    veto_threshold = int(total_teams * veto_pct / 100) if veto_pct > 0 else total_teams + 1
-
-    updated_trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
-    if veto_pct > 0 and updated_trade["votes"]["veto"] > veto_threshold:
+    threshold_info = _veto_threshold(league)
+    if threshold_info["enabled"] and counts["veto"] >= threshold_info["teams_required"]:
         await db.trades.update_one(
             {"_id": ObjectId(trade_id)},
-            {"$set": {"status": "vetoed", "processed_at": datetime.now(timezone.utc).isoformat()}},
+            {"$set": {
+                "status": "vetoed",
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }},
         )
-        await _broadcast(f"league_{trade['league_id']}", "trade_vetoed", {"trade_id": trade_id})
-        return {"message": "Trade vetoed by league vote", "status": "vetoed"}
+        await _broadcast(
+            f"league_{trade['league_id']}",
+            "trade_vetoed",
+            {"trade_id": trade_id, "veto_count": counts["veto"]},
+        )
+        return {
+            "message": "Trade vetoed by league vote",
+            "status": "vetoed",
+            "votes": counts,
+            "veto_threshold": threshold_info,
+            "your_vote": input.vote,
+        }
 
-    return {"message": f"Vote recorded: {input.vote}", "votes": updated_trade["votes"]}
+    return {
+        "message": f"Vote {'changed' if prev_choice else 'recorded'}: {input.vote}",
+        "votes": counts,
+        "veto_threshold": threshold_info,
+        "your_vote": input.vote,
+    }
+
+
+def _recount_votes(choices: dict) -> dict:
+    """Derive {approve, veto} counts from the per-voter `choices` map."""
+    return {
+        "approve": sum(1 for v in choices.values() if v == "approve"),
+        "veto": sum(1 for v in choices.values() if v == "veto"),
+    }
+
+
+def _veto_threshold(league: dict) -> dict:
+    """Return {enabled, pct, total_teams, teams_required} for the league's
+    veto policy. `teams_required` is the absolute number of vetoes needed to
+    auto-veto a trade (uses ceil so 50% of 12 = 6, not 5)."""
+    import math
+    total = int(league.get("current_teams") or 0)
+    pct = league.get("trade_veto_threshold_pct")
+    if pct is None:
+        pct = 50
+    pct = int(pct)
+    enabled = pct > 0 and total > 0
+    if not enabled:
+        return {"enabled": False, "pct": pct, "total_teams": total, "teams_required": 0}
+    teams_required = max(1, math.ceil(total * pct / 100))
+    return {
+        "enabled": True,
+        "pct": pct,
+        "total_teams": total,
+        "teams_required": teams_required,
+    }
+
+
+@router.get("/trades/{trade_id}/votes")
+async def get_trade_votes(trade_id: str, request: Request):
+    """Return current vote tally + threshold + the calling user's own choice.
+    Frontend uses this to render the live count alongside the approve/veto
+    buttons and to know whether the user has already voted (so the buttons
+    can highlight their current choice and allow toggling)."""
+    db = _db()
+    user = await _get_user(request)
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    choices = (trade.get("votes") or {}).get("choices") or {}
+    counts = _recount_votes(choices)
+    league = await db.leagues.find_one({"_id": ObjectId(trade["league_id"])})
+    return {
+        "trade_id": trade_id,
+        "votes": counts,
+        "veto_threshold": _veto_threshold(league),
+        "your_vote": choices.get(str(user["_id"])),
+        "status": trade["status"],
+    }

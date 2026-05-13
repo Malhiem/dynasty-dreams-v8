@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -31,6 +31,11 @@ interface TradeProposalModalProps {
   onOpenChange: (open: boolean) => void;
   targetTeam: string;
   targetPlayers: Player[];
+  // iter-82: pre-select these players from `targetPlayers` when the modal
+  // opens. Used when the user clicked a "Trade" button on a specific player
+  // card — that player should already be on the "want" side so the user
+  // only has to pick what to offer.
+  prefilledTheirPlayerIds?: number[];
 }
 
 const myRoster: Player[] = [
@@ -52,11 +57,23 @@ export const TradeProposalModal = ({
   onOpenChange,
   targetTeam,
   targetPlayers,
+  prefilledTheirPlayerIds,
 }: TradeProposalModalProps) => {
   const [step, setStep] = useState<"their-roster" | "my-roster" | "review">("their-roster");
   const [selectedTheirPlayers, setSelectedTheirPlayers] = useState<number[]>([]);
   const [selectedMyPlayers, setSelectedMyPlayers] = useState<number[]>([]);
   const [selectedMyPicks, setSelectedMyPicks] = useState<number[]>([]);
+
+  // Seed the requested side whenever the modal opens with a prefilled id.
+  // The user landed here from a per-player Trade button; pre-checking saves
+  // them a click and signals "yes, we found the player you came for".
+  useEffect(() => {
+    if (!open) return;
+    if (prefilledTheirPlayerIds && prefilledTheirPlayerIds.length > 0) {
+      setSelectedTheirPlayers(prefilledTheirPlayerIds);
+      setStep("my-roster"); // skip "their roster" step — already chosen
+    }
+  }, [open, prefilledTheirPlayerIds]);
 
   const handleClose = () => {
     setStep("their-roster");

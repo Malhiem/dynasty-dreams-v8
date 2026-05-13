@@ -22,6 +22,7 @@ import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import SmartNumberInput from "@/components/ui/smart-number-input";
 import CBABadge from "@/lovable/components/CBABadge";
+import VetoThresholdPreview from "@/lovable/components/VetoThresholdPreview";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 
@@ -306,6 +307,14 @@ export default function RulesScheduleTab() {
                   </div>
                   {field.helper && (
                     <p className="text-xs text-muted-foreground">{field.helper}</p>
+                  )}
+                  {/* Live veto-math preview right under the % input */}
+                  {field.key === "trade_veto_threshold_pct" && (
+                    <VetoThresholdPreview
+                      leagueId={league.id}
+                      pct={parseInt(draft.trade_veto_threshold_pct || "0", 10)}
+                      testId="rules-schedule-veto-preview"
+                    />
                   )}
                 </div>
               ))}

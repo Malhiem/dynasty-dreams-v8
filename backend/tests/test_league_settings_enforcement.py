@@ -133,13 +133,19 @@ async def test_trade_deadline_blocks_new_proposals():
             mine = next(t for t in teams if t["owner_id"] == me["id"])
             other = next(t for t in teams if t["owner_id"] != me["id"])
 
+            # iter-82 guard requires at least one asset; pick the proposer's
+            # first rostered player so the only failure remains the deadline.
+            my_roster = mine.get("roster") or []
+            asset_pid = str(my_roster[0]) if my_roster else None
+            offered = [{"asset_type": "player", "player_id": asset_pid}] if asset_pid else []
+
             r = await client.post(
                 "/api/trades",
                 headers={"Authorization": f"Bearer {token}"},
                 json={
                     "league_id": LID,
                     "target_team_id": other["id"],
-                    "assets_offered": [],
+                    "assets_offered": offered,
                     "assets_requested": [],
                     "message": "deadline test",
                 },
@@ -158,7 +164,7 @@ async def test_trade_deadline_blocks_new_proposals():
                 json={
                     "league_id": LID,
                     "target_team_id": other["id"],
-                    "assets_offered": [],
+                    "assets_offered": offered,
                     "assets_requested": [],
                     "message": "pre-deadline ok",
                 },

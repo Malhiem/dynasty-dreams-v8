@@ -71,16 +71,17 @@ const SortableRow = forwardRef(function SortableRow({ id, children, dragHandleTe
   };
   return (
     <div ref={setNodeRef} style={style} data-testid={`sortable-row-${id}`} data-dragging={isDragging ? "true" : "false"}>
-      <div className="group relative">
-        {/* Drag handle — positioned top-right so it never interferes with
-            the underlying widget's own buttons/links. */}
+      <div className="group relative pr-8">
+        {/* Drag handle — positioned top-right with a `pr-8` gutter on the
+            wrapper so widget content (titles, badges, controls) never sits
+            under the handle. Hidden until hover (`opacity-0 group-hover`). */}
         <button
           type="button"
           {...attributes}
           {...listeners}
           data-testid={dragHandleTestId}
           title="Drag to reorder"
-          className="absolute top-2 right-2 z-20 h-6 w-6 rounded-md bg-black/40 hover:bg-black/70 text-white/70 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-grab active:cursor-grabbing"
+          className="absolute top-2 right-2 z-20 h-6 w-6 rounded-md bg-background/90 backdrop-blur border border-border text-muted-foreground hover:text-foreground hover:bg-secondary opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center cursor-grab active:cursor-grabbing"
         >
           <GripVertical className="h-4 w-4" />
         </button>

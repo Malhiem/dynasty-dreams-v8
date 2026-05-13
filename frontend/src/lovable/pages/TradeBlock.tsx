@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useState, useMemo, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
@@ -192,6 +192,7 @@ const owners = ["All Teams", "Frozen Thunder", "Glacier Kings", "Puck Masters", 
 const TradeBlock = () => {
   const { league, leagueTeams, myTeam } = useActiveLeague();
   const { streaks } = useSeasonStreaks(league?.id);
+  const navigate = useNavigate();
   const leagueTeamsCount = leagueTeams?.length || 0;
 
   const [positionFilter, setPositionFilter] = useState("All");
@@ -199,6 +200,10 @@ const TradeBlock = () => {
   const [tradeModalOpen, setTradeModalOpen] = useState(false);
   const [selectedOwner, setSelectedOwner] = useState("");
   const [selectedOwnerPlayers, setSelectedOwnerPlayers] = useState<any[]>([]);
+  // The specific player the user clicked Trade on — pre-populated as the
+  // "want" side in the proposal modal. Optional; falls back to "show all
+  // players from this team" when null (legacy "owner-level" Trade button).
+  const [prefilledIds, setPrefilledIds] = useState<number[]>([]);
   const [liveItems, setLiveItems] = useState<any[]>([]);
   const [myRoster, setMyRoster] = useState<any[]>([]);
 
@@ -294,19 +299,36 @@ const TradeBlock = () => {
     return items;
   }, [positionFilter, ownerFilter, realTradeItems]);
 
-  const handleProposeTrade = (owner: string) => {
-    const ownerItems = tradeBlockItems
-      .filter((item) => item.owner === owner && item.type === "player")
-      .map((item) => ({
-        id: item.id,
-        name: item.name,
-        position: item.position,
-        team: item.team,
-        dynastyValue: item.dynastyValue,
-      }));
+  const handleProposeTrade = (owner: string, prefilledItem?: TradeBlockItem) => {
+    // Real trade items (preferred) take priority over the seeded mock. The
+    // pre-filled player from the per-card Trade button is force-included so
+    // even if the owner has nothing else listed, the proposal modal can
+    // still target that specific asset.
+    const liveItems = realTradeItems.filter((it) => it.owner === owner && it.type === "player");
+    const fallback = tradeBlockItems.filter((it) => it.owner === owner && it.type === "player");
+    const pool = liveItems.length > 0 ? liveItems : fallback;
+    const merged = prefilledItem && !pool.some((p) => p.id === prefilledItem.id)
+      ? [prefilledItem, ...pool]
+      : pool;
+    const ownerItems = merged.map((item) => ({
+      id: item.id,
+      name: item.name,
+      position: item.position,
+      team: item.team,
+      dynastyValue: item.dynastyValue,
+    }));
     setSelectedOwner(owner);
     setSelectedOwnerPlayers(ownerItems);
+    setPrefilledIds(prefilledItem ? [prefilledItem.id] : []);
     setTradeModalOpen(true);
+  };
+
+  // Trade-from-player-card: navigate to the owner's roster page and open the
+  // proposal modal with that exact player pre-checked on the "want" side.
+  const handleTradeForPlayer = (item: TradeBlockItem) => {
+    const ownerTeam = (leagueTeams || []).find((t: any) => t.name === item.owner);
+    handleProposeTrade(item.owner, item);
+    if (ownerTeam?.id) navigate(`/teams/${ownerTeam.id}`);
   };
 
   return (
@@ -372,7 +394,7 @@ const TradeBlock = () => {
                   key={item.id} 
                   item={item} 
                   streakChipData={item.team_id ? streakChip(streaks?.[item.team_id]?.active) : null}
-                  onProposeTrade={() => handleProposeTrade(item.owner)} 
+                  onProposeTrade={() => handleTradeForPlayer(item)} 
                 />
               ))}
               {sortedAndFilteredItems.length === 0 && (
@@ -425,6 +447,7 @@ const TradeBlock = () => {
         onOpenChange={setTradeModalOpen}
         targetTeam={selectedOwner}
         targetPlayers={selectedOwnerPlayers}
+        prefilledTheirPlayerIds={prefilledIds}
       />
     </AppLayout>
   );
@@ -570,6 +593,8 @@ const TradeBlockCard = ({
                 size="sm" 
                 className="bg-primary hover:bg-primary/90"
                 onClick={onProposeTrade}
+                data-testid={`trade-block-trade-btn-${item.id}`}
+                title={`Trade for ${item.name} — opens proposal pre-filled with this player`}
               >
                 <ArrowRightLeft className="h-4 w-4 mr-2" />
                 Trade

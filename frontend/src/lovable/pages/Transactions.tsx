@@ -35,6 +35,11 @@ interface PendingTrade {
   processesAt: string;
   votes: { approve: number; veto: number; total: number };
   salaryRetained?: { team: string; amount: string; duration: string };
+  // iter 82: per-card vote state + handler so the buttons can highlight the
+  // user's current choice and let them toggle.
+  yourVote?: "approve" | "veto" | null;
+  vetoThreshold?: number;
+  onVote?: (vote: "approve" | "veto") => void;
 }
 
 const MOCK_TRADES: PendingTrade[] = [
@@ -209,13 +214,51 @@ function TradeCard({ trade }: { trade: PendingTrade }) {
         )}
 
         {trade.status === "pending" && (
-          <div className="flex gap-2 mt-4 justify-end">
-            <Button variant="outline" size="sm" className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10">
-              <ThumbsUp className="h-3.5 w-3.5 mr-1" /> Approve
-            </Button>
-            <Button variant="outline" size="sm" className="text-destructive border-destructive/30 hover:bg-destructive/10">
-              <ThumbsDown className="h-3.5 w-3.5 mr-1" /> Veto
-            </Button>
+          <div className="flex flex-col items-end gap-2 mt-4">
+            <div className="text-xs text-muted-foreground">
+              {trade.vetoThreshold ? (
+                <>
+                  {trade.votes.veto} / <span className="font-semibold">{trade.vetoThreshold}</span>{" "}
+                  veto{trade.vetoThreshold === 1 ? "" : "s"} needed to block.
+                </>
+              ) : (
+                <>Vetoes disabled — trade will process at the scheduled time.</>
+              )}
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button
+                variant={trade.yourVote === "approve" ? "default" : "outline"}
+                size="sm"
+                className={
+                  trade.yourVote === "approve"
+                    ? "bg-emerald-500/30 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/40"
+                    : "text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10"
+                }
+                onClick={() => trade.onVote?.("approve")}
+                disabled={!trade.onVote}
+                data-testid={`trade-vote-approve-${trade.id}`}
+                title={trade.yourVote === "approve" ? "You voted Approve (click again to confirm/unchange)" : "Vote Approve"}
+              >
+                <ThumbsUp className="h-3.5 w-3.5 mr-1" /> Approve
+                {trade.yourVote === "approve" && <span className="ml-1 text-[10px]">(your vote)</span>}
+              </Button>
+              <Button
+                variant={trade.yourVote === "veto" ? "default" : "outline"}
+                size="sm"
+                className={
+                  trade.yourVote === "veto"
+                    ? "bg-destructive/40 text-destructive-foreground border-destructive hover:bg-destructive/50"
+                    : "text-destructive border-destructive/30 hover:bg-destructive/10"
+                }
+                onClick={() => trade.onVote?.("veto")}
+                disabled={!trade.onVote}
+                data-testid={`trade-vote-veto-${trade.id}`}
+                title={trade.yourVote === "veto" ? "You voted Veto (click Approve to switch)" : "Vote Veto"}
+              >
+                <ThumbsDown className="h-3.5 w-3.5 mr-1" /> Veto
+                {trade.yourVote === "veto" && <span className="ml-1 text-[10px]">(your vote)</span>}
+              </Button>
+            </div>
           </div>
         )}
       </CardContent>
@@ -230,6 +273,9 @@ const Transactions = () => {
   const [tab, setTab] = useState("pending");
   const [trades, setTrades] = useState<any[]>([]);
   const [activity, setActivity] = useState<any[]>([]);
+  // Per-trade vote payload: { [tradeId]: { yourVote, threshold, votes } }
+  const [voteState, setVoteState] = useState<Record<string, any>>({});
+  const [reloadTick, setReloadTick] = useState(0);
 
   useEffect(() => {
     if (!league?.id) return;
@@ -241,44 +287,108 @@ const Transactions = () => {
       .then(({ data }) => { if (!cancelled) setActivity(data?.items || []); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [league?.id]);
+  }, [league?.id, reloadTick]);
 
-  // Map backend trades to the TradeCard shape; falls back to MOCK_TRADES when none
+  // Pull live vote details once we know which pending trades exist
+  useEffect(() => {
+    if (!Array.isArray(trades) || trades.length === 0) return;
+    const pendingIds = trades
+      .filter((t: any) => (t.status || "pending") === "pending")
+      .map((t: any) => t._id || t.id);
+    let cancelled = false;
+    Promise.all(pendingIds.map((id: string) =>
+      api.get(`/trades/${id}/votes`).then(r => [id, r.data] as const).catch(() => [id, null] as const),
+    )).then((rows) => {
+      if (cancelled) return;
+      const map: Record<string, any> = {};
+      for (const [id, data] of rows) if (data) map[id] = data;
+      setVoteState(map);
+    });
+    return () => { cancelled = true; };
+  }, [trades]);
+
+  const castVote = async (tradeId: string, vote: "approve" | "veto") => {
+    try {
+      const { data } = await api.post(`/trades/${tradeId}/vote`, { vote });
+      // Optimistically update the local cache; reload tick refetches if the
+      // trade auto-vetoed (status changed).
+      setVoteState((prev) => ({
+        ...prev,
+        [tradeId]: {
+          ...(prev[tradeId] || {}),
+          your_vote: data.your_vote ?? vote,
+          votes: data.votes,
+          veto_threshold: data.veto_threshold,
+        },
+      }));
+      if (data.status === "vetoed") setReloadTick((t) => t + 1);
+    } catch (e: any) {
+      // surface via console; existing toast infra hooks up at a higher level
+      // eslint-disable-next-line no-console
+      console.warn("vote failed", e?.response?.data?.detail || e?.message);
+    }
+  };
+
+  // Map backend trades to the TradeCard shape and drop empties (no assets on
+  // EITHER side). Cleans up the historic "ghost trade" rows that appeared
+  // when proposals were accidentally submitted blank.
   const teamName = (tid: string) => (leagueTeams || []).find(t => t.id === tid)?.name || tid;
   const allTrades: PendingTrade[] = useMemo(() => {
-    const mapped = (trades || []).map((t: any) => ({
-      id: t._id || t.id,
-      teamA: teamName(t.from_team_id || t.team_a_id),
-      teamB: teamName(t.to_team_id || t.team_b_id),
-      assetsFromA: (t.from_assets || t.team_a_assets || []).map((a: any) => ({
-        name: a.name || a.player_name || "Unknown",
-        position: a.position || "—",
-        age: a.age || 0,
-        capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
-        goals: a.goals || 0,
-        assists: a.assists || 0,
-        points: a.points || 0,
-        fantasyPts: a.fantasy_points || 0,
-        type: (a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
-      })),
-      assetsFromB: (t.to_assets || t.team_b_assets || []).map((a: any) => ({
-        name: a.name || a.player_name || "Unknown",
-        position: a.position || "—",
-        age: a.age || 0,
-        capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
-        goals: a.goals || 0,
-        assists: a.assists || 0,
-        points: a.points || 0,
-        fantasyPts: a.fantasy_points || 0,
-        type: (a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
-      })),
-      status: (t.status || "pending") as any,
-      submittedAt: (t.created_at || "").slice(0, 16).replace("T", " "),
-      processesAt: (t.expires_at || "").slice(0, 16).replace("T", " "),
-      votes: t.votes || { approve: 0, veto: 0, total: leagueTeamsCount },
-    }));
-    return mapped.length > 0 ? mapped : [];
-  }, [trades, leagueTeams, leagueTeamsCount]);
+    const mapped = (trades || []).map((t: any) => {
+      const tradeId = t._id || t.id;
+      // Backend canonical fields: assets_offered / assets_requested + proposer/target ids
+      const fromAssets = t.assets_offered || t.from_assets || t.team_a_assets || [];
+      const toAssets = t.assets_requested || t.to_assets || t.team_b_assets || [];
+      return {
+        id: tradeId,
+        teamA: teamName(t.proposer_team_id || t.from_team_id || t.team_a_id),
+        teamB: teamName(t.target_team_id || t.to_team_id || t.team_b_id),
+        assetsFromA: fromAssets.map((a: any) => ({
+          name: a.player_name || a.name || (a.asset_type === "pick" ? `${a.pick_year || ""} ${a.pick_round || ""} Pick` : "Unknown"),
+          position: a.position || "—",
+          age: a.age || 0,
+          capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
+          goals: a.goals || 0,
+          assists: a.assists || 0,
+          points: a.points || 0,
+          fantasyPts: a.fantasy_points || 0,
+          type: (a.asset_type === "pick" || a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
+        })),
+        assetsFromB: toAssets.map((a: any) => ({
+          name: a.player_name || a.name || (a.asset_type === "pick" ? `${a.pick_year || ""} ${a.pick_round || ""} Pick` : "Unknown"),
+          position: a.position || "—",
+          age: a.age || 0,
+          capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
+          goals: a.goals || 0,
+          assists: a.assists || 0,
+          points: a.points || 0,
+          fantasyPts: a.fantasy_points || 0,
+          type: (a.asset_type === "pick" || a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
+        })),
+        status: (t.status || "pending") as any,
+        submittedAt: (t.created_at || "").slice(0, 16).replace("T", " "),
+        processesAt: (t.expires_at || t.processes_at || "").slice(0, 16).replace("T", " "),
+        votes: {
+          approve: voteState[tradeId]?.votes?.approve ?? (t.votes?.approve || 0),
+          veto: voteState[tradeId]?.votes?.veto ?? (t.votes?.veto || 0),
+          total: leagueTeamsCount,
+        },
+        yourVote: voteState[tradeId]?.your_vote || null,
+        vetoThreshold: voteState[tradeId]?.veto_threshold?.teams_required ?? 0,
+        onVote: (vote: "approve" | "veto") => castVote(tradeId, vote),
+      };
+    });
+    // Drop empty trades — neither side has any asset (corrupted seeds /
+    // legacy bug). A real trade must move at least one player or pick.
+    const nonEmpty = mapped.filter(
+      (t) => (t.assetsFromA?.length || 0) > 0 || (t.assetsFromB?.length || 0) > 0,
+    );
+    // Drop ghost trades — neither team resolved to a real name.
+    const hasTeams = nonEmpty.filter(
+      (t) => t.teamA && t.teamB && t.teamA !== t.teamB,
+    );
+    return hasTeams;
+  }, [trades, leagueTeams, leagueTeamsCount, voteState]);
 
   const pending = allTrades.filter((t) => t.status === "pending");
   const accepted = allTrades.filter((t) => t.status === "accepted");
