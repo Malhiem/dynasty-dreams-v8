@@ -802,6 +802,19 @@ class LeagueUpdate(BaseModel):
     consolation_start_week: Optional[int] = Field(default=None, ge=1, le=40)
     consolation_end_week: Optional[int] = Field(default=None, ge=1, le=40)
     consolation_uses_playoff_schedule: Optional[bool] = None
+    # ── Iter 81: extended roster controls ───────────────────────
+    # All optional; legacy leagues without these fields fall back to historic
+    # defaults at runtime (no migration required for existing leagues).
+    ir_slots: Optional[int] = Field(default=None, ge=0, le=15)
+    ir_plus_slots: Optional[int] = Field(default=None, ge=0, le=10)
+    taxi_squad_size: Optional[int] = Field(default=None, ge=0, le=20)
+    position_limits: Optional[dict] = None  # e.g. {"C": 4, "LW": 4, "RW": 4, "D": 6, "G": 3}
+    enforce_position_maxes: Optional[bool] = None
+    min_active_players: Optional[int] = Field(default=None, ge=0, le=40)
+    min_games_played: Optional[int] = Field(default=None, ge=0, le=200)
+    prorate_min_max_by_period: Optional[bool] = None
+    allow_illegal_rosters: Optional[bool] = None
+    ir_eligibility_modes: Optional[List[str]] = None  # e.g. ["IR", "IR-LT"]
 
 
 _LEAGUE_UPDATE_ALLOWED = {
@@ -816,6 +829,10 @@ _LEAGUE_UPDATE_ALLOWED = {
     "matchup_length_days", "opponents_per_matchup_period",
     "consolation_enabled", "consolation_start_week", "consolation_end_week",
     "consolation_uses_playoff_schedule",
+    # Iter 81: extended roster controls
+    "ir_slots", "ir_plus_slots", "taxi_squad_size", "position_limits",
+    "enforce_position_maxes", "min_active_players", "min_games_played",
+    "prorate_min_max_by_period", "allow_illegal_rosters", "ir_eligibility_modes",
 }
 
 

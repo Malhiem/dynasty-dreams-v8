@@ -255,6 +255,17 @@ class LeagueResponse(BaseModel):
     consolation_start_week: Optional[int] = None
     consolation_end_week: Optional[int] = None
     consolation_uses_playoff_schedule: Optional[bool] = None
+    # Iter 81: extended roster controls
+    ir_slots: Optional[int] = None
+    ir_plus_slots: Optional[int] = None
+    taxi_squad_size: Optional[int] = None
+    position_limits: Optional[dict] = None
+    enforce_position_maxes: Optional[bool] = None
+    min_active_players: Optional[int] = None
+    min_games_played: Optional[int] = None
+    prorate_min_max_by_period: Optional[bool] = None
+    allow_illegal_rosters: Optional[bool] = None
+    ir_eligibility_modes: Optional[List[str]] = None
 
 class TeamCreate(BaseModel):
     name: str
@@ -508,6 +519,16 @@ async def get_league(league_id: str):
         consolation_start_week=league.get("consolation_start_week"),
         consolation_end_week=league.get("consolation_end_week"),
         consolation_uses_playoff_schedule=league.get("consolation_uses_playoff_schedule"),
+        ir_slots=league.get("ir_slots"),
+        ir_plus_slots=league.get("ir_plus_slots"),
+        taxi_squad_size=league.get("taxi_squad_size"),
+        position_limits=league.get("position_limits"),
+        enforce_position_maxes=league.get("enforce_position_maxes"),
+        min_active_players=league.get("min_active_players"),
+        min_games_played=league.get("min_games_played"),
+        prorate_min_max_by_period=league.get("prorate_min_max_by_period"),
+        allow_illegal_rosters=league.get("allow_illegal_rosters"),
+        ir_eligibility_modes=league.get("ir_eligibility_modes"),
     )
 
 # ─── League Invite System ─────────────────────────────────────
