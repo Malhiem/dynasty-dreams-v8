@@ -2069,43 +2069,10 @@ async def notify_league(league_id: str, notif_type: str, title: str, message: st
             await create_notification(team["owner_id"], notif_type, title, message, league_id, link)
 
 
-@api_router.get("/notifications")
-async def get_notifications(request: Request, unread_only: bool = False, limit: int = 50):
-    user = await get_current_user(request)
-    query = {"user_id": user["_id"]}
-    if unread_only:
-        query["read"] = False
-    notifs = await db.notifications.find(query).sort("created_at", -1).limit(limit).to_list(limit)
-    for n in notifs:
-        n["_id"] = str(n["_id"])
-    return notifs
+# Notifications routes moved to routes/notifications.py (iter 85).
 
 
-@api_router.get("/notifications/count")
-async def get_unread_count(request: Request):
-    user = await get_current_user(request)
-    count = await db.notifications.count_documents({"user_id": user["_id"], "read": False})
-    return {"count": count}
 
-
-@api_router.post("/notifications/{notif_id}/read")
-async def mark_notification_read(notif_id: str, request: Request):
-    user = await get_current_user(request)
-    await db.notifications.update_one(
-        {"_id": ObjectId(notif_id), "user_id": user["_id"]},
-        {"$set": {"read": True}}
-    )
-    return {"message": "Marked as read"}
-
-
-@api_router.post("/notifications/read-all")
-async def mark_all_read(request: Request):
-    user = await get_current_user(request)
-    result = await db.notifications.update_many(
-        {"user_id": user["_id"], "read": False},
-        {"$set": {"read": True}}
-    )
-    return {"message": f"Marked {result.modified_count} notifications as read"}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -5015,7 +4982,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes
 
 _router_deps = {
     "db": db,
@@ -5066,6 +5033,7 @@ push_routes.setup(_router_deps)
 seasons_routes.setup(_router_deps)
 teams_routes.setup(_router_deps)
 ratings_routes.setup(_router_deps)
+notifications_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -5083,6 +5051,7 @@ api_router.include_router(push_routes.router)
 api_router.include_router(seasons_routes.router)
 api_router.include_router(teams_routes.router)
 api_router.include_router(ratings_routes.router)
+api_router.include_router(notifications_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")

@@ -14,6 +14,7 @@ import {
 import FantasyLevelBadge from "@/components/FantasyLevelBadge";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useChatUnread } from "@/hooks/use-chat-unread";
+import CurrentLeagueDropdown from "./CurrentLeagueDropdown";
 
 const userItems = [
   { title: "User Dashboard", url: "/dashboard", icon: UserCircle },
@@ -138,10 +139,11 @@ export function AppSidebar() {
 
       <SidebarContent className="px-2">
         {renderGroup("User", userItems)}
-        {/* The "Active League" static badge that used to live here has been
-            replaced by the global CurrentLeagueDropdown in the header — that
-            dropdown is now the only way to switch leagues besides the User
-            Dashboard. */}
+        {/* "Current League" switcher — repurposed from the old static
+            "Active league" badge that used to live here. Clicking opens
+            the league-switch menu; this is the only way to jump between
+            leagues besides the User Dashboard link above. */}
+        <CurrentLeagueDropdown collapsed={collapsed} />
         {renderGroup("League Hub", dynamicLeagueHub)}
         {renderGroup("Social", socialItemsWithBadge)}
         {renderGroup("Team Management", managementItems)}

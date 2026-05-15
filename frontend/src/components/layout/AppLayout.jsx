@@ -10,7 +10,6 @@ import { useGlobalSocketEvent } from "@/hooks/use-global-socket";
 import { toast } from "sonner";
 import GlobalTradeBuilder from "@/lovable/components/trade/GlobalTradeBuilder";
 import TeamSettingsModal from "@/lovable/components/TeamSettingsModal";
-import CurrentLeagueDropdown from "./CurrentLeagueDropdown";
 
 export function AppLayout({ children, onSettingsClick }) {
   const { user } = useAuth();
@@ -50,7 +49,6 @@ export function AppLayout({ children, onSettingsClick }) {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <CurrentLeagueDropdown />
               <NotificationsPanel />
               {/* Team Settings cog — always visible to logged-in users with a team.
                   Opens a modal letting users edit team name, abbreviation

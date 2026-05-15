@@ -12,19 +12,20 @@ import TeamLogo from "@/lovable/components/TeamLogo";
 import { useActiveLeague } from "@/hooks/use-active-league";
 
 /**
- * Global "Current League" switcher.
+ * Sidebar-mounted "Current League" switcher.
  *
- * Sits in the AppLayout header (Dynasty Dreams JSX layout). Replaces the
- * per-page league transfer dropdowns that used to live on Transactions,
- * Standings, and the LeagueContextBanner. This is the ONLY way to jump
- * between leagues besides the "User Dashboard" link.
+ * Replaces the legacy static `sidebar-active-league-name` badge that used to
+ * sit at the top of the sidebar. This is now the ONLY way to jump between
+ * leagues besides the "User Dashboard" sidebar link.
  *
- * Trigger: team logo + team name + league name underneath.
- * Menu:    one entry per league showing the same team-logo / team / league
- *          stack, with a checkmark on the active league + a quick "User
- *          Dashboard" link to the dashboard for cross-league management.
+ * Expanded sidebar: full-width cyan card showing team logo + team name +
+ * league name + chevron — visually echoing the previous "Active league"
+ * tile so the UI affordance is unchanged for muscle memory.
+ *
+ * Collapsed sidebar (icon mode): just the team logo, centered. Click still
+ * opens the same dropdown menu.
  */
-export default function CurrentLeagueDropdown() {
+export default function CurrentLeagueDropdown({ collapsed = false }) {
   const { myLeagues, myTeamsByLeague, leagueId, league, myTeam, switchLeague } =
     useActiveLeague();
 
@@ -35,43 +36,60 @@ export default function CurrentLeagueDropdown() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          data-testid="current-league-dropdown-trigger"
-          className="flex items-center gap-2.5 pl-1.5 pr-2 py-1 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 transition-colors focus:outline-none focus:ring-2 focus:ring-[#00D2FF]/40 max-w-[260px]"
-        >
-          <TeamLogo
-            logo={triggerTeam?.logo_url}
-            name={triggerTeam?.name || league.name}
-            abbr={triggerTeam?.logo_abbr}
-            size="sm"
-            className="rounded-md"
-          />
-          <div className="flex flex-col items-start min-w-0 leading-tight">
-            <span
-              className="text-[10px] uppercase tracking-wider text-[#71717A]"
-              data-testid="current-league-label"
-            >
-              Current League
-            </span>
-            <span
-              className="text-sm font-semibold text-white truncate max-w-[160px]"
-              data-testid="current-league-team-name"
-            >
-              {triggerTeam?.name || "No team"}
-            </span>
-            <span
-              className="text-[11px] text-[#A1A1AA] truncate max-w-[160px]"
-              data-testid="current-league-league-name"
-            >
-              {league.name}
-            </span>
-          </div>
-          <ChevronDown className="h-3.5 w-3.5 text-[#A1A1AA] shrink-0" />
-        </button>
+        {collapsed ? (
+          <button
+            data-testid="current-league-dropdown-trigger"
+            title={`Current League: ${triggerTeam?.name ? `${triggerTeam.name} · ` : ""}${league.name}`}
+            className="mx-auto my-2 flex h-9 w-9 items-center justify-center rounded-lg border border-[#00D2FF]/25 bg-[#00D2FF]/5 hover:bg-[#00D2FF]/10 transition-colors focus:outline-none focus:ring-2 focus:ring-[#00D2FF]/40"
+          >
+            <TeamLogo
+              logo={triggerTeam?.logo_url}
+              name={triggerTeam?.name || league.name}
+              abbr={triggerTeam?.logo_abbr}
+              size="xs"
+              className="rounded-md"
+            />
+          </button>
+        ) : (
+          <button
+            data-testid="current-league-dropdown-trigger"
+            className="mx-2 mt-2 mb-1 flex w-[calc(100%-1rem)] items-center gap-2.5 px-3 py-2 rounded-md border border-[#00D2FF]/25 bg-[#00D2FF]/5 hover:bg-[#00D2FF]/10 transition-colors focus:outline-none focus:ring-2 focus:ring-[#00D2FF]/40 text-left"
+          >
+            <TeamLogo
+              logo={triggerTeam?.logo_url}
+              name={triggerTeam?.name || league.name}
+              abbr={triggerTeam?.logo_abbr}
+              size="sm"
+              className="rounded-md shrink-0"
+            />
+            <div className="flex flex-col items-start min-w-0 leading-tight flex-1">
+              <span
+                className="text-[9px] uppercase tracking-widest text-[#71717A]"
+                data-testid="current-league-label"
+              >
+                Current League
+              </span>
+              <span
+                className="text-sm font-bold text-white truncate w-full"
+                data-testid="current-league-team-name"
+              >
+                {triggerTeam?.name || "No team"}
+              </span>
+              <span
+                className="text-[11px] text-[#A1A1AA] truncate w-full"
+                data-testid="current-league-league-name"
+              >
+                {league.name}
+              </span>
+            </div>
+            <ChevronDown className="h-3.5 w-3.5 text-[#A1A1AA] shrink-0" />
+          </button>
+        )}
       </DropdownMenuTrigger>
 
       <DropdownMenuContent
-        align="end"
+        align="start"
+        side="right"
         className="w-80 p-0 bg-[#141414] border-white/10"
         data-testid="current-league-dropdown-menu"
       >
