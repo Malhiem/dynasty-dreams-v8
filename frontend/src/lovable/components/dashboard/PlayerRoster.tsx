@@ -1396,6 +1396,7 @@ const PlayerRoster = ({
             visibleCategories={filteredStatCategories}
             showFpts={showFpts}
             showPositionEligibility={showPositionEligibility}
+            lineupWarnings={lineupWarnings}
           />
         )}
       </div>
@@ -1493,6 +1494,7 @@ const StatsTable = ({
   showFpts = true,
   showOwnership = true,
   showPositionEligibility = true,
+  lineupWarnings = {},
 }: {
   grouped: Record<RosterSection, Player[]>;
   onTrade: (p: Player) => void;
@@ -1511,6 +1513,7 @@ const StatsTable = ({
   showFpts?: boolean;
   showOwnership?: boolean;
   showPositionEligibility?: boolean;
+  lineupWarnings?: Record<string, any[]>;
 } & HighlightProps) => {
   const displayCategories = visibleCategories ?? rosterStatCategories;
   const statCols = displayCategories.length;
@@ -1578,7 +1581,7 @@ const StatsTable = ({
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (player) {
                       return (
-                        <PlayerRow key={player.id} player={player} index={slotIdx} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
+                        <PlayerRow key={player.id} player={player} index={slotIdx} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility} warnings={lineupWarnings[String(player.id)]}>
                           {showFpts && <td className="p-2 text-right font-bold text-primary" data-testid={`row-fpts-${player.id}`}>{getPlayerPoints(player)}</td>}
                           {showFpts && <td className="p-2 text-right text-muted-foreground tabular-nums" data-testid={`row-fpg-${player.id}`}>{fpgOf(player)}</td>}
                           {displayCategories.map(cat => (
@@ -1614,7 +1617,7 @@ const StatsTable = ({
                 ) : (
                   <>
                     {sectionPlayers.map((player, index) => (
-                      <PlayerRow key={player.id} player={player} index={index} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility}>
+                      <PlayerRow key={player.id} player={player} index={index} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility} warnings={lineupWarnings[String(player.id)]}>
                         {showFpts && <td className="p-2 text-right font-bold text-primary" data-testid={`row-fpts-${player.id}`}>{getPlayerPoints(player)}</td>}
                         {showFpts && <td className="p-2 text-right text-muted-foreground tabular-nums" data-testid={`row-fpg-${player.id}`}>{fpgOf(player)}</td>}
                         {displayCategories.map(cat => (
@@ -2160,6 +2163,7 @@ const PlayerRow = ({
   highlightedPositions,
   onToggleHighlight,
   showPositionEligibility = true,
+  warnings,
 }: {
   player: Player;
   index: number;
@@ -2173,11 +2177,14 @@ const PlayerRow = ({
   isOwnTeam?: boolean;
   commissionerMode?: boolean;
   showPositionEligibility?: boolean;
+  warnings?: any[];
 } & HighlightProps) => {
   const canEdit = isOwnTeam || commissionerMode;
   const otherSections = sectionOrder.filter(s => s !== player.rosterSection);
   const highlighted = isPositionHighlighted(player, highlightedPositions, highlightedPlayerId);
   const ineligibility = checkIneligibility(player);
+  const hasWarnings = Array.isArray(warnings) && warnings.length > 0;
+  const warningMessages = hasWarnings ? warnings!.map((w: any) => w.message).filter(Boolean) : [];
 
   return (
     <tr
@@ -2196,6 +2203,29 @@ const PlayerRow = ({
             <div className="flex items-center gap-1.5 min-w-0">
               <button onClick={() => onPlayerClick(player)} className="font-medium text-sm text-foreground hover:text-primary transition-colors cursor-pointer truncate text-left">{player.name}</button>
               {newsInfo && <NewsSignalIcon player={{ ...newsInfo, _id: player.id, name: player.name }} />}
+              {hasWarnings && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Badge
+                        variant="outline"
+                        className="h-5 px-1.5 py-0 text-[10px] font-medium bg-yellow-500/15 text-yellow-500 border-yellow-500/40 hover:bg-yellow-500/25 cursor-help flex items-center gap-1 shrink-0"
+                        data-testid={`lineup-warning-${player.id}`}
+                      >
+                        <AlertTriangle className="h-3 w-3" />
+                        <span>Warning</span>
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-xs">
+                      <div className="space-y-1">
+                        {warningMessages.map((m: string, i: number) => (
+                          <p key={i} className="text-xs">{m}</p>
+                        ))}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
             </div>
             {showPositionEligibility && <PositionBadges player={player} />}
           </div>

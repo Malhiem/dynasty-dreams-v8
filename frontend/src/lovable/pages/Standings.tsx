@@ -800,18 +800,7 @@ const StandingsPage = () => {
               {league ? `${league.format?.replace('_',' ').toUpperCase()} · ${league.current_teams}/${league.max_teams} teams · Live standings` : 'Full league standings, divisions, and playoff picture.'}
             </p>
           </div>
-          {myLeagues?.length > 1 && (
-            <Select value={leagueId || undefined} onValueChange={switchLeague}>
-              <SelectTrigger className="w-[240px] h-9 text-sm" data-testid="standings-league-switcher">
-                <SelectValue placeholder="Pick a league" />
-              </SelectTrigger>
-              <SelectContent>
-                {myLeagues.map(l => (
-                  <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          {/* League switcher moved to the global header (CurrentLeagueDropdown). */}
         </div>
 
         <Tabs defaultValue="standings" className="space-y-6">

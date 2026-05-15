@@ -1,14 +1,12 @@
 // @ts-nocheck
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowRight, Database } from "lucide-react";
 
 /**
  * Tiny "this page is now live" banner. Shows:
- *   - which league is active (with switcher if user has >1)
+ *   - which league is active (read-only; switching is handled globally by the
+ *     header `CurrentLeagueDropdown`)
  *   - real-time count + stat tied to the page context
  *   - link to the most relevant data-driven page we already ship
  *
@@ -22,7 +20,7 @@ export default function LeagueContextBanner({
   primaryHref,
   primaryLabel,
 }: any) {
-  const { league, myLeagues, leagueId, switchLeague } = useActiveLeague();
+  const { league } = useActiveLeague();
   if (!league) return null;
 
   return (
@@ -46,18 +44,6 @@ export default function LeagueContextBanner({
       )}
 
       <div className="flex items-center gap-3 ml-auto flex-wrap">
-        {myLeagues?.length > 1 && (
-          <Select value={leagueId || undefined} onValueChange={switchLeague}>
-            <SelectTrigger className="w-[220px] h-8 text-xs" data-testid="league-context-switcher">
-              <SelectValue placeholder="Switch league" />
-            </SelectTrigger>
-            <SelectContent>
-              {myLeagues.map((l: any) => (
-                <SelectItem key={l.id} value={l.id}>{l.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
         {primaryHref && (
           <Link
             to={primaryHref}

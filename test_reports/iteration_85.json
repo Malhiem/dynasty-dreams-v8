@@ -1,0 +1,25 @@
+{
+  "summary": "Frontend-only verification of the new global 'Current League' header dropdown and the lineup-warning chip wiring. Logged in as chriszarek@gmail.com (real team owner). Confirmed: dropdown trigger renders with team logo, team name 'Zarek's Frozen', league name 'Ice Kings Head-to-Head', and a 'Current League' uppercase label (testid current-league-label). Clicking the trigger opens menu (current-league-dropdown-menu) listing 17 leagues (testid current-league-option-<leagueId>) with a single active check (current-league-active-<leagueId>). Switching to a different league updated the trigger from 'Ice Kings Head-to-Head' to 'Stat Chasers Roto' and the league context in real time. The current-league-go-to-dashboard link is present inside the menu. The old switchers are fully gone: codebase-wide grep for 'league-context-switcher', 'standings-league-switcher', and 'sidebar-active-league-name' returned ZERO matches. Smoke test on /dashboard, /roster, /standings, /transactions, /matchup, /trade-block, /salary-cap — the new header dropdown rendered on every one. The remaining pages (/waivers, /analytics, /chat, /league-info, /league-history, /trophy-room) hit a Cloudflare bot-challenge (429 + 403 on /api/leagues/my and /api/leagues/active) after too-rapid sequential navigation — this is NOT a missing-dropdown bug; the dropdown lives in the shared AppLayout.jsx which wraps every authenticated route. PlayerRoster.tsx lineup-warning wiring inspected: line 690 holds lineupWarnings state, line 851 POSTs to /teams/{teamId}/lineup, line 858 reads data.warnings, lines 864-875 group by player_id and toast a summary, line 2213 renders <Badge data-testid={`lineup-warning-${player.id}`}> with a tooltip showing each w.message — wiring is correct. Could not construct an over-cap IR violation via UI to render the actual chip (lineup-validation is hard to trigger by hand and main agent acknowledged this).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CurrentLeagueDropdown.jsx correctly returns null when no active league — good guard. Trigger has accessible focus ring. Dropdown menu uses DropdownMenuItem with onClick switchLeague — clean.",
+    "Old switcher removals verified via codebase grep (zero matches for league-context-switcher / standings-league-switcher / sidebar-active-league-name). Clean refactor.",
+    "PlayerRoster.tsx lineup warning wiring is correct (state, POST, parse data.warnings, group by player_id, render yellow Badge with testid). Tooltip messages shown on hover. Recommend integration test with a forced over-IR-cap scenario for full coverage — but that's a main-agent concern, not a code bug.",
+    "Cloudflare bot-challenge can lockout an authenticated session when an automated test rapidly navigates to many routes (429 on WS, 403 on /api). Not a code bug, but the playwright suite should pace navigation (>=2s between page jumps) to avoid false negatives."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (frontend-only)", "frontend": "100% on directly testable items (8/9 — only the yellow-chip render itself was not visually exercised; code wiring confirmed)" },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (used — real team owner)",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "If retesting the yellow lineup-warning chip end-to-end, you will need to seed a violation scenario at the backend (e.g. put a player on IR+ when the cap is already full, or mark an active-slot player with min_games_played unmet) and then save the lineup — the chip and toast will then render. Pace UI navigation >=2s between pages to avoid Cloudflare 429/bot-challenge that can invalidate the session mid-test.",
+  "rca_of_the_issue": "No bugs found. The 6 pages that initially showed dropdown=False were a Cloudflare bot-challenge artefact (visible in the trailing screenshot — 'Performing security verification'), confirmed by accompanying 429/403 error spam in the console. The dropdown is unconditionally rendered by AppLayout.jsx which is the wrapper for every authenticated route."
+}

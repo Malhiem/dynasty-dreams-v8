@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserLeagueMenu } from "./UserLeagueMenu";
+import CurrentLeagueDropdown from "./CurrentLeagueDropdown";
 import { useUiScale } from "@/hooks/use-ui-scale";
 
 interface AppLayoutProps {

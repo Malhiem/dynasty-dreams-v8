@@ -13,6 +13,7 @@ const STORAGE_KEY = 'dd_active_league_id';
 export function useActiveLeague() {
   const [loading, setLoading] = useState(true);
   const [myLeagues, setMyLeagues] = useState([]);
+  const [myTeamsByLeague, setMyTeamsByLeague] = useState({});
   const [leagueId, setLeagueId] = useState(() => {
     try { return localStorage.getItem(STORAGE_KEY) || null; } catch { return null; }
   });
@@ -37,6 +38,27 @@ export function useActiveLeague() {
             setLeagueId(id);
           }
         }
+        // Fetch user's team in each league so the global Current League
+        // switcher can show team logo+name per league entry without
+        // round-tripping per click.
+        try {
+          const meRes = await api.get('/auth/me');
+          const meId = meRes.data?.id;
+          if (meId && Array.isArray(data) && data.length > 0) {
+            const teamResults = await Promise.all(
+              data.map(l =>
+                api.get(`/teams?league_id=${l.id}`)
+                  .then(r => [l.id, (r.data || []).find(t => t.owner_id === meId) || null])
+                  .catch(() => [l.id, null]),
+              ),
+            );
+            if (!cancelled) {
+              const map = {};
+              for (const [lid, t] of teamResults) map[lid] = t;
+              setMyTeamsByLeague(map);
+            }
+          }
+        } catch (e) { /* noop */ }
       } catch (e) {
         console.error('my_leagues failed', e);
       }
@@ -62,6 +84,8 @@ export function useActiveLeague() {
         setLeagueTeams(tRes.data || []);
         const mine = (tRes.data || []).find(t => t.owner_id === meRes.data?.id) || null;
         setMyTeam(mine);
+        // Keep myTeamsByLeague in sync for the active league.
+        setMyTeamsByLeague(prev => ({ ...prev, [leagueId]: mine }));
       } catch (e) { console.error('active league load', e); }
     };
     load();
@@ -76,5 +100,5 @@ export function useActiveLeague() {
   const reloadTeams = () => setTeamsReloadKey(k => k + 1);
   const reloadLeague = () => setTeamsReloadKey(k => k + 1);
 
-  return { loading, myLeagues, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague };
+  return { loading, myLeagues, myTeamsByLeague, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague };
 }
