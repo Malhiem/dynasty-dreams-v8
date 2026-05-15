@@ -4375,9 +4375,10 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
 
     raw = payload.get("lineup") or {}
     lineup: dict[str, dict] = {}
-    valid_sections = {"forward", "defense", "goalie", "bench", "ir", "minors"}
+    valid_sections = {"forward", "defense", "goalie", "bench", "ir", "ir-plus", "taxi", "minors"}
     starting_sections = {"forward", "defense", "goalie"}
     starter_ids: list[str] = []
+    section_counts: dict[str, int] = {}
     for pid, info in raw.items():
         if not isinstance(info, dict):
             continue
@@ -4386,15 +4387,47 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
             section = "bench"
         slot = info.get("slot") or section.upper()[:3]
         lineup[str(pid)] = {"section": section, "slot": slot}
+        section_counts[section] = section_counts.get(section, 0) + 1
         if section in starting_sections:
             starter_ids.append(str(pid))
+
+    # ── Roster-section caps (iter 84) ───────────────────────────
+    # Hard-cap each special section against the league's configured slot
+    # counts. `ir_slots` and `ir_plus_slots` are separate counters; legacy
+    # leagues that mash them together still work because both default 0.
+    cap_checks = [
+        ("ir", int((league or {}).get("ir_slots") or 0), "IR"),
+        ("ir-plus", int((league or {}).get("ir_plus_slots") or 0), "IR+"),
+        ("taxi", int((league or {}).get("taxi_squad_size") or 0), "Taxi Squad"),
+        ("minors", int((league or {}).get("minors_spots") or 0), "Minors Pool"),
+        ("bench", int((league or {}).get("bench_spots") or 0), "Bench"),
+    ]
+    for section_key, cap, friendly in cap_checks:
+        used = section_counts.get(section_key, 0)
+        if cap > 0 and used > cap:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{friendly} has {used} player{'s' if used != 1 else ''} but the "
+                    f"league only allows {cap}. Move {used - cap} to another section."
+                ),
+            )
+        if cap == 0 and used > 0 and section_key in ("ir", "ir-plus", "taxi", "minors"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"{friendly} is disabled for this league (size = 0). "
+                    f"Move the {used} player{'s' if used != 1 else ''} you placed "
+                    f"there to another section."
+                ),
+            )
 
     # ── League rule enforcement (iter 83) ────────────────────────
     # `min_active_players` blocks saves that would drop the team below the
     # league's required count of scoring starters. `min_games_played` is a
     # per-player warning — gathered but not blocking (warnings returned to
     # the caller so the UI can surface a yellow chip per ineligible player).
-    from utils.roster_rules import check_min_active_players, check_min_games_played
+    from utils.roster_rules import check_min_active_players
     from bson.errors import InvalidId
     enforce_block = (league or {}).get("allow_illegal_rosters") is False
     active_err = check_min_active_players(league or {}, len(starter_ids))

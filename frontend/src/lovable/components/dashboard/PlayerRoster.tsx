@@ -682,6 +682,12 @@ const PlayerRoster = ({
   // Used by the "Fantasy Points" filter to break down each player's FPTS
   // into per-category contribution (e.g. 10 goals × 3 = 30 pts).
   const [scoringConfig, setScoringConfig] = useState<any>(null);
+  // ── Lineup warnings (iter 84) ───────────────────────────────────
+  // Backend returns `warnings: [{code, player_id, message, ...}]` after a
+  // successful lineup save. Map them by player_id so the row can render
+  // a yellow chip explaining why the player is flagged (e.g. below the
+  // league's `min_games_played` threshold).
+  const [lineupWarnings, setLineupWarnings] = useState<Record<string, any[]>>({});
   useEffect(() => {
     if (!leagueId) return;
     let cancelled = false;
@@ -842,9 +848,39 @@ const PlayerRoster = ({
                         const section = (p.rosterSection || "bench").toString();
                         lineup[String(p.id)] = { section, slot: p.position || section.toUpperCase().slice(0, 3) };
                       });
-                      await api.post(`/teams/${teamId}/lineup`, { lineup });
-                    } catch (e) {
-                      console.warn("lineup save failed", e);
+                      const { data } = await api.post(`/teams/${teamId}/lineup`, { lineup });
+                      // ── Lineup warnings (iter 84) ─────────────────────
+                      // Backend returns `warnings: [{code, player_id, ...}]`
+                      // for things like `min_games_played` violations. Cache
+                      // them per player so the card can render a yellow chip
+                      // and toast a top-level summary so the user knows the
+                      // save succeeded WITH caveats.
+                      const warns = Array.isArray(data?.warnings) ? data.warnings : [];
+                      const byPlayer: Record<string, any[]> = {};
+                      warns.forEach((w: any) => {
+                        const pid = String(w.player_id || "__league__");
+                        (byPlayer[pid] ||= []).push(w);
+                      });
+                      setLineupWarnings(byPlayer);
+                      if (warns.length > 0) {
+                        toast.warning(
+                          `Saved with ${warns.length} warning${warns.length === 1 ? "" : "s"}`,
+                          {
+                            description: warns
+                              .slice(0, 3)
+                              .map((w: any) => w.message)
+                              .join(" · "),
+                            duration: 8000,
+                          },
+                        );
+                      }
+                    } catch (e: any) {
+                      const detail = e?.response?.data?.detail;
+                      if (detail) {
+                        toast.error(`Lineup save blocked: ${detail}`, { duration: 8000 });
+                      } else {
+                        console.warn("lineup save failed", e);
+                      }
                     }
                   }
                   setHasUnsavedChanges(false);

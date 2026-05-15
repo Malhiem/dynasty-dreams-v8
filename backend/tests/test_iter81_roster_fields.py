@@ -27,7 +27,12 @@ LID = "69e46af167999bfb85c39628"
 
 @pytest.mark.asyncio
 async def test_iter81_roster_fields_roundtrip():
-    """Every new roster field (ir_slots, position_limits, etc) round-trips."""
+    """Every new roster field (ir_slots, position_limits, etc) round-trips.
+
+    Snapshots and restores all touched fields after the test so we don't
+    leak `enforce_position_maxes=True` (or strict `position_limits`) into
+    other tests that assume the iter79-backfill defaults.
+    """
     async with AsyncClient(base_url=BASE, timeout=20) as client:
         r = await client.post("/api/auth/login",
                               json={"email": EMAIL, "password": PASSWORD})
@@ -46,16 +51,23 @@ async def test_iter81_roster_fields_roundtrip():
             "allow_illegal_rosters": False,
             "ir_eligibility_modes": ["IR", "IR-LT"],
         }
-        r = await client.put(f"/api/leagues/{LID}", headers=headers, json=payload)
-        assert r.status_code == 200, r.text
-        body = r.json()
-        for k, v in payload.items():
-            assert body[k] == v, f"PUT echo mismatch {k}: got {body[k]}"
+        # Snapshot pre-test state so we can restore — protects sibling tests
+        # that assume backfilled defaults (enforce_position_maxes=False, etc.)
+        before = (await client.get(f"/api/leagues/{LID}", headers=headers)).json()
+        snapshot = {k: before.get(k) for k in payload.keys()}
+        try:
+            r = await client.put(f"/api/leagues/{LID}", headers=headers, json=payload)
+            assert r.status_code == 200, r.text
+            body = r.json()
+            for k, v in payload.items():
+                assert body[k] == v, f"PUT echo mismatch {k}: got {body[k]}"
 
-        r = await client.get(f"/api/leagues/{LID}", headers=headers)
-        league = r.json()
-        for k, v in payload.items():
-            assert league.get(k) == v, f"GET round-trip mismatch {k}: got {league.get(k)}"
+            r = await client.get(f"/api/leagues/{LID}", headers=headers)
+            league = r.json()
+            for k, v in payload.items():
+                assert league.get(k) == v, f"GET round-trip mismatch {k}: got {league.get(k)}"
+        finally:
+            await client.put(f"/api/leagues/{LID}", headers=headers, json=snapshot)
 
 
 @pytest.mark.asyncio
