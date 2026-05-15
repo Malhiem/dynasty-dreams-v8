@@ -43,6 +43,7 @@ interface TradeBlockItem {
   team_id?: string;
   age?: number;
   dynastyValue: number;
+  aav?: number | null;
   owner: string;
   ownerAvatar: string;
   lookingFor: string[];
@@ -260,6 +261,7 @@ const TradeBlock = () => {
     team: it.nhl_team || (it.item_type === "pick" ? "Own" : ""),
     team_id: it.team_id,
     age: it.age || undefined,
+    aav: it.aav || null,
     dynastyValue: Math.round(((it.points || 0) * 80) + 1000),
     owner: ownerNameFor(it.owner_id),
     ownerAvatar: ownerAbbrFor(it.owner_id),
@@ -476,6 +478,9 @@ const TradeBlock = () => {
                 sort={prefs.sort}
                 onToggleSort={prefs.toggleSort}
                 onTrade={handleTradeForPlayer}
+                onHide={prefs.hide}
+                capEnabled={Boolean(league?.salary_cap_enabled)}
+                capColumnLabel={"AAV"}
               />
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-testid="trade-block-tile-grid">
@@ -681,13 +686,15 @@ const TradeBlockCard = ({
                 <span
                   data-testid={`trade-block-streak-chip-${item.team_id}`}
                   title={`${streakChipData.count} consecutive ${streakChipData.label === "Hot" ? "winning" : "losing"} seasons`}
-                  className={`inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full border ${
+                  className={`inline-flex items-center justify-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border whitespace-nowrap leading-none ${
                     streakChipData.tone === "hot"
                       ? "bg-orange-500/20 text-orange-300 border-orange-400/40"
                       : "bg-sky-500/20 text-sky-200 border-sky-400/40"
                   }`}
                 >
-                  {streakChipData.emoji} {streakChipData.label} {streakChipData.count}
+                  <span aria-hidden="true">{streakChipData.emoji}</span>
+                  <span>{streakChipData.label}</span>
+                  <span className="tabular-nums">{streakChipData.count}</span>
                 </span>
               )}
             </div>
@@ -715,34 +722,50 @@ const TradeBlockCard = ({
   );
 };
 
-const SORT_COLUMNS: { key: string; label: string; numeric: boolean; testid: string }[] = [
-  { key: "name", label: "Player", numeric: false, testid: "trade-block-col-name" },
-  { key: "position", label: "Pos", numeric: false, testid: "trade-block-col-position" },
-  { key: "team", label: "Team", numeric: false, testid: "trade-block-col-team" },
-  { key: "age", label: "Age", numeric: true, testid: "trade-block-col-age" },
-  { key: "weeklyPoints", label: "Pts/Wk", numeric: true, testid: "trade-block-col-weekly" },
-  { key: "dynastyValue", label: "Dynasty $", numeric: true, testid: "trade-block-col-dynasty" },
-  { key: "owner", label: "Owner", numeric: false, testid: "trade-block-col-owner" },
-];
-
 const TradeBlockListView = ({
   items,
   sort,
   onToggleSort,
   onTrade,
+  onHide,
+  capEnabled,
+  capColumnLabel,
 }: {
   items: TradeBlockItem[];
   sort: { key: string; dir: "asc" | "desc" };
   onToggleSort: (key: string) => void;
   onTrade: (item: TradeBlockItem) => void;
+  onHide: (id: any) => void;
+  capEnabled: boolean;
+  capColumnLabel: string;
 }) => {
+  // Column set is computed per render so we can drop the cap column when the
+  // active league has no salary cap configured.
+  const columns: { key: string; label: string; numeric: boolean; testid: string }[] = [
+    { key: "name", label: "Player", numeric: false, testid: "trade-block-col-name" },
+    { key: "position", label: "Pos", numeric: false, testid: "trade-block-col-position" },
+    { key: "team", label: "Team", numeric: false, testid: "trade-block-col-team" },
+    { key: "age", label: "Age", numeric: true, testid: "trade-block-col-age" },
+    { key: "weeklyPoints", label: "Pts/Wk", numeric: true, testid: "trade-block-col-weekly" },
+    ...(capEnabled ? [{ key: "aav", label: capColumnLabel, numeric: true, testid: "trade-block-col-aav" }] : []),
+    { key: "owner", label: "Owner", numeric: false, testid: "trade-block-col-owner" },
+    { key: "lookingFor", label: "Looking For", numeric: false, testid: "trade-block-col-looking-for" },
+  ];
+
+  const fmtCurrency = (v: number | null | undefined) => {
+    if (!v) return "—";
+    if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
+    if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
+    return `$${v}`;
+  };
+
   return (
     <Card className="bg-card border-border" data-testid="trade-block-list-view">
       <CardContent className="p-0">
         <Table>
           <TableHeader>
             <TableRow>
-              {SORT_COLUMNS.map((col) => {
+              {columns.map((col) => {
                 const active = sort?.key === col.key;
                 return (
                   <TableHead
@@ -761,13 +784,13 @@ const TradeBlockListView = ({
                   </TableHead>
                 );
               })}
-              <TableHead className="text-right w-[120px]">Action</TableHead>
+              <TableHead className="text-right w-[180px]">Action</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {items.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={SORT_COLUMNS.length + 1} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={columns.length + 1} className="text-center py-8 text-muted-foreground">
                   No items match your filters
                 </TableCell>
               </TableRow>
@@ -780,18 +803,42 @@ const TradeBlockListView = ({
                 <TableCell className="text-right text-primary">
                   {item.weeklyPoints && item.weeklyPoints > 0 ? item.weeklyPoints.toFixed(1) : "—"}
                 </TableCell>
-                <TableCell className="text-right">{item.dynastyValue.toLocaleString()}</TableCell>
+                {capEnabled && (
+                  <TableCell className="text-right tabular-nums">{fmtCurrency(item.aav)}</TableCell>
+                )}
                 <TableCell><TeamLink name={item.owner} /></TableCell>
+                <TableCell>
+                  <div className="flex flex-wrap gap-1 max-w-[260px]">
+                    {(item.lookingFor || []).slice(0, 3).map((req, idx) => (
+                      <Badge key={idx} variant="secondary" className="text-[10px] py-0 px-1.5">
+                        {req}
+                      </Badge>
+                    ))}
+                  </div>
+                </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => onTrade(item)}
-                    data-testid={`trade-block-list-trade-${item.id}`}
-                  >
-                    <ArrowRightLeft className="h-3.5 w-3.5 mr-1" />
-                    Trade
-                  </Button>
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => onTrade(item)}
+                      data-testid={`trade-block-list-trade-${item.id}`}
+                    >
+                      <ArrowRightLeft className="h-3.5 w-3.5 mr-1" />
+                      Trade
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => onHide(item.id)}
+                      title="Hide this player"
+                      aria-label="Hide from Trade Block"
+                      data-testid={`trade-block-list-hide-${item.id}`}
+                      className="h-8 w-8 text-muted-foreground/70 hover:text-foreground"
+                    >
+                      <EyeOff className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

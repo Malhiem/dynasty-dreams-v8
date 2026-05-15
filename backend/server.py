@@ -2818,8 +2818,39 @@ async def get_trade_block(
     if owner_id:
         query["owner_id"] = owner_id
     items = await db.trade_block.find(query).sort("created_at", -1).to_list(500)
+
+    # Enrich each item with the player's contract / salary so the frontend
+    # Trade Block can render an AAV column when the league has the cap
+    # turned on. We do this in one batch lookup to avoid N+1 reads.
+    player_ids = [item["player_id"] for item in items if item.get("player_id")]
+    salary_map: dict = {}
+    if player_ids:
+        oids = []
+        for pid in player_ids:
+            try:
+                oids.append(ObjectId(pid))
+            except Exception:
+                continue
+        if oids:
+            cursor = db.players.find(
+                {"_id": {"$in": oids}},
+                {"contract": 1, "salary": 1, "cap_hit": 1},
+            )
+            async for p in cursor:
+                contract = p.get("contract") or {}
+                salary_map[str(p["_id"])] = {
+                    "aav": contract.get("aav"),
+                    "salary": p.get("salary"),
+                    "cap_hit": p.get("cap_hit"),
+                }
     for item in items:
         item["_id"] = str(item["_id"])
+        if item.get("player_id"):
+            info = salary_map.get(item["player_id"]) or {}
+            # Prefer the explicit AAV value when present, fall back through
+            # the synthesized salary then cap_hit so we always have *something*
+            # to surface when cap is enabled.
+            item["aav"] = info.get("aav") or info.get("salary") or info.get("cap_hit")
     return items
 
 @api_router.delete("/trade-block/{item_id}")

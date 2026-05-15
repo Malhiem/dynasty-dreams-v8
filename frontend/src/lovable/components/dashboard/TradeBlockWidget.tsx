@@ -13,13 +13,8 @@ import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useTradeBlockUiPrefs } from "@/hooks/use-trade-block-ui-prefs";
 
-const WIDGET_COLUMNS: { key: string; label: string; numeric: boolean }[] = [
-  { key: "name", label: "Player", numeric: false },
-  { key: "position", label: "Pos", numeric: false },
-  { key: "team", label: "Team", numeric: false },
-  { key: "weeklyPoints", label: "Pts/Wk", numeric: true },
-  { key: "owner", label: "Owner", numeric: false },
-];
+// (List-view columns are now computed inside the component so we can drop
+// the AAV column when the active league has no salary cap.)
 
 // Used when the active league has no trade-block entries yet — keeps the
 // widget from looking empty during seed/initial state.
@@ -34,6 +29,26 @@ const TradeBlockWidget = () => {
   const { league, leagueTeams } = useActiveLeague();
   const prefs = useTradeBlockUiPrefs(league?.id);
   const [liveItems, setLiveItems] = useState<any[]>([]);
+  const capEnabled = Boolean((league as any)?.salary_cap_enabled);
+
+  // Widget table columns — Player / Pos / Team / Pts/Wk / (AAV?) / Owner / Looking For.
+  // We hide AAV when the league has no salary cap (mirrors the page contract).
+  const widgetColumns = useMemo(() => ([
+    { key: "name", label: "Player", numeric: false },
+    { key: "position", label: "Pos", numeric: false },
+    { key: "team", label: "Team", numeric: false },
+    { key: "weeklyPoints", label: "Pts/Wk", numeric: true },
+    ...(capEnabled ? [{ key: "aav", label: "AAV", numeric: true }] : []),
+    { key: "owner", label: "Owner", numeric: false },
+    { key: "lookingFor", label: "Looking For", numeric: false },
+  ]), [capEnabled]);
+
+  const fmtCurrency = (v: number | null | undefined) => {
+    if (!v) return "—";
+    if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(2)}M`;
+    if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
+    return `$${v}`;
+  };
 
   useEffect(() => {
     if (!league?.id) return;
@@ -55,8 +70,10 @@ const TradeBlockWidget = () => {
       team: it.nhl_team || (it.item_type === "pick" ? "Own" : ""),
       age: it.age || null,
       weeklyPoints: Number(it.points || 0),
+      aav: it.aav || null,
       owner: ownerName(it.owner_id),
       ownerAvatar: ownerAbbr(it.owner_id),
+      lookingFor: (it.looking_for || []).length ? it.looking_for : ["Best Offer"],
     }));
     return real.length > 0 ? real : FALLBACK_ITEMS;
   }, [liveItems, leagueTeams]);
@@ -136,7 +153,7 @@ const TradeBlockWidget = () => {
           <Table>
             <TableHeader>
               <TableRow>
-                {WIDGET_COLUMNS.map((col) => {
+                {widgetColumns.map((col) => {
                   const active = prefs.sort?.key === col.key;
                   return (
                     <TableHead
@@ -155,12 +172,13 @@ const TradeBlockWidget = () => {
                     </TableHead>
                   );
                 })}
+                <TableHead className="text-right w-[40px]"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {display.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={WIDGET_COLUMNS.length} className="text-center py-4 text-xs text-muted-foreground">
+                  <TableCell colSpan={widgetColumns.length + 1} className="text-center py-4 text-xs text-muted-foreground">
                     Nothing on the trade block.
                   </TableCell>
                 </TableRow>
@@ -170,7 +188,29 @@ const TradeBlockWidget = () => {
                   <TableCell>{p.position}</TableCell>
                   <TableCell>{p.team}</TableCell>
                   <TableCell className="text-right text-primary">{p.weeklyPoints ? p.weeklyPoints.toFixed(1) : "—"}</TableCell>
+                  {capEnabled && (
+                    <TableCell className="text-right tabular-nums">{fmtCurrency(p.aav)}</TableCell>
+                  )}
                   <TableCell><TeamLink name={p.owner} /></TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-0.5 max-w-[160px]">
+                      {(p.lookingFor || []).slice(0, 2).map((req: string, idx: number) => (
+                        <span key={idx} className="text-[10px] bg-secondary/60 rounded px-1 py-0.5">{req}</span>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); prefs.hide(p.id); }}
+                      title="Hide this player"
+                      aria-label="Hide from Trade Block"
+                      data-testid={`trade-block-widget-list-hide-${p.id}`}
+                      className="h-6 w-6 rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-secondary inline-flex items-center justify-center"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
