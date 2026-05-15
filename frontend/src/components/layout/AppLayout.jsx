@@ -83,11 +83,14 @@ export function AppLayout({ children, onSettingsClick }) {
               )}
               {user && (
                 <div className="flex items-center gap-3 pl-3 border-l border-white/10">
-                  <div className="text-right hidden sm:block">
-                    <p className="text-sm font-medium text-white">{user.name}</p>
-                    <p className="text-xs text-[#A1A1AA]">{user.role}</p>
-                  </div>
-                  <div className="h-9 w-9 rounded-full bg-[#00D2FF]/20 flex items-center justify-center text-sm font-bold text-[#00D2FF]">
+                  {/* Username + role text removed from header per user request —
+                      the avatar still surfaces account context, and the
+                      sidebar footer continues to show full identity. */}
+                  <div
+                    className="h-9 w-9 rounded-full bg-[#00D2FF]/20 flex items-center justify-center text-sm font-bold text-[#00D2FF]"
+                    title={user.name || ""}
+                    data-testid="header-user-avatar"
+                  >
                     {user.name?.[0]?.toUpperCase() || "U"}
                   </div>
                 </div>

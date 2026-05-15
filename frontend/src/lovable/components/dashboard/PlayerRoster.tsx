@@ -95,6 +95,7 @@ type RosterSection = "starting" | "bench" | "ir" | "minors" | "goalies" | "goali
 
 type ViewFilter =
   | "season"
+  | "cap-hit"
   | "1d"
   | "7d"
   | "14d"
@@ -464,6 +465,7 @@ const allStatCategories = [...trackedCategories, ...untrackedCategories];
 
 const filterLabels: Record<ViewFilter, string> = {
   season: "Season Stats",
+  "cap-hit": "Cap Hit",
   "1d": "Last 1 Day",
   "7d": "Last 7 Days",
   "14d": "Last 14 Days",
@@ -1185,6 +1187,7 @@ const PlayerRoster = ({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="season">Season Stats</SelectItem>
+                <SelectItem value="cap-hit">Cap Hit</SelectItem>
                 <SelectItem value="1d">Last 1 Day</SelectItem>
                 <SelectItem value="7d">Last 7 Days</SelectItem>
                 <SelectItem value="14d">Last 14 Days</SelectItem>
@@ -1373,6 +1376,8 @@ const PlayerRoster = ({
           <MatchupScheduleTable grouped={grouped} onTrade={handleOpenTrade} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} showPositionEligibility={showPositionEligibility} />
         ) : effectiveFilter === "fantasy-points" ? (
           <FantasyPointsTable grouped={grouped} onTrade={handleOpenTrade} getSectionTotal={getSectionTotal} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} visibleCategories={filteredStatCategories} showFpts={showFpts} showPositionEligibility={showPositionEligibility} scoringConfig={scoringConfig} />
+        ) : effectiveFilter === "cap-hit" ? (
+          <CapHitTable grouped={grouped} onPlayerClick={handleOpenCard} />
         ) : (
           <StatsTable
             grouped={grouped}
@@ -1643,6 +1648,155 @@ const StatsTable = ({
 };
 
 // ── Fantasy Points Breakdown Table ─────────────────────
+// ── Cap Hit Table ───────────────────────────────────────
+// Rows = players, columns = upcoming seasons. Cell value is the player's
+// AAV for each year the contract is active. The season AFTER the contract
+// ends shows "UFA" or "RFA" depending on the player's contract type.
+
+const CapHitTable = ({
+  grouped,
+  onPlayerClick,
+}: {
+  grouped: Record<RosterSection, Player[]>;
+  onPlayerClick: (p: Player) => void;
+}) => {
+  const allPlayers: Player[] = sectionOrder.flatMap((s) => grouped[s] || []);
+
+  // Determine the year range. We start at the current fantasy-hockey season
+  // (season "2025-26" starts July 1, 2025) and extend out to the longest
+  // contract on the roster + 1 for the UFA/RFA terminator column.
+  const today = new Date();
+  const seasonStart = today.getMonth() >= 6 ? today.getFullYear() : today.getFullYear() - 1;
+  const maxYears = allPlayers.reduce((m, p) => Math.max(m, p.contract?.yearsRemaining || 0), 0);
+  // +1 covers the "free-agency status" terminator column. Default to 5
+  // columns minimum so the table doesn't look empty for short-contract
+  // rosters.
+  const totalYears = Math.max(5, maxYears + 1);
+  const years = Array.from({ length: totalYears }, (_, i) => seasonStart + i);
+
+  const fmtAAV = (n: number) => {
+    if (!n) return "—";
+    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`;
+    return `$${n}`;
+  };
+
+  const sectionLabels: Partial<Record<RosterSection, string>> = {
+    starting: "Starting Lineup",
+    bench: "Bench",
+    minors: "Minors",
+    ir: "Injured Reserve",
+    ir_plus: "IR+",
+    taxi: "Taxi Squad",
+    goalies: "Goalies",
+  };
+
+  return (
+    <div className="p-6 space-y-6" data-testid="cap-hit-table">
+      {sectionOrder.map((section) => {
+        const rows = grouped[section] || [];
+        if (rows.length === 0) return null;
+        return (
+          <div key={section}>
+            <h4 className="text-xs uppercase tracking-wider text-muted-foreground mb-2">
+              {sectionLabels[section] || section}
+            </h4>
+            <div className="rounded-lg border border-border overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-secondary/40">
+                      <th className="text-left py-2 px-3 font-semibold sticky left-0 bg-secondary/40 z-10 min-w-[180px]">
+                        Player
+                      </th>
+                      {years.map((y) => (
+                        <th
+                          key={y}
+                          className="text-right py-2 px-3 font-semibold tabular-nums"
+                          data-testid={`cap-hit-year-${y}`}
+                        >
+                          {y}-{String(y + 1).slice(-2)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((p) => {
+                      const years_remaining = p.contract?.yearsRemaining || 0;
+                      const aav = p.contract?.salary || 0;
+                      const type = p.contract?.type || "UFA";
+                      return (
+                        <tr
+                          key={p.id}
+                          className="border-t border-border hover:bg-secondary/30"
+                          data-testid={`cap-hit-row-${p.id}`}
+                        >
+                          <td className="py-2 px-3 sticky left-0 bg-card hover:bg-secondary/30 z-10">
+                            <button
+                              type="button"
+                              onClick={() => onPlayerClick(p)}
+                              className="font-medium text-foreground hover:text-primary text-left flex flex-col leading-tight"
+                            >
+                              <span className="truncate max-w-[160px]">{p.name}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {p.position} · {p.team}
+                              </span>
+                            </button>
+                          </td>
+                          {years.map((_y, idx) => {
+                            if (idx < years_remaining) {
+                              return (
+                                <td
+                                  key={idx}
+                                  className="py-2 px-3 text-right tabular-nums text-foreground"
+                                >
+                                  {fmtAAV(aav)}
+                                </td>
+                              );
+                            }
+                            if (idx === years_remaining) {
+                              // Terminator column shows the free-agency status
+                              // immediately AFTER the contract ends. RFA for
+                              // entry-level or restricted-FA players, UFA for
+                              // everyone else.
+                              const label =
+                                type === "RFA" || type === "ELC" ? "RFA" : "UFA";
+                              const tone =
+                                label === "RFA"
+                                  ? "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                                  : "bg-red-500/15 text-red-400 border-red-500/30";
+                              return (
+                                <td key={idx} className="py-2 px-3 text-right">
+                                  <span
+                                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${tone}`}
+                                    data-testid={`cap-hit-fa-${p.id}-${label}`}
+                                  >
+                                    {label}
+                                  </span>
+                                </td>
+                              );
+                            }
+                            return (
+                              <td key={idx} className="py-2 px-3 text-right text-muted-foreground/40">
+                                —
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
+
 
 const FantasyPointsTable = ({
   grouped,

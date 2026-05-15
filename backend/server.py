@@ -3626,6 +3626,27 @@ async def _execute_multi_party_trade(trade: dict) -> dict:
     )
 
     description = "Multi-team trade executed: " + " ↔ ".join(p["team_name"] for p in parties)
+    # ── Clear trade-block entries for any player that just changed hands ──
+    # Multi-party path. `moves` is a list of asset movements; each player move
+    # carries `player_id` directly.
+    multi_traded_pids = list({
+        m["player_id"]
+        for m in moves
+        if m.get("asset_type") == "player" and m.get("player_id")
+    })
+    if multi_traded_pids:
+        try:
+            await db.trade_block.delete_many({
+                "league_id": league_id,
+                "player_id": {"$in": multi_traded_pids},
+            })
+            await broadcast_to_room(
+                f"league_{league_id}",
+                "trade_block_changed",
+                {"action": "cleared_after_trade", "player_ids": multi_traded_pids},
+            )
+        except Exception:
+            pass
     try:
         await db.activity_feed.insert_one({
             "league_id": league_id,
@@ -3810,6 +3831,29 @@ async def _execute_trade(trade: dict) -> dict:
             "execution_moves": moves,
         }}
     )
+
+    # ── Clear trade-block entries for any player that just changed hands ──
+    # Two-team path. If a traded player was on the original owner's block, we
+    # remove the listing on execution: they're no longer on the previous
+    # roster and the new owner hasn't expressed interest in shopping them.
+    traded_player_ids = list({
+        m["player_id"]
+        for m in (moves.get("players_out") or []) + (moves.get("players_in") or [])
+        if m.get("player_id")
+    })
+    if traded_player_ids:
+        try:
+            await db.trade_block.delete_many({
+                "league_id": league_id,
+                "player_id": {"$in": traded_player_ids},
+            })
+            await broadcast_to_room(
+                f"league_{league_id}",
+                "trade_block_changed",
+                {"action": "cleared_after_trade", "player_ids": traded_player_ids},
+            )
+        except Exception:
+            pass
 
     try:
         await db.activity_feed.insert_one({

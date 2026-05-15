@@ -282,6 +282,30 @@ const TradeBlock = () => {
     [leagueTeams]
   );
 
+  // ── "My Players" tab data ──
+  // Single source of truth: backend `db.trade_block`. We surface ONLY this
+  // user's currently-listed players (filtered by owner_id) so the tab is in
+  // lockstep with the roster-page bullhorn toggle. When a trade executes,
+  // the backend wipes those rows, so this list updates automatically.
+  const myOnBlockPlayers = useMemo(() => {
+    if (!myTeam?.id) return [];
+    const rosterById = new Map((myRoster || []).map((p: any) => [String(p.player_id || p.id), p]));
+    return (liveItems || [])
+      .filter((it: any) => it.team_id === myTeam.id && it.player_id)
+      .map((it: any) => {
+        const r = rosterById.get(String(it.player_id));
+        return {
+          id: it._id || it.player_id,
+          player_id: String(it.player_id),
+          name: it.name || r?.name || "Unknown",
+          position: it.position || r?.position || "—",
+          team: it.nhl_team || r?.nhl_team || "",
+          nhl_team: r?.nhl_team,
+          lookingFor: it.looking_for || [],
+        };
+      });
+  }, [liveItems, myRoster, myTeam?.id]);
+
   const sortedAndFilteredItems = useMemo(() => {
     // Prefer live items; fall back to seeded mock when league has no trade-block entries
     let items = realTradeItems.length > 0 ? [...realTradeItems] : [...tradeBlockItems];
@@ -508,33 +532,83 @@ const TradeBlock = () => {
 
           <TabsContent value="my-players">
             <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>Manage Your Trade Block</CardTitle>
+              <CardHeader className="flex flex-row items-start justify-between gap-2">
+                <div>
+                  <CardTitle>My Trade-Block Players</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Players you've shopped from your roster. To add or remove
+                    listings, use the trade-block toggle on the{" "}
+                    {myTeam ? (
+                      <Link
+                        to={`/teams/${myTeam.id}`}
+                        className="text-primary hover:underline"
+                        data-testid="my-players-roster-link"
+                      >
+                        Roster page
+                      </Link>
+                    ) : "Roster page"}
+                    .
+                  </p>
+                </div>
+                <Badge variant="outline" data-testid="my-players-count">
+                  {myOnBlockPlayers.length} on block
+                </Badge>
               </CardHeader>
               <CardContent>
-                <div className="space-y-3">
-                  {myAvailablePlayers.map((player) => (
-                    <div
-                      key={player.id}
-                      className="flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center text-xs font-bold">
-                          {player.team}
-                        </div>
-                        <div>
-                          <p className="font-medium">{player.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {player.position}
-                          </p>
-                        </div>
-                      </div>
-                      <Button variant={player.onBlock ? "destructive" : "outline"} size="sm">
-                        {player.onBlock ? "Remove from Block" : "Add to Block"}
-                      </Button>
+                {myOnBlockPlayers.length === 0 ? (
+                  <div
+                    className="text-center py-10 text-sm text-muted-foreground"
+                    data-testid="my-players-empty"
+                  >
+                    None of your players are on the trade block yet.
+                    <div className="mt-2">
+                      {myTeam && (
+                        <Button asChild variant="outline" size="sm">
+                          <Link
+                            to={`/teams/${myTeam.id}`}
+                            data-testid="my-players-go-to-roster"
+                          >
+                            Go to Roster →
+                          </Link>
+                        </Button>
+                      )}
                     </div>
-                  ))}
-                </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {myOnBlockPlayers.map((player: any) => (
+                      <div
+                        key={player.id}
+                        data-testid={`my-players-row-${player.id}`}
+                        className="flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center text-xs font-bold shrink-0">
+                            {player.team || player.nhl_team || "?"}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-medium truncate">{player.name}</p>
+                            <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-1">
+                              <span>{player.position}</span>
+                              {(player.lookingFor || []).length > 0 && (
+                                <>
+                                  <span className="text-muted-foreground/60">·</span>
+                                  <span className="text-xs">Looking for:</span>
+                                  {(player.lookingFor || []).slice(0, 3).map((r: string, i: number) => (
+                                    <Badge key={i} variant="secondary" className="text-[10px] py-0 px-1.5">{r}</Badge>
+                                  ))}
+                                </>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                        <Button asChild variant="outline" size="sm" data-testid={`my-players-manage-${player.id}`}>
+                          <Link to={`/teams/${myTeam?.id}`}>Manage on Roster →</Link>
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
