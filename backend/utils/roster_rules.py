@@ -61,8 +61,14 @@ def check_position_limits(
     pos = _position_of(candidate_player)
     if not pos or pos not in limits:
         return None
-    max_at_pos = int(limits[pos] or 0)
-    if max_at_pos <= 0:
+    # An explicit `0` means "zero players allowed at this position" — block
+    # the add. A missing key is treated as "no limit" via the membership
+    # check above. Negative values fall through as no-limit (defensive).
+    raw_max = limits[pos]
+    if raw_max is None:
+        return None
+    max_at_pos = int(raw_max)
+    if max_at_pos < 0:
         return None
     current_at_pos = sum(1 for p in current_roster_players if _position_of(p) == pos)
     if current_at_pos + 1 > max_at_pos:

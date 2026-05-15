@@ -336,6 +336,13 @@ async def process_waivers(league_id: str, request: Request):
     if not pending:
         return {"message": "No pending claims to process", "processed": 0}
 
+    # Position-limit enforcement (iter 83) — only used when the league has
+    # `enforce_position_maxes` ON; loaded once and reused per-claim. Skipped
+    # losers must mirror the same DENIED disposition as winners.
+    from utils.roster_rules import check_position_limits
+    enforce_positions = bool(league.get("enforce_position_maxes"))
+    position_limits = league.get("position_limits") or {}
+
     player_claims: dict = {}
     for claim in pending:
         pid = claim["player_id"]
@@ -346,8 +353,65 @@ async def process_waivers(league_id: str, request: Request):
 
     for player_id, claims in player_claims.items():
         claims.sort(key=lambda c: (-c["bid_amount"], c["created_at"]))
-        winner = claims[0]
-        losers = claims[1:]
+
+        # Pre-roll: if position-limits are on, skip claimants whose roster is
+        # already at the cap for this player's position. The next-in-line bid
+        # gets promoted to winner. If everyone is blocked, the claim is
+        # marked `denied` instead of leaving the winner in a broken state.
+        winner = None
+        denied_for_positions: list = []
+        if enforce_positions and position_limits:
+            try:
+                player_doc = await db.players.find_one({"_id": ObjectId(player_id)})
+            except Exception:
+                player_doc = None
+            for cand in claims:
+                if player_doc is None:
+                    winner = cand
+                    break
+                team_doc = await db.teams.find_one(
+                    {"_id": ObjectId(cand["team_id"])},
+                    {"roster": 1},
+                )
+                roster_ids = (team_doc or {}).get("roster") or []
+                oids = []
+                for rid in roster_ids:
+                    try:
+                        oids.append(ObjectId(rid))
+                    except Exception:
+                        pass
+                roster_players = (
+                    await db.players.find(
+                        {"_id": {"$in": oids}},
+                        {"name": 1, "position": 1, "primary_position": 1,
+                         "eligible_positions": 1, "player_type": 1},
+                    ).to_list(200) if oids else []
+                )
+                err = check_position_limits(league, roster_players, player_doc)
+                if err is None:
+                    winner = cand
+                    break
+                denied_for_positions.append((cand, err))
+            losers = [c for c in claims if c is not winner and c not in [d[0] for d in denied_for_positions]]
+        else:
+            winner = claims[0]
+            losers = claims[1:]
+
+        # Mark position-blocked claims as `denied` (audit-friendly)
+        for cand, err in denied_for_positions:
+            await db.waiver_claims.update_one(
+                {"_id": cand["_id"]},
+                {"$set": {
+                    "status": "denied",
+                    "denied_reason": err,
+                    "processed_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
+
+        if winner is None:
+            # Nobody could legally roster the player — refund attempted bids
+            # and skip the player entirely.
+            continue
 
         await db.waiver_claims.update_one(
             {"_id": winner["_id"]},

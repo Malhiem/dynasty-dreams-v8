@@ -99,7 +99,8 @@ async def test_empty_trade_proposal_rejected():
 async def test_salary_retention_slots_endpoint_still_works_after_refactor():
     """The migrated PUT /leagues/{id}/salary-retention-slots endpoint works."""
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, ADMIN_EMAIL, ADMIN_PASSWORD)
+        # Chris is the commissioner of LID; use his credentials.
+        token = await _login(client)
         h = {"Authorization": f"Bearer {token}"}
         before = (await client.get(f"/api/leagues/{LID}", headers=h)).json()
         orig = before.get("salary_retention_slots") or 3

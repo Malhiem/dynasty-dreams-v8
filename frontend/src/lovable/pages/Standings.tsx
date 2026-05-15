@@ -749,14 +749,40 @@ const StandingsPage = () => {
     return filtered.map((t, i) => ({ ...t, displayRank: i + 1 }));
   };
 
+  // ── Division grouping ────────────────────────────────────────
+  // Source the list of divisions from the live backend metadata so custom
+  // setups (e.g. "South division" in Ice Kings Head-to-Head) render here
+  // instead of being silently dropped by the old NHL-style hardcode. Falls
+  // back to the union of divisions present on the actual team docs, then to
+  // the NHL defaults, so legacy leagues without metadata still render.
+  const divisionNames = useMemo<string[]>(() => {
+    const fromMeta = standingsMeta.divisions || [];
+    if (fromMeta.length > 0) return fromMeta;
+    const fromTeams = Array.from(
+      new Set(liveTeams.map((t) => t.division).filter(Boolean)),
+    ) as string[];
+    if (fromTeams.length > 0) return fromTeams.sort();
+    return ["Atlantic", "Central", "Metropolitan", "Pacific"];
+  }, [standingsMeta.divisions, liveTeams]);
+
+  const conferenceNames = useMemo<string[]>(() => {
+    const fromMeta = standingsMeta.conferences || [];
+    if (fromMeta.length > 0) return fromMeta;
+    const fromTeams = Array.from(
+      new Set(liveTeams.map((t) => t.conference).filter(Boolean)),
+    ) as string[];
+    if (fromTeams.length > 0) return fromTeams.sort();
+    return ["Eastern", "Western"];
+  }, [standingsMeta.conferences, liveTeams]);
+
   const getDivisionGroups = () =>
-    ["Atlantic", "Central", "Metropolitan", "Pacific"].map(div => ({
+    divisionNames.map(div => ({
       name: div,
       teams: liveTeams.filter(t => t.division === div).map((t, i) => ({ ...t, displayRank: i + 1 })),
     }));
 
   const getConferenceGroups = () =>
-    ["Eastern", "Western"].map(conf => ({
+    conferenceNames.map(conf => ({
       name: conf,
       teams: liveTeams
         .filter(t => t.conference === conf)
@@ -812,10 +838,7 @@ const StandingsPage = () => {
                   <SelectTrigger className="w-[140px] h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Divisions</SelectItem>
-                    {(standingsMeta.divisions.length > 0
-                      ? standingsMeta.divisions
-                      : ["Atlantic", "Central", "Metropolitan", "Pacific"]
-                    ).map(div => (
+                    {divisionNames.map(div => (
                       <SelectItem key={div} value={div}>{div}</SelectItem>
                     ))}
                   </SelectContent>
@@ -827,10 +850,7 @@ const StandingsPage = () => {
                   <SelectTrigger className="w-[150px] h-9 text-sm"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Conferences</SelectItem>
-                    {(standingsMeta.conferences.length > 0
-                      ? standingsMeta.conferences
-                      : ["Eastern", "Western"]
-                    ).map(conf => (
+                    {conferenceNames.map(conf => (
                       <SelectItem key={conf} value={conf}>{conf}</SelectItem>
                     ))}
                   </SelectContent>

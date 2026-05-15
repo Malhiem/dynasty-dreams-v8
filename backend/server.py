@@ -3665,6 +3665,56 @@ async def _execute_trade(trade: dict) -> dict:
         raise HTTPException(status_code=404, detail="Trade team(s) not found")
     proposer_roster = list(proposer.get("roster", []) or [])
     target_roster = list(target.get("roster", []) or [])
+
+    # ── Position-limit pre-flight (iter 83) ────────────────────────
+    # Before committing the swap, simulate the post-trade rosters and ensure
+    # neither side ends up over `position_limits` when `enforce_position_maxes`
+    # is enabled. Loads each player once so the check is O(N+M).
+    league_doc = await db.leagues.find_one({"_id": ObjectId(league_id)}) or {}
+    if league_doc.get("enforce_position_maxes") and (league_doc.get("position_limits") or {}):
+        from utils.roster_rules import check_position_limits, _position_of
+        offered_ids = [a["player_id"] for a in trade.get("assets_offered", [])
+                       if a.get("asset_type") == "player" and a.get("player_id")]
+        requested_ids = [a["player_id"] for a in trade.get("assets_requested", [])
+                         if a.get("asset_type") == "player" and a.get("player_id")]
+        # Final rosters after the trade
+        final_proposer_ids = [p for p in proposer_roster if p not in offered_ids] + requested_ids
+        final_target_ids = [p for p in target_roster if p not in requested_ids] + offered_ids
+        all_pid_strs = set(final_proposer_ids) | set(final_target_ids)
+        all_oids = []
+        for pid in all_pid_strs:
+            try:
+                all_oids.append(ObjectId(pid))
+            except Exception:
+                pass
+        player_map = {}
+        if all_oids:
+            async for p in db.players.find(
+                {"_id": {"$in": all_oids}},
+                {"name": 1, "position": 1, "primary_position": 1,
+                 "eligible_positions": 1, "player_type": 1},
+            ):
+                player_map[str(p["_id"])] = p
+
+        def _validate(side_name: str, post_ids: list, incoming_ids: list):
+            for incoming_pid in incoming_ids:
+                incoming = player_map.get(incoming_pid)
+                if not incoming:
+                    continue
+                existing = [
+                    player_map[pid] for pid in post_ids
+                    if pid != incoming_pid and pid in player_map
+                ]
+                err = check_position_limits(league_doc, existing, incoming)
+                if err:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{side_name} would exceed position limits after this trade: {err}",
+                    )
+
+        _validate(proposer.get("name", "Proposer"), final_proposer_ids, requested_ids)
+        _validate(target.get("name", "Target"), final_target_ids, offered_ids)
+
     moves = {"players_out": [], "picks_out": [], "players_in": [], "picks_in": [], "retained": []}
 
     for a in trade.get("assets_offered", []):
@@ -4326,6 +4376,8 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
     raw = payload.get("lineup") or {}
     lineup: dict[str, dict] = {}
     valid_sections = {"forward", "defense", "goalie", "bench", "ir", "minors"}
+    starting_sections = {"forward", "defense", "goalie"}
+    starter_ids: list[str] = []
     for pid, info in raw.items():
         if not isinstance(info, dict):
             continue
@@ -4334,12 +4386,62 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
             section = "bench"
         slot = info.get("slot") or section.upper()[:3]
         lineup[str(pid)] = {"section": section, "slot": slot}
+        if section in starting_sections:
+            starter_ids.append(str(pid))
+
+    # ── League rule enforcement (iter 83) ────────────────────────
+    # `min_active_players` blocks saves that would drop the team below the
+    # league's required count of scoring starters. `min_games_played` is a
+    # per-player warning — gathered but not blocking (warnings returned to
+    # the caller so the UI can surface a yellow chip per ineligible player).
+    from utils.roster_rules import check_min_active_players, check_min_games_played
+    from bson.errors import InvalidId
+    enforce_block = (league or {}).get("allow_illegal_rosters") is False
+    active_err = check_min_active_players(league or {}, len(starter_ids))
+    if active_err and enforce_block:
+        raise HTTPException(status_code=400, detail=active_err)
+
+    warnings: list[dict] = []
+    if active_err:
+        warnings.append({"code": "min_active_players", "message": active_err})
+    min_gp = int((league or {}).get("min_games_played") or 0)
+    if min_gp > 0 and starter_ids:
+        oids: list = []
+        for sid in starter_ids:
+            try:
+                oids.append(ObjectId(sid))
+            except InvalidId:
+                pass
+        if oids:
+            async for p in db.players.find(
+                {"_id": {"$in": oids}},
+                {"name": 1, "games_played": 1, "stats.games_played": 1},
+            ):
+                gp = int(p.get("games_played") or (p.get("stats") or {}).get("games_played") or 0)
+                if gp < min_gp:
+                    warnings.append({
+                        "code": "min_games_played",
+                        "player_id": str(p["_id"]),
+                        "player_name": p.get("name") or "Unknown",
+                        "games_played": gp,
+                        "required": min_gp,
+                        "message": (
+                            f"{p.get('name') or 'Player'} has only {gp} GP — "
+                            f"below the league's {min_gp} GP minimum."
+                        ),
+                    })
 
     await db.teams.update_one(
         {"_id": ObjectId(team_id)},
         {"$set": {"lineup": lineup, "lineup_updated_at": datetime.now(timezone.utc)}},
     )
-    return {"team_id": team_id, "lineup_size": len(lineup), "saved": True}
+    return {
+        "team_id": team_id,
+        "lineup_size": len(lineup),
+        "starter_count": len(starter_ids),
+        "saved": True,
+        "warnings": warnings,
+    }
 
 
 @api_router.get("/teams/{team_id}/lineup")
