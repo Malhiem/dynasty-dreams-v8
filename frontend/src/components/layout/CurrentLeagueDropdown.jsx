@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronDown, Check, Trophy, LayoutGrid } from "lucide-react";
 import {
   DropdownMenu,
@@ -24,14 +24,33 @@ import { useActiveLeague } from "@/hooks/use-active-league";
  *
  * Collapsed sidebar (icon mode): just the team logo, centered. Click still
  * opens the same dropdown menu.
+ *
+ * Selecting a different league:
+ *  1) calls `switchLeague(id)` (persists active-league in localStorage,
+ *     refreshes `useActiveLeague` context across the app)
+ *  2) navigates to `/leagues/{id}` (League Home for the picked league)
+ *
+ * Per-league UI configurations (widget visibility + drag order) are already
+ * keyed by leagueId in `use-league-home-config.js`
+ * (`dynasty-league-home-widgets-{leagueId}` + `dynasty-league-home-order-{leagueId}`),
+ * so the user's saved layout for the destination league is automatically
+ * restored on arrival.
  */
 export default function CurrentLeagueDropdown({ collapsed = false }) {
+  const navigate = useNavigate();
   const { myLeagues, myTeamsByLeague, leagueId, league, myTeam, switchLeague } =
     useActiveLeague();
 
   if (!league) return null;
 
   const triggerTeam = myTeam;
+
+  const handlePick = (id) => {
+    if (id !== leagueId) switchLeague(id);
+    // Always send the user to League Home for the picked league so their
+    // per-league dashboard layout is what they see immediately.
+    navigate(`/leagues/${id}`);
+  };
 
   return (
     <DropdownMenu>
@@ -106,7 +125,7 @@ export default function CurrentLeagueDropdown({ collapsed = false }) {
               className={`px-4 py-3 cursor-pointer focus:bg-white/5 ${
                 isActive ? "bg-[#00D2FF]/5" : ""
               }`}
-              onClick={() => switchLeague(l.id)}
+              onClick={() => handlePick(l.id)}
               data-testid={`current-league-option-${l.id}`}
             >
               <div className="flex items-start gap-3 w-full">
