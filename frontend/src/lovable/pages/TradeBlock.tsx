@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
+import { useTradeBlockUiPrefs } from "@/hooks/use-trade-block-ui-prefs";
 import api from "@/lib/api";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,7 +18,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Plus, ArrowRightLeft, MessageSquare, TrendingUp, TrendingDown, Filter, Crown } from "lucide-react";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Plus, ArrowRightLeft, MessageSquare, TrendingUp, TrendingDown, Filter, Crown,
+  LayoutGrid, List as ListIcon, X, ArrowUp, ArrowDown, EyeOff, Eye,
+} from "lucide-react";
 import { TradeProposalModal } from "@/lovable/components/trade/TradeProposalModal";
 import TeamLink from "@/lovable/components/TeamLink";
 
@@ -195,6 +207,10 @@ const TradeBlock = () => {
   const navigate = useNavigate();
   const leagueTeamsCount = leagueTeams?.length || 0;
 
+  // ── Per-league UI prefs (view mode, hidden players, sort) ──
+  // Persisted in localStorage so each league remembers its own setup.
+  const prefs = useTradeBlockUiPrefs(league?.id);
+
   const [positionFilter, setPositionFilter] = useState("All");
   const [ownerFilter, setOwnerFilter] = useState("All Teams");
   const [tradeModalOpen, setTradeModalOpen] = useState(false);
@@ -284,20 +300,46 @@ const TradeBlock = () => {
       items = items.filter((item) => item.owner === ownerFilter);
     }
 
-    // Sort: highest performing players → lowest → prospects → picks
-    items.sort((a, b) => {
+    // ── Sort ──
+    // List view: respect the user's chosen sort key + direction.
+    // Tile view: always use the default highest-FP → prospect → pick ordering
+    //   (sortable columns only make sense in list/table view).
+    if (prefs.viewMode === "list") {
+      const { key, dir } = prefs.sort || { key: "weeklyPoints", dir: "desc" };
+      const factor = dir === "asc" ? 1 : -1;
+      items.sort((a, b) => {
+        const av = a[key];
+        const bv = b[key];
+        if (typeof av === "string" || typeof bv === "string") {
+          return String(av || "").localeCompare(String(bv || "")) * factor;
+        }
+        return ((av ?? 0) - (bv ?? 0)) * factor;
+      });
+    } else {
       const typeOrder = { player: 0, prospect: 1, pick: 2 };
-      if (typeOrder[a.type] !== typeOrder[b.type]) {
-        return typeOrder[a.type] - typeOrder[b.type];
-      }
-      if (a.type === "player" && b.type === "player") {
-        return (b.weeklyPoints || 0) - (a.weeklyPoints || 0);
-      }
-      return b.dynastyValue - a.dynastyValue;
-    });
+      items.sort((a, b) => {
+        if (typeOrder[a.type] !== typeOrder[b.type]) {
+          return typeOrder[a.type] - typeOrder[b.type];
+        }
+        if (a.type === "player" && b.type === "player") {
+          return (b.weeklyPoints || 0) - (a.weeklyPoints || 0);
+        }
+        return b.dynastyValue - a.dynastyValue;
+      });
+    }
 
     return items;
-  }, [positionFilter, ownerFilter, realTradeItems]);
+  }, [positionFilter, ownerFilter, realTradeItems, prefs.viewMode, prefs.sort]);
+
+  // Tile view honors the per-league hidden list; list view always shows all.
+  const visibleItems = useMemo(() => {
+    if (prefs.viewMode !== "tile") return sortedAndFilteredItems;
+    return sortedAndFilteredItems.filter((it) => !prefs.isHidden(it.id));
+  }, [sortedAndFilteredItems, prefs.viewMode, prefs.hiddenIds]);
+
+  const hiddenCountAfterFilters = useMemo(() => (
+    sortedAndFilteredItems.length - visibleItems.length
+  ), [sortedAndFilteredItems, visibleItems]);
 
   const handleProposeTrade = (owner: string, prefilledItem?: TradeBlockItem) => {
     // Real trade items (preferred) take priority over the seeded mock. The
@@ -383,28 +425,80 @@ const TradeBlock = () => {
                   ))}
                 </SelectContent>
               </Select>
-              <Badge variant="outline" className="ml-auto">
-                {sortedAndFilteredItems.length} items
+              <Badge variant="outline" className="ml-auto" data-testid="trade-block-count">
+                {visibleItems.length} items{hiddenCountAfterFilters > 0 && (
+                  <span className="ml-1 text-muted-foreground/70">· {hiddenCountAfterFilters} hidden</span>
+                )}
               </Badge>
-            </div>
-
-            <div className="grid gap-4">
-              {sortedAndFilteredItems.map((item) => (
-                <TradeBlockCard 
-                  key={item.id} 
-                  item={item} 
-                  streakChipData={item.team_id ? streakChip(streaks?.[item.team_id]?.active) : null}
-                  onProposeTrade={() => handleTradeForPlayer(item)} 
-                />
-              ))}
-              {sortedAndFilteredItems.length === 0 && (
-                <Card className="bg-card border-border">
-                  <CardContent className="p-8 text-center text-muted-foreground">
-                    No items match your filters
-                  </CardContent>
-                </Card>
+              {/* View toggle — list ↔ tile. Selection persists per-league. */}
+              <div
+                className="inline-flex items-center rounded-md border border-border bg-secondary/40 overflow-hidden"
+                data-testid="trade-block-view-toggle"
+              >
+                <button
+                  type="button"
+                  onClick={() => prefs.setViewMode("tile")}
+                  data-testid="trade-block-view-tile"
+                  aria-pressed={prefs.viewMode === "tile"}
+                  className={`flex items-center gap-1 px-2.5 py-1 text-xs ${prefs.viewMode === "tile" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                  title="Tile view"
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" /> Tile
+                </button>
+                <button
+                  type="button"
+                  onClick={() => prefs.setViewMode("list")}
+                  data-testid="trade-block-view-list"
+                  aria-pressed={prefs.viewMode === "list"}
+                  className={`flex items-center gap-1 px-2.5 py-1 text-xs border-l border-border ${prefs.viewMode === "list" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                  title="List view"
+                >
+                  <ListIcon className="h-3.5 w-3.5" /> List
+                </button>
+              </div>
+              {prefs.viewMode === "tile" && prefs.hiddenIds.length > 0 && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={prefs.clearHidden}
+                  data-testid="trade-block-show-hidden"
+                  className="text-xs h-7"
+                >
+                  <Eye className="h-3.5 w-3.5 mr-1" />
+                  Show {prefs.hiddenIds.length} hidden
+                </Button>
               )}
             </div>
+
+            {prefs.viewMode === "list" ? (
+              <TradeBlockListView
+                items={visibleItems}
+                sort={prefs.sort}
+                onToggleSort={prefs.toggleSort}
+                onTrade={handleTradeForPlayer}
+              />
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" data-testid="trade-block-tile-grid">
+                {visibleItems.map((item) => (
+                  <TradeBlockCard
+                    key={item.id}
+                    item={item}
+                    streakChipData={item.team_id ? streakChip(streaks?.[item.team_id]?.active) : null}
+                    onProposeTrade={() => handleTradeForPlayer(item)}
+                    onHide={() => prefs.hide(item.id)}
+                  />
+                ))}
+                {visibleItems.length === 0 && (
+                  <Card className="bg-card border-border sm:col-span-2 xl:col-span-3">
+                    <CardContent className="p-8 text-center text-muted-foreground">
+                      {hiddenCountAfterFilters > 0
+                        ? "All matching items are hidden. Click 'Show hidden' above to reveal them."
+                        : "No items match your filters"}
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="my-players">
@@ -453,13 +547,15 @@ const TradeBlock = () => {
   );
 };
 
-const TradeBlockCard = ({ 
-  item, 
+const TradeBlockCard = ({
+  item,
   onProposeTrade,
+  onHide,
   streakChipData,
-}: { 
-  item: TradeBlockItem; 
+}: {
+  item: TradeBlockItem;
   onProposeTrade: () => void;
+  onHide?: () => void;
   streakChipData?: { emoji: string; label: string; count: number; tone: string } | null;
 }) => {
   const getTypeLabel = () => {
@@ -469,7 +565,19 @@ const TradeBlockCard = ({
   };
 
   return (
-    <Card className="bg-card border-border hover:border-primary/30 transition-colors">
+    <Card className="bg-card border-border hover:border-primary/30 transition-colors relative">
+      {onHide && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onHide(); }}
+          className="absolute top-2 right-2 z-10 h-6 w-6 rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-secondary flex items-center justify-center transition-colors"
+          title="Hide this player from the Trade Block"
+          aria-label="Hide from Trade Block"
+          data-testid={`trade-block-hide-${item.id}`}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
       <CardContent className="p-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-4">
@@ -602,6 +710,93 @@ const TradeBlockCard = ({
             </div>
           </div>
         </div>
+      </CardContent>
+    </Card>
+  );
+};
+
+const SORT_COLUMNS: { key: string; label: string; numeric: boolean; testid: string }[] = [
+  { key: "name", label: "Player", numeric: false, testid: "trade-block-col-name" },
+  { key: "position", label: "Pos", numeric: false, testid: "trade-block-col-position" },
+  { key: "team", label: "Team", numeric: false, testid: "trade-block-col-team" },
+  { key: "age", label: "Age", numeric: true, testid: "trade-block-col-age" },
+  { key: "weeklyPoints", label: "Pts/Wk", numeric: true, testid: "trade-block-col-weekly" },
+  { key: "dynastyValue", label: "Dynasty $", numeric: true, testid: "trade-block-col-dynasty" },
+  { key: "owner", label: "Owner", numeric: false, testid: "trade-block-col-owner" },
+];
+
+const TradeBlockListView = ({
+  items,
+  sort,
+  onToggleSort,
+  onTrade,
+}: {
+  items: TradeBlockItem[];
+  sort: { key: string; dir: "asc" | "desc" };
+  onToggleSort: (key: string) => void;
+  onTrade: (item: TradeBlockItem) => void;
+}) => {
+  return (
+    <Card className="bg-card border-border" data-testid="trade-block-list-view">
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {SORT_COLUMNS.map((col) => {
+                const active = sort?.key === col.key;
+                return (
+                  <TableHead
+                    key={col.key}
+                    className={`cursor-pointer select-none hover:text-foreground transition-colors ${col.numeric ? "text-right" : ""}`}
+                    onClick={() => onToggleSort(col.key)}
+                    data-testid={col.testid}
+                    aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : "none"}
+                  >
+                    <span className="inline-flex items-center gap-1">
+                      {col.label}
+                      {active && (sort.dir === "asc"
+                        ? <ArrowUp className="h-3 w-3 text-primary" />
+                        : <ArrowDown className="h-3 w-3 text-primary" />)}
+                    </span>
+                  </TableHead>
+                );
+              })}
+              <TableHead className="text-right w-[120px]">Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {items.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={SORT_COLUMNS.length + 1} className="text-center py-8 text-muted-foreground">
+                  No items match your filters
+                </TableCell>
+              </TableRow>
+            ) : items.map((item) => (
+              <TableRow key={item.id} data-testid={`trade-block-row-${item.id}`}>
+                <TableCell className="font-medium">{item.name}</TableCell>
+                <TableCell>{item.position}</TableCell>
+                <TableCell>{item.team}</TableCell>
+                <TableCell className="text-right">{item.age ?? "—"}</TableCell>
+                <TableCell className="text-right text-primary">
+                  {item.weeklyPoints && item.weeklyPoints > 0 ? item.weeklyPoints.toFixed(1) : "—"}
+                </TableCell>
+                <TableCell className="text-right">{item.dynastyValue.toLocaleString()}</TableCell>
+                <TableCell><TeamLink name={item.owner} /></TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onTrade(item)}
+                    data-testid={`trade-block-list-trade-${item.id}`}
+                  >
+                    <ArrowRightLeft className="h-3.5 w-3.5 mr-1" />
+                    Trade
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </CardContent>
     </Card>
   );

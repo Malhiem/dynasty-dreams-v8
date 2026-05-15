@@ -1,60 +1,220 @@
 // @ts-nocheck
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowRightLeft } from "lucide-react";
+import {
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
+import {
+  ArrowRightLeft, LayoutGrid, List as ListIcon, X, Eye, ArrowUp, ArrowDown,
+} from "lucide-react";
 import TeamLink from "@/lovable/components/TeamLink";
+import api from "@/lib/api";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import { useTradeBlockUiPrefs } from "@/hooks/use-trade-block-ui-prefs";
 
-const tradeBlockPlayers = [
-  {
-    name: "Connor McDavid", team: "Arctic Wolves", position: "C", age: 28, fp: 186.4,
-    gp: 48, g: 22, a: 38, plusMinus: 12, ppp: 14, shp: 1, gwg: 4, sog: 198, hit: 32, blk: 18, fow: 412, fol: 298,
-  },
-  {
-    name: "Cale Makar", team: "Glacier Kings", position: "D", age: 26, fp: 152.8,
-    gp: 50, g: 10, a: 34, plusMinus: 18, ppp: 12, shp: 0, gwg: 2, sog: 142, hit: 48, blk: 76, fow: 0, fol: 0,
-  },
-  {
-    name: "Igor Shesterkin", team: "Frozen Thunder", position: "G", age: 29, fp: 134.2,
-    gp: 42, w: 18, l: 8, sol: 3, sv: 1042, ga: 72, so: 3,
-  },
-  {
-    name: "Tim Stützle", team: "Ice Crushers", position: "C", age: 23, fp: 142.6,
-    gp: 46, g: 16, a: 29, plusMinus: 5, ppp: 8, shp: 2, gwg: 3, sog: 156, hit: 28, blk: 14, fow: 384, fol: 312,
-  },
+const WIDGET_COLUMNS: { key: string; label: string; numeric: boolean }[] = [
+  { key: "name", label: "Player", numeric: false },
+  { key: "position", label: "Pos", numeric: false },
+  { key: "team", label: "Team", numeric: false },
+  { key: "weeklyPoints", label: "Pts/Wk", numeric: true },
+  { key: "owner", label: "Owner", numeric: false },
+];
+
+// Used when the active league has no trade-block entries yet — keeps the
+// widget from looking empty during seed/initial state.
+const FALLBACK_ITEMS = [
+  { id: "f1", name: "Connor McDavid", position: "C", team: "EDM", age: 28, weeklyPoints: 38.4, owner: "Arctic Wolves", ownerAvatar: "AW" },
+  { id: "f2", name: "Cale Makar", position: "D", team: "COL", age: 26, weeklyPoints: 31.2, owner: "Glacier Kings", ownerAvatar: "GK" },
+  { id: "f3", name: "Igor Shesterkin", position: "G", team: "NYR", age: 29, weeklyPoints: 26.6, owner: "Frozen Thunder", ownerAvatar: "FT" },
+  { id: "f4", name: "Tim Stützle", position: "C", team: "OTT", age: 23, weeklyPoints: 29.0, owner: "Ice Crushers", ownerAvatar: "IC" },
 ];
 
 const TradeBlockWidget = () => {
+  const { league, leagueTeams } = useActiveLeague();
+  const prefs = useTradeBlockUiPrefs(league?.id);
+  const [liveItems, setLiveItems] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (!league?.id) return;
+    let cancelled = false;
+    api.get(`/trade-block?league_id=${league.id}`)
+      .then(({ data }) => { if (!cancelled) setLiveItems(Array.isArray(data) ? data : []); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [league?.id]);
+
+  const ownerName = (oid: string) => (leagueTeams || []).find((t: any) => t.owner_id === oid)?.name || "Unknown";
+  const ownerAbbr = (oid: string) => (leagueTeams || []).find((t: any) => t.owner_id === oid)?.logo_abbr || "?";
+
+  const items = useMemo(() => {
+    const real = (liveItems || []).map((it: any, idx: number) => ({
+      id: String(it._id || idx),
+      name: it.name || "Unknown",
+      position: it.position || "—",
+      team: it.nhl_team || (it.item_type === "pick" ? "Own" : ""),
+      age: it.age || null,
+      weeklyPoints: Number(it.points || 0),
+      owner: ownerName(it.owner_id),
+      ownerAvatar: ownerAbbr(it.owner_id),
+    }));
+    return real.length > 0 ? real : FALLBACK_ITEMS;
+  }, [liveItems, leagueTeams]);
+
+  const sortedItems = useMemo(() => {
+    const out = [...items];
+    if (prefs.viewMode === "list") {
+      const { key, dir } = prefs.sort || { key: "weeklyPoints", dir: "desc" };
+      const factor = dir === "asc" ? 1 : -1;
+      out.sort((a: any, b: any) => {
+        const av = a[key]; const bv = b[key];
+        if (typeof av === "string" || typeof bv === "string") {
+          return String(av || "").localeCompare(String(bv || "")) * factor;
+        }
+        return ((av ?? 0) - (bv ?? 0)) * factor;
+      });
+    } else {
+      out.sort((a: any, b: any) => (b.weeklyPoints || 0) - (a.weeklyPoints || 0));
+    }
+    return out;
+  }, [items, prefs.viewMode, prefs.sort]);
+
+  const visible = useMemo(() => {
+    if (prefs.viewMode !== "tile") return sortedItems;
+    return sortedItems.filter((it: any) => !prefs.isHidden(it.id));
+  }, [sortedItems, prefs.viewMode, prefs.hiddenIds]);
+
+  // Cap the widget at 6 rows to keep it dashboard-sized.
+  const display = visible.slice(0, 6);
+
   return (
-    <Card className="bg-card border-border">
-      <CardHeader className="pb-3">
+    <Card className="bg-card border-border" data-testid="trade-block-widget">
+      <CardHeader className="pb-3 flex flex-row items-center justify-between gap-2">
         <CardTitle className="text-lg flex items-center gap-2">
           <ArrowRightLeft className="h-5 w-5 text-primary" />
           Trading Block
         </CardTitle>
+        <div className="flex items-center gap-2">
+          {prefs.viewMode === "tile" && prefs.hiddenIds.length > 0 && (
+            <button
+              type="button"
+              onClick={prefs.clearHidden}
+              data-testid="trade-block-widget-show-hidden"
+              className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+              title="Show hidden players"
+            >
+              <Eye className="h-3 w-3" /> {prefs.hiddenIds.length}
+            </button>
+          )}
+          <div className="inline-flex items-center rounded-md border border-border bg-secondary/40 overflow-hidden" data-testid="trade-block-widget-view-toggle">
+            <button
+              type="button"
+              onClick={() => prefs.setViewMode("tile")}
+              aria-pressed={prefs.viewMode === "tile"}
+              data-testid="trade-block-widget-view-tile"
+              className={`px-1.5 py-0.5 ${prefs.viewMode === "tile" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              title="Tile view"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => prefs.setViewMode("list")}
+              aria-pressed={prefs.viewMode === "list"}
+              data-testid="trade-block-widget-view-list"
+              className={`px-1.5 py-0.5 border-l border-border ${prefs.viewMode === "list" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+              title="List view"
+            >
+              <ListIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {tradeBlockPlayers.map((player) => {
-          const isGoalie = player.position === "G";
-          return (
-            <div key={player.name} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors gap-3">
-              <div className="min-w-0">
-                <p className="font-semibold text-sm">{player.name}</p>
-                <p className="text-xs text-muted-foreground">
-                  <TeamLink name={player.team} /> · {player.position} · Age {player.age}
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {isGoalie
-                    ? `GP ${player.gp} · ${player.w}W · ${player.l}L · ${player.sol}SOL · ${player.sv}SV · ${player.ga}GA · ${player.so}SO`
-                    : `GP ${player.gp} · ${player.g}G · ${player.a}A · ${player.plusMinus >= 0 ? '+' : ''}${player.plusMinus} · ${player.ppp}PPP · ${player.shp}SHP · ${player.gwg}GWG · ${player.sog}SOG · ${player.hit}HIT · ${player.blk}BLK · ${player.fow}FOW · ${player.fol}FOL`
-                  }
-                </p>
-              </div>
-              <div className="text-right flex-shrink-0">
-                <p className="text-sm font-semibold text-primary">{player.fp} FP</p>
-                <p className="text-xs text-muted-foreground">{(player.fp / player.gp).toFixed(1)} FP/GP</p>
-              </div>
-            </div>
-          );
-        })}
+
+      <CardContent className={prefs.viewMode === "list" ? "p-0" : "space-y-3"}>
+        {prefs.viewMode === "list" ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                {WIDGET_COLUMNS.map((col) => {
+                  const active = prefs.sort?.key === col.key;
+                  return (
+                    <TableHead
+                      key={col.key}
+                      className={`cursor-pointer select-none text-xs ${col.numeric ? "text-right" : ""}`}
+                      onClick={() => prefs.toggleSort(col.key)}
+                      data-testid={`trade-block-widget-col-${col.key}`}
+                      aria-sort={active ? (prefs.sort.dir === "asc" ? "ascending" : "descending") : "none"}
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        {col.label}
+                        {active && (prefs.sort.dir === "asc"
+                          ? <ArrowUp className="h-3 w-3 text-primary" />
+                          : <ArrowDown className="h-3 w-3 text-primary" />)}
+                      </span>
+                    </TableHead>
+                  );
+                })}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {display.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={WIDGET_COLUMNS.length} className="text-center py-4 text-xs text-muted-foreground">
+                    Nothing on the trade block.
+                  </TableCell>
+                </TableRow>
+              ) : display.map((p: any) => (
+                <TableRow key={p.id} data-testid={`trade-block-widget-row-${p.id}`} className="text-xs">
+                  <TableCell className="font-medium">{p.name}</TableCell>
+                  <TableCell>{p.position}</TableCell>
+                  <TableCell>{p.team}</TableCell>
+                  <TableCell className="text-right text-primary">{p.weeklyPoints ? p.weeklyPoints.toFixed(1) : "—"}</TableCell>
+                  <TableCell><TeamLink name={p.owner} /></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <>
+            {display.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-4">
+                {prefs.hiddenIds.length > 0
+                  ? "All trade-block items are hidden."
+                  : "Nothing on the trade block."}
+              </p>
+            ) : display.map((p: any) => {
+              const isGoalie = p.position === "G";
+              return (
+                <div
+                  key={p.id}
+                  data-testid={`trade-block-widget-tile-${p.id}`}
+                  className="relative flex items-center justify-between p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors gap-3"
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); prefs.hide(p.id); }}
+                    className="absolute top-1.5 right-1.5 h-5 w-5 rounded-md text-muted-foreground/60 hover:text-foreground hover:bg-secondary flex items-center justify-center"
+                    title="Hide this player"
+                    aria-label="Hide from Trade Block"
+                    data-testid={`trade-block-widget-hide-${p.id}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-sm">{p.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      <TeamLink name={p.owner} /> · {p.position}{p.age ? ` · Age ${p.age}` : ""}
+                    </p>
+                  </div>
+                  <div className="text-right flex-shrink-0 pr-5">
+                    <p className="text-sm font-semibold text-primary">{(p.weeklyPoints || 0).toFixed(1)} FP</p>
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
       </CardContent>
     </Card>
   );
