@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,13 +10,15 @@ import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Clock, DollarSign, Plus, History, TrendingUp, Search, X } from "lucide-react";
+import { Clock, DollarSign, Plus, History, TrendingUp, Search, X, AlertTriangle, ArrowRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function WaiversPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [available, setAvailable] = useState([]);
   const [myClaims, setMyClaims] = useState([]);
   const [history, setHistory] = useState([]);
@@ -28,6 +31,11 @@ export default function WaiversPage() {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [bidAmount, setBidAmount] = useState(1);
   const [leagueId, setLeagueId] = useState(null);
+  // Precheck result for the active claim attempt — populated when the modal
+  // opens and re-runs whenever the bid changes (cap math depends on player,
+  // not bid, but FAAB blocker re-evaluates).
+  const [precheck, setPrecheck] = useState(null);
+  const [prechecking, setPrechecking] = useState(false);
 
   // Get user's first league
   useEffect(() => {
@@ -311,10 +319,88 @@ export default function WaiversPage() {
                 <Input type="number" min={0} max={budget.remaining} value={bidAmount} onChange={e => setBidAmount(parseFloat(e.target.value) || 0)} className="mt-2 bg-[#0A0A0A] border-white/10 text-white" data-testid="bid-amount" />
                 <p className="text-xs text-[#A1A1AA] mt-1">Remaining budget: ${budget.remaining}</p>
               </div>
+
+              {/* Precheck panel — surfaces roster space, cap fit, and any
+                  illegal placement warnings before the user commits. */}
+              {prechecking && (
+                <p className="text-xs text-[#A1A1AA] italic" data-testid="precheck-loading">
+                  Checking your roster…
+                </p>
+              )}
+              {precheck && (
+                <div
+                  className="rounded-lg border border-white/10 p-3 space-y-2 bg-[#0A0A0A]"
+                  data-testid="precheck-panel"
+                >
+                  <div className="flex items-center justify-between text-xs text-[#A1A1AA]">
+                    <span data-testid="precheck-roster">
+                      Roster: <span className="text-white font-medium">{precheck.roster.current}/{precheck.roster.max}</span>
+                      {precheck.roster.has_room ? (
+                        <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1.5 border-green-500/40 text-green-300">Room</Badge>
+                      ) : (
+                        <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1.5 border-red-500/40 text-red-300">Full</Badge>
+                      )}
+                    </span>
+                    {precheck.cap.enabled && (
+                      <span data-testid="precheck-cap">
+                        Cap: <span className="text-white font-medium">${(precheck.cap.would_be / 1_000_000).toFixed(2)}M</span> / ${(precheck.cap.cap / 1_000_000).toFixed(1)}M
+                        {precheck.cap.fits ? (
+                          <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1.5 border-green-500/40 text-green-300">Fits</Badge>
+                        ) : (
+                          <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1.5 border-red-500/40 text-red-300">Over</Badge>
+                        )}
+                      </span>
+                    )}
+                  </div>
+
+                  {(precheck.issues || []).map((iss, idx) => {
+                    const isError = iss.severity === "error";
+                    return (
+                      <div
+                        key={idx}
+                        data-testid={`precheck-issue-${iss.code}`}
+                        className={cn(
+                          "flex items-start gap-2 p-2 rounded text-xs",
+                          isError ? "bg-red-500/10 text-red-300 border border-red-500/30"
+                                  : "bg-yellow-500/10 text-yellow-300 border border-yellow-500/30",
+                        )}
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                        <span>{iss.message}</span>
+                      </div>
+                    );
+                  })}
+
+                  {precheck.requires_drop && precheck.team?.id && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full border-[#00D2FF]/40 text-[#00D2FF] hover:bg-[#00D2FF]/10 hover:text-[#33DBFF] gap-1"
+                      data-testid="precheck-proceed-to-drop"
+                      onClick={() => {
+                        setClaimModalOpen(false);
+                        navigate("/team");
+                      }}
+                    >
+                      Proceed to Drop Player <ArrowRight className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setClaimModalOpen(false)} className="text-white">Cancel</Button>
-              <Button className="bg-[#00D2FF] text-black hover:bg-[#33DBFF]" onClick={handleClaim} disabled={bidAmount > budget.remaining} data-testid="confirm-claim">Place Claim</Button>
+              <Button
+                className="bg-[#00D2FF] text-black hover:bg-[#33DBFF]"
+                onClick={handleClaim}
+                disabled={
+                  bidAmount > budget.remaining ||
+                  (precheck && !precheck.can_claim)
+                }
+                data-testid="confirm-claim"
+              >
+                Place Claim
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

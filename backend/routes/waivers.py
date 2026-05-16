@@ -134,6 +134,180 @@ async def suggest_free_agent(
     return {"league_id": league_id, "position": position, "suggestions": out[:max(1, limit)]}
 
 
+@router.get("/waivers/precheck")
+async def precheck_waiver_claim(
+    league_id: str,
+    player_id: str,
+    request: Request,
+    bid_amount: float = 0,
+):
+    """Returns a structured precheck report for the Waivers claim modal.
+
+    The frontend uses this on modal open to surface roster-space, cap-space,
+    and illegal-placement issues BEFORE the user commits to a claim. When
+    `requires_drop` is true the modal shows a "Proceed to Drop Player"
+    button that deep-links to the roster page.
+
+    Shape:
+      {
+        "can_claim": bool,                  # No blocking issues remain
+        "requires_drop": bool,              # Roster will overflow on win
+        "roster": { current, max, has_room, taxi_count, ir_count },
+        "cap":    { enabled, used, cap, would_be, fits, addition },
+        "issues": [{code, severity, message, suggested_action?}],
+        "team":   { id, name },
+      }
+    """
+    db = _db()
+    user = await _get_user(request)
+
+    team = await db.teams.find_one({"league_id": league_id, "owner_id": user["_id"]})
+    if not team:
+        raise HTTPException(status_code=403, detail="You don't have a team in this league")
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)}) or {}
+    player = await db.players.find_one({"_id": ObjectId(player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    # ── Roster space ──
+    roster_ids = team.get("roster", []) or []
+    lineup = team.get("lineup") or {}
+    max_roster_size = int(league.get("roster_size") or 23)
+    # taxi/IR slot sizes are read but not yet enforced as blockers here —
+    # we only segment counts so the modal can show the breakdown.
+
+    # Active roster = everything NOT in taxi/ir/ir_plus sections.
+    def _section_count(name: str) -> int:
+        return sum(
+            1 for pid in roster_ids
+            if (lineup.get(pid) or {}).get("section", "").lower() == name
+        )
+    taxi_count = _section_count("taxi")
+    ir_count = _section_count("ir")
+    ir_plus_count = _section_count("ir_plus")
+    active_count = len(roster_ids) - taxi_count - ir_count - ir_plus_count
+    has_room = active_count < max_roster_size
+
+    # ── Cap space ──
+    cap_enabled = bool(league.get("salary_cap_enabled"))
+    cap_total = float(league.get("salary_cap") or 0)
+    cap_used = float(team.get("salary_used") or 0)
+    # Synthesize the incoming player's salary the same way the roster page
+    # does, so the precheck is consistent with what the user sees.
+    p_points = int(player.get("points") or 0)
+    p_fp = float(player.get("fantasy_points") or 0)
+    is_g = (player.get("player_type") == "goalie") or (player.get("position") == "G")
+    if is_g:
+        addition = 9_500_000 if p_fp >= 300 else (
+            6_000_000 if p_fp >= 180 else (3_500_000 if p_fp >= 100 else 1_200_000)
+        )
+    elif p_points >= 100:
+        addition = 11_000_000 + min(2_500_000, (p_points - 100) * 70_000)
+    elif p_points >= 60:
+        addition = 6_000_000 + (p_points - 60) * 100_000
+    elif p_points >= 30:
+        addition = 3_000_000 + (p_points - 30) * 90_000
+    elif p_points >= 10:
+        addition = 1_500_000 + (p_points - 10) * 75_000
+    else:
+        addition = 950_000 + p_points * 40_000
+    addition = int(min(13_500_000, max(775_000, addition)))
+    cap_would_be = cap_used + addition
+    cap_fits = (not cap_enabled) or (cap_would_be <= cap_total)
+
+    # ── Roster legality scan ──
+    # Surface known illegal placements the COMMISH usually wants flagged so
+    # the user knows their roster will be flagged after the claim lands.
+    issues: list[dict] = []
+    player_oids = [ObjectId(pid) for pid in roster_ids]
+    roster_docs = await db.players.find({"_id": {"$in": player_oids}}).to_list(100)
+    by_id = {str(p["_id"]): p for p in roster_docs}
+    for pid in roster_ids:
+        section = (lineup.get(pid) or {}).get("section", "").lower()
+        rp = by_id.get(pid)
+        if not rp:
+            continue
+        # Healthy player on IR (allow rule may be on, but it's still worth flagging).
+        if section in ("ir", "ir_plus") and not rp.get("is_injured"):
+            issues.append({
+                "code": "healthy_on_ir",
+                "severity": "warning",
+                "message": f"{rp.get('name', 'A player')} is on {section.upper()} but isn't flagged as injured.",
+            })
+        # Illegal player in minors — typically a non-prospect veteran sitting in
+        # the minor-league slot. We treat "veteran in minors" as the heuristic
+        # since prospect status isn't always set; commissioners can tune via
+        # admin rules. Threshold: 30+ NHL games played.
+        if section == "minors" and int(rp.get("games_played") or 0) >= 30:
+            issues.append({
+                "code": "illegal_minors_placement",
+                "severity": "warning",
+                "message": f"{rp.get('name', 'A player')} has played {rp.get('games_played')} NHL games — typically too many for Minors.",
+            })
+
+    # ── Combine into top-level blockers ──
+    blockers: list[dict] = []
+    if not has_room:
+        blockers.append({
+            "code": "no_roster_space",
+            "severity": "error",
+            "message": (
+                f"Active roster is at {active_count}/{max_roster_size}. "
+                "You must drop a player before this claim can succeed."
+            ),
+            "suggested_action": "drop",
+        })
+    if cap_enabled and not cap_fits:
+        blockers.append({
+            "code": "insufficient_cap",
+            "severity": "error",
+            "message": (
+                f"Adding this player would put you at ${cap_would_be/1_000_000:.2f}M, "
+                f"exceeding the ${cap_total/1_000_000:.1f}M cap."
+            ),
+            "suggested_action": "drop",
+        })
+    if bid_amount and bid_amount > 0:
+        budget = await db.waiver_budgets.find_one({
+            "team_id": str(team["_id"]), "league_id": league_id,
+        })
+        remaining = float(budget["remaining"]) if budget else float(
+            league.get("waiver_faab_budget") or 100
+        )
+        if bid_amount > remaining:
+            blockers.append({
+                "code": "insufficient_faab",
+                "severity": "error",
+                "message": f"Bid ${bid_amount:.0f} exceeds remaining FAAB of ${remaining:.0f}.",
+            })
+
+    requires_drop = any(b.get("suggested_action") == "drop" for b in blockers)
+    can_claim = len(blockers) == 0
+
+    return {
+        "can_claim": can_claim,
+        "requires_drop": requires_drop,
+        "roster": {
+            "current": active_count,
+            "max": max_roster_size,
+            "has_room": has_room,
+            "taxi_count": taxi_count,
+            "ir_count": ir_count,
+            "ir_plus_count": ir_plus_count,
+        },
+        "cap": {
+            "enabled": cap_enabled,
+            "used": cap_used,
+            "cap": cap_total,
+            "addition": addition,
+            "would_be": cap_would_be,
+            "fits": cap_fits,
+        },
+        "issues": issues + blockers,
+        "team": {"id": str(team["_id"]), "name": team["name"]},
+    }
+
+
 @router.post("/waivers/claim")
 async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     db = _db()
