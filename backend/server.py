@@ -3339,269 +3339,10 @@ async def _execute_trade(trade: dict) -> dict:
 # Roster Management Endpoints
 # ═══════════════════════════════════════════════════════════════
 
-@api_router.get("/roster/{team_id}")
-async def get_roster(team_id: str):
-    team = await db.teams.find_one({"_id": ObjectId(team_id)})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-
-    roster_players = team.get("roster", [])
-    lineup = team.get("lineup") or {}
-    players = []
-    for pid in roster_players:
-        player = await db.players.find_one({"_id": ObjectId(pid)})
-        if player:
-            # Calculate fantasy points
-            config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
-            fpts = calculate_fantasy_points(player, config)
-            section_info = lineup.get(pid) or {}
-            section = (section_info.get("section") or "active").lower()
-            players.append({
-                "player_id": str(player["_id"]),
-                "name": player["name"],
-                "position": player["position"],
-                "player_type": player.get("player_type") or ("goalie" if player.get("position") == "G" else "skater"),
-                "nhl_team": player.get("team", ""),
-                "team_name": player.get("team_name", ""),
-                "games_played": player.get("games_played", 0),
-                "goals": player.get("goals", 0),
-                "assists": player.get("assists", 0),
-                "points": player.get("points", 0),
-                "plus_minus": player.get("plus_minus", 0),
-                "penalty_minutes": player.get("penalty_minutes", 0),
-                "power_play_goals": player.get("power_play_goals", 0),
-                "power_play_points": player.get("power_play_points", 0),
-                "shots": player.get("shots", 0),
-                "wins": player.get("wins", 0),
-                "losses": player.get("losses", 0),
-                "saves": player.get("saves", 0),
-                "shots_against": player.get("shots_against", 0),
-                "goals_against": player.get("goals_against", 0),
-                "save_pct": player.get("save_pct", 0),
-                "goals_against_avg": player.get("goals_against_avg", 0),
-                "shutouts": player.get("shutouts", 0),
-                "fantasy_points": fpts,
-                "roster_section": section,
-            })
-
-    players.sort(key=lambda p: -(p.get("fantasy_points") or 0))
-    return {"team_id": team_id, "team_name": team["name"], "players": players}
-
-
-@api_router.get("/roster/{team_id}/detail")
-async def get_roster_detail(team_id: str):
-    """Rich roster payload for the Lovable Team page. Includes per-player
-    season + live stats, category breakdown, synthesized contracts/eligibility
-    (fantasy metadata not yet modelled in DB), and roster section assignment."""
-    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-
-    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
-    config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
-
-    roster_ids = team.get("roster", []) or []
-    if not roster_ids:
-        return {"team_id": team_id, "team_name": team["name"], "league_id": team["league_id"],
-                "league_name": (league or {}).get("name"), "players": []}
-
-    players_raw = await db.players.find(
-        {"_id": {"$in": [ObjectId(pid) for pid in roster_ids]}},
-    ).to_list(100)
-
-    from live_scoring_worker import _fantasy_points_from_live
-
-    # Count forwards/defensemen/goalies for roster section bucketing
-    starting_slots = [
-        ("C1", "C", ["C"]), ("C2", "C", ["C"]),
-        ("LW1", "LW", ["LW"]), ("RW1", "RW", ["RW"]),
-        ("W1", "W", ["LW", "RW"]),
-        ("D1", "D", ["D"]), ("D2", "D", ["D"]),
-        ("UTIL1", "UTIL", ["C", "LW", "RW", "D"]),
-        # G slots removed — goalies route to dedicated "goalies" section.
-    ]
-
-    # Map live stats
-    def live_agg(p):
-        is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
-        live = p.get("live_stats") or {}
-        goals = assists = shots = saves = ga = wins = 0
-        fpts_live = 0.0
-        for gid, ls in live.items():
-            goals += ls.get("goals", 0) or 0
-            assists += ls.get("assists", 0) or 0
-            shots += ls.get("shots", 0) or 0
-            saves += ls.get("saves", 0) or 0
-            ga += ls.get("goals_against", 0) or 0
-            wins += ls.get("wins", 0) or 0
-            fpts_live += _fantasy_points_from_live(ls, is_g)
-        return {
-            "goals": goals, "assists": assists, "shots": shots,
-            "saves": saves, "goals_against": ga, "wins": wins,
-            "fpts": round(fpts_live, 2),
-        }
-
-    # Build normalized players + assign roster slots (best players to starting slots)
-    enriched = []
-    for p in players_raw:
-        pos = p.get("position", "F")
-        is_g = p.get("player_type") == "goalie" or pos == "G"
-        live = live_agg(p)
-        fpts_season = calculate_fantasy_points(p, config)
-        games = p.get("games_played", 0) or 0
-        points = p.get("points", 0) or 0
-        # Synthesize dynasty value from points + age
-        age = 27  # age not in DB; default; could be enriched later
-        dyn_val = int(max(1000, points * 80 + (fpts_season * 10)))
-        trend = "up" if live["fpts"] > 0 else ("down" if games > 0 and points < 10 else "stable")
-
-        # Synthesize eligible positions (primary + one secondary for forwards)
-        eligible = [pos] if pos in ("C", "LW", "RW", "D", "G") else ["F"]
-
-        # Contract salary (synthesized realistic NHL tiers based on points G+A)
-        # Elite (>=100) → $11-13M, Star (60-99) → $6-10M, Mid (30-59) → $3-6M, Role (10-29) → $1.5-3M
-        if is_g:
-            # Goalies tiered by fantasy points
-            if fpts_season >= 300:   salary = 9_500_000
-            elif fpts_season >= 180: salary = 6_000_000
-            elif fpts_season >= 100: salary = 3_500_000
-            else:                     salary = 1_200_000
-        elif points >= 100:
-            salary = 11_000_000 + min(2_500_000, (points - 100) * 70_000)
-        elif points >= 60:
-            salary = 6_000_000 + (points - 60) * 100_000
-        elif points >= 30:
-            salary = 3_000_000 + (points - 30) * 90_000
-        elif points >= 10:
-            salary = 1_500_000 + (points - 10) * 75_000
-        else:
-            salary = 950_000 + points * 40_000
-        salary = int(min(13_500_000, max(775_000, salary)))
-        years_remaining = 1 + (int(p.get("nhl_id", 0)) % 6)
-        contract_type = "ELC" if age < 23 and salary < 1200000 else ("RFA" if years_remaining == 1 and age < 27 else ("UFA" if years_remaining == 1 else "Signed"))
-
-        stats_by_period = {
-            "season": round(fpts_season, 1),
-            "1d": round(live["fpts"], 1),
-            "7d": round(live["fpts"], 1),
-            "14d": round(live["fpts"] * 1.3, 1),
-            "30d": round(fpts_season * 0.3, 1),
-            "60d": round(fpts_season * 0.55, 1),
-            "100d": round(fpts_season * 0.85, 1),
-        }
-
-        category_breakdown = {
-            "G": p.get("goals", 0) or 0,
-            "A": p.get("assists", 0) or 0,
-            "PPP": p.get("power_play_points", 0) or 0,
-            "SHP": p.get("short_handed_points", 0) or 0,
-            "SOG": p.get("shots", 0) or 0,
-            "HIT": p.get("hits", 0) or 0,
-            "BLK": p.get("blocked_shots", 0) or 0,
-            "PIM": p.get("penalty_minutes", 0) or 0,
-            "+/-": p.get("plus_minus", 0) or 0,
-            "FOW": 0, "FOL": 0,
-        }
-
-        enriched.append({
-            "id": str(p["_id"]),
-            "player_id": str(p["_id"]),
-            "nhl_id": p.get("nhl_id"),
-            "name": p.get("name"),
-            "team": p.get("team"),
-            "position": pos,
-            "eligiblePositions": eligible,
-            "is_goalie": is_g,
-            "age": age,
-            "dynastyValue": dyn_val,
-            "trend": trend,
-            "contract": {
-                "salary": salary,
-                "yearsRemaining": years_remaining,
-                "type": contract_type,
-            },
-            "games_played": games,
-            "points": points,
-            "fantasy_points": round(fpts_season, 2),
-            "live": live,
-            "statsByPeriod": stats_by_period,
-            "categoryBreakdown": category_breakdown,
-            "matchupGames": live.get("games", 0) if isinstance(live.get("games"), int) else 0,
-        })
-
-    # Rank by season fantasy points; assign roster sections
-    enriched.sort(key=lambda x: -x["fantasy_points"])
-
-    def fill_slot(label, eligible_positions, pool, assigned):
-        for cand in pool:
-            if cand["id"] in assigned:
-                continue
-            if cand["position"] in eligible_positions or any(ep in eligible_positions for ep in cand.get("eligiblePositions", [])):
-                assigned.add(cand["id"])
-                cand["rosterSlotId"] = label[0]
-                cand["rosterSection"] = "starting"
-                return cand
-        return None
-
-    assigned_ids = set()
-    for slot_id, label, elig in starting_slots:
-        for cand in enriched:
-            if cand["id"] in assigned_ids:
-                continue
-            if cand["position"] in elig:
-                cand["rosterSlotId"] = slot_id
-                # Goalies still occupy their roster slot but are routed to the
-                # dedicated "goalies" section so the Roster UI can render them
-                # in a separate card with goalie-only stat columns.
-                cand["rosterSection"] = "goalies" if cand.get("is_goalie") else "starting"
-                assigned_ids.add(cand["id"])
-                break
-
-    # Put remaining into bench / minors / goalies / goalies_minors
-    for cand in enriched:
-        if cand["id"] in assigned_ids:
-            continue
-        cand["rosterSlotId"] = None
-        if cand.get("is_goalie"):
-            # Spillover goalies → goalies section if there's room (max 4),
-            # else goalies_minors pool.
-            goalie_count = sum(1 for c in enriched if c.get("rosterSection") == "goalies")
-            cand["rosterSection"] = "goalies" if goalie_count < 4 else "goalies_minors"
-        else:
-            bench_count = sum(1 for c in enriched if c.get("rosterSection") == "bench")
-            if bench_count < 6:
-                cand["rosterSection"] = "bench"
-            else:
-                cand["rosterSection"] = "minors"
-        assigned_ids.add(cand["id"])
-
-    # Honor team.lineup overrides (commissioner-set sections — minors, ir, etc.)
-    lineup = team.get("lineup") or {}
-    for cand in enriched:
-        ln = lineup.get(cand["id"])
-        if ln and ln.get("section"):
-            sec = ln["section"].lower()
-            if sec == "minors":
-                cand["rosterSection"] = "goalies_minors" if cand.get("is_goalie") else "minors"
-            elif sec == "ir":
-                cand["rosterSection"] = "ir"
-
-    total_fpts = round(sum(p["fantasy_points"] for p in enriched), 2)
-    total_live = round(sum(p["live"]["fpts"] for p in enriched), 2)
-    return {
-        "team_id": team_id,
-        "team_name": team["name"],
-        "owner_name": team.get("owner_name"),
-        "league_id": team["league_id"],
-        "league_name": (league or {}).get("name"),
-        "wins": team.get("wins", 0),
-        "losses": team.get("losses", 0),
-        "ties": team.get("ties", 0),
-        "salary_used": team.get("salary_used", 0.0),
-        "season_fpts": total_fpts,
-        "live_fpts": total_live,
-        "players": enriched,
-    }
+# ─── Roster read-side endpoints moved to routes/roster.py (iter 91).
+# Write-side `/roster/{id}/add` + `/roster/{id}/drop` remain below — they
+# depend on waiver-claim creation + activity-feed writes that are
+# tightly coupled to the legacy code path.
 
 
 class RosterAction(BaseModel):
@@ -4511,7 +4252,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes, roster as roster_routes
 
 _router_deps = {
     "db": db,
@@ -4566,6 +4307,7 @@ notifications_routes.setup(_router_deps)
 contracts_routes.setup(_router_deps)
 activity_routes.setup(_router_deps)
 trade_block_routes.setup(_router_deps)
+roster_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -4587,6 +4329,7 @@ api_router.include_router(notifications_routes.router)
 api_router.include_router(contracts_routes.router)
 api_router.include_router(activity_routes.router)
 api_router.include_router(trade_block_routes.router)
+api_router.include_router(roster_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")
