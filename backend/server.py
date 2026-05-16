@@ -2395,175 +2395,21 @@ class ContractUpdate(BaseModel):
     no_move_clause: Optional[bool] = None
 
 
-@api_router.post("/contracts")
-async def create_contract(input: ContractCreate, request: Request):
-    user = await get_current_user(request)
-
-    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-
-    team = await db.teams.find_one({"_id": ObjectId(input.team_id)})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-
-    # Only team owner or commissioner can add contracts
-    is_commissioner = league["commissioner_id"] == user["_id"]
-    if team["owner_id"] != user["_id"] and not is_commissioner:
-        raise HTTPException(status_code=403, detail="Not authorized")
-
-    player = await db.players.find_one({"_id": ObjectId(input.player_id)})
-    if not player:
-        raise HTTPException(status_code=404, detail="Player not found")
-
-    # Check cap space
-    if league.get("salary_cap_enabled"):
-        cap = league.get("salary_cap", 82500000)
-        current_used = await get_team_cap_used(input.team_id, input.league_id)
-        if current_used + input.aav > cap:
-            raise HTTPException(status_code=400, detail=f"Exceeds salary cap. Used: ${current_used:,.0f}, Cap: ${cap:,.0f}, Contract: ${input.aav:,.0f}")
-
-    contract_doc = {
-        "league_id": input.league_id,
-        "team_id": input.team_id,
-        "team_name": team["name"],
-        "player_id": input.player_id,
-        "player_name": player["name"],
-        "player_position": player["position"],
-        "player_nhl_team": player.get("team", ""),
-        "aav": input.aav,
-        "total_value": input.total_value,
-        "signing_bonus": input.signing_bonus,
-        "years": input.years,
-        "start_year": input.start_year,
-        "end_year": input.start_year + input.years - 1,
-        "free_agency_year": input.start_year + input.years,
-        "no_trade_clause": input.no_trade_clause,
-        "no_move_clause": input.no_move_clause,
-        "player_status": input.player_status,
-        "status": ContractStatus.ACTIVE.value,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-
-    result = await db.contracts.insert_one(contract_doc)
-    contract_doc["_id"] = str(result.inserted_id)
-
-    await log_activity(input.league_id, "contract_signed", f"{team['name']} signs {player['name']} to {input.years}-year, ${input.aav:,.0f} AAV contract", user["_id"])
-
-    return contract_doc
-
-
-async def get_team_cap_used(team_id: str, league_id: str):
-    """Returns the team's active cap usage. Source of truth:
-    1. Sum of `db.contracts.aav` if any active contracts exist (legacy / commissioner-managed).
-    2. Otherwise the synthesized per-player salary used everywhere else
-       (`_synthesize_player_salary`, kept consistent with the roster page,
-       compliance check, and `/roster/{id}/detail`).
+@api_router.post("/_contracts_moved")
+async def _contracts_routes_marker():
+    """Contracts, salary-cap, activity-feed, transactions, and trade-block
+    endpoints have all moved to dedicated routers in iter 89:
+      - routes/contracts.py
+      - routes/activity.py
+      - routes/trade_block.py
+    See those files for the implementations.
     """
-    pipeline = [
-        {"$match": {"team_id": team_id, "league_id": league_id, "status": "active"}},
-        {"$group": {"_id": None, "total": {"$sum": "$aav"}}}
-    ]
-    result = await db.contracts.aggregate(pipeline).to_list(1)
-    if result and result[0]["total"]:
-        return result[0]["total"]
-    # Fallback: live recompute from synthesized roster salaries so
-    # `/salary-cap/{league_id}` matches `/teams/{id}/compliance` exactly.
-    try:
-        return await _recompute_team_salary_used(team_id)
-    except Exception:
-        return 0.0
+    raise HTTPException(status_code=410, detail="Use the dedicated routers")
 
 
-@api_router.get("/contracts")
-async def get_contracts(league_id: str, team_id: Optional[str] = None, status: Optional[str] = None):
-    query = {"league_id": league_id}
-    if team_id:
-        query["team_id"] = team_id
-    if status:
-        query["status"] = status
-    contracts = await db.contracts.find(query).sort("aav", -1).to_list(500)
-    for c in contracts:
-        c["_id"] = str(c["_id"])
-    return contracts
-
-
-@api_router.get("/contracts/{contract_id}")
-async def get_contract(contract_id: str):
-    contract = await db.contracts.find_one({"_id": ObjectId(contract_id)})
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-    contract["_id"] = str(contract["_id"])
-    return contract
-
-
-@api_router.put("/contracts/{contract_id}")
-async def update_contract(contract_id: str, input: ContractUpdate, request: Request):
-    user = await get_current_user(request)
-    contract = await db.contracts.find_one({"_id": ObjectId(contract_id)})
-    if not contract:
-        raise HTTPException(status_code=404, detail="Contract not found")
-
-    league = await db.leagues.find_one({"_id": ObjectId(contract["league_id"])})
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can edit contracts")
-
-    updates = {}
-    if input.aav is not None: updates["aav"] = input.aav
-    if input.status is not None: updates["status"] = input.status
-    if input.no_trade_clause is not None: updates["no_trade_clause"] = input.no_trade_clause
-    if input.no_move_clause is not None: updates["no_move_clause"] = input.no_move_clause
-
-    if updates:
-        await db.contracts.update_one({"_id": ObjectId(contract_id)}, {"$set": updates})
-    return {"updated": list(updates.keys())}
-
-
-@api_router.get("/salary-cap/{league_id}")
-async def get_salary_cap_overview(league_id: str):
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-
-    cap = league.get("salary_cap") or 88_000_000  # Default $88M if league hasn't configured one
-    teams = await db.teams.find({"league_id": league_id}).to_list(100)
-
-    team_caps = []
-    for team in teams:
-        tid = str(team["_id"])
-        used = await get_team_cap_used(tid, league_id)
-        contracts = await db.contracts.count_documents({"team_id": tid, "league_id": league_id, "status": "active"})
-
-        # Count by status
-        rfa = await db.contracts.count_documents({"team_id": tid, "league_id": league_id, "player_status": "rfa"})
-        ufa = await db.contracts.count_documents({"team_id": tid, "league_id": league_id, "player_status": "ufa"})
-
-        team_caps.append({
-            "team_id": tid,
-            "team_name": team["name"],
-            "owner_name": team["owner_name"],
-            "cap_used": round(used, 2),
-            "cap_remaining": round(cap - used, 2),
-            "cap_pct": round((used / cap) * 100, 1) if cap > 0 else 0,
-            "active_contracts": contracts,
-            "rfa_count": rfa,
-            "ufa_count": ufa
-        })
-
-    team_caps.sort(key=lambda t: -t["cap_used"])
-    return {"salary_cap": cap, "teams": team_caps}
-
-
-@api_router.get("/salary-cap/{league_id}/expiring")
-async def get_expiring_contracts(league_id: str, year: int = 2026):
-    contracts = await db.contracts.find({
-        "league_id": league_id,
-        "free_agency_year": year,
-        "status": "active"
-    }).sort("aav", -1).to_list(200)
-    for c in contracts:
-        c["_id"] = str(c["_id"])
-    return contracts
+# (Contracts endpoints moved to routes/contracts.py)
+# (Activity-feed endpoints moved to routes/activity.py)
+# (Trade-block endpoints moved to routes/trade_block.py)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2589,72 +2435,11 @@ async def log_activity(league_id: str, event_type: str, message: str, user_id: s
     await broadcast_to_room(f"league_{league_id}", "activity_feed", broadcast_doc)
 
 
-@api_router.get("/activity/{league_id}")
-async def get_activity_feed(league_id: str, event_type: Optional[str] = None, limit: int = 50, page: int = 1):
-    query: dict = {"league_id": league_id}
-    if event_type:
-        # Support comma-separated event types: "roster_add,roster_drop,trade_executed"
-        types = [t.strip() for t in event_type.split(",") if t.strip()]
-        if len(types) == 1:
-            query["event_type"] = types[0]
-        elif types:
-            query["event_type"] = {"$in": types}
-    skip = (page - 1) * limit
-    items = await db.activity_feed.find(query).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
-    total = await db.activity_feed.count_documents(query)
-    for item in items:
-        item["_id"] = str(item["_id"])
-    return {"items": items, "total": total, "page": page, "pages": (total + limit - 1) // limit}
-
-
-# ─── League transactions (normalized adds/drops/waivers/trades) ─
-@api_router.get("/leagues/{league_id}/transactions")
-async def get_league_transactions(
-    league_id: str, limit: int = 30,
-    since: Optional[str] = None, team_id: Optional[str] = None,
-):
-    """Returns the most recent player transactions for a league in a normalized shape:
-    [{type, description, team_id?, team_name?, player_name?, created_at, raw}, ...]
-    Types: roster_add, roster_drop, waiver_won, trade_executed.
-
-    Filters:
-      - `since`: ISO date string (e.g. "2026-04-01") — only events on/after this date.
-      - `team_id`: filter by metadata.team_id (the actor team).
-    """
-    query: dict = {
-        "league_id": league_id,
-        "event_type": {"$in": ["roster_add", "roster_drop", "waiver_won", "waiver_lost", "trade_executed"]},
-    }
-    if since:
-        try:
-            from datetime import datetime as _dt
-            cutoff = _dt.fromisoformat(since.replace("Z", "+00:00"))
-            query["created_at"] = {"$gte": cutoff}
-        except Exception:
-            pass
-    if team_id:
-        query["metadata.team_id"] = team_id
-    cursor = db.activity_feed.find(query).sort("created_at", -1).limit(max(1, min(limit, 500)))
-    items = await cursor.to_list(limit)
-    out = []
-    for it in items:
-        it["_id"] = str(it["_id"])
-        meta = it.get("metadata") or {}
-        out.append({
-            "id": it["_id"],
-            "type": it.get("event_type"),
-            "description": it.get("message") or it.get("description"),
-            "team_id": meta.get("team_id"),
-            "team_name": meta.get("team_name"),
-            "player_id": meta.get("player_id"),
-            "player_name": meta.get("player_name"),
-            "bid_amount": meta.get("bid_amount"),
-            "winning_team_name": meta.get("winning_team_name"),
-            "winning_bid": meta.get("winning_bid"),
-            "competing_claims": meta.get("competing_claims") or [],
-            "created_at": it.get("created_at"),
-        })
-    return {"league_id": league_id, "transactions": out, "count": len(out)}
+@api_router.get("/activity/_moved_marker")
+async def _activity_routes_marker():
+    """Activity-feed read endpoints moved to routes/activity.py.
+    `log_activity` write helper remains here — called from many places."""
+    raise HTTPException(status_code=410, detail="Use routes/activity.py")
 
 
 @api_router.get("/leagues/{league_id}/pending-trades")
@@ -2688,341 +2473,10 @@ from trade_waiver_engine import (
 )
 
 # ─── Trade Block ──────────────────────────────────────────────
+# All trade-block endpoints moved to routes/trade_block.py (iter 89).
+# The cascading delete on trade execution remains in _execute_trade /
+# _execute_multi_party_trade below.
 
-@api_router.post("/trade-block")
-async def add_to_trade_block(input: TradeBlockItemCreate, request: Request):
-    user = await get_current_user(request)
-
-    # Auto-resolve team_id from owner+league if the client didn't provide one,
-    # so every new row gets a team_id (avoids the missing-Crown-link issue).
-    resolved_team_id = input.team_id
-    if not resolved_team_id and input.league_id:
-        owner_team = await db.teams.find_one(
-            {"league_id": input.league_id, "owner_id": user["_id"]},
-            {"_id": 1},
-        )
-        if owner_team:
-            resolved_team_id = str(owner_team["_id"])
-
-    item_doc = {
-        "item_type": input.item_type,
-        "looking_for": input.looking_for or [],
-        "owner_id": user["_id"],
-        "owner_name": user["name"],
-        "league_id": input.league_id,
-        "team_id": resolved_team_id,
-        "note": (input.note or "").strip(),
-        "created_at": datetime.now(timezone.utc),
-    }
-
-    # Resolve team_name + retention preference once
-    if resolved_team_id:
-        team = await db.teams.find_one({"_id": ObjectId(resolved_team_id)})
-        if team:
-            item_doc["team_name"] = team.get("name")
-            item_doc["salary_retention_pref"] = team.get(
-                "salary_retention_pref", "no_preference"
-            )
-
-    if input.item_type == "player" and input.player_id:
-        player = await db.players.find_one({"_id": ObjectId(input.player_id)})
-        if not player:
-            raise HTTPException(status_code=404, detail="Player not found")
-        item_doc["player_id"] = input.player_id
-        item_doc["name"] = player["name"]
-        item_doc["position"] = player["position"]
-        item_doc["nhl_team"] = player.get("team", "")
-
-        season = player.get("season_stats") or {}
-        gp = int(season.get("games_played") or player.get("games_played") or 0)
-        item_doc["goals"] = int(season.get("goals") or player.get("goals") or 0)
-        item_doc["assists"] = int(season.get("assists") or player.get("assists") or 0)
-        item_doc["points"] = int(season.get("points") or player.get("points") or 0)
-        item_doc["plus_minus"] = int(season.get("plus_minus") or player.get("plus_minus") or 0)
-        item_doc["games_played"] = gp
-        fpts = float(
-            player.get("fantasy_points")
-            or season.get("fantasy_points")
-            or 0
-        )
-        item_doc["fantasy_points"] = round(fpts, 1)
-        item_doc["fantasy_ppg"] = round(fpts / gp, 2) if gp else 0.0
-
-        # Recent form: last 3 weeks of fantasy points from week_summaries (avg)
-        if input.team_id and input.league_id:
-            recent = await db.week_summaries.find({
-                "league_id": input.league_id,
-                "team_id": input.team_id,
-            }).sort("week", -1).limit(3).to_list(3)
-            if recent:
-                item_doc["recent_form_ppw"] = round(
-                    sum((r.get("points_for", 0.0) or 0.0) for r in recent) / len(recent),
-                    1,
-                )
-    elif input.item_type == "pick":
-        if input.pick_id:
-            pick = await db.draft_picks.find_one({"_id": ObjectId(input.pick_id)})
-            if not pick:
-                raise HTTPException(status_code=404, detail="Pick not found")
-            item_doc["pick_id"] = input.pick_id
-            item_doc["pick_year"] = pick.get("year")
-            item_doc["pick_round"] = pick.get("round")
-            item_doc["pick_number"] = pick.get("pick_number")
-            item_doc["name"] = (
-                f"{pick.get('year')} R{pick.get('round')}"
-                + (f" #{pick.get('pick_number')}" if pick.get("pick_number") else "")
-            )
-        else:
-            item_doc["name"] = f"{input.pick_year} {input.pick_round} Round"
-            item_doc["pick_year"] = input.pick_year
-            item_doc["pick_round"] = input.pick_round
-        item_doc["position"] = "PICK"
-
-    # Prevent duplicates (per-owner, per-league, per-asset)
-    dup_query: dict = {"owner_id": user["_id"], "item_type": input.item_type}
-    if input.league_id:
-        dup_query["league_id"] = input.league_id
-    if input.team_id:
-        dup_query["team_id"] = input.team_id
-    if input.player_id:
-        dup_query["player_id"] = input.player_id
-    elif input.pick_id:
-        dup_query["pick_id"] = input.pick_id
-    elif input.pick_year and input.pick_round:
-        dup_query["pick_year"] = input.pick_year
-        dup_query["pick_round"] = input.pick_round
-    existing = await db.trade_block.find_one(dup_query)
-    if existing:
-        raise HTTPException(status_code=400, detail="Already on trade block")
-
-    result = await db.trade_block.insert_one(item_doc)
-    item_doc["_id"] = str(result.inserted_id)
-
-    # Also broadcast for live UI updates
-    if input.league_id:
-        await broadcast_to_room(f"league_{input.league_id}", "trade_block_changed",
-                                {"action": "added", "item_id": str(result.inserted_id)})
-    return item_doc
-
-@api_router.get("/trade-block")
-async def get_trade_block(
-    league_id: Optional[str] = None,
-    team_id: Optional[str] = None,
-    owner_id: Optional[str] = None,
-):
-    query: dict = {}
-    if league_id:
-        query["league_id"] = league_id
-    if team_id:
-        query["team_id"] = team_id
-    if owner_id:
-        query["owner_id"] = owner_id
-    items = await db.trade_block.find(query).sort("created_at", -1).to_list(500)
-
-    # Enrich each item with the player's contract / salary so the frontend
-    # Trade Block can render an AAV column when the league has the cap
-    # turned on. We do this in one batch lookup to avoid N+1 reads.
-    player_ids = [item["player_id"] for item in items if item.get("player_id")]
-    salary_map: dict = {}
-    if player_ids:
-        oids = []
-        for pid in player_ids:
-            try:
-                oids.append(ObjectId(pid))
-            except Exception:
-                continue
-        if oids:
-            cursor = db.players.find(
-                {"_id": {"$in": oids}},
-                {"contract": 1, "salary": 1, "cap_hit": 1},
-            )
-            async for p in cursor:
-                contract = p.get("contract") or {}
-                salary_map[str(p["_id"])] = {
-                    "aav": contract.get("aav"),
-                    "salary": p.get("salary"),
-                    "cap_hit": p.get("cap_hit"),
-                }
-    for item in items:
-        item["_id"] = str(item["_id"])
-        if item.get("player_id"):
-            info = salary_map.get(item["player_id"]) or {}
-            # Prefer the explicit AAV value when present, fall back through
-            # the synthesized salary then cap_hit so we always have *something*
-            # to surface when cap is enabled.
-            item["aav"] = info.get("aav") or info.get("salary") or info.get("cap_hit")
-    return items
-
-@api_router.delete("/trade-block/{item_id}")
-async def remove_from_trade_block(item_id: str, request: Request):
-    user = await get_current_user(request)
-    item = await db.trade_block.find_one({"_id": ObjectId(item_id)})
-    if not item:
-        raise HTTPException(status_code=404, detail="Item not found")
-    if item["owner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Not your item")
-    await db.trade_block.delete_one({"_id": ObjectId(item_id)})
-    if item.get("league_id"):
-        await broadcast_to_room(f"league_{item['league_id']}", "trade_block_changed",
-                                {"action": "removed", "item_id": item_id})
-    return {"message": "Removed from trade block"}
-
-
-# ─── Trade Block: salary retention preference (per team) ────────
-class SalaryRetentionPrefUpdate(BaseModel):
-    preference: str  # "willing_to_retain" | "no_preference" | "seeking_retention"
-
-
-@api_router.put("/teams/{team_id}/trade-block-note")
-async def set_trade_block_note(team_id: str, payload: dict, request: Request):
-    """Update the team's public trade block note (max 200 chars).
-
-    Visible to anyone viewing the team's trade block; only the team owner
-    can edit it.
-    """
-    user = await get_current_user(request)
-    note = (payload.get("note") or "").strip()
-    if len(note) > 200:
-        raise HTTPException(status_code=400, detail="Note must be 200 characters or fewer")
-    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-    if team.get("owner_id") != user["_id"]:
-        raise HTTPException(status_code=403, detail="Not your team")
-    await db.teams.update_one(
-        {"_id": team["_id"]},
-        {"$set": {
-            "trade_block_note": note,
-            "trade_block_note_updated_at": datetime.now(timezone.utc),
-        }},
-    )
-    return {"team_id": team_id, "note": note}
-
-
-@api_router.get("/teams/{team_id}/trade-block-note")
-async def get_trade_block_note(team_id: str):
-    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-    return {
-        "team_id": team_id,
-        "note": team.get("trade_block_note") or "",
-        "updated_at": team.get("trade_block_note_updated_at"),
-    }
-
-
-# --- Team logo upload/delete moved to routes/teams.py ------------------------
-
-
-@api_router.put("/teams/{team_id}/trade-block-preference")
-async def set_trade_block_preference(team_id: str, payload: SalaryRetentionPrefUpdate, request: Request):
-    user = await get_current_user(request)
-    if payload.preference not in ("willing_to_retain", "no_preference", "seeking_retention"):
-        raise HTTPException(status_code=400, detail="Invalid preference")
-    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-    if team.get("owner_id") != user["_id"]:
-        raise HTTPException(status_code=403, detail="Not your team")
-
-    await db.teams.update_one({"_id": team["_id"]},
-                              {"$set": {"salary_retention_pref": payload.preference}})
-    # Cascade preference to current trade-block items for this team
-    await db.trade_block.update_many(
-        {"owner_id": user["_id"], "team_id": team_id},
-        {"$set": {"salary_retention_pref": payload.preference}},
-    )
-    return {"team_id": team_id, "preference": payload.preference}
-
-
-@api_router.get("/leagues/{league_id}/trade-block-summary")
-async def trade_block_summary(league_id: str, limit: int = 10):
-    """Return enriched, top-valued trade block items for a league, ranked by season fantasy
-    points then by recent_form_ppw (last 3 weeks). Used by the league homepage widget."""
-    items = await db.trade_block.find({"league_id": league_id}).to_list(500)
-
-    # Backfill team_name + salary_retention_pref for legacy items that were added before
-    # the team_id field existed. We resolve the team via the owner_id within this league.
-    needs_fill = [it for it in items if not it.get("team_name") or not it.get("salary_retention_pref")]
-    if needs_fill:
-        owner_ids = list({it["owner_id"] for it in needs_fill if it.get("owner_id")})
-        teams_in_league = await db.teams.find({
-            "league_id": league_id, "owner_id": {"$in": owner_ids},
-        }).to_list(100)
-        by_owner = {t["owner_id"]: t for t in teams_in_league}
-        for it in needs_fill:
-            t = by_owner.get(it.get("owner_id"))
-            if t:
-                if not it.get("team_name"):
-                    it["team_name"] = t.get("name")
-                if not it.get("salary_retention_pref"):
-                    it["salary_retention_pref"] = t.get("salary_retention_pref", "no_preference")
-                if not it.get("team_id"):
-                    it["team_id"] = str(t["_id"])
-
-    items.sort(
-        key=lambda x: (
-            float(x.get("fantasy_points") or 0),
-            float(x.get("recent_form_ppw") or 0),
-        ),
-        reverse=True,
-    )
-    out = []
-    for it in items[: max(1, min(limit, 50))]:
-        it["_id"] = str(it["_id"])
-        out.append(it)
-    return {"league_id": league_id, "items": out, "count": len(items)}
-
-
-@api_router.post("/leagues/{league_id}/trade-block/refresh-stats")
-async def refresh_trade_block_stats(league_id: str, request: Request):
-    """Re-pull current player season_stats + recent-form into all this league's trade-block
-    items so the homepage widget stays in sync as the season advances. Idempotent.
-    """
-    user = await get_current_user(request)
-    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    is_comm = league["commissioner_id"] == user["_id"]
-    co_comms = league.get("co_commissioners", []) or []
-    if not (is_comm or user["_id"] in co_comms):
-        raise HTTPException(status_code=403, detail="Only commissioners can refresh trade-block stats")
-
-    items = await db.trade_block.find({"league_id": league_id, "item_type": "player"}).to_list(500)
-    updated = 0
-    for it in items:
-        pid = it.get("player_id")
-        if not pid:
-            continue
-        try:
-            player = await db.players.find_one({"_id": ObjectId(pid)})
-        except Exception:
-            continue
-        if not player:
-            continue
-        season = player.get("season_stats") or {}
-        gp = int(season.get("games_played") or player.get("games_played") or 0)
-        fpts = float(player.get("fantasy_points") or season.get("fantasy_points") or 0)
-        patch = {
-            "goals": int(season.get("goals") or player.get("goals") or 0),
-            "assists": int(season.get("assists") or player.get("assists") or 0),
-            "points": int(season.get("points") or player.get("points") or 0),
-            "plus_minus": int(season.get("plus_minus") or player.get("plus_minus") or 0),
-            "games_played": gp,
-            "fantasy_points": round(fpts, 1),
-            "fantasy_ppg": round(fpts / gp, 2) if gp else 0.0,
-        }
-        if it.get("team_id"):
-            recent = await db.week_summaries.find({
-                "league_id": league_id, "team_id": it["team_id"],
-            }).sort("week", -1).limit(3).to_list(3)
-            if recent:
-                patch["recent_form_ppw"] = round(
-                    sum((r.get("points_for", 0.0) or 0.0) for r in recent) / len(recent), 1,
-                )
-        await db.trade_block.update_one({"_id": it["_id"]}, {"$set": patch})
-        updated += 1
-    return {"league_id": league_id, "items_refreshed": updated}
 
 # Trade routes extracted to routes/trades.py
 
@@ -5057,7 +4511,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes
 
 _router_deps = {
     "db": db,
@@ -5109,6 +4563,9 @@ seasons_routes.setup(_router_deps)
 teams_routes.setup(_router_deps)
 ratings_routes.setup(_router_deps)
 notifications_routes.setup(_router_deps)
+contracts_routes.setup(_router_deps)
+activity_routes.setup(_router_deps)
+trade_block_routes.setup(_router_deps)
 api_router.include_router(awards_routes.router)
 api_router.include_router(drafts_routes.router)
 api_router.include_router(matchups_routes.router)
@@ -5127,6 +4584,9 @@ api_router.include_router(seasons_routes.router)
 api_router.include_router(teams_routes.router)
 api_router.include_router(ratings_routes.router)
 api_router.include_router(notifications_routes.router)
+api_router.include_router(contracts_routes.router)
+api_router.include_router(activity_routes.router)
+api_router.include_router(trade_block_routes.router)
 
 
 @api_router.post("/admin/snapshot-ownership")
