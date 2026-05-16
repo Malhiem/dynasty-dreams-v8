@@ -70,6 +70,69 @@
   --shadow-card: 0 4px 24px hsl(0 0% 0% / 0.5);
 }
 
+/* ── Light mode ──────────────────────────────────────────────
+   Activated by adding `class="light"` to <html>. Hex tokens
+   (--background-hex, --surface, …) flip too so emergent pages
+   that hard-code bg-[#hex] still adapt. */
+html.light {
+  /* Hex tokens for emergent pages */
+  --background-hex: #FFFFFF;
+  --surface: #F8FAFC;          /* slate-50 */
+  --surface-elevated: #FFFFFF;
+  --text-primary: #0F172A;     /* slate-900 */
+  --text-secondary: #475569;   /* slate-600 */
+  --text-disabled: #94A3B8;    /* slate-400 */
+  --border-default: rgba(15, 23, 42, 0.10);
+  --border-focus: #0284C7;     /* darker cyan for AA contrast */
+  --brand-primary: #0284C7;    /* sky-600: WCAG-friendly on white */
+  --brand-primary-hover: #0369A1;
+  --brand-accent: #D97706;     /* amber-600: contrast on white */
+  --brand-accent-hover: #B45309;
+  --success: #16A34A;
+  --warning: #D97706;
+  --danger: #DC2626;
+  --info: #0284C7;
+
+  /* HSL semantic tokens */
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --card: 210 40% 98%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 199 89% 39%;          /* #0284C7 */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 222 47% 11%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 32 95% 44%;             /* #D97706 */
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 199 89% 39%;
+
+  --sidebar-background: 210 40% 98%;
+  --sidebar-foreground: 222 47% 11%;
+  --sidebar-primary: 199 89% 39%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 210 40% 94%;
+  --sidebar-accent-foreground: 222 47% 11%;
+  --sidebar-border: 214 32% 91%;
+  --sidebar-ring: 199 89% 39%;
+
+  --ice-glow: 199 89% 39%;
+  --ice-subtle: 199 30% 80%;
+  --gold: 32 95% 44%;
+  --gradient-ice: linear-gradient(135deg, hsl(199 89% 39% / 0.10), hsl(199 89% 39% / 0.02));
+  --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(210 40% 98%));
+  --gradient-hero: linear-gradient(135deg, hsl(210 40% 98%), hsl(0 0% 100%));
+  --shadow-glow: 0 0 30px hsl(199 89% 39% / 0.12);
+  --shadow-card: 0 4px 24px hsl(222 47% 11% / 0.08);
+}
+
 /* Lovable utility classes used by ported pages */
 .gradient-ice { background: var(--gradient-ice); }
 .gradient-card { background: var(--gradient-card); }
@@ -338,3 +401,105 @@ input:focus, select:focus, textarea:focus {
     @apply bg-background text-foreground;
   }
 }
+
+
+/* ── Light-mode utility overrides ─────────────────────────────
+   Dynasty Dreams was originally a dark-only app with many hardcoded
+   color classes (text-white, bg-[#0A0A0A], etc.) sprinkled across
+   components. Rather than refactor every component to use semantic
+   tokens, we override the highest-traffic offenders here so toggling
+   light mode produces a readable, AA-contrast surface. New components
+   should prefer `text-foreground`, `bg-card`, `border-border`, etc. */
+
+html.light body {
+  background-color: #FFFFFF;
+  color: #0F172A;
+}
+
+/* Text colors — anything that hardcoded white text now reads dark on white. */
+html.light .text-white,
+html.light .text-zinc-50,
+html.light .text-zinc-100,
+html.light .text-zinc-200 { color: #0F172A !important; }
+
+html.light .text-zinc-300,
+html.light .text-zinc-400,
+html.light .text-\[\#A1A1AA\] { color: #475569 !important; }
+
+html.light .text-zinc-500,
+html.light .text-\[\#71717A\],
+html.light .text-\[\#52525B\] { color: #64748B !important; }
+
+/* Dynasty brand cyan stays bright but darkens slightly for contrast on white */
+html.light .text-\[\#00D2FF\] { color: #0284C7 !important; }
+html.light .text-cyan-400,
+html.light .text-cyan-300 { color: #0369A1 !important; }
+
+/* Backgrounds — the dark hex palette flips to clean light surfaces. */
+html.light .bg-\[\#0A0A0A\],
+html.light .bg-\[\#0a0a0a\],
+html.light .bg-\[\#000\],
+html.light .bg-black { background-color: #FFFFFF !important; }
+
+html.light .bg-\[\#141414\],
+html.light .bg-\[\#1A1A1A\],
+html.light .bg-\[\#1a1a1a\],
+html.light .bg-zinc-900,
+html.light .bg-zinc-800 { background-color: #F8FAFC !important; }
+
+html.light .bg-\[\#0A0A0A\]\/50,
+html.light .bg-\[\#141414\]\/50,
+html.light .bg-\[\#141414\]\/80,
+html.light .bg-\[\#141414\]\/90 { background-color: rgba(248, 250, 252, 0.85) !important; }
+
+/* Subtle white-tint overlays flip to subtle dark tints. */
+html.light .bg-white\/5 { background-color: rgba(15, 23, 42, 0.04) !important; }
+html.light .bg-white\/10 { background-color: rgba(15, 23, 42, 0.06) !important; }
+html.light .bg-white\/20 { background-color: rgba(15, 23, 42, 0.10) !important; }
+
+html.light .hover\:bg-white\/5:hover { background-color: rgba(15, 23, 42, 0.05) !important; }
+html.light .hover\:bg-white\/10:hover { background-color: rgba(15, 23, 42, 0.08) !important; }
+
+/* Borders */
+html.light .border-white\/5 { border-color: rgba(15, 23, 42, 0.06) !important; }
+html.light .border-white\/10 { border-color: rgba(15, 23, 42, 0.10) !important; }
+html.light .border-white\/20 { border-color: rgba(15, 23, 42, 0.14) !important; }
+
+/* Surface helper class used across emergent pages. */
+html.light .surface,
+html.light .glass {
+  background-color: #FFFFFF !important;
+  border-color: rgba(15, 23, 42, 0.10) !important;
+}
+
+/* Dynasty Dreams brand-mark stays cyan but slightly darker for contrast.
+   The brand uses `text-[#00D2FF]` for "DREAMS"; we already mapped above. */
+
+/* ── Recharts chart contrast ─────────────────────────────────
+   recharts inlines colors into SVG attributes (stroke, fill), so we
+   can't override them via Tailwind utilities. Instead, target the
+   gridlines + tick text + tooltip skin so charts remain readable on
+   the light background. The series colors themselves keep their
+   brand identity (cyan, amber, red), which all have acceptable
+   contrast on white. */
+html.light .recharts-cartesian-grid line,
+html.light .recharts-cartesian-grid-horizontal line,
+html.light .recharts-cartesian-grid-vertical line {
+  stroke: rgba(15, 23, 42, 0.12) !important;
+}
+html.light .recharts-cartesian-axis-line { stroke: rgba(15, 23, 42, 0.30) !important; }
+html.light .recharts-cartesian-axis-tick-line { stroke: rgba(15, 23, 42, 0.30) !important; }
+html.light .recharts-cartesian-axis-tick-value,
+html.light .recharts-text { fill: #475569 !important; }
+html.light .recharts-legend-item-text { color: #0F172A !important; }
+html.light .recharts-default-tooltip {
+  background-color: #FFFFFF !important;
+  border-color: rgba(15, 23, 42, 0.14) !important;
+  color: #0F172A !important;
+}
+html.light .recharts-tooltip-label,
+html.light .recharts-tooltip-item { color: #0F172A !important; }
+
+/* Where chart series rely on `--ice-glow`, the light-mode HSL block at
+   the top of this file already redefines that token, so the gradient
+   strokes stay sensible (cyan-on-white). */

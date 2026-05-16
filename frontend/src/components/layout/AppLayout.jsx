@@ -10,6 +10,7 @@ import { useGlobalSocketEvent } from "@/hooks/use-global-socket";
 import { toast } from "sonner";
 import GlobalTradeBuilder from "@/lovable/components/trade/GlobalTradeBuilder";
 import TeamSettingsModal from "@/lovable/components/TeamSettingsModal";
+import AppPreferencesMenu from "./AppPreferencesMenu";
 
 export function AppLayout({ children, onSettingsClick }) {
   const { user } = useAuth();
@@ -81,6 +82,8 @@ export function AppLayout({ children, onSettingsClick }) {
                   <Settings className="h-5 w-5" />
                 </Button>
               )}
+              {/* Global app preferences cog (theme toggle + future settings). */}
+              <AppPreferencesMenu />
               {user && (
                 <div className="flex items-center gap-3 pl-3 border-l border-white/10">
                   {/* Username + role text removed from header per user request —
