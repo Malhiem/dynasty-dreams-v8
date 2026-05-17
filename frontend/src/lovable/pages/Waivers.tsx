@@ -9,11 +9,15 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Clock, DollarSign, Plus, History, TrendingUp, ChevronDown, ChevronUp } from "lucide-react";
+import { Clock, DollarSign, Plus, History, TrendingUp, ChevronDown, ChevronUp, AlertTriangle, ArrowRight } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
-import api from "@/lib/api";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import api, { formatApiError } from "@/lib/api";
 import TeamLink from "@/lovable/components/TeamLink";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 
 interface WaiverPlayer {
   id: number;
@@ -48,6 +52,7 @@ interface ClaimHistory {
 }
 
 const Waivers = () => {
+  const navigate = useNavigate();
   const { league, leagueTeams, myTeam } = useActiveLeague();
   const leagueTeamsCount = leagueTeams?.length || 0;
 
@@ -57,6 +62,14 @@ const Waivers = () => {
   const [liveHistory, setLiveHistory] = useState<any[]>([]);
   const [liveBudget, setLiveBudget] = useState<any>(null);
   const [liveOrder, setLiveOrder] = useState<any[]>([]);
+
+  // Claim modal state ────────────────────────────────────────────────
+  const [claimModalOpen, setClaimModalOpen] = useState(false);
+  const [selectedPlayer, setSelectedPlayer] = useState<any>(null);
+  const [bidAmount, setBidAmount] = useState<number>(1);
+  const [precheck, setPrecheck] = useState<any>(null);
+  const [prechecking, setPrechecking] = useState(false);
+  const [claimSubmitting, setClaimSubmitting] = useState(false);
 
   useEffect(() => {
     if (!league?.id) return;
@@ -79,6 +92,67 @@ const Waivers = () => {
     });
     return () => { cancelled = true; };
   }, [league?.id, myTeam?.id]);
+
+  // Re-fetch precheck whenever the modal opens, selected player changes,
+  // or the bid amount changes (FAAB blocker depends on bid).
+  useEffect(() => {
+    if (!claimModalOpen || !selectedPlayer || !league?.id) return;
+    let cancelled = false;
+    setPrechecking(true);
+    api.get(`/waivers/precheck`, {
+      params: {
+        league_id: league.id,
+        player_id: selectedPlayer.id,
+        bid_amount: bidAmount || 0,
+      },
+    })
+      .then((res) => { if (!cancelled) setPrecheck(res.data); })
+      .catch(() => { if (!cancelled) setPrecheck(null); })
+      .finally(() => { if (!cancelled) setPrechecking(false); });
+    return () => { cancelled = true; };
+  }, [claimModalOpen, selectedPlayer?.id, bidAmount, league?.id]);
+
+  const openClaimModal = (player: any) => {
+    setSelectedPlayer(player);
+    setBidAmount(1);
+    setPrecheck(null);
+    setClaimModalOpen(true);
+  };
+
+  const refreshLive = async () => {
+    if (!league?.id) return;
+    try {
+      const [cRes, bRes] = await Promise.all([
+        api.get(`/waivers/claims?my_claims=true&league_id=${league.id}`),
+        myTeam?.id
+          ? api.get(`/waivers/budget?league_id=${league.id}`)
+          : Promise.resolve({ data: null }),
+      ]);
+      setLiveClaims(cRes.data || []);
+      if (bRes.data) setLiveBudget(bRes.data);
+    } catch { /* swallow */ }
+  };
+
+  const handleSubmitClaim = async () => {
+    if (!selectedPlayer || !league?.id) return;
+    setClaimSubmitting(true);
+    try {
+      await api.post("/waivers/claim", {
+        league_id: league.id,
+        player_id: selectedPlayer.id,
+        bid_amount: bidAmount,
+      });
+      toast.success(`Claim placed on ${selectedPlayer.name} for $${bidAmount}`, {
+        description: "You'll see the result after waivers process.",
+      });
+      setClaimModalOpen(false);
+      await refreshLive();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setClaimSubmitting(false);
+    }
+  };
 
   const faabBudget = liveBudget?.total_budget ?? 100;
   const faabSpent = liveBudget?.spent ?? 0;
@@ -114,6 +188,7 @@ const Waivers = () => {
     seasonPoints: p.points || 0,
     percentOwned: Math.min(99, Math.round(((p.games_played || 0) / 50) * 100)),
     trending: (p.points > 30 ? "up" : "stable") as any,
+    hasActiveClaim: !!p.has_active_claim,
   })), [livePlayers]);
 
   const myClaims: WaiverClaim[] = useMemo(() => (liveClaims || []).map((c: any, i: number) => ({
@@ -278,7 +353,12 @@ const Waivers = () => {
                         <TableCell className="text-right">{player.seasonPoints}</TableCell>
                         <TableCell className="text-center">{player.percentOwned}%</TableCell>
                         <TableCell className="text-right">
-                          <Button size="sm" className="bg-primary hover:bg-primary/90">
+                          <Button
+                            size="sm"
+                            className="bg-primary hover:bg-primary/90"
+                            onClick={() => openClaimModal(player)}
+                            data-testid={`waiver-claim-${player.id}`}
+                          >
                             <Plus className="h-4 w-4 mr-1" />
                             Claim
                           </Button>
@@ -363,6 +443,138 @@ const Waivers = () => {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Waiver Claim Modal with pre-check */}
+        <Dialog open={claimModalOpen} onOpenChange={setClaimModalOpen}>
+          <DialogContent className="bg-card border-border" data-testid="waiver-claim-modal">
+            <DialogHeader>
+              <DialogTitle>Place Waiver Claim</DialogTitle>
+              <DialogDescription>
+                Place a FAAB bid for {selectedPlayer?.name}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4 space-y-4">
+              <div className="flex items-center gap-3 p-3 bg-secondary/40 rounded-lg">
+                <Badge variant="outline">{selectedPlayer?.position}</Badge>
+                <div>
+                  <p className="font-medium">{selectedPlayer?.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedPlayer?.team} · {selectedPlayer?.seasonPoints} pts
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm text-muted-foreground">FAAB Bid ($)</label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={faabRemaining}
+                  value={bidAmount}
+                  onChange={(e) => setBidAmount(parseFloat(e.target.value) || 0)}
+                  className="mt-2"
+                  data-testid="waiver-bid-amount"
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Remaining budget: ${faabRemaining}
+                </p>
+              </div>
+
+              {/* Precheck panel ─ surfaces roster / cap / FAAB blockers */}
+              {prechecking && (
+                <p className="text-xs text-muted-foreground italic" data-testid="precheck-loading">
+                  Checking your roster…
+                </p>
+              )}
+              {precheck && (
+                <div
+                  className="rounded-lg border border-border p-3 space-y-2 bg-background/60"
+                  data-testid="precheck-panel"
+                >
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span data-testid="precheck-roster">
+                      Roster: <span className="text-foreground font-medium">
+                        {precheck.roster.current}/{precheck.roster.max}
+                      </span>
+                      {precheck.roster.has_room ? (
+                        <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1.5 border-success/50 text-success">Room</Badge>
+                      ) : (
+                        <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1.5 border-destructive/50 text-destructive">Full</Badge>
+                      )}
+                    </span>
+                    {precheck.cap?.enabled && (
+                      <span data-testid="precheck-cap">
+                        Cap: <span className="text-foreground font-medium">
+                          ${(precheck.cap.would_be / 1_000_000).toFixed(2)}M
+                        </span> / ${(precheck.cap.cap / 1_000_000).toFixed(1)}M
+                        {precheck.cap.fits ? (
+                          <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1.5 border-success/50 text-success">Fits</Badge>
+                        ) : (
+                          <Badge variant="outline" className="ml-2 text-[10px] py-0 px-1.5 border-destructive/50 text-destructive">Over</Badge>
+                        )}
+                      </span>
+                    )}
+                  </div>
+
+                  {(precheck.issues || []).map((iss: any, idx: number) => {
+                    const isError = iss.severity === "error";
+                    return (
+                      <div
+                        key={`${iss.code}-${idx}`}
+                        data-testid={`precheck-issue-${iss.code}`}
+                        className={cn(
+                          "flex items-start gap-2 p-2 rounded text-xs border",
+                          isError
+                            ? "bg-destructive/10 text-destructive border-destructive/30"
+                            : "bg-yellow-500/10 text-yellow-600 dark:text-yellow-300 border-yellow-500/30",
+                        )}
+                      >
+                        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                        <span>{iss.message}</span>
+                      </div>
+                    );
+                  })}
+
+                  {precheck.requires_drop && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full border-primary/40 text-primary hover:bg-primary/10 gap-1"
+                      data-testid="precheck-proceed-to-drop"
+                      onClick={() => {
+                        setClaimModalOpen(false);
+                        navigate("/roster");
+                      }}
+                    >
+                      Proceed to Drop Player <ArrowRight className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="ghost"
+                onClick={() => setClaimModalOpen(false)}
+                data-testid="waiver-claim-cancel"
+              >
+                Cancel
+              </Button>
+              <Button
+                className="bg-primary hover:bg-primary/90"
+                onClick={handleSubmitClaim}
+                disabled={
+                  claimSubmitting ||
+                  bidAmount > faabRemaining ||
+                  (precheck && !precheck.can_claim)
+                }
+                data-testid="waiver-claim-confirm"
+              >
+                {claimSubmitting ? "Placing…" : "Place Claim"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppLayout>
   );

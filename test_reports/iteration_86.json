@@ -1,0 +1,37 @@
+{
+  "summary": "Iter 86 — Validated Waivers pre-check UX and 76 router unit tests on Dynasty Dreams. All 76 router tests pass (3.39s). New live integration suite (4/4 pass) exercises happy-path precheck, requires_drop blocker (roster_size=13 + cap_enabled, with deterministic restore), claim placement + my_claims propagation, and admin regression for /leagues, /teams, /players, /trade-block, /activity. Frontend E2E: chriszarek can open the claim modal on /waivers, precheck-panel renders the 13/23 roster pill + Room badge, sonner toast 'Claim placed on Connor McDavid for $2' fires on success, and a high bid disables the confirm button and surfaces the insufficient_faab issue text correctly. League roster_size restored to 23, salary_cap_enabled=false, test waiver_claim cleaned up.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/waivers/claims?my_claims=true", "issue": "Legacy test_trade_waiver_engine.py::TestWaiverClaimsList::test_get_my_claims fails because it relies on a claim made by a skipped/prior fixture step — unrelated to iter 86 changes; precheck + claim verified independently in iter86 live suite."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter86_waivers_precheck_live.py",
+    "/app/backend/tests/test_waivers_router.py",
+    "/app/backend/tests/test_roster_router.py",
+    "/app/backend/tests/test_notifications_router.py",
+    "/app/test_reports/pytest/iteration_86_routers.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Waivers.tsx file has @ts-nocheck — fine for now but the precheck typing should be hardened next iteration (e.g., a Precheck interface) to prevent runtime null-deref on precheck.cap if backend ever omits it.",
+    "Precheck addition calculation (salary synthesis) is duplicated between waivers.py precheck and roster cap calc — extract into a shared util to keep them in lockstep.",
+    "GET /api/waivers/claims returns a bare list when my_claims=true but the frontend already handles both .claims and bare array shapes — consider standardizing the envelope to {claims:[...]} across all waivers list endpoints."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter86_waivers_precheck_live.py (new — 4 live integration tests)"
+  ],
+  "success_rate": {"backend": "100% (76/76 router unit + 4/4 iter86 live)", "frontend": "100% (modal, precheck, toast, blocker, cancel all green)"},
+  "test_credentials": "Admin: admin@dynastydreams.com / Admin123!  ·  Standard: chriszarek@gmail.com / Chris2026! (team in Ice Kings, league 69e46af167999bfb85c39628)",
+  "seed_data_creation": "None. Test created one waiver_claim on McDavid (bid=2) and deleted it after the run. League roster_size/salary_cap_enabled/salary_cap mutated for blocker test and fully restored to 23 / false / 0 (verified post-run).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter86 live test file at /app/backend/tests/test_iter86_waivers_precheck_live.py is reusable for future regressions on the precheck/claim flow — it autorestores league state and cleans up its own claim. To reproduce the requires_drop UI path manually, mutate the league via mongo (roster_size=13, salary_cap_enabled=true, salary_cap=50000000), then reload /waivers and click Claim — the precheck panel will show no_roster_space + insufficient_cap issues and the 'Proceed to Drop Player' button (testid precheck-proceed-to-drop) which routes to /roster.",
+  "rca of the issue": "No bugs detected in iter86 scope. Pre-check, claim placement, toast, and 76 router unit tests all pass end-to-end. Single unrelated legacy test_trade_waiver_engine::test_get_my_claims failure is a fixture-ordering issue in the legacy test file (not iter86 code)."
+}
