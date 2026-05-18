@@ -3430,6 +3430,7 @@ _router_deps = {
     "get_current_user": get_current_user,
     "_safe_object_id": _safe_object_id,
     "_evaluate_conditions": _evaluate_conditions,
+    "_evaluate_single_condition": _evaluate_single_condition,
     "_execute_trade": _execute_trade,
     "_apply_pick_upgrades": _apply_pick_upgrades,
     "_recompute_team_salary_used": _recompute_team_salary_used,

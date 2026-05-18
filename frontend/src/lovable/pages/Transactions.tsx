@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowRightLeft, ThumbsUp, ThumbsDown, Clock, CheckCircle2, XCircle, AlertTriangle, Activity } from "lucide-react";
+import { ArrowRightLeft, ThumbsUp, ThumbsDown, Clock, CheckCircle2, XCircle, AlertTriangle, Activity, GitBranch, Zap, MinusCircle } from "lucide-react";
 import TeamLink from "@/lovable/components/TeamLink";
 
 interface TradeAsset {
@@ -266,6 +266,255 @@ function TradeCard({ trade }: { trade: PendingTrade }) {
   );
 }
 
+// ─── Conditional Trade rendering ──────────────────────────────────────
+// Maps backend metric keys → human-readable labels.
+const METRIC_LABELS: Record<string, string> = {
+  // Player
+  nhl_points: "NHL points",
+  goals: "Goals",
+  assists: "Assists",
+  ppg: "Points per game",
+  games_played: "Games played",
+  fantasy_points: "Fantasy points",
+  live_fantasy_points: "Live fantasy points",
+  // Team
+  team_wins: "Wins",
+  team_losses: "Losses",
+  team_points_for: "Points For",
+  team_rank: "League rank",
+  made_playoffs: "Made playoffs",
+  won_division: "Won division",
+  won_conference: "Won conference",
+  won_championship: "Won championship",
+  won_consolation: "Won consolation bracket",
+  won_draft_lottery: "Won draft lottery",
+  // Pick
+  pick_slot: "Pick slot (#)",
+  pick_round: "Pick round",
+};
+
+const OP_LABEL: Record<string, string> = {
+  gte: "≥",
+  lte: "≤",
+  eq: "=",
+};
+
+function describeCondition(c: any): string {
+  if (c?.description) return c.description;
+  const m = METRIC_LABELS[c?.metric] || c?.metric || "metric";
+  const op = OP_LABEL[c?.operator] || c?.operator || "";
+  return `${m} ${op} ${c?.threshold}`;
+}
+
+function ConditionEvalRow({ row }: { row: any }) {
+  const c = row?.condition || {};
+  const met = !!row?.met;
+  return (
+    <div
+      className={`flex items-start gap-2 rounded-md border px-3 py-2 ${
+        met
+          ? "border-emerald-500/30 bg-emerald-500/5"
+          : "border-amber-500/30 bg-amber-500/5"
+      }`}
+      data-testid={`condition-eval-${c.metric}-${c.threshold}`}
+    >
+      {met ? (
+        <CheckCircle2 className="h-4 w-4 mt-0.5 text-emerald-400 shrink-0" />
+      ) : (
+        <Clock className="h-4 w-4 mt-0.5 text-amber-400 shrink-0" />
+      )}
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">{describeCondition(c)}</p>
+        <p className="text-[11px] text-muted-foreground mt-0.5">
+          Current: <span className="font-semibold text-foreground">
+            {row?.actual_value != null ? Number(row.actual_value).toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—"}
+          </span>
+          {" · "}
+          <span className={met ? "text-emerald-400" : "text-amber-400"}>
+            {met ? "Met — trade triggers" : "Not yet met"}
+          </span>
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PickUpgradeRow({ row }: { row: any }) {
+  const c = row?.condition || {};
+  const state = row?.state || "pending";
+  const pick = row?.pick || {};
+  const stateConfig =
+    state === "triggered"
+      ? { icon: Zap, color: "text-emerald-400", border: "border-emerald-500/30", bg: "bg-emerald-500/5", label: "Triggered" }
+      : state === "failed"
+      ? { icon: MinusCircle, color: "text-muted-foreground", border: "border-border", bg: "bg-secondary/30", label: "Did not trigger" }
+      : { icon: Clock, color: "text-amber-400", border: "border-amber-500/30", bg: "bg-amber-500/5", label: "Pending" };
+  const Icon = stateConfig.icon;
+  return (
+    <div
+      className={`flex items-start gap-2 rounded-md border ${stateConfig.border} ${stateConfig.bg} px-3 py-2`}
+      data-testid={`pick-upgrade-${row?.pick_id}`}
+    >
+      <Icon className={`h-4 w-4 mt-0.5 ${stateConfig.color} shrink-0`} />
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-sm font-medium">
+            {row?.description || (
+              <>Pick {pick.year} R{pick.round}{pick.pick_number ? ` #${pick.pick_number}` : ""}</>
+            )}
+          </p>
+          <Badge variant="outline" className={`text-[10px] ${stateConfig.color} ${stateConfig.border}`}>
+            {stateConfig.label}
+          </Badge>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          <span className="uppercase tracking-wider mr-1">Condition:</span>
+          {describeCondition(c)}
+          {row?.actual_value != null && (
+            <span className="ml-2">
+              · Current: <span className="font-semibold text-foreground">{Number(row.actual_value).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+            </span>
+          )}
+        </p>
+        <p className="text-[11px] text-foreground/85">
+          <span className="uppercase tracking-wider text-muted-foreground mr-1">Outcome:</span>
+          {row?.outcome_text}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ConditionalTradeCard({ trade, mapped }: { trade: any; mapped: PendingTrade }) {
+  const conds = trade?.conditions_eval || [];
+  const upgrades = trade?.pick_upgrades_state || [];
+  const hasAny = conds.length > 0 || upgrades.length > 0;
+  return (
+    <Card className="border-border/50" data-testid={`conditional-trade-${trade._id}`}>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-3">
+            <GitBranch className="h-5 w-5 text-primary" />
+            <CardTitle className="text-lg">
+              <TeamLink name={mapped.teamA} /> <span className="text-muted-foreground mx-1">↔</span> <TeamLink name={mapped.teamB} />
+            </CardTitle>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="outline" className="border-emerald-500/50 text-emerald-400">
+              <CheckCircle2 className="h-3 w-3 mr-1" />
+              Executed
+            </Badge>
+            {conds.length > 0 && (
+              <Badge variant="outline" className="border-primary/50 text-primary">
+                {conds.length} trigger condition{conds.length === 1 ? "" : "s"}
+              </Badge>
+            )}
+            {upgrades.length > 0 && (
+              <Badge variant="outline" className="border-amber-500/50 text-amber-400">
+                {upgrades.length} pick protection{upgrades.length === 1 ? "" : "s"}
+              </Badge>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
+          <span>Executed: {(trade.executed_at || trade.processed_at || "").slice(0, 16).replace("T", " ") || "—"}</span>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Trade assets — reuses the same layout block as TradeCard for consistency */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div>
+            <p className="text-sm font-medium text-muted-foreground mb-2"><TeamLink name={mapped.teamA} /> sent:</p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Player</TableHead>
+                  <TableHead className="text-xs">Pos</TableHead>
+                  <TableHead className="text-xs">Cap</TableHead>
+                  <TableHead className="text-xs">G</TableHead>
+                  <TableHead className="text-xs">A</TableHead>
+                  <TableHead className="text-xs">P</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {mapped.assetsFromA.map((a) => (
+                  <TableRow key={a.name}>
+                    <TableCell className="font-medium text-sm">
+                      {a.name}
+                      {a.type === "pick" && <Badge variant="secondary" className="ml-1 text-[10px]">Pick</Badge>}
+                    </TableCell>
+                    <TableCell className="text-sm">{a.position}</TableCell>
+                    <TableCell className="text-sm">{a.capHit}</TableCell>
+                    <TableCell className="text-sm">{a.type === "player" ? a.goals : "—"}</TableCell>
+                    <TableCell className="text-sm">{a.type === "player" ? a.assists : "—"}</TableCell>
+                    <TableCell className="text-sm">{a.type === "player" ? a.points : "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          <div>
+            <p className="text-sm font-medium text-muted-foreground mb-2"><TeamLink name={mapped.teamB} /> sent:</p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-xs">Player</TableHead>
+                  <TableHead className="text-xs">Pos</TableHead>
+                  <TableHead className="text-xs">Cap</TableHead>
+                  <TableHead className="text-xs">G</TableHead>
+                  <TableHead className="text-xs">A</TableHead>
+                  <TableHead className="text-xs">P</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {mapped.assetsFromB.map((a) => (
+                  <TableRow key={a.name}>
+                    <TableCell className="font-medium text-sm">
+                      {a.name}
+                      {a.type === "pick" && <Badge variant="secondary" className="ml-1 text-[10px]">Pick</Badge>}
+                    </TableCell>
+                    <TableCell className="text-sm">{a.position}</TableCell>
+                    <TableCell className="text-sm">{a.capHit}</TableCell>
+                    <TableCell className="text-sm">{a.type === "player" ? a.goals : "—"}</TableCell>
+                    <TableCell className="text-sm">{a.type === "player" ? a.assists : "—"}</TableCell>
+                    <TableCell className="text-sm">{a.type === "player" ? a.points : "—"}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+
+        {/* Conditions + Pick upgrades block */}
+        {hasAny && (
+          <div className="rounded-lg border border-border bg-secondary/20 p-3 space-y-3" data-testid={`conditional-clauses-${trade._id}`}>
+            {conds.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
+                  <Zap className="h-3.5 w-3.5" /> Trigger Conditions
+                </p>
+                {conds.map((row: any, idx: number) => (
+                  <ConditionEvalRow key={idx} row={row} />
+                ))}
+              </div>
+            )}
+            {upgrades.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
+                  <GitBranch className="h-3.5 w-3.5" /> Pick Protections / Upgrades
+                </p>
+                {upgrades.map((row: any, idx: number) => (
+                  <PickUpgradeRow key={idx} row={row} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 const Transactions = () => {
   const { league, leagueTeams } = useActiveLeague();
   const leagueTeamsCount = leagueTeams?.length || 0;
@@ -276,6 +525,10 @@ const Transactions = () => {
   // Per-trade vote payload: { [tradeId]: { yourVote, threshold, votes } }
   const [voteState, setVoteState] = useState<Record<string, any>>({});
   const [reloadTick, setReloadTick] = useState(0);
+  // Conditional / pick-protection trades — populated only when the user
+  // opens the Conditional tab (avoids extra work on first paint).
+  const [conditionalTrades, setConditionalTrades] = useState<any[] | null>(null);
+  const [conditionalLoading, setConditionalLoading] = useState(false);
 
   useEffect(() => {
     if (!league?.id) return;
@@ -288,6 +541,21 @@ const Transactions = () => {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [league?.id, reloadTick]);
+
+  // Conditional trades — fetched lazily on tab open + every reload tick.
+  useEffect(() => {
+    if (tab !== "conditional" || !league?.id) return;
+    let cancelled = false;
+    setConditionalLoading(true);
+    api.get(`/trades/conditional?league_id=${league.id}`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setConditionalTrades(data?.trades || []);
+      })
+      .catch(() => { if (!cancelled) setConditionalTrades([]); })
+      .finally(() => { if (!cancelled) setConditionalLoading(false); });
+    return () => { cancelled = true; };
+  }, [tab, league?.id, reloadTick]);
 
   // Pull live vote details once we know which pending trades exist
   useEffect(() => {
@@ -418,6 +686,12 @@ const Transactions = () => {
               )}
             </TabsTrigger>
             <TabsTrigger value="all" data-testid="transactions-tab-all">All</TabsTrigger>
+            <TabsTrigger value="conditional" data-testid="transactions-tab-conditional">
+              Conditional
+              {conditionalTrades && conditionalTrades.length > 0 && (
+                <Badge variant="secondary" className="ml-2 text-xs">{conditionalTrades.length}</Badge>
+              )}
+            </TabsTrigger>
             <TabsTrigger value="activity" data-testid="transactions-tab-activity">
               Activity
               {activity.length > 0 && (
@@ -442,6 +716,52 @@ const Transactions = () => {
             {all.length === 0 ? (
               <Card><CardContent className="py-8 text-center text-muted-foreground">No trades yet in this league. When managers propose trades they'll appear here.</CardContent></Card>
             ) : all.map((t) => <TradeCard key={t.id} trade={t} />)}
+          </TabsContent>
+
+          <TabsContent value="conditional" className="space-y-4" data-testid="transactions-conditional-content">
+            {conditionalLoading && conditionalTrades === null ? (
+              <Card><CardContent className="py-8 text-center text-muted-foreground">Loading conditional trades…</CardContent></Card>
+            ) : (conditionalTrades || []).length === 0 ? (
+              <Card>
+                <CardContent className="py-8 text-center text-muted-foreground" data-testid="conditional-empty">
+                  No executed trades with conditions or pick protections yet.
+                  <span className="block text-xs mt-2">
+                    Conditional trades appear here once they've been accepted and processed.
+                  </span>
+                </CardContent>
+              </Card>
+            ) : (
+              (conditionalTrades || []).map((t: any) => {
+                // Reuse the mapper used by the other tabs so the asset rows are
+                // formatted consistently with the rest of the page.
+                const tradeId = t._id || t.id;
+                const fromAssets = t.assets_offered || t.from_assets || t.team_a_assets || [];
+                const toAssets = t.assets_requested || t.to_assets || t.team_b_assets || [];
+                const mapAsset = (a: any): TradeAsset => ({
+                  name: a.player_name || a.name || (a.asset_type === "pick" ? `${a.pick_year || ""} ${a.pick_round ? "R" + a.pick_round : ""} Pick` : "Unknown"),
+                  position: a.position || "—",
+                  age: a.age || 0,
+                  capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
+                  goals: a.goals || 0,
+                  assists: a.assists || 0,
+                  points: a.points || 0,
+                  fantasyPts: a.fantasy_points || 0,
+                  type: (a.asset_type === "pick" || a.item_type === "pick" ? "pick" : "player"),
+                });
+                const mapped: PendingTrade = {
+                  id: tradeId,
+                  teamA: teamName(t.proposer_team_id || t.from_team_id || t.team_a_id),
+                  teamB: teamName(t.target_team_id || t.to_team_id || t.team_b_id),
+                  assetsFromA: fromAssets.map(mapAsset),
+                  assetsFromB: toAssets.map(mapAsset),
+                  status: "accepted",
+                  submittedAt: "",
+                  processesAt: "",
+                  votes: { approve: 0, veto: 0, total: 0 },
+                };
+                return <ConditionalTradeCard key={tradeId} trade={t} mapped={mapped} />;
+              })
+            )}
           </TabsContent>
 
           <TabsContent value="activity" className="space-y-2">

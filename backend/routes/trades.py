@@ -173,6 +173,133 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
     return trade_doc
 
 
+@router.get("/trades/conditional")
+async def get_conditional_trades(league_id: str, request: Request = None):
+    """Return all EXECUTED trades in this league that carry either trigger
+    conditions or pick-protection upgrades, alongside a live evaluation of
+    each clause so the UI can show "what would happen if triggered" + the
+    current met/unmet state.
+
+    Shape:
+        {
+          "trades": [
+            {
+              ...full trade doc (assets, parties, dates, status),
+              "conditions_eval": [
+                {"condition": {...}, "actual_value": float, "met": bool}
+              ],
+              "pick_upgrades_state": [
+                {
+                  ...the original pick_upgrade clause,
+                  "pick": {round, year, pick_number, current_team_id, ...},
+                  "actual_value": float|None,
+                  "met": bool,
+                  "state": "triggered" | "failed" | "pending",
+                  "outcome_text": str   # human-readable "if triggered" line
+                }
+              ]
+            },
+            ...
+          ]
+        }
+    """
+    db = _db()
+    query = {
+        "league_id": league_id,
+        "status": "executed",
+        "$or": [
+            {"conditions": {"$exists": True, "$ne": []}},
+            {"pick_upgrades": {"$exists": True, "$ne": []}},
+        ],
+    }
+    raw_trades = await db.trades.find(query).sort("executed_at", -1).to_list(200)
+
+    # Cache picks we touch so multi-upgrade trades don't re-fetch the same row.
+    pick_cache: dict = {}
+
+    async def _resolve_pick(pid: str):
+        if not pid:
+            return None
+        if pid in pick_cache:
+            return pick_cache[pid]
+        try:
+            doc = await db.draft_picks.find_one({"_id": ObjectId(pid)})
+        except Exception:
+            doc = None
+        if doc:
+            doc["_id"] = str(doc["_id"])
+        pick_cache[pid] = doc
+        return doc
+
+    out = []
+    evaluate = _deps["_evaluate_conditions"]
+    eval_single = _deps.get("_evaluate_single_condition")
+    for t in raw_trades:
+        t["_id"] = str(t["_id"])
+
+        # Trigger-conditions evaluation (whole-trade gate clauses)
+        try:
+            cond_eval = await evaluate(t)
+            t["conditions_eval"] = cond_eval.get("results", [])
+        except Exception:
+            t["conditions_eval"] = []
+
+        # Per-pick upgrade state (pick protection clauses)
+        upgrades_state = []
+        for up in (t.get("pick_upgrades") or []):
+            cond = up.get("condition") or {}
+            pick = await _resolve_pick(up.get("pick_id"))
+            # Current state — applied, failed, or still pending
+            if up.get("applied_at"):
+                state = "triggered"
+            elif up.get("failed_at"):
+                state = "failed"
+            else:
+                state = "pending"
+            actual = up.get("actual_value")
+            met = None
+            if state == "pending" and eval_single:
+                try:
+                    met, actual = await eval_single(cond, t)
+                except Exception:
+                    met = None
+            elif state == "triggered":
+                met = True
+            elif state == "failed":
+                met = False
+            # Build a human-readable "outcome" line for the UI
+            new_year = up.get("new_year")
+            new_round = up.get("new_round")
+            new_team = up.get("new_team_id")
+            parts = []
+            if new_year:
+                parts.append(str(new_year))
+            if new_round:
+                parts.append(f"R{new_round}")
+            if pick and not new_year and not new_round:
+                parts.append(f"{pick.get('year')} R{pick.get('round')}")
+            outcome_target = " ".join(parts) or "pick"
+            if state == "triggered":
+                outcome_text = f"Pick transferred → {outcome_target}"
+            elif state == "failed":
+                outcome_text = f"Did not trigger (condition unmet at evaluation)"
+            else:
+                outcome_text = f"If triggered, pick becomes {outcome_target}"
+
+            upgrades_state.append({
+                **up,
+                "pick": pick,
+                "actual_value": actual,
+                "met": met,
+                "state": state,
+                "outcome_text": outcome_text,
+            })
+        t["pick_upgrades_state"] = upgrades_state
+        out.append(t)
+
+    return {"trades": out, "count": len(out)}
+
+
 @router.get("/trades")
 async def get_trades(
     league_id: Optional[str] = None,
