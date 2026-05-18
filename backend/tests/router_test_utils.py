@@ -53,7 +53,19 @@ async def isolated_router_app(router_module, *, user: dict | None = None):
     The test database is dropped on exit so each test starts pristine — this
     is the property the iter-85 test-pollution incident specifically lacked.
     """
-    mongo = AsyncIOMotorClient(_env("MONGO_URL"))
+    # Per-test mongo client. We tried sharing one client across tests but
+    # motor's connection pool occasionally hands out a stale socket under
+    # the 200+ test suite (manifests as `AutoReconnect: connection closed`).
+    # Per-test clients with `maxPoolSize=1` keep the kernel TIME_WAIT pool
+    # bounded and `retryReads/Writes=True` masks the rare transient.
+    mongo = AsyncIOMotorClient(
+        _env("MONGO_URL"),
+        maxPoolSize=1,
+        serverSelectionTimeoutMS=5000,
+        connectTimeoutMS=5000,
+        retryReads=True,
+        retryWrites=True,
+    )
     db_name = f"dynasty_test_router_{uuid.uuid4().hex[:8]}"
     db = mongo[db_name]
 
@@ -121,8 +133,10 @@ async def isolated_router_app(router_module, *, user: dict | None = None):
                 activity_calls=activity_calls,
             )
     finally:
-        await mongo.drop_database(db_name)
-        mongo.close()
+        try:
+            await mongo.drop_database(db_name)
+        finally:
+            mongo.close()
 
 
 async def seed_league(db, *, commissioner_id="test_user_0001", co_commissioners=None, salary_cap_enabled=False, salary_cap=82_500_000):
