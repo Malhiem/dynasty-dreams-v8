@@ -1,0 +1,54 @@
+{
+  "summary": "Iter 93 regression complete. Trade-engine extraction (server.py → services/trade_engine.py, 830 LOC moved) verified end-to-end: 132/132 router unit tests pass (4.22s), 15/15 trade-engine integration tests pass (16.71s), and 4/4 live API regression tests pass against the deployed preview using chriszarek credentials. Extracted helpers (_evaluate_conditions, _execute_trade, _apply_pick_upgrades, etc.) correctly wired via setup(deps) injection — POST /api/trades/{id}/evaluate-conditions returns the expected {all_met, results} shape. Frontend smoke (login, dashboard, leagues/{id}, standings, salary-cap, trade-block, waivers, team) loaded with no page errors; Waivers claim modal renders correctly with precheck-panel visible after clicking Claim.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/trades/{id}/evaluate-conditions", "issue": "Returns 200 with all_met=False/results when called on a non-conditional trade rather than 400. Not a regression (pre-existing behavior of _evaluate_conditions with empty conditions list). Cosmetic only."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard / global", "issues": ["Socket.IO websocket reconnect loop spam in console (wss://.../api/socket.io/) — non-fatal but noisy"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter93_live_regression.py",
+    "/app/backend/tests/test_notifications_router.py",
+    "/app/backend/tests/test_roster_router.py",
+    "/app/backend/tests/test_waivers_router.py",
+    "/app/backend/tests/test_analytics_router.py",
+    "/app/backend/tests/test_seasons_router.py",
+    "/app/backend/tests/test_chat_router.py",
+    "/app/backend/tests/test_comparisons_router.py",
+    "/app/backend/tests/test_drafts_router.py",
+    "/app/backend/tests/test_matchups_router.py",
+    "/app/backend/tests/test_players_router.py",
+    "/app/backend/tests/test_users_router.py",
+    "/app/backend/tests/test_multi_party_trade.py",
+    "/app/backend/tests/test_iter88_trade_clears_block.py",
+    "/app/backend/tests/test_iter82_trade_votes.py",
+    "/app/backend/tests/test_iter85_lineup_warnings.py",
+    "/app/backend/tests/test_team_logo.py"
+  ],
+  "action_items": [
+    "MINOR: Review-request testid names `waiver-claim-confirm` / `waiver-claim-cancel` do not exist in /app/frontend/src/pages/WaiversPage.jsx — actual testids are `confirm-claim` (and the cancel button has no data-testid). Either update the testids or update the spec to avoid confusion in future regressions. Also the live rendered claim-trigger button testid appears as `waiver-claim-{playerId}` while source shows `claim-${player.id}` on line 224 — investigate whether frontend build is stale or another file is overriding.",
+    "MINOR: server.py still uses deprecated `@fastapi_app.on_event('startup'/'shutdown')` — should migrate to lifespan handlers.",
+    "MINOR: server.py is 3618 LOC; per code-review guidelines files >700 LOC should continue to be split. Extraction is on a good track."
+  ],
+  "critical_code_review_comments": [
+    "Trade-engine setup(deps) injection pattern: depends on _db, _logger, _broadcast keys in _router_deps — confirmed present at server.py:~3479 wiring. No 500s observed on the four trade-related live endpoints.",
+    "Re-export of helpers at server.py:~2487 preserves all existing call sites (awards, matchups, trades routers) — verified by full integration test pass."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter93_live_regression.py (NEW - 4 live API regression tests covering pending-trades, trades list, transactions, evaluate-conditions)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Used chriszarek@gmail.com / Chris2026! per /app/memory/test_credentials.md and review request. League_id=69e46af167999bfb85c39628 (Ice Kings Head-to-Head). Login via /api/auth/login returns access_token; cookie-based auth also works.",
+  "seed_data_creation": "None — only used existing pending trades (16 found on Ice Kings league).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 93 is a pure refactor (trade-engine extraction) + new router unit tests. Full regression suite is green: 132 router unit tests + 15 integration tests + 4 new live API tests. The new live regression file /app/backend/tests/test_iter93_live_regression.py is reusable as a smoke test against the preview env. Trade engine helpers are now in /app/backend/services/trade_engine.py with setup(deps) injection — if you touch them, re-run the full 132 router + 15 integration + 4 live test suites. Waivers UI claim flow works; just be aware actual testid is `waiver-claim-{playerId}` (trigger) and `confirm-claim` (modal confirm), not the names listed in this iter's request.",
+  "rca of the issue": "No issues found that required RCA. Two of my initial live regression tests failed (test_pending_trades, test_evaluate_conditions) due to my own incorrect assertions about response shape — /api/leagues/{id}/pending-trades returns {count, league_id, pending_trades} dict, not a list. Fixed the test assertions; all 4 tests then passed."
+}
