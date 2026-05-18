@@ -1,26 +1,30 @@
-"""Roster read-side router.
+"""Roster router (read + write side).
 
-Extracted from server.py during iter 91 modularization. Bundles the two
-heavy read endpoints that power the Lovable Team page + tradeable-player
-selectors:
+Extracted from server.py during iter 91 (read side) and iter 98 (write
+side). Bundles the team-roster endpoints that power the Lovable Team
+page + the add/drop flow:
 
-  - GET /roster/{team_id}         (light per-player list)
-  - GET /roster/{team_id}/detail  (rich payload — sections, live stats,
-                                   category breakdown, synthesized
-                                   contracts + eligibility)
+  Read:
+    - GET  /roster/{team_id}         (light per-player list)
+    - GET  /roster/{team_id}/detail  (rich payload — sections, live stats,
+                                       category breakdown, synthesized
+                                       contracts + eligibility)
+  Write:
+    - POST /roster/{team_id}/add     (free-agent add with position-cap,
+                                       illegal-roster, and salary-cap gates)
+    - POST /roster/{team_id}/drop    (remove + activity log)
 
-The write side (`/roster/{id}/add`, `/roster/{id}/drop`) stays in
-server.py — those endpoints write to waiver/activity collections and
-own pickup-priority logic that's deeply coupled to the legacy code path.
+The write side persists a recomputed `team.salary_used` after every
+mutation via `_recompute_team_salary_used`, the same helper used by the
+compliance endpoint in server.py (re-exported via `_router_deps`).
 
-Both endpoints lean on `calculate_fantasy_points` (a sync helper in
-server.py) and `live_scoring_worker._fantasy_points_from_live`. The
-former is passed through `_router_deps`; the latter is imported lazily
-inside the handler to avoid pulling the live-scoring graph into the
-module load path (mirrors what server.py did).
+All endpoints lean on dependency injection via `setup(deps)`.
 """
+from typing import Optional
+
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 router = APIRouter()
 _deps: dict = {}
@@ -28,6 +32,13 @@ _deps: dict = {}
 
 def setup(deps: dict) -> None:
     _deps.update(deps)
+
+
+# ─── Models ─────────────────────────────────────────────────────
+
+
+class RosterAction(BaseModel):
+    player_id: str
 
 
 @router.get("/roster/{team_id}")
@@ -324,3 +335,279 @@ async def get_roster_detail(team_id: str):
         "live_fpts": total_live,
         "players": enriched,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Write side (iter 98 extraction)
+# ═══════════════════════════════════════════════════════════════
+
+
+def _synthesize_player_salary(p: dict, config: Optional[dict] = None) -> float:
+    """Single source of truth for player salary synthesis.
+
+    Mirrors the tiered formula used in `/roster/{id}/detail` so the cap
+    usage on the team page matches the per-row salary chip exactly.
+    """
+    calculate_fantasy_points = _deps["calculate_fantasy_points"]
+
+    # Honour any explicit salary stored on the player document first
+    explicit = (
+        (p.get("contract") or {}).get("aav")
+        or (p.get("contract") or {}).get("salary")
+        or p.get("salary")
+        or p.get("cap_hit")
+    )
+    if explicit:
+        return float(explicit)
+
+    is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
+    points = int(p.get("points") or 0)
+    fpts_season = float(calculate_fantasy_points(p, config) or 0.0)
+    if is_g:
+        if fpts_season >= 300:
+            salary = 9_500_000
+        elif fpts_season >= 180:
+            salary = 6_000_000
+        elif fpts_season >= 100:
+            salary = 3_500_000
+        else:
+            salary = 1_200_000
+    elif points >= 100:
+        salary = 11_000_000 + min(2_500_000, (points - 100) * 70_000)
+    elif points >= 60:
+        salary = 6_000_000 + (points - 60) * 100_000
+    elif points >= 30:
+        salary = 3_000_000 + (points - 30) * 90_000
+    elif points >= 10:
+        salary = 1_500_000 + (points - 10) * 75_000
+    else:
+        salary = 950_000 + points * 40_000
+    return float(min(13_500_000, max(775_000, salary)))
+
+
+async def _recompute_team_salary_used(team_id: str) -> float:
+    """Sum the synthesized cap hit across every player on the team's
+    roster + any salary_retentions the team is paying for other teams'
+    players. Persists the result to `team.salary_used` so subsequent
+    /compliance + /roster reads return the live number.
+    """
+    db = _deps["db"]
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        return 0.0
+    roster_obj_ids = []
+    for pid in (team.get("roster") or []):
+        try:
+            roster_obj_ids.append(ObjectId(pid))
+        except Exception:
+            pass
+    rostered_players = []
+    if roster_obj_ids:
+        rostered_players = await db.players.find(
+            {"_id": {"$in": roster_obj_ids}},
+            {"contract": 1, "salary": 1, "cap_hit": 1, "position": 1,
+             "player_type": 1, "points": 1, "games_played": 1,
+             "goals": 1, "assists": 1, "shots": 1, "saves": 1,
+             "wins": 1, "losses": 1, "overtime_losses": 1,
+             "goals_against": 1, "shutouts": 1, "plus_minus": 1,
+             "penalty_minutes": 1, "power_play_points": 1,
+             "power_play_goals": 1, "short_handed_goals": 1,
+             "short_handed_points": 1, "game_winning_goals": 1},
+        ).to_list(200)
+
+    config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
+    used = sum(_synthesize_player_salary(p, config) for p in rostered_players)
+    retentions = team.get("salary_retentions") or []
+    used += sum(float(r.get("amount") or 0.0) for r in retentions)
+    await db.teams.update_one(
+        {"_id": ObjectId(team_id)},
+        {"$set": {"salary_used": float(used)}},
+    )
+    return float(used)
+
+
+@router.post("/roster/{team_id}/add")
+async def add_to_roster(team_id: str, input: RosterAction, request: Request):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    log_activity = _deps["log_activity"]
+
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if team["owner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Not your team")
+
+    # Roster-spots gate
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    max_roster = league.get("roster_spots", 20)
+    current_roster = team.get("roster", [])
+    if len(current_roster) >= max_roster:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Roster full ({len(current_roster)}/{max_roster}). Drop a player before adding.",
+        )
+
+    player = await db.players.find_one({"_id": ObjectId(input.player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+
+    if input.player_id in current_roster:
+        raise HTTPException(status_code=400, detail="Player already on roster")
+
+    # ── Position-limit pre-check (league.enforce_position_maxes) ────
+    from utils.roster_rules import check_position_limits
+    roster_obj_ids = []
+    for pid in current_roster:
+        try:
+            roster_obj_ids.append(ObjectId(pid))
+        except Exception:
+            pass
+    roster_players = (
+        await db.players.find(
+            {"_id": {"$in": roster_obj_ids}},
+            {"name": 1, "position": 1, "primary_position": 1,
+             "eligible_positions": 1, "player_type": 1},
+        ).to_list(200) if roster_obj_ids else []
+    )
+    pos_err = check_position_limits(league, roster_players, player)
+    if pos_err:
+        raise HTTPException(status_code=400, detail=pos_err)
+
+    # ── Illegal-roster pre-check ────────────────────────────────────
+    # If the league has an IR-compliance mode that locks adds when the
+    # team is non-compliant, block until the violations are resolved.
+    ir_mode = (league.get("injury_reserve_compliance_mode") or "none").lower()
+    if ir_mode in ("lock_adds", "lock_adds_trades", "lock_all", "illegal_roster"):
+        lineup = team.get("lineup") or {}
+        if lineup:
+            lookup_obj_ids = []
+            for pid in current_roster:
+                try:
+                    lookup_obj_ids.append(ObjectId(pid))
+                except Exception:
+                    pass
+            existing = await db.players.find(
+                {"_id": {"$in": lookup_obj_ids}},
+                {"name": 1, "games_played": 1, "birth_date": 1,
+                 "injury_status": 1, "status": 1},
+            ).to_list(200) if lookup_obj_ids else []
+            illegal_msgs: list[str] = []
+            for p in existing:
+                pid = str(p["_id"])
+                slot = lineup.get(pid)
+                if not slot:
+                    continue
+                section = (slot.get("section") or "").lower()
+                if section == "ir":
+                    inj = (p.get("injury_status") or p.get("status") or "").lower()
+                    if not inj or inj in ("healthy", "active", "ok"):
+                        illegal_msgs.append(f"{p.get('name')} is on IR but healthy")
+            if illegal_msgs:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Add denied: illegal roster — {'; '.join(illegal_msgs[:3])}. "
+                        f"League IR rule: {ir_mode.replace('_', ' ')}."
+                    ),
+                )
+
+    # ── Salary-cap pre-check ────────────────────────────────────────
+    cap_enabled = bool(league.get("salary_cap_enabled"))
+    salary_cap = league.get("salary_cap")
+    if cap_enabled and salary_cap:
+        config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
+        new_player_salary = _synthesize_player_salary(player, config)
+        roster_obj_ids = []
+        for pid in current_roster:
+            try:
+                roster_obj_ids.append(ObjectId(pid))
+            except Exception:
+                pass
+        rostered_players = []
+        if roster_obj_ids:
+            rostered_players = await db.players.find(
+                {"_id": {"$in": roster_obj_ids}},
+                {"contract": 1, "salary": 1, "cap_hit": 1, "position": 1,
+                 "player_type": 1, "points": 1, "games_played": 1,
+                 "goals": 1, "assists": 1, "shots": 1, "saves": 1,
+                 "wins": 1, "losses": 1, "overtime_losses": 1,
+                 "goals_against": 1, "shutouts": 1, "plus_minus": 1,
+                 "penalty_minutes": 1, "power_play_points": 1,
+                 "power_play_goals": 1, "short_handed_goals": 1,
+                 "short_handed_points": 1, "game_winning_goals": 1},
+            ).to_list(200)
+        current_used = sum(_synthesize_player_salary(p, config) for p in rostered_players)
+        retentions = team.get("salary_retentions") or []
+        retention_total = sum(float(r.get("amount") or 0.0) for r in retentions)
+        projected_used = current_used + new_player_salary + retention_total
+        if projected_used > float(salary_cap):
+            over_by = projected_used - float(salary_cap)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Add denied: over the salary cap by ${over_by:,.0f}. "
+                    f"Adding {player['name']} (${new_player_salary:,.0f}) would put you at "
+                    f"${projected_used:,.0f} vs ${float(salary_cap):,.0f} cap."
+                ),
+            )
+
+    await db.teams.update_one(
+        {"_id": ObjectId(team_id)},
+        {"$push": {"roster": input.player_id}},
+    )
+
+    # Refresh salary_used so the compliance + UI numbers track immediately.
+    await _recompute_team_salary_used(team_id)
+
+    await log_activity(
+        team["league_id"], "roster_add",
+        f"{team['name']} adds {player['name']} ({player['position']})",
+        user["_id"],
+        metadata={
+            "team_id": team_id, "team_name": team["name"],
+            "player_id": input.player_id, "player_name": player["name"],
+            "position": player.get("position"),
+        },
+    )
+    return {"message": f"Added {player['name']} to roster"}
+
+
+@router.post("/roster/{team_id}/drop")
+async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    log_activity = _deps["log_activity"]
+
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if team["owner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Not your team")
+
+    current_roster = team.get("roster", [])
+    if input.player_id not in current_roster:
+        raise HTTPException(status_code=400, detail="Player not on roster")
+
+    await db.teams.update_one(
+        {"_id": ObjectId(team_id)},
+        {"$pull": {"roster": input.player_id}},
+    )
+
+    # Refresh salary_used so the compliance + UI numbers track immediately.
+    await _recompute_team_salary_used(team_id)
+
+    player = await db.players.find_one({"_id": ObjectId(input.player_id)})
+    name = player["name"] if player else "Unknown"
+    await log_activity(
+        team["league_id"], "roster_drop",
+        f"{team['name']} drops {name}",
+        user["_id"],
+        metadata={
+            "team_id": team_id, "team_name": team["name"],
+            "player_id": input.player_id, "player_name": name,
+        },
+    )
+    return {"message": f"Dropped {name} from roster"}
