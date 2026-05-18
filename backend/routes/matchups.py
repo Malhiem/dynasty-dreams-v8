@@ -161,6 +161,15 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
     if num_weeks is None:
         num_weeks = int(league.get("regular_season_weeks") or 18)
 
+    # ── Iter 100: opponents_per_matchup_period (1..N-1) ───────────────
+    # When > 1, each team plays N opponents per scoring period. We achieve
+    # this by stacking the base schedule N times (each pass adds a fresh
+    # opponent for every team in every week). Bounded to N-1 (can't play
+    # more unique opponents than exist).
+    opponents_per_period = int(league.get("opponents_per_matchup_period") or 1)
+    max_opponents = max(1, len(teams) - 1)
+    opponents_per_period = max(1, min(opponents_per_period, max_opponents))
+
     # Division-aware? Only opt-in via league.schedule_config AND ≥2 distinct
     # divisions configured. Otherwise fall back to vanilla round-robin.
     schedule_cfg = league.get("schedule_config")
@@ -187,24 +196,29 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
             })
     else:
         base_schedule = generate_round_robin(team_ids)
-        week = 1
-        cycle = itertools.cycle(base_schedule)
-        while week <= num_weeks:
-            round_matchups = next(cycle)
-            _random.shuffle(round_matchups)
-            for home_id, away_id in round_matchups:
-                full_schedule.append({
-                    "week": week,
-                    "home_team_id": home_id,
-                    "home_team_name": team_map.get(home_id, ""),
-                    "away_team_id": away_id,
-                    "away_team_name": team_map.get(away_id, ""),
-                    "home_score": 0,
-                    "away_score": 0,
-                    "status": "scheduled",
-                    "winner": None,
-                })
-            week += 1
+        # Stack N copies of the round-robin to hit `opponents_per_period`.
+        for pass_idx in range(opponents_per_period):
+            week = 1
+            cycle = itertools.cycle(base_schedule)
+            # Skip ahead per pass so passes don't all start at round 0.
+            for _ in range(pass_idx):
+                next(cycle)
+            while week <= num_weeks:
+                round_matchups = next(cycle)
+                _random.shuffle(round_matchups)
+                for home_id, away_id in round_matchups:
+                    full_schedule.append({
+                        "week": week,
+                        "home_team_id": home_id,
+                        "home_team_name": team_map.get(home_id, ""),
+                        "away_team_id": away_id,
+                        "away_team_name": team_map.get(away_id, ""),
+                        "home_score": 0,
+                        "away_score": 0,
+                        "status": "scheduled",
+                        "winner": None,
+                    })
+                week += 1
 
     await db.matchups.delete_many({"league_id": input.league_id})
     if full_schedule:
@@ -217,6 +231,7 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
         "message": f"Generated {len(full_schedule)} matchups for {num_weeks} weeks",
         "weeks": num_weeks,
         "mode": "division_aware" if use_divisional else "round_robin",
+        "opponents_per_period": 1 if use_divisional else opponents_per_period,
     }
 
 

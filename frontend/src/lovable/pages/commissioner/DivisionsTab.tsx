@@ -8,13 +8,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Network, Plus, Trash2, Save } from "lucide-react";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import {
+  RegularSeasonScheduleCard,
+  PlayoffsCard,
+  ConsolationCard,
+} from "@/lovable/pages/commissioner/PlayoffsScheduleCards";
 
 /**
- * Commissioner UI for assigning teams to divisions + conferences.
- * POSTs batch to PUT /api/leagues/{id}/divisions
- * Backend shape: {assignments: [{team_id, division, conference}]}
+ * Commissioner UI for League Structure: divisions/conferences + schedule mix +
+ * Playoffs & Schedule (regular-season length, opponents/period, playoff bracket).
  */
 export default function DivisionsTab({ leagueId }: { leagueId: string | null | undefined }) {
+  const { league: activeLeague, reloadLeague } = useActiveLeague();
   const [teams, setTeams] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -359,6 +365,15 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
           </div>
         </CardContent>
       </Card>
+
+      {/* Regular Season + Playoffs + Consolation (moved here from Rules & Schedule) */}
+      {activeLeague?.id && (
+        <>
+          <RegularSeasonScheduleCard league={activeLeague} reloadLeague={reloadLeague} />
+          <PlayoffsCard league={activeLeague} reloadLeague={reloadLeague} teams={teams} />
+          <ConsolationCard league={activeLeague} reloadLeague={reloadLeague} teams={teams} />
+        </>
+      )}
     </div>
   );
 }

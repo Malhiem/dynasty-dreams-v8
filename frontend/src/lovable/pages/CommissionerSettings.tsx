@@ -910,6 +910,13 @@ const CommissionerSettings = () => {
     }
   };
 
+  // ─── Iter 101: ping the TBD-deadline scanner so admins get a top-bell
+  // reminder ~2 days before any custom-bracket week that still has TBD slots.
+  useEffect(() => {
+    if (!activeLeague?.id) return;
+    api.post(`/leagues/${activeLeague.id}/playoffs/check-tbd-deadlines`).catch(() => {});
+  }, [activeLeague?.id]);
+
   // Fetch real audit log entries for the active league and merge with the seeded UI rows
   useEffect(() => {
     if (!activeLeague?.id) return;
@@ -1185,7 +1192,7 @@ const CommissionerSettings = () => {
             </TabsTrigger>
             <TabsTrigger value="rules-schedule" className="data-[state=active]:bg-primary/20" data-testid="tab-rules-schedule">
               <Sliders className="h-4 w-4 mr-2" />
-              Rules &amp; Schedule
+              Transactions
             </TabsTrigger>
             <TabsTrigger value="scoring" className="data-[state=active]:bg-primary/20">
               <Target className="h-4 w-4 mr-2" />

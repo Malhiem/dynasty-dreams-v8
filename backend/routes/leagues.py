@@ -815,6 +815,38 @@ class LeagueUpdate(BaseModel):
     prorate_min_max_by_period: Optional[bool] = None
     allow_illegal_rosters: Optional[bool] = None
     ir_eligibility_modes: Optional[List[str]] = None  # e.g. ["IR", "IR-LT"]
+    # ── Iter 100: Roster lock + lineup lock + NHL stats window ───
+    # Roster lock cadence governs when a manager's lineup is frozen for the
+    # scoring period. `lineup_lock_minutes_before` is the cushion (0..1440)
+    # before the first NHL game of the period when individual slots lock,
+    # snapped to 5-minute increments client-side.
+    roster_lock_type: Optional[str] = Field(default=None, pattern=r"^(daily|semi_weekly|weekly)$")
+    roster_lock_day: Optional[str] = None  # e.g. "monday"
+    roster_lock_second_day: Optional[str] = None  # semi-weekly only
+    lineup_lock_minutes_before: Optional[int] = Field(default=None, ge=0, le=1440)
+    # Playoff override — when toggled ON, the playoff_* lock fields replace
+    # the regular-season lock config during playoff weeks only.
+    playoff_roster_lock_override: Optional[bool] = None
+    playoff_roster_lock_type: Optional[str] = Field(default=None, pattern=r"^(daily|semi_weekly|weekly)$")
+    playoff_roster_lock_day: Optional[str] = None
+    playoff_roster_lock_second_day: Optional[str] = None
+    playoff_lineup_lock_minutes_before: Optional[int] = Field(default=None, ge=0, le=1440)
+    # NHL stats-counting window (commissioner picks an NHL-calendar week range)
+    stats_count_start_date: Optional[str] = Field(default=None, max_length=20)
+    stats_count_end_date: Optional[str] = Field(default=None, max_length=20)
+    # ── Iter 101: Playoff bracket + Consolation bracket configuration ───
+    # Playoff format: "h2h_matchup" mirrors regular-season scoring; "playoff_tree" runs
+    # an elimination bracket. Seeding methods: high_vs_low (1vN, 2vN-1…), adjacent
+    # (1v2, 3v4…), or custom (commissioner-built matchup ladder).
+    playoff_format: Optional[str] = Field(default=None, pattern=r"^(h2h_matchup|playoff_tree)$")
+    playoff_seeding_method: Optional[str] = Field(default=None, pattern=r"^(high_vs_low|adjacent|custom)$")
+    # Custom ladder: [{week, matchups: [{home, away, label?}]}]
+    # `home`/`away` are team_id strings OR the literal "tbd" sentinel.
+    playoff_custom_matchups: Optional[List[dict]] = None
+    # Consolation bracket — count of teams (0..N-playoff_teams), same seeding knobs.
+    consolation_teams: Optional[int] = Field(default=None, ge=0, le=32)
+    consolation_seeding_method: Optional[str] = Field(default=None, pattern=r"^(high_vs_low|adjacent|custom)$")
+    consolation_custom_matchups: Optional[List[dict]] = None
 
 
 _LEAGUE_UPDATE_ALLOWED = {
@@ -833,6 +865,16 @@ _LEAGUE_UPDATE_ALLOWED = {
     "ir_slots", "ir_plus_slots", "taxi_squad_size", "position_limits",
     "enforce_position_maxes", "min_active_players", "min_games_played",
     "prorate_min_max_by_period", "allow_illegal_rosters", "ir_eligibility_modes",
+    # Iter 100: roster lock + lineup lock + NHL stats window
+    "roster_lock_type", "roster_lock_day", "roster_lock_second_day",
+    "lineup_lock_minutes_before",
+    "playoff_roster_lock_override", "playoff_roster_lock_type",
+    "playoff_roster_lock_day", "playoff_roster_lock_second_day",
+    "playoff_lineup_lock_minutes_before",
+    "stats_count_start_date", "stats_count_end_date",
+    # Iter 101: playoff bracket + consolation bracket configuration
+    "playoff_format", "playoff_seeding_method", "playoff_custom_matchups",
+    "consolation_teams", "consolation_seeding_method", "consolation_custom_matchups",
 }
 
 
@@ -875,6 +917,88 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
         if new_val != old_val:
             update[field] = new_val
             diff[field] = {"from": old_val, "to": new_val}
+
+    # ── Iter 100: cross-field validation for playoffs vs regular season ──
+    # Only enforce when the request actually touches one of the relevant
+    # fields (don't punish legacy leagues with pre-existing inconsistent data
+    # when the commissioner is updating an unrelated setting).
+    _validated_fields = {
+        "regular_season_weeks",
+        "playoff_start_week",
+        "playoff_end_week",
+        "playoff_rounds",
+        "playoff_teams",
+        "consolation_teams",
+    }
+    if _validated_fields & update.keys():
+        def _eff(k, default=None):
+            if k in update:
+                return update[k]
+            return league.get(k, default)
+
+        reg_weeks = _eff("regular_season_weeks")
+        ps_week = _eff("playoff_start_week")
+        pe_week = _eff("playoff_end_week")
+        p_rounds = _eff("playoff_rounds")
+        p_teams = _eff("playoff_teams")
+        if reg_weeks is not None and ps_week is not None and int(ps_week) <= int(reg_weeks):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Playoffs must start AFTER the regular season ends. "
+                    f"Regular season ends week {reg_weeks}; playoffs start week {ps_week}."
+                ),
+            )
+        if ps_week is not None and pe_week is not None and int(pe_week) < int(ps_week):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Playoff end week ({pe_week}) cannot be before playoff start week ({ps_week})."
+                ),
+            )
+        if (
+            ps_week is not None and pe_week is not None and p_rounds is not None
+            and (int(pe_week) - int(ps_week) + 1) < int(p_rounds)
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Cannot award a champion: {p_rounds} rounds need at least "
+                    f"{p_rounds} week{'s' if int(p_rounds) != 1 else ''}, "
+                    f"but only {int(pe_week) - int(ps_week) + 1} week"
+                    f"{'s' if (int(pe_week) - int(ps_week) + 1) != 1 else ''} configured. "
+                    "Extend the playoff window or reduce the round count."
+                ),
+            )
+        if p_teams is not None and p_rounds is not None:
+            min_teams = 2 ** int(p_rounds)
+            if int(p_teams) < min_teams:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"With {p_rounds} round{'s' if int(p_rounds) != 1 else ''}, "
+                        f"need at least {min_teams} playoff teams to award a champion. "
+                        f"Currently {p_teams}."
+                    ),
+                )
+        # Consolation teams cannot exceed teams NOT in playoffs
+        c_teams = _eff("consolation_teams")
+        league_team_count = int(league.get("current_teams") or league.get("max_teams") or 0)
+        if (
+            c_teams is not None
+            and p_teams is not None
+            and league_team_count > 0
+            and int(c_teams) > (league_team_count - int(p_teams))
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Consolation bracket can have at most "
+                    f"{league_team_count - int(p_teams)} team"
+                    f"{'s' if (league_team_count - int(p_teams)) != 1 else ''} "
+                    f"(teams not in the playoffs). Currently {c_teams}."
+                ),
+            )
 
     if update:
         await db.leagues.update_one({"_id": league["_id"]}, {"$set": update})
@@ -1018,3 +1142,154 @@ async def veto_threshold_preview(
             "Vetoes are disabled — trades cannot be blocked by league vote."
         ),
     }
+
+
+# ─── GET /leagues/nhl-season-bounds ─────────────────────────────
+# Returns NHL 2025-26 regular-season + playoff calendar week list for the
+# commissioner-facing "League stats start/end counting on" dropdowns.
+# Hardcoded for the current season (per user choice B) — backend-sourced
+# so a future iteration can swap to a live source without UI changes.
+_NHL_SEASON_2025_26 = {
+    "regular_season_start": "2025-10-07",
+    "regular_season_end": "2026-04-16",
+    "playoffs_start": "2026-04-18",
+    "playoffs_end": "2026-06-25",
+}
+
+
+def _build_nhl_weeks(start_iso: str, end_iso: str) -> list:
+    """Generate 7-day NHL fantasy weeks (Mon→Sun) spanning [start, end]."""
+    from datetime import date
+    s = date.fromisoformat(start_iso)
+    e = date.fromisoformat(end_iso)
+    # Snap start back to Monday so weeks line up consistently.
+    s = s - timedelta(days=s.weekday())
+    weeks = []
+    cur = s
+    week_no = 1
+    while cur <= e:
+        wk_end = cur + timedelta(days=6)
+        weeks.append({
+            "number": week_no,
+            "start_date": cur.isoformat(),
+            "end_date": wk_end.isoformat(),
+            "label": f"Week {week_no} ({cur.strftime('%b %-d')} – {wk_end.strftime('%b %-d')})",
+        })
+        cur = wk_end + timedelta(days=1)
+        week_no += 1
+    return weeks
+
+
+@router.get("/nhl-season-bounds")
+async def nhl_season_bounds():
+    """NHL calendar reference used to populate stats-start/stats-end + playoff
+    week dropdowns in the commissioner UI. Static for the 2025-26 season.
+    """
+    weeks = _build_nhl_weeks(
+        _NHL_SEASON_2025_26["regular_season_start"],
+        _NHL_SEASON_2025_26["playoffs_end"],
+    )
+    return {
+        "season": "2025-26",
+        **_NHL_SEASON_2025_26,
+        "weeks": weeks,
+        "total_weeks": len(weeks),
+    }
+
+
+
+# ─── POST /leagues/{league_id}/playoffs/check-tbd-deadlines ────
+# Scans the league's playoff_custom_matchups + consolation_custom_matchups
+# for any TBD slots whose matchup-period (week) is within 2 days of starting,
+# and posts a top-bell notification + activity feed entry for every
+# commissioner / co-commissioner. Safe to call repeatedly — idempotent within
+# a 24h window per (league, week) via the `tbd_deadline_pings` collection.
+#
+# Returns the count of notifications fired. Intended to be hit by a daily
+# cron or whenever the admin lands on `/commissioner/settings`.
+@router.post("/leagues/{league_id}/playoffs/check-tbd-deadlines")
+async def check_playoff_tbd_deadlines(league_id: str, request: Request):
+    from datetime import date
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+    create_notification = _deps.get("create_notification")
+
+    await get_current_user(request)  # any logged-in user can trigger; safe no-op
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    matchup_len = int(league.get("matchup_length_days") or 7)
+    season_start_str = league.get("season_start_date")
+    if not season_start_str:
+        return {"fired": 0, "reason": "season_start_date not configured"}
+    try:
+        season_start = date.fromisoformat(season_start_str)
+    except Exception:
+        return {"fired": 0, "reason": "invalid season_start_date"}
+
+    today = date.today()
+    fired = 0
+    recipients = [league["commissioner_id"]] + list(league.get("co_commissioners") or [])
+    recipients = list(dict.fromkeys(recipients))  # de-dupe preserving order
+
+    for bracket_key, label in (
+        ("playoff_custom_matchups", "Playoff"),
+        ("consolation_custom_matchups", "Consolation"),
+    ):
+        for entry in (league.get(bracket_key) or []):
+            try:
+                week = int(entry.get("week", 0))
+            except Exception:
+                continue
+            if week <= 0:
+                continue
+            # Has any TBD slot in any matchup for this week?
+            has_tbd = any(
+                (m.get("home") in (None, "tbd", "")) or (m.get("away") in (None, "tbd", ""))
+                for m in (entry.get("matchups") or [])
+            )
+            if not has_tbd:
+                continue
+
+            week_start = season_start + timedelta(days=(week - 1) * matchup_len)
+            days_until = (week_start - today).days
+            # Within last 2 days of the prior matchup period (i.e. 0..2 days before start)
+            if not (0 <= days_until <= 2):
+                continue
+
+            # Idempotency: have we already pinged this (league, bracket, week) in the past 22h?
+            recent = await db.tbd_deadline_pings.find_one({
+                "league_id": league_id,
+                "bracket": bracket_key,
+                "week": week,
+                "created_at": {"$gte": datetime.now(timezone.utc) - timedelta(hours=22)},
+            })
+            if recent:
+                continue
+
+            if create_notification:
+                for uid in recipients:
+                    await create_notification(
+                        uid,
+                        "playoff_tbd_deadline",
+                        f"{label} bracket needs matchup setup",
+                        (
+                            f"Week {week} starts in {days_until} day"
+                            f"{'s' if days_until != 1 else ''} and has TBD slots. "
+                            "Configure the matchup ladder in Commissioner → League Structure."
+                        ),
+                        league_id,
+                        f"/commissioner/settings?tab=divisions&focus={bracket_key}-week-{week}",
+                    )
+                    fired += 1
+
+            await db.tbd_deadline_pings.insert_one({
+                "league_id": league_id,
+                "bracket": bracket_key,
+                "week": week,
+                "created_at": datetime.now(timezone.utc),
+            })
+
+    return {"fired": fired, "league_id": league_id}

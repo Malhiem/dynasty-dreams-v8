@@ -1,13 +1,10 @@
 // @ts-nocheck
 /**
- * Rules & Schedule — Commissioner-facing editor for every league setting that
- * the runtime now reads from `db.leagues` (single source of truth). Mirrors
- * the Setup Wizard fields so commissioners can adjust the configuration after
- * setup completes.
+ * Transactions tab — Commissioner-facing editor for trade settings, waivers,
+ * roster locks, salary cap & salary retention. Playoffs / Regular-season /
+ * Consolation now live under the **League Structure** tab.
  *
- * Backed by `PUT /api/leagues/{id}` with a sparse payload — only changed
- * fields are persisted, and the response echoes the full canonical config so
- * the local cache stays in sync.
+ * Backed by `PUT /api/leagues/{id}` with a sparse payload.
  */
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -17,7 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { ArrowRightLeft, Trophy, Users, Save, Loader2, DollarSign, Calendar } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ArrowRightLeft, Trophy, Users, Save, Loader2, DollarSign, LockKeyhole } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import SmartNumberInput from "@/components/ui/smart-number-input";
@@ -111,42 +109,6 @@ const sections: SectionSpec[] = [
       },
     ],
   },
-  {
-    title: "Playoffs & Schedule",
-    description: "Bracket size, start/end weeks, round count, and regular-season length.",
-    icon: <Trophy className="h-5 w-5 text-violet-400" />,
-    testid: "rules-schedule-playoffs-card",
-    fields: [
-      { key: "playoff_teams", label: "Playoff Teams", min: 2, max: 16, defaultPlaceholder: "6" },
-      { key: "playoff_start_week", label: "Playoffs Start Week", min: 1, max: 30, defaultPlaceholder: "19" },
-      { key: "playoff_end_week", label: "Playoffs End Week", min: 1, max: 40, defaultPlaceholder: "21" },
-      { key: "playoff_rounds", label: "Playoff Rounds", min: 1, max: 5, defaultPlaceholder: "3" },
-      {
-        key: "regular_season_weeks",
-        label: "Regular Season Weeks",
-        min: 4,
-        max: 30,
-        helper: "Default schedule length for the season.",
-        defaultPlaceholder: "18",
-      },
-      {
-        key: "matchup_length_days",
-        label: "Matchup Length (days)",
-        min: 1,
-        max: 30,
-        helper: "Most leagues use 7 (weekly H2H).",
-        defaultPlaceholder: "7",
-      },
-      {
-        key: "opponents_per_matchup_period",
-        label: "Opponents / Period",
-        min: 1,
-        max: 10,
-        helper: "Teams played per matchup period.",
-        defaultPlaceholder: "1",
-      },
-    ],
-  },
 ];
 
 const ALL_KEYS = sections.flatMap((s) => s.fields.map((f) => f.key));
@@ -190,7 +152,6 @@ export default function RulesScheduleTab() {
           toast.error(`${field.label} must be ≤ ${field.max}`);
           return null;
         }
-        // Only include if changed
         const current = (league as any)?.[field.key];
         if (current !== parsed) payload[field.key] = parsed;
       }
@@ -223,7 +184,7 @@ export default function RulesScheduleTab() {
     return (
       <Card className="bg-card border-border">
         <CardContent className="py-6 text-sm text-muted-foreground">
-          Select a league to edit its rules & schedule.
+          Select a league to edit its transactions settings.
         </CardContent>
       </Card>
     );
@@ -237,11 +198,10 @@ export default function RulesScheduleTab() {
             <div>
               <CardTitle className="flex items-center gap-2">
                 <Save className="h-5 w-5 text-cyan-400" />
-                Rules &amp; Schedule
+                Transactions
               </CardTitle>
               <CardDescription>
-                Edit every league-level setting that the runtime reads from{" "}
-                <code className="text-xs bg-secondary px-1 rounded">db.leagues</code>.
+                Trades, waivers, roster locks, salary cap &amp; retention.
                 Changes are audit-logged with actor + before/after diff.
               </CardDescription>
             </div>
@@ -252,14 +212,14 @@ export default function RulesScheduleTab() {
         </CardHeader>
       </Card>
 
+      {/* Roster Lock + Lineup Lock + Playoff override */}
+      <RosterLockCard league={league} reloadLeague={reloadLeague} />
+
       {/* Salary Cap (with hold-to-accelerate) */}
       <SalaryCapCard league={league} reloadLeague={reloadLeague} />
 
       {/* Salary Retention A/B */}
       <SalaryRetentionCard league={league} reloadLeague={reloadLeague} />
-
-      {/* Calendar window + consolation */}
-      <CalendarConsolationCard league={league} reloadLeague={reloadLeague} />
 
       {sections.map((section) => (
         <Card
@@ -308,7 +268,6 @@ export default function RulesScheduleTab() {
                   {field.helper && (
                     <p className="text-xs text-muted-foreground">{field.helper}</p>
                   )}
-                  {/* Live veto-math preview right under the % input */}
                   {field.key === "trade_veto_threshold_pct" && (
                     <VetoThresholdPreview
                       leagueId={league.id}
@@ -341,6 +300,244 @@ export default function RulesScheduleTab() {
 }
 
 const fmtMoney = (n: number) => (Number(n) || 0).toLocaleString();
+
+const DAY_OPTIONS = [
+  { value: "monday", label: "Monday" },
+  { value: "tuesday", label: "Tuesday" },
+  { value: "wednesday", label: "Wednesday" },
+  { value: "thursday", label: "Thursday" },
+  { value: "friday", label: "Friday" },
+  { value: "saturday", label: "Saturday" },
+  { value: "sunday", label: "Sunday" },
+];
+
+// 5-minute increments from 0 to 1440 (24 hrs)
+const LOCK_TIME_OPTIONS = (() => {
+  const opts: { value: string; label: string }[] = [];
+  for (let m = 0; m <= 1440; m += 5) {
+    let label: string;
+    if (m === 0) label = "At first match start (0 min)";
+    else if (m < 60) label = `${m} min before first match`;
+    else if (m % 60 === 0) label = `${m / 60} hr before first match`;
+    else label = `${Math.floor(m / 60)} hr ${m % 60} min before first match`;
+    opts.push({ value: String(m), label });
+  }
+  return opts;
+})();
+
+function RosterLockCard({ league, reloadLeague }: any) {
+  const [lockType, setLockType] = useState<string>(league?.roster_lock_type || "daily");
+  const [lockDay, setLockDay] = useState<string>(league?.roster_lock_day || "monday");
+  const [lockSecondDay, setLockSecondDay] = useState<string>(league?.roster_lock_second_day || "thursday");
+  const [lineupLockMins, setLineupLockMins] = useState<string>(
+    String(league?.lineup_lock_minutes_before ?? 5),
+  );
+  const [playoffOverride, setPlayoffOverride] = useState<boolean>(!!league?.playoff_roster_lock_override);
+  const [pLockType, setPLockType] = useState<string>(league?.playoff_roster_lock_type || "weekly");
+  const [pLockDay, setPLockDay] = useState<string>(league?.playoff_roster_lock_day || "monday");
+  const [pLockSecondDay, setPLockSecondDay] = useState<string>(league?.playoff_roster_lock_second_day || "thursday");
+  const [pLineupLockMins, setPLineupLockMins] = useState<string>(
+    String(league?.playoff_lineup_lock_minutes_before ?? 5),
+  );
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setLockType(league?.roster_lock_type || "daily");
+    setLockDay(league?.roster_lock_day || "monday");
+    setLockSecondDay(league?.roster_lock_second_day || "thursday");
+    setLineupLockMins(String(league?.lineup_lock_minutes_before ?? 5));
+    setPlayoffOverride(!!league?.playoff_roster_lock_override);
+    setPLockType(league?.playoff_roster_lock_type || "weekly");
+    setPLockDay(league?.playoff_roster_lock_day || "monday");
+    setPLockSecondDay(league?.playoff_roster_lock_second_day || "thursday");
+    setPLineupLockMins(String(league?.playoff_lineup_lock_minutes_before ?? 5));
+  }, [
+    league?.id,
+    league?.roster_lock_type,
+    league?.roster_lock_day,
+    league?.roster_lock_second_day,
+    league?.lineup_lock_minutes_before,
+    league?.playoff_roster_lock_override,
+    league?.playoff_roster_lock_type,
+    league?.playoff_roster_lock_day,
+    league?.playoff_roster_lock_second_day,
+    league?.playoff_lineup_lock_minutes_before,
+  ]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/leagues/${league.id}`, {
+        roster_lock_type: lockType,
+        roster_lock_day: lockType === "daily" ? null : lockDay,
+        roster_lock_second_day: lockType === "semi_weekly" ? lockSecondDay : null,
+        lineup_lock_minutes_before: parseInt(lineupLockMins, 10) || 0,
+        playoff_roster_lock_override: playoffOverride,
+        playoff_roster_lock_type: playoffOverride ? pLockType : null,
+        playoff_roster_lock_day: playoffOverride && pLockType !== "daily" ? pLockDay : null,
+        playoff_roster_lock_second_day: playoffOverride && pLockType === "semi_weekly" ? pLockSecondDay : null,
+        playoff_lineup_lock_minutes_before: playoffOverride ? (parseInt(pLineupLockMins, 10) || 0) : null,
+      });
+      toast.success("Roster lock rules saved");
+      reloadLeague?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save roster lock rules");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renderLockBlock = (
+    prefix: string,
+    type: string,
+    setType: (v: string) => void,
+    day: string,
+    setDay: (v: string) => void,
+    secondDay: string,
+    setSecondDay: (v: string) => void,
+    lockMins: string,
+    setLockMins: (v: string) => void,
+  ) => (
+    <div className="space-y-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="space-y-2">
+          <Label className="text-xs">Lock cadence</Label>
+          <Select value={type} onValueChange={setType}>
+            <SelectTrigger className="bg-secondary border-border" data-testid={`${prefix}-lock-type`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-popover border-border z-50">
+              <SelectItem value="daily">Daily Lock</SelectItem>
+              <SelectItem value="semi_weekly">Semi-Weekly Lock</SelectItem>
+              <SelectItem value="weekly">Weekly Lock</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        {type !== "daily" && (
+          <div className="space-y-2">
+            <Label className="text-xs">Primary lock day</Label>
+            <Select value={day} onValueChange={setDay}>
+              <SelectTrigger className="bg-secondary border-border" data-testid={`${prefix}-lock-day`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-popover border-border z-50">
+                {DAY_OPTIONS.map((d) => (
+                  <SelectItem key={d.value} value={d.value}>
+                    {d.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+        {type === "semi_weekly" && (
+          <div className="space-y-2">
+            <Label className="text-xs">Second lock day</Label>
+            <Select value={secondDay} onValueChange={setSecondDay}>
+              <SelectTrigger className="bg-secondary border-border" data-testid={`${prefix}-lock-second-day`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-popover border-border z-50">
+                {DAY_OPTIONS.map((d) => (
+                  <SelectItem key={d.value} value={d.value}>
+                    {d.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
+      <div className="space-y-2 max-w-md">
+        <Label className="text-xs">Lineup lock time (5-min increments)</Label>
+        <Select value={lockMins} onValueChange={setLockMins}>
+          <SelectTrigger className="bg-secondary border-border" data-testid={`${prefix}-lineup-lock-mins`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="bg-popover border-border z-50 max-h-72">
+            {LOCK_TIME_OPTIONS.map((o) => (
+              <SelectItem key={o.value} value={o.value}>
+                {o.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-[11px] text-muted-foreground">
+          Lineup slots freeze this many minutes before the first NHL game of the scoring period.
+        </p>
+      </div>
+    </div>
+  );
+
+  return (
+    <Card className="bg-card border-border" data-testid="rules-schedule-roster-lock-card">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <LockKeyhole className="h-5 w-5 text-violet-400" />
+          Roster Lock &amp; Lineup Lock
+        </CardTitle>
+        <CardDescription>
+          Cadence of when transactions/lineups freeze for the scoring period.
+          Optionally override the lock rules for playoff weeks only.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div>
+          <div className="text-sm font-semibold mb-3 text-cyan-300">Regular Season Lock</div>
+          {renderLockBlock(
+            "regular",
+            lockType,
+            setLockType,
+            lockDay,
+            setLockDay,
+            lockSecondDay,
+            setLockSecondDay,
+            lineupLockMins,
+            setLineupLockMins,
+          )}
+        </div>
+
+        <Separator />
+
+        <div className="flex items-center gap-3">
+          <Checkbox
+            checked={playoffOverride}
+            onCheckedChange={(c) => setPlayoffOverride(!!c)}
+            id="rs-playoff-lock-override"
+            data-testid="rules-schedule-playoff-lock-override"
+          />
+          <Label htmlFor="rs-playoff-lock-override" className="cursor-pointer text-sm">
+            Change roster lock type for playoffs
+          </Label>
+        </div>
+
+        {playoffOverride && (
+          <div className="pl-1 border-l-2 border-amber-500/30 pl-4">
+            <div className="text-sm font-semibold mb-3 text-amber-300">Playoff Lock Override</div>
+            {renderLockBlock(
+              "playoff",
+              pLockType,
+              setPLockType,
+              pLockDay,
+              setPLockDay,
+              pLockSecondDay,
+              setPLockSecondDay,
+              pLineupLockMins,
+              setPLineupLockMins,
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-end">
+          <Button size="sm" onClick={save} disabled={saving} data-testid="rules-schedule-roster-lock-save">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+            Save Lock Rules
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 function SalaryCapCard({ league, reloadLeague }: any) {
   const [enabled, setEnabled] = useState(!!league?.salary_cap_enabled);
@@ -533,123 +730,3 @@ function SalaryRetentionCard({ league, reloadLeague }: any) {
     </Card>
   );
 }
-
-function CalendarConsolationCard({ league, reloadLeague }: any) {
-  const [start, setStart] = useState<string>(league?.season_start_date || "");
-  const [end, setEnd] = useState<string>(league?.season_end_date || "");
-  const [consolation, setConsolation] = useState(!!league?.consolation_enabled);
-  const [alongPlayoffs, setAlongPlayoffs] = useState(league?.consolation_uses_playoff_schedule !== false);
-  const [consStart, setConsStart] = useState<string>(String(league?.consolation_start_week ?? ""));
-  const [consEnd, setConsEnd] = useState<string>(String(league?.consolation_end_week ?? ""));
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    setStart(league?.season_start_date || "");
-    setEnd(league?.season_end_date || "");
-    setConsolation(!!league?.consolation_enabled);
-    setAlongPlayoffs(league?.consolation_uses_playoff_schedule !== false);
-    setConsStart(String(league?.consolation_start_week ?? ""));
-    setConsEnd(String(league?.consolation_end_week ?? ""));
-  }, [
-    league?.id,
-    league?.season_start_date,
-    league?.season_end_date,
-    league?.consolation_enabled,
-    league?.consolation_uses_playoff_schedule,
-    league?.consolation_start_week,
-    league?.consolation_end_week,
-  ]);
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      await api.put(`/leagues/${league.id}`, {
-        season_start_date: start || null,
-        season_end_date: end || null,
-        consolation_enabled: consolation,
-        consolation_uses_playoff_schedule: alongPlayoffs,
-        consolation_start_week: consolation && !alongPlayoffs && consStart ? parseInt(consStart, 10) : (consolation && alongPlayoffs ? (league?.playoff_start_week || null) : null),
-        consolation_end_week: consolation && !alongPlayoffs && consEnd ? parseInt(consEnd, 10) : (consolation && alongPlayoffs ? (league?.playoff_end_week || null) : null),
-      });
-      toast.success("Season calendar saved");
-      reloadLeague?.();
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Failed to save calendar");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card className="bg-card border-border" data-testid="rules-schedule-calendar-card">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <Calendar className="h-5 w-5 text-cyan-400" />
-          Season Calendar &amp; Consolation
-        </CardTitle>
-        <CardDescription>
-          Wall-clock start / end dates and the optional consolation bracket window.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl">
-          <div>
-            <Label className="text-xs">Season start date</Label>
-            <Input type="date" value={start} onChange={(e) => setStart(e.target.value)}
-              data-testid="rules-schedule-season-start" />
-          </div>
-          <div>
-            <Label className="text-xs">Season end date</Label>
-            <Input type="date" value={end} onChange={(e) => setEnd(e.target.value)}
-              data-testid="rules-schedule-season-end" />
-          </div>
-        </div>
-
-        <div className="border-t border-border pt-3 space-y-3">
-          <div className="flex items-center gap-3">
-            <Switch checked={consolation} onCheckedChange={setConsolation}
-              id="rs-consolation" data-testid="rules-schedule-consolation-enabled" />
-            <Label htmlFor="rs-consolation" className="cursor-pointer font-semibold">
-              Enable consolation playoff bracket
-            </Label>
-          </div>
-          {consolation && (
-            <div className="pl-1 space-y-2">
-              <div className="flex items-center gap-2">
-                <Checkbox checked={alongPlayoffs} onCheckedChange={(c) => setAlongPlayoffs(!!c)}
-                  id="rs-consolation-along" data-testid="rules-schedule-consolation-along" />
-                <Label htmlFor="rs-consolation-along" className="cursor-pointer text-sm">
-                  Schedule along with the main playoffs
-                </Label>
-              </div>
-              {!alongPlayoffs && (
-                <div className="grid grid-cols-2 gap-3 max-w-lg">
-                  <div>
-                    <Label className="text-xs">Consolation start (week)</Label>
-                    <Input type="number" min={1} max={40} value={consStart}
-                      onChange={(e) => setConsStart(e.target.value)}
-                      data-testid="rules-schedule-consolation-start" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Consolation end (week)</Label>
-                    <Input type="number" min={1} max={40} value={consEnd}
-                      onChange={(e) => setConsEnd(e.target.value)}
-                      data-testid="rules-schedule-consolation-end" />
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="flex justify-end">
-          <Button size="sm" onClick={save} disabled={saving} data-testid="rules-schedule-calendar-save">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
-            Save Calendar
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
