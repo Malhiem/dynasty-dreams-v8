@@ -17,7 +17,7 @@ const RETENTION_OPTIONS = [
   { value: "seeking_retention", label: "C · Seeking retention", color: "text-amber-400" },
 ];
 
-export default function TradeBlockManager({ team, league, isOwnTeam }) {
+export default function TradeBlockManager({ team, league, isOwnTeam, reloadKey = 0, onItemsChange }) {
   const [items, setItems] = useState([]);
   const [picks, setPicks] = useState([]);
   const [pickToAdd, setPickToAdd] = useState("");
@@ -33,6 +33,13 @@ export default function TradeBlockManager({ team, league, isOwnTeam }) {
 
   // Local set of player_ids on the block (for fast toggle highlight)
   const onBlockSet = useMemo(() => new Set(items.filter(i => i.item_type === "player").map(i => i.player_id)), [items]);
+
+  // Notify parent every time `items` changes so the bullhorn highlight on
+  // the roster table above stays in sync with the card below.
+  useEffect(() => {
+    if (onItemsChange) onItemsChange(items);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items]);
 
   const fetchItems = async () => {
     if (!team?.id) return;
@@ -62,7 +69,8 @@ export default function TradeBlockManager({ team, league, isOwnTeam }) {
         })
         .catch(() => {});
     }
-  }, [team?.id, league?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [team?.id, league?.id, reloadKey]);
 
   const saveNote = async () => {
     if (!isOwnTeam || !team?.id || noteSaving) return;

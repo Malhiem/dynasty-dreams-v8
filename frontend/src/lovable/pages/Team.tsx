@@ -831,6 +831,17 @@ const Team = () => {
               }}
               league={league ? { id: league.id, name: league.name } : null}
               isOwnTeam={!!isOwnTeam}
+              reloadKey={tradeBlockReloadKey}
+              onItemsChange={(items) => {
+                // Mirror the card's items into the parent so the bullhorn
+                // highlight on the roster table above this card stays in sync
+                // with any add/remove done from inside the card.
+                setTradeBlockPlayerIds(
+                  (items || [])
+                    .filter((i: any) => i.player_id)
+                    .map((i: any) => String(i.player_id))
+                );
+              }}
             />
           </TabsContent>
 
