@@ -175,19 +175,26 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
 
 @router.get("/trades/conditional")
 async def get_conditional_trades(league_id: str, request: Request = None):
-    """Return all EXECUTED trades in this league that carry either trigger
-    conditions or pick-protection upgrades, alongside a live evaluation of
-    each clause so the UI can show "what would happen if triggered" + the
-    current met/unmet state.
+    """Return all EXECUTED conditional trades in this league.
+
+    A "conditional trade" in our model is exclusively a clause of the form:
+        (player/team metric op threshold)  →  (draft pick modification)
+
+    Each trade in the response carries a `pick_upgrades_state` array with
+    the full lifecycle of each pick-outcome clause: current state
+    (pending/triggered/failed), the hydrated `pick`, the live actual value
+    + met flag (when still pending), and a human-readable `outcome_text`
+    describing what happens if the condition triggers.
+
+    Whole-trade execution gates (the `conditions` array with no pick
+    outcome) are deliberately NOT surfaced here — they are proposal-time
+    gates and have no ongoing resolution lifecycle.
 
     Shape:
         {
           "trades": [
             {
               ...full trade doc (assets, parties, dates, status),
-              "conditions_eval": [
-                {"condition": {...}, "actual_value": float, "met": bool}
-              ],
               "pick_upgrades_state": [
                 {
                   ...the original pick_upgrade clause,
@@ -204,13 +211,16 @@ async def get_conditional_trades(league_id: str, request: Request = None):
         }
     """
     db = _db()
+    # A "conditional trade" in our model is exclusively
+    # (condition on player/team metric) → (draft-pick modification). Whole-
+    # trade execution gates (`conditions` array with no pick outcome) are
+    # NOT surfaced here — they're handled at the proposal stage and have no
+    # ongoing resolution lifecycle. So we filter strictly on a non-empty
+    # `pick_upgrades` array.
     query = {
         "league_id": league_id,
         "status": "executed",
-        "$or": [
-            {"conditions": {"$exists": True, "$ne": []}},
-            {"pick_upgrades": {"$exists": True, "$ne": []}},
-        ],
+        "pick_upgrades": {"$exists": True, "$ne": []},
     }
     raw_trades = await db.trades.find(query).sort("executed_at", -1).to_list(200)
 
@@ -232,19 +242,13 @@ async def get_conditional_trades(league_id: str, request: Request = None):
         return doc
 
     out = []
-    evaluate = _deps["_evaluate_conditions"]
     eval_single = _deps.get("_evaluate_single_condition")
     for t in raw_trades:
         t["_id"] = str(t["_id"])
 
-        # Trigger-conditions evaluation (whole-trade gate clauses)
-        try:
-            cond_eval = await evaluate(t)
-            t["conditions_eval"] = cond_eval.get("results", [])
-        except Exception:
-            t["conditions_eval"] = []
-
-        # Per-pick upgrade state (pick protection clauses)
+        # Per-pick upgrade state (pick protection clauses). Each row carries
+        # its own condition; we evaluate it live when still pending so the
+        # UI can render a real-time progress indicator.
         upgrades_state = []
         for up in (t.get("pick_upgrades") or []):
             cond = up.get("condition") or {}
@@ -267,24 +271,44 @@ async def get_conditional_trades(league_id: str, request: Request = None):
                 met = True
             elif state == "failed":
                 met = False
-            # Build a human-readable "outcome" line for the UI
+            # Build a human-readable "outcome" line for the UI. We show the
+            # FROM → TO comparison whenever possible so the user can read
+            # "pick upgraded from 2nd to 1st" at a glance.
             new_year = up.get("new_year")
             new_round = up.get("new_round")
             new_team = up.get("new_team_id")
-            parts = []
-            if new_year:
-                parts.append(str(new_year))
-            if new_round:
-                parts.append(f"R{new_round}")
-            if pick and not new_year and not new_round:
-                parts.append(f"{pick.get('year')} R{pick.get('round')}")
-            outcome_target = " ".join(parts) or "pick"
+            cur_year = pick.get("year") if pick else None
+            cur_round = pick.get("round") if pick else None
+            # For triggered upgrades, the pick has already been mutated, so
+            # the "from" state is captured on the upgrade itself (persisted
+            # by trade_engine when the trigger fired).
+            from_year = up.get("from_year") or cur_year
+            from_round = up.get("from_round") or cur_round
+
+            def _fmt(yr, rd):
+                bits = []
+                if yr:
+                    bits.append(str(yr))
+                if rd:
+                    bits.append(f"R{rd}")
+                return " ".join(bits) or "pick"
+
+            target_str = _fmt(new_year or cur_year, new_round or cur_round)
+            from_str = _fmt(from_year, from_round)
+            current_str = _fmt(cur_year, cur_round)
             if state == "triggered":
-                outcome_text = f"Pick transferred → {outcome_target}"
+                if from_str and target_str and from_str != target_str:
+                    outcome_text = f"Pick is now {target_str} (was {from_str})"
+                else:
+                    outcome_text = f"Pick transferred → {target_str}"
             elif state == "failed":
-                outcome_text = f"Did not trigger (condition unmet at evaluation)"
+                outcome_text = f"Pick remains {current_str} (condition unmet at evaluation)"
             else:
-                outcome_text = f"If triggered, pick becomes {outcome_target}"
+                # Pending — preview "from X to Y" using CURRENT state
+                if current_str and target_str and current_str != target_str:
+                    outcome_text = f"If triggered, pick upgrades from {current_str} to {target_str}"
+                else:
+                    outcome_text = f"If triggered, pick becomes {target_str}"
 
             upgrades_state.append({
                 **up,

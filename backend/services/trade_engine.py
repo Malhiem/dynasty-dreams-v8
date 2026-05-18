@@ -539,7 +539,9 @@ async def _apply_pick_upgrades(trade: dict, *, final_eval: bool = False) -> dict
             await _db().trades.update_one(
                 {"_id": trade["_id"]},
                 {"$set": {f"pick_upgrades.{idx}.applied_at": now,
-                          f"pick_upgrades.{idx}.actual_value": actual}},
+                          f"pick_upgrades.{idx}.actual_value": actual,
+                          f"pick_upgrades.{idx}.from_round": old_round,
+                          f"pick_upgrades.{idx}.from_year": old_year}},
             )
             await _db().audit_log.insert_one({
                 "league_id": league_id,

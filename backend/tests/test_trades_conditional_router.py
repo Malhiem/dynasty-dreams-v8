@@ -46,6 +46,26 @@ def _wire_engine_deps():
 
 
 @pytest.mark.asyncio
+async def test_conditional_excludes_trades_with_only_whole_trade_conditions():
+    """Iter 97 model change: trades with only `conditions` (whole-trade
+    execution gates) and NO `pick_upgrades` are NOT surfaced on the
+    Conditional tab — they're proposal-time gates, not ongoing clauses."""
+    async with isolated_router_app(trades_routes) as ctx:
+        _wire_engine_deps()
+        await ctx.db.trades.insert_one({
+            "league_id": "L1", "status": "executed",
+            "conditions": [
+                {"metric": "nhl_points", "operator": "gte", "threshold": 70,
+                 "description": "Hits 70 pts"},
+            ],
+            # Note: NO pick_upgrades — should be excluded from /conditional
+        })
+        r = await ctx.client.get("/api/trades/conditional?league_id=L1")
+        assert r.status_code == 200
+        assert r.json() == {"trades": [], "count": 0}
+
+
+@pytest.mark.asyncio
 async def test_conditional_empty_when_no_executed_conditional_trades():
     async with isolated_router_app(trades_routes) as ctx:
         _wire_engine_deps()
@@ -66,38 +86,16 @@ async def test_conditional_empty_when_no_executed_conditional_trades():
 
 
 @pytest.mark.asyncio
-async def test_conditional_returns_executed_trades_with_conditions():
-    async with isolated_router_app(trades_routes) as ctx:
-        _wire_engine_deps()
-        await ctx.db.trades.insert_one({
-            "league_id": "L1", "status": "executed",
-            "proposer_team_id": "T1", "target_team_id": "T2",
-            "conditions": [
-                {"metric": "nhl_points", "operator": "gte", "threshold": 70,
-                 "description": "Hits 70 pts"},
-            ],
-            "executed_at": "2026-01-15T10:00:00",
-        })
-        r = await ctx.client.get("/api/trades/conditional?league_id=L1")
-        body = r.json()
-        assert body["count"] == 1
-        t = body["trades"][0]
-        # Live-eval populates conditions_eval
-        assert len(t["conditions_eval"]) == 1
-        assert t["conditions_eval"][0]["met"] is True
-        # Threshold-stub increments by 1
-        assert t["conditions_eval"][0]["actual_value"] == 71.0
-        # No pick upgrades on this trade
-        assert t["pick_upgrades_state"] == []
-
-
-@pytest.mark.asyncio
 async def test_conditional_pick_upgrade_state_triggered():
-    """Pick upgrade with `applied_at` set → state=triggered + outcome shows new round."""
+    """Pick upgrade with `applied_at` set → state=triggered + outcome shows
+    new round AND the `was X` comparison using persisted from_round."""
     async with isolated_router_app(trades_routes) as ctx:
         _wire_engine_deps()
+        # Simulate post-trigger: the pick has already been mutated to round 1,
+        # and the upgrade row carries the persisted from_round = 2 / from_year = 2026
+        # (this is what trade_engine writes when it applies the upgrade).
         pick_res = await ctx.db.draft_picks.insert_one({
-            "league_id": "L1", "year": 2026, "round": 2, "pick_number": 14,
+            "league_id": "L1", "year": 2026, "round": 1, "pick_number": 14,
             "current_team_id": "T2",
         })
         pid = str(pick_res.inserted_id)
@@ -111,6 +109,7 @@ async def test_conditional_pick_upgrade_state_triggered():
                               "description": "Hits 50 pts"},
                 "applied_at": "2026-01-20T10:00:00",
                 "actual_value": 51.0,
+                "from_round": 2, "from_year": 2026,
             }],
         })
         r = await ctx.client.get("/api/trades/conditional?league_id=L1")
@@ -119,10 +118,38 @@ async def test_conditional_pick_upgrade_state_triggered():
         assert len(ups) == 1
         assert ups[0]["state"] == "triggered"
         assert ups[0]["met"] is True
-        assert "2026" in ups[0]["outcome_text"]
-        assert "R1" in ups[0]["outcome_text"]
-        # `pick` is hydrated from draft_picks
-        assert ups[0]["pick"]["round"] == 2
+        # Outcome text shows the FROM → TO comparison the user described
+        # ("from 2nd to 1st round pick")
+        outcome = ups[0]["outcome_text"]
+        assert "2026 R1" in outcome
+        assert "was" in outcome and "2026 R2" in outcome
+        # `pick` is hydrated from draft_picks (mutated post-trigger)
+        assert ups[0]["pick"]["round"] == 1
+
+
+@pytest.mark.asyncio
+async def test_conditional_pending_outcome_text_shows_from_to_preview():
+    """Pending upgrade — outcome text previews `If triggered, pick upgrades
+    from <current> to <target>`."""
+    async with isolated_router_app(trades_routes) as ctx:
+        _wire_engine_deps()
+        pick_res = await ctx.db.draft_picks.insert_one({
+            "league_id": "L1", "year": 2027, "round": 2, "current_team_id": "T2",
+        })
+        await ctx.db.trades.insert_one({
+            "league_id": "L1", "status": "executed",
+            "pick_upgrades": [{
+                "pick_id": str(pick_res.inserted_id),
+                "new_round": 1, "new_year": 2027,
+                "condition": {"metric": "nhl_points", "operator": "gte",
+                              "threshold": 70, "description": "Hits 70"},
+            }],
+        })
+        r = await ctx.client.get("/api/trades/conditional?league_id=L1")
+        outcome = r.json()["trades"][0]["pick_upgrades_state"][0]["outcome_text"]
+        assert outcome.startswith("If triggered, pick upgrades")
+        assert "from 2027 R2" in outcome
+        assert "to 2027 R1" in outcome
 
 
 @pytest.mark.asyncio
@@ -147,7 +174,8 @@ async def test_conditional_pick_upgrade_state_failed():
         ups = r.json()["trades"][0]["pick_upgrades_state"]
         assert ups[0]["state"] == "failed"
         assert ups[0]["met"] is False
-        assert "Did not trigger" in ups[0]["outcome_text"]
+        assert "Pick remains" in ups[0]["outcome_text"]
+        assert "condition unmet" in ups[0]["outcome_text"]
 
 
 @pytest.mark.asyncio

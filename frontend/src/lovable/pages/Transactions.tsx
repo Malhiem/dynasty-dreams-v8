@@ -425,13 +425,16 @@ function ConditionalTradeCard({
 }: {
   trade: any;
   mapped: PendingTrade;
-  /** Set of `pick_upgrade_idx` (-1 = whole-trade) the user has subscribed to. */
+  /** Set of `pick_upgrade_idx` the user has subscribed to. */
   subscribedTradeIdxs: Set<number>;
   onToggleSubscribe: (tradeId: string, pickUpgradeIdx: number, currentlySubscribed: boolean) => void;
 }) {
-  const conds = trade?.conditions_eval || [];
   const upgrades = trade?.pick_upgrades_state || [];
-  const hasAny = conds.length > 0 || upgrades.length > 0;
+  const hasAny = upgrades.length > 0;
+  // Aggregate state counts for the header badges
+  const triggeredCount = upgrades.filter((u: any) => u.state === "triggered").length;
+  const pendingCount = upgrades.filter((u: any) => u.state === "pending").length;
+  const failedCount = upgrades.filter((u: any) => u.state === "failed").length;
   return (
     <Card className="border-border/50" data-testid={`conditional-trade-${trade._id}`}>
       <CardHeader className="pb-3">
@@ -447,14 +450,22 @@ function ConditionalTradeCard({
               <CheckCircle2 className="h-3 w-3 mr-1" />
               Executed
             </Badge>
-            {conds.length > 0 && (
-              <Badge variant="outline" className="border-primary/50 text-primary">
-                {conds.length} trigger condition{conds.length === 1 ? "" : "s"}
+            {triggeredCount > 0 && (
+              <Badge variant="outline" className="border-emerald-500/50 text-emerald-400">
+                <Zap className="h-3 w-3 mr-1" />
+                {triggeredCount} triggered
               </Badge>
             )}
-            {upgrades.length > 0 && (
+            {pendingCount > 0 && (
               <Badge variant="outline" className="border-amber-500/50 text-amber-400">
-                {upgrades.length} pick protection{upgrades.length === 1 ? "" : "s"}
+                <Clock className="h-3 w-3 mr-1" />
+                {pendingCount} pending
+              </Badge>
+            )}
+            {failedCount > 0 && (
+              <Badge variant="outline" className="border-muted-foreground/50 text-muted-foreground">
+                <MinusCircle className="h-3 w-3 mr-1" />
+                {failedCount} did not trigger
               </Badge>
             )}
           </div>
@@ -528,46 +539,26 @@ function ConditionalTradeCard({
           </div>
         </div>
 
-        {/* Conditions + Pick upgrades block */}
+        {/* Conditional clauses — every clause is of the form
+            (condition on player/team metric) → (draft pick outcome). */}
         {hasAny && (
           <div className="rounded-lg border border-border bg-secondary/20 p-3 space-y-3" data-testid={`conditional-clauses-${trade._id}`}>
-            {conds.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
-                  <Zap className="h-3.5 w-3.5" /> Trigger Conditions
-                </p>
-                {conds.map((row: any, idx: number) => {
-                  // Whole-trade triggers share a single subscription bucket (idx = -1)
-                  const subscribed = subscribedTradeIdxs.has(-1);
-                  return (
-                    <ConditionEvalRow
-                      key={idx}
-                      row={row}
-                      subscribed={subscribed}
-                      onToggleSubscribe={() => onToggleSubscribe(trade._id, -1, subscribed)}
-                    />
-                  );
-                })}
-              </div>
-            )}
-            {upgrades.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
-                  <GitBranch className="h-3.5 w-3.5" /> Pick Protections / Upgrades
-                </p>
-                {upgrades.map((row: any, idx: number) => {
-                  const subscribed = subscribedTradeIdxs.has(idx);
-                  return (
-                    <PickUpgradeRow
-                      key={idx}
-                      row={row}
-                      subscribed={subscribed}
-                      onToggleSubscribe={() => onToggleSubscribe(trade._id, idx, subscribed)}
-                    />
-                  );
-                })}
-              </div>
-            )}
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
+                <GitBranch className="h-3.5 w-3.5" /> Conditional Pick Outcomes
+              </p>
+              {upgrades.map((row: any, idx: number) => {
+                const subscribed = subscribedTradeIdxs.has(idx);
+                return (
+                  <PickUpgradeRow
+                    key={idx}
+                    row={row}
+                    subscribed={subscribed}
+                    onToggleSubscribe={() => onToggleSubscribe(trade._id, idx, subscribed)}
+                  />
+                );
+              })}
+            </div>
           </div>
         )}
       </CardContent>
