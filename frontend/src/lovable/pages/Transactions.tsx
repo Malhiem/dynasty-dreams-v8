@@ -9,7 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowRightLeft, ThumbsUp, ThumbsDown, Clock, CheckCircle2, XCircle, AlertTriangle, Activity, GitBranch, Zap, MinusCircle } from "lucide-react";
+import { ArrowRightLeft, ThumbsUp, ThumbsDown, Clock, CheckCircle2, XCircle, AlertTriangle, Activity, GitBranch, Zap, MinusCircle, Bell, BellOff } from "lucide-react";
+import { toast } from "sonner";
 import TeamLink from "@/lovable/components/TeamLink";
 
 interface TradeAsset {
@@ -306,9 +307,10 @@ function describeCondition(c: any): string {
   return `${m} ${op} ${c?.threshold}`;
 }
 
-function ConditionEvalRow({ row }: { row: any }) {
+function ConditionEvalRow({ row, subscribed, onToggleSubscribe }: { row: any; subscribed?: boolean; onToggleSubscribe?: () => void }) {
   const c = row?.condition || {};
   const met = !!row?.met;
+  const showBell = !met && !!onToggleSubscribe;  // only on pending rows
   return (
     <div
       className={`flex items-start gap-2 rounded-md border px-3 py-2 ${
@@ -335,11 +337,27 @@ function ConditionEvalRow({ row }: { row: any }) {
           </span>
         </p>
       </div>
+      {showBell && (
+        <button
+          type="button"
+          onClick={onToggleSubscribe}
+          className={`shrink-0 rounded-md p-1.5 transition-colors ${
+            subscribed
+              ? "bg-primary/20 text-primary hover:bg-primary/30"
+              : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+          }`}
+          title={subscribed ? "You'll be notified when this resolves. Click to stop." : "Notify me when this resolves"}
+          data-testid={`condition-subscribe-${c.metric}-${c.threshold}`}
+          aria-pressed={subscribed}
+        >
+          {subscribed ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
+        </button>
+      )}
     </div>
   );
 }
 
-function PickUpgradeRow({ row }: { row: any }) {
+function PickUpgradeRow({ row, subscribed, onToggleSubscribe }: { row: any; subscribed?: boolean; onToggleSubscribe?: () => void }) {
   const c = row?.condition || {};
   const state = row?.state || "pending";
   const pick = row?.pick || {};
@@ -350,6 +368,7 @@ function PickUpgradeRow({ row }: { row: any }) {
       ? { icon: MinusCircle, color: "text-muted-foreground", border: "border-border", bg: "bg-secondary/30", label: "Did not trigger" }
       : { icon: Clock, color: "text-amber-400", border: "border-amber-500/30", bg: "bg-amber-500/5", label: "Pending" };
   const Icon = stateConfig.icon;
+  const showBell = state === "pending" && !!onToggleSubscribe;
   return (
     <div
       className={`flex items-start gap-2 rounded-md border ${stateConfig.border} ${stateConfig.bg} px-3 py-2`}
@@ -381,11 +400,35 @@ function PickUpgradeRow({ row }: { row: any }) {
           {row?.outcome_text}
         </p>
       </div>
+      {showBell && (
+        <button
+          type="button"
+          onClick={onToggleSubscribe}
+          className={`shrink-0 rounded-md p-1.5 transition-colors ${
+            subscribed
+              ? "bg-primary/20 text-primary hover:bg-primary/30"
+              : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+          }`}
+          title={subscribed ? "Notification on — click to turn off" : "Notify me when this resolves"}
+          data-testid={`pick-upgrade-subscribe-${row?.pick_id}`}
+          aria-pressed={subscribed}
+        >
+          {subscribed ? <Bell className="h-3.5 w-3.5" /> : <BellOff className="h-3.5 w-3.5" />}
+        </button>
+      )}
     </div>
   );
 }
 
-function ConditionalTradeCard({ trade, mapped }: { trade: any; mapped: PendingTrade }) {
+function ConditionalTradeCard({
+  trade, mapped, subscribedTradeIdxs, onToggleSubscribe,
+}: {
+  trade: any;
+  mapped: PendingTrade;
+  /** Set of `pick_upgrade_idx` (-1 = whole-trade) the user has subscribed to. */
+  subscribedTradeIdxs: Set<number>;
+  onToggleSubscribe: (tradeId: string, pickUpgradeIdx: number, currentlySubscribed: boolean) => void;
+}) {
   const conds = trade?.conditions_eval || [];
   const upgrades = trade?.pick_upgrades_state || [];
   const hasAny = conds.length > 0 || upgrades.length > 0;
@@ -493,9 +536,18 @@ function ConditionalTradeCard({ trade, mapped }: { trade: any; mapped: PendingTr
                 <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
                   <Zap className="h-3.5 w-3.5" /> Trigger Conditions
                 </p>
-                {conds.map((row: any, idx: number) => (
-                  <ConditionEvalRow key={idx} row={row} />
-                ))}
+                {conds.map((row: any, idx: number) => {
+                  // Whole-trade triggers share a single subscription bucket (idx = -1)
+                  const subscribed = subscribedTradeIdxs.has(-1);
+                  return (
+                    <ConditionEvalRow
+                      key={idx}
+                      row={row}
+                      subscribed={subscribed}
+                      onToggleSubscribe={() => onToggleSubscribe(trade._id, -1, subscribed)}
+                    />
+                  );
+                })}
               </div>
             )}
             {upgrades.length > 0 && (
@@ -503,9 +555,17 @@ function ConditionalTradeCard({ trade, mapped }: { trade: any; mapped: PendingTr
                 <p className="text-[11px] uppercase tracking-wider text-muted-foreground font-semibold flex items-center gap-1.5">
                   <GitBranch className="h-3.5 w-3.5" /> Pick Protections / Upgrades
                 </p>
-                {upgrades.map((row: any, idx: number) => (
-                  <PickUpgradeRow key={idx} row={row} />
-                ))}
+                {upgrades.map((row: any, idx: number) => {
+                  const subscribed = subscribedTradeIdxs.has(idx);
+                  return (
+                    <PickUpgradeRow
+                      key={idx}
+                      row={row}
+                      subscribed={subscribed}
+                      onToggleSubscribe={() => onToggleSubscribe(trade._id, idx, subscribed)}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>
@@ -529,6 +589,8 @@ const Transactions = () => {
   // opens the Conditional tab (avoids extra work on first paint).
   const [conditionalTrades, setConditionalTrades] = useState<any[] | null>(null);
   const [conditionalLoading, setConditionalLoading] = useState(false);
+  // Map trade_id → Set of subscribed pick_upgrade_idx (-1 = whole-trade)
+  const [subsByTrade, setSubsByTrade] = useState<Record<string, Set<number>>>({});
 
   useEffect(() => {
     if (!league?.id) return;
@@ -547,15 +609,52 @@ const Transactions = () => {
     if (tab !== "conditional" || !league?.id) return;
     let cancelled = false;
     setConditionalLoading(true);
-    api.get(`/trades/conditional?league_id=${league.id}`)
-      .then(({ data }) => {
-        if (cancelled) return;
-        setConditionalTrades(data?.trades || []);
-      })
-      .catch(() => { if (!cancelled) setConditionalTrades([]); })
-      .finally(() => { if (!cancelled) setConditionalLoading(false); });
+    Promise.all([
+      api.get(`/trades/conditional?league_id=${league.id}`).catch(() => ({ data: { trades: [] } })),
+      api.get(`/trades/conditional/subscriptions?league_id=${league.id}`).catch(() => ({ data: { subscriptions: [] } })),
+    ]).then(([tradesRes, subsRes]) => {
+      if (cancelled) return;
+      setConditionalTrades(tradesRes.data?.trades || []);
+      const map: Record<string, Set<number>> = {};
+      for (const s of (subsRes.data?.subscriptions || [])) {
+        const tid = s.trade_id;
+        const idx = typeof s.pick_upgrade_idx === "number" ? s.pick_upgrade_idx : -1;
+        if (!map[tid]) map[tid] = new Set();
+        map[tid].add(idx);
+      }
+      setSubsByTrade(map);
+    }).finally(() => { if (!cancelled) setConditionalLoading(false); });
     return () => { cancelled = true; };
   }, [tab, league?.id, reloadTick]);
+
+  const toggleConditionalSubscription = async (
+    tradeId: string, pickUpgradeIdx: number, currentlySubscribed: boolean,
+  ) => {
+    const action = currentlySubscribed ? "unsubscribe" : "subscribe";
+    try {
+      await api.post(`/trades/conditional/${tradeId}/subscribe`, {
+        pick_upgrade_idx: pickUpgradeIdx,
+        action,
+      });
+      setSubsByTrade((prev) => {
+        const next = { ...prev };
+        const set = new Set(next[tradeId] || []);
+        if (currentlySubscribed) set.delete(pickUpgradeIdx);
+        else set.add(pickUpgradeIdx);
+        next[tradeId] = set;
+        return next;
+      });
+      toast.success(
+        currentlySubscribed
+          ? "Notifications off for this trigger"
+          : "You'll get a notification in the top bell when this resolves",
+      );
+    } catch (e: any) {
+      toast.error("Couldn't update subscription", {
+        description: e?.response?.data?.detail || e?.message,
+      });
+    }
+  };
 
   // Pull live vote details once we know which pending trades exist
   useEffect(() => {
@@ -759,7 +858,13 @@ const Transactions = () => {
                   processesAt: "",
                   votes: { approve: 0, veto: 0, total: 0 },
                 };
-                return <ConditionalTradeCard key={tradeId} trade={t} mapped={mapped} />;
+                return <ConditionalTradeCard
+                  key={tradeId}
+                  trade={t}
+                  mapped={mapped}
+                  subscribedTradeIdxs={subsByTrade[tradeId] || new Set<number>()}
+                  onToggleSubscribe={toggleConditionalSubscription}
+                />;
               })
             )}
           </TabsContent>

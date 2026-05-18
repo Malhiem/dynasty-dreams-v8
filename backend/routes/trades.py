@@ -300,6 +300,86 @@ async def get_conditional_trades(league_id: str, request: Request = None):
     return {"trades": out, "count": len(out)}
 
 
+# ─── Conditional notification subscriptions ──────────────────────────
+# Users can opt-in to receive a notification when a pending conditional
+# clause resolves (trigger or fail). Both trade parties (proposer +
+# target_owner) are notified automatically; this lets ANY league member
+# follow a conditional clause they're interested in.
+
+@router.get("/trades/conditional/subscriptions")
+async def list_conditional_subs(league_id: str, request: Request = None):
+    """Return the current user's subscription rows for this league.
+
+    Shape: { "subscriptions": [{trade_id, pick_upgrade_idx, _id}, ...] }
+    """
+    db = _db()
+    user = await _get_user(request)
+    rows = await db.conditional_subscriptions.find({
+        "league_id": league_id,
+        "user_id": user["_id"],
+    }).to_list(500)
+    for r in rows:
+        r["_id"] = str(r["_id"])
+    return {"subscriptions": rows}
+
+
+@router.post("/trades/conditional/{trade_id}/subscribe")
+async def subscribe_conditional(trade_id: str, body: dict, request: Request = None):
+    """Toggle a subscription for the current user on this conditional clause.
+
+    Body:
+        {
+          "pick_upgrade_idx": int | -1 for whole-trade trigger conditions,
+          "action": "subscribe" | "unsubscribe"
+        }
+    """
+    db = _db()
+    user = await _get_user(request)
+    # Validate the trade exists + is conditional + is executed (no point
+    # subscribing to a clause that already settled or hasn't processed).
+    try:
+        trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid trade_id")
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if trade.get("status") != "executed":
+        raise HTTPException(status_code=400,
+                            detail="Can only subscribe to executed conditional trades")
+
+    pu_idx = int(body.get("pick_upgrade_idx", -1) if body.get("pick_upgrade_idx") is not None else -1)
+    action = (body.get("action") or "subscribe").lower()
+
+    # Defensive bounds: pu_idx must reference a real pending pick_upgrade
+    # row OR be -1 (whole-trade trigger conditions).
+    if pu_idx >= 0:
+        upgrades = trade.get("pick_upgrades") or []
+        if pu_idx >= len(upgrades):
+            raise HTTPException(status_code=400, detail="pick_upgrade_idx out of range")
+        u = upgrades[pu_idx]
+        if u.get("applied_at") or u.get("failed_at"):
+            raise HTTPException(status_code=400, detail="That clause has already settled")
+
+    query = {
+        "league_id": trade.get("league_id"),
+        "trade_id": trade_id,
+        "user_id": user["_id"],
+        "pick_upgrade_idx": pu_idx,
+    }
+    if action == "unsubscribe":
+        res = await db.conditional_subscriptions.delete_one(query)
+        return {"subscribed": False, "removed": res.deleted_count}
+
+    # subscribe (idempotent upsert)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.conditional_subscriptions.update_one(
+        query,
+        {"$setOnInsert": {**query, "created_at": now}},
+        upsert=True,
+    )
+    return {"subscribed": True}
+
+
 @router.get("/trades")
 async def get_trades(
     league_id: Optional[str] = None,

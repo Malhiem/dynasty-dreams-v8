@@ -48,6 +48,86 @@ async def _broadcast(room, event, payload):
     return await fn(room, event, payload)
 
 
+async def _create_notification(user_id, notif_type, title, message, league_id=None, link=None):
+    """Best-effort notification dispatch. Silently no-ops if the dep is not
+    wired (e.g. in isolated unit tests). Routes notifications to the dynasty
+    notification bell in the top toolbar AND the Expo push pipeline."""
+    fn = _deps.get("create_notification")
+    if not fn:
+        return None
+    try:
+        return await fn(user_id, notif_type, title, message, league_id, link)
+    except Exception as e:
+        _logger().warning("create_notification failed: %s", e)
+        return None
+
+
+async def _notify_conditional_resolution(trade, idx, *, up, cond, met, actual,
+                                          new_round=None, new_year=None,
+                                          old_round=None, old_year=None,
+                                          action="rewrite", to_team_id=None):
+    """Notify everyone who should hear that this conditional clause resolved.
+
+    Recipients:
+      1. Both trade parties (proposer + target owner) — always informed.
+      2. Anyone subscribed via the bell on the Conditional tab card.
+
+    Pushes a notification doc into the `notifications` collection (visible
+    in the top toolbar bell). The notification bell already paginates +
+    read-syncs on the frontend via `routes/notifications.py`.
+    """
+    league_id = trade.get("league_id")
+    trade_id = str(trade.get("_id"))
+    trigger_desc = cond.get("description") or cond.get("metric") or "condition"
+
+    # Build a human-readable summary depending on the outcome.
+    if met:
+        title = "Conditional trade triggered"
+        if action in ("add", "remove") and to_team_id:
+            outcome = f"Pick transferred → {to_team_id}"
+        elif new_round:
+            yr = new_year or old_year or ""
+            outcome = f"Pick upgraded to {yr} R{new_round}".strip()
+        else:
+            outcome = "Pick protection applied"
+        msg = f"Trigger met: {trigger_desc}. {outcome}."
+    else:
+        title = "Conditional trade did not trigger"
+        msg = f"Final eval: {trigger_desc} was not met (actual: {actual:g})."
+
+    link = f"/transactions?tab=conditional&trade={trade_id}"
+
+    recipients = set()
+    for uid in (trade.get("proposer_id"), trade.get("target_owner_id")):
+        if uid:
+            recipients.add(uid)
+    # Pull explicit subscribers (whole-trade OR per-upgrade-idx)
+    try:
+        subs = await _db().conditional_subscriptions.find({
+            "trade_id": trade_id,
+            "$or": [{"pick_upgrade_idx": idx}, {"pick_upgrade_idx": -1}],
+        }).to_list(200)
+        for s in subs:
+            if s.get("user_id"):
+                recipients.add(s["user_id"])
+    except Exception:
+        pass
+
+    notif_type = "conditional_triggered" if met else "conditional_failed"
+    for uid in recipients:
+        await _create_notification(uid, notif_type, title, msg, league_id=league_id, link=link)
+
+    # Once the clause resolves, remove the now-stale subscriptions so users
+    # don't receive duplicate notifications if the trade is re-evaluated.
+    try:
+        await _db().conditional_subscriptions.delete_many({
+            "trade_id": trade_id,
+            "$or": [{"pick_upgrade_idx": idx}, {"pick_upgrade_idx": -1}],
+        })
+    except Exception:
+        pass
+
+
 def _metric_value_for_player(player: dict, metric: str) -> float:
     if metric == "nhl_points":
         return float(player.get("points", 0) or 0)
@@ -428,6 +508,11 @@ async def _apply_pick_upgrades(trade: dict, *, final_eval: bool = False) -> dict
                                 "action": action,
                                 "from_team_id": from_team_id or old_owner,
                                 "to_team_id": to_team_id})
+                await _notify_conditional_resolution(
+                    trade, idx, up=up, cond=cond, met=True, actual=actual,
+                    action=action, to_team_id=to_team_id,
+                    old_round=old_round, old_year=old_year,
+                )
                 continue
 
             # action == "rewrite" (default, back-compat)
@@ -482,6 +567,11 @@ async def _apply_pick_upgrades(trade: dict, *, final_eval: bool = False) -> dict
             results.append({"index": idx, "met": True, "applied": True,
                             "action": "rewrite",
                             "from_round": old_round, "to_round": new_round})
+            await _notify_conditional_resolution(
+                trade, idx, up=up, cond=cond, met=True, actual=actual,
+                new_round=new_round, new_year=new_year or old_year,
+                old_round=old_round, old_year=old_year, action="rewrite",
+            )
         else:
             if final_eval:
                 await _db().trades.update_one(
@@ -501,6 +591,9 @@ async def _apply_pick_upgrades(trade: dict, *, final_eval: bool = False) -> dict
                 })
                 failed += 1
                 results.append({"index": idx, "met": False, "final": True})
+                await _notify_conditional_resolution(
+                    trade, idx, up=up, cond=cond, met=False, actual=actual,
+                )
             else:
                 results.append({"index": idx, "met": False, "pending": True})
     return {"applied": applied, "failed": failed, "results": results}
