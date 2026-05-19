@@ -684,6 +684,23 @@ const PlayerRoster = ({
   // Used by the "Fantasy Points" filter to break down each player's FPTS
   // into per-category contribution (e.g. 10 goals × 3 = 30 pts).
   const [scoringConfig, setScoringConfig] = useState<any>(null);
+  // ── Iter 103: Live lineup-lock status banner ───────────────────
+  // Polls `/leagues/{id}/lock-status` every 60s so the manager sees a
+  // warning BEFORE the save fails. Server-side gate in `save_team_lineup`
+  // is still the source of truth — this is purely a friendly pre-warn.
+  const [lockStatus, setLockStatus] = useState<any>(null);
+  useEffect(() => {
+    if (!leagueId) { setLockStatus(null); return; }
+    let cancelled = false;
+    const fetchOnce = () => {
+      api.get(`/leagues/${leagueId}/lock-status`)
+        .then(({ data }) => { if (!cancelled) setLockStatus(data); })
+        .catch(() => { if (!cancelled) setLockStatus(null); });
+    };
+    fetchOnce();
+    const t = setInterval(fetchOnce, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [leagueId]);
   // ── Lineup warnings (iter 84) ───────────────────────────────────
   // Backend returns `warnings: [{code, player_id, message, ...}]` after a
   // successful lineup save. Map them by player_id so the row can render
@@ -1127,6 +1144,32 @@ const PlayerRoster = ({
   return (
     <>
       <div className="stat-card p-0 overflow-hidden">
+        {/* ── Iter 103: Lineup Lock Status Banner ── */}
+        {lockStatus?.locked && (
+          <div
+            className="px-4 py-2.5 border-b border-amber-500/40 bg-amber-500/10 flex items-start gap-2"
+            data-testid="lineup-lock-banner"
+          >
+            <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <div className="text-xs font-semibold text-amber-300">
+                Lineup locked — saves will be rejected
+              </div>
+              <div className="text-[11px] text-amber-200/80 leading-snug">
+                {lockStatus.reason}
+                {lockStatus.next_unlock_iso && (
+                  <span className="ml-1 opacity-80">
+                    Unlocks at {new Date(lockStatus.next_unlock_iso).toLocaleString(undefined, {
+                      weekday: "short",
+                      hour: "numeric",
+                      minute: "2-digit",
+                    })}.
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
         {/* ── Matchup Bar ── */}
         <div className="p-4 border-b border-border bg-secondary/20">
           <div className="flex flex-wrap items-center gap-3">

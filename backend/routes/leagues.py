@@ -48,14 +48,17 @@ def _score(team: dict) -> float:
 
 
 def _rank_teams(teams: List[dict]) -> List[dict]:
-    """Sort teams by W desc, PF desc. Returns new sorted list."""
+    """Sort teams by W desc, PF desc. Deterministic tiebreaker on team _id
+    so that two consecutive ranks (e.g. matchup-gen + bracket-render) agree
+    even when many teams share 0-0 records.
+    """
     return sorted(
         teams,
         key=lambda t: (
-            t.get("wins", 0) or 0,
-            _score(t),
+            -(t.get("wins", 0) or 0),
+            -_score(t),
+            str(t.get("_id") or ""),
         ),
-        reverse=True,
     )
 
 
@@ -493,9 +496,9 @@ async def get_playoff_bracket(league_id: str):
             playoff_size = 2
     playoff_size = min(playoff_size, total)
 
-    # Seed by overall rank
-    seeded = _rank_teams(teams)[:playoff_size]
-    overall_leader = seeded[0] if seeded else None
+    # Helper used by both the actual-bracket and projected-bracket branches
+    seeded_for_helper = _rank_teams(teams)[:playoff_size]
+    overall_leader = seeded_for_helper[0] if seeded_for_helper else None
 
     def _team_to_slot(t: dict, seed: int) -> dict:
         return {
@@ -511,6 +514,99 @@ async def get_playoff_bracket(league_id: str):
             "points_for": round(float(t.get("points_for", 0) or 0), 2),
             "games_back": _games_back(overall_leader, t),
         }
+
+    # ── Iter 104: if persisted playoff matchups exist (generated via iter-102),
+    # build rounds DIRECTLY from them so we honor the configured seeding method
+    # (high_vs_low / adjacent / custom). Falls back to the projected hardcoded
+    # logic below when no `is_playoff` matchups exist yet.
+    persisted_playoff = await db.matchups.find({
+        "league_id": league_id,
+        "is_playoff": True,
+    }).to_list(200)
+    if persisted_playoff:
+        team_lookup = {str(t["_id"]): t for t in teams}
+        ranked = _rank_teams(teams)
+        seed_lookup = {str(t["_id"]): idx + 1 for idx, t in enumerate(ranked)}
+
+        def _slot_from_team_id(tid):
+            t = team_lookup.get(str(tid or ""))
+            if not t:
+                return None
+            return _team_to_slot(t, seed_lookup.get(str(t["_id"]), 99))
+
+        # Group by bracket_round (default = 1 for legacy data)
+        by_round: dict = {}
+        for m in persisted_playoff:
+            rnd = int(m.get("bracket_round") or 1)
+            by_round.setdefault(rnd, []).append(m)
+
+        round_names = {
+            1: "Round 1",
+            2: "Quarterfinals",
+            3: "Semifinals",
+            4: "Conference Finals",
+            5: "Championship",
+        }
+        # Adjust last-round name to "Championship" regardless of count
+        max_round = max(by_round.keys()) if by_round else 1
+
+        rounds_built: list = []
+        for rnd_idx in sorted(by_round.keys()):
+            matchups_out: list = []
+            for m in by_round[rnd_idx]:
+                hs = None if m.get("home_team_tbd") else _slot_from_team_id(m.get("home_team_id"))
+                ls = None if m.get("away_team_tbd") else _slot_from_team_id(m.get("away_team_id"))
+                home_score = m.get("home_score")
+                away_score = m.get("away_score")
+                status = m.get("status", "scheduled")
+                projected_winner = None
+                if status in ("completed", "final") and home_score is not None and away_score is not None:
+                    if float(home_score) > float(away_score):
+                        projected_winner = m.get("home_team_id")
+                    elif float(away_score) > float(home_score):
+                        projected_winner = m.get("away_team_id")
+                elif hs and ls:
+                    projected_winner = hs["team_id"]  # projection = higher seed
+                matchups_out.append({
+                    "high_seed": hs,
+                    "low_seed": ls,
+                    "projected_winner": projected_winner,
+                    "status": status if status != "scheduled" else "actual",
+                    "home_score": home_score,
+                    "away_score": away_score,
+                    "week": m.get("week"),
+                })
+            label = (
+                "Championship" if rnd_idx == max_round and max_round > 1
+                else round_names.get(rnd_idx, f"Round {rnd_idx}")
+            )
+            rounds_built.append({"name": label, "matchups": matchups_out})
+
+        # Compute byes: any seeded team NOT in Round 1 matchups
+        r1_teams = set()
+        for mu in rounds_built[0]["matchups"] if rounds_built else []:
+            for slot in (mu.get("high_seed"), mu.get("low_seed")):
+                if slot:
+                    r1_teams.add(slot["team_id"])
+        seeded = _rank_teams(teams)[:playoff_size]
+        playoff_teams_out = [_team_to_slot(t, i + 1) for i, t in enumerate(seeded)]
+        bye_teams_out = [pt for pt in playoff_teams_out if pt["team_id"] not in r1_teams]
+        if rounds_built and bye_teams_out:
+            rounds_built[0]["byes"] = bye_teams_out
+
+        return {
+            "league_id": league_id,
+            "playoff_size": playoff_size,
+            "playoff_teams": playoff_teams_out,
+            "bye_teams": bye_teams_out,
+            "rounds": rounds_built,
+            "status": "actual",
+            "seeding_method": league.get("playoff_seeding_method") or "high_vs_low",
+            "playoff_format": league.get("playoff_format") or "h2h_matchup",
+        }
+
+    # Seed by overall rank
+    seeded = _rank_teams(teams)[:playoff_size]
 
     playoff_teams_out = [_team_to_slot(t, i + 1) for i, t in enumerate(seeded)]
 
@@ -847,6 +943,19 @@ class LeagueUpdate(BaseModel):
     consolation_teams: Optional[int] = Field(default=None, ge=0, le=32)
     consolation_seeding_method: Optional[str] = Field(default=None, pattern=r"^(high_vs_low|adjacent|custom)$")
     consolation_custom_matchups: Optional[List[dict]] = None
+    # ── Iter 104: Emergency Roster Changes + Goalie Scoring (moved from
+    # the legacy "Roster Lock Rules" mock UI in League Setup → League Structure).
+    emergency_changes_enabled: Optional[bool] = None
+    emergency_changes_regular: Optional[int] = Field(default=None, ge=0, le=10)
+    emergency_changes_playoffs: Optional[int] = Field(default=None, ge=0, le=10)
+    emergency_eligibility: Optional[List[str]] = None  # any | scratched | injured | minors | suspended | personal
+    differentiate_goalie_scoring: Optional[bool] = None
+    goalie_scoring_method: Optional[str] = Field(default=None, pattern=r"^(cumulative|average_multiplied|best_x)$")
+    goalie_best_x_count: Optional[int] = Field(default=None, ge=1, le=8)
+    goalie_avg_multiplier_count: Optional[int] = Field(default=None, ge=1, le=8)
+    goalie_gp_limit_enabled: Optional[bool] = None
+    goalie_gp_limit: Optional[int] = Field(default=None, ge=1, le=10)
+    goalie_gp_count_method: Optional[str] = Field(default=None, pattern=r"^(best|average)$")
 
 
 _LEAGUE_UPDATE_ALLOWED = {
@@ -875,6 +984,12 @@ _LEAGUE_UPDATE_ALLOWED = {
     # Iter 101: playoff bracket + consolation bracket configuration
     "playoff_format", "playoff_seeding_method", "playoff_custom_matchups",
     "consolation_teams", "consolation_seeding_method", "consolation_custom_matchups",
+    # Iter 104: Emergency Roster Changes + Goalie Scoring (moved from League Setup mock UI)
+    "emergency_changes_enabled", "emergency_changes_regular",
+    "emergency_changes_playoffs", "emergency_eligibility",
+    "differentiate_goalie_scoring", "goalie_scoring_method",
+    "goalie_best_x_count", "goalie_avg_multiplier_count",
+    "goalie_gp_limit_enabled", "goalie_gp_limit", "goalie_gp_count_method",
 }
 
 
@@ -1196,6 +1311,35 @@ async def nhl_season_bounds():
         "total_weeks": len(weeks),
     }
 
+
+
+# ─── GET /leagues/{league_id}/lock-status ──────────────────────
+# Returns the live `evaluate_lineup_lock` result so the lineup UI can show a
+# warning banner BEFORE the save fails. Read-only; any authenticated user
+# in the league can call it. Honors `?week=N` to preview lock state for a
+# specific scoring period (defaults to the league's current_week).
+@router.get("/leagues/{league_id}/lock-status")
+async def league_lock_status(league_id: str, request: Request, week: Optional[int] = None):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+    await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    try:
+        from utils.lineup_lock import evaluate_lineup_lock
+        current_wk = week if week is not None else (
+            league.get("current_week") or league.get("playoff_start_week")
+        )
+        result = evaluate_lineup_lock(league, current_week=current_wk)
+        return {
+            **result,
+            "league_id": league_id,
+            "evaluated_for_week": current_wk,
+        }
+    except Exception as e:
+        return {"locked": False, "reason": None, "error": str(e)}
 
 
 # ─── POST /leagues/{league_id}/playoffs/check-tbd-deadlines ────

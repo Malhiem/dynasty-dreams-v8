@@ -20,7 +20,8 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
 import TeamsTab from "@/lovable/components/admin/TeamsTab";
 import DivisionsTab from "@/lovable/pages/commissioner/DivisionsTab";
-import RulesScheduleTab from "@/lovable/pages/commissioner/RulesScheduleTab";
+import RulesScheduleTab, { RosterLockCard } from "@/lovable/pages/commissioner/RulesScheduleTab";
+
 import RostersTab from "@/lovable/pages/commissioner/RostersTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
 import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
@@ -785,7 +786,7 @@ const CommissionerSettings = () => {
   );
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(generateMockAuditLog());
   const [auditFilterCategory, setAuditFilterCategory] = useState<string>("all");
-  const { league: activeLeague } = useActiveLeague();
+  const { league: activeLeague, reloadLeague } = useActiveLeague();
 
   // ─── Setup Wizard (first-time) ─────────────────────────────────
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -978,17 +979,6 @@ const CommissionerSettings = () => {
   const [scoringPeriodStartDay, setScoringPeriodStartDay] = useState("monday");
   const [semiWeeklyEnabled, setSemiWeeklyEnabled] = useState(false);
   const [semiWeeklySplitDay, setSemiWeeklySplitDay] = useState("friday");
-  const [emergencyChangesEnabled, setEmergencyChangesEnabled] = useState(true);
-  const [emergencyChangesRegular, setEmergencyChangesRegular] = useState(2);
-  const [emergencyChangesPlayoffs, setEmergencyChangesPlayoffs] = useState(1);
-  const [emergencyEligibility, setEmergencyEligibility] = useState<Set<string>>(new Set(["any"]));
-  const [differentiateGoalieScoring, setDifferentiateGoalieScoring] = useState(false);
-  const [goalieScoringMethod, setGoalieScoringMethod] = useState("cumulative");
-  const [goalieBestXCount, setGoalieBestXCount] = useState(4);
-  const [goalieAvgMultiplierCount, setGoalieAvgMultiplierCount] = useState(3);
-  const [goalieGPLimitEnabled, setGoalieGPLimitEnabled] = useState(false);
-  const [goalieGPLimit, setGoalieGPLimit] = useState(4);
-  const [goalieGPCountMethod, setGoalieGPCountMethod] = useState("best");
 
   const completedDraftResults = [
     { draftId: "draft-3", pick: 1, round: 1, team: "Ice Crushers", player: "Connor Bedard", position: "C" },
@@ -1477,106 +1467,76 @@ const CommissionerSettings = () => {
               </CardContent>
             </Card>
 
-            {/* ─── Salary Retention Slots (wired) ─────────────────── */}
-            <Card className="bg-card border-border" data-testid="salary-retention-slots-card">
-              <CardHeader>
-                <CardTitle>Salary Retention Slots</CardTitle>
-                <CardDescription>
-                  How many retained-salary trades each team can stack at one time. Default is <span className="font-semibold text-foreground">3</span> (mirrors the NHL CBA).
-                  Set to <span className="font-semibold text-foreground">0</span> to disable retention trades entirely.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap items-end gap-4">
-                  <div className="space-y-2 flex-1 min-w-[180px]">
-                    <Label htmlFor="retention-slots-input">Retention Slots per Team</Label>
-                    <Input
-                      id="retention-slots-input"
-                      type="number"
-                      min={0}
-                      max={10}
-                      step={1}
-                      value={retentionSlotsDraft}
-                      onChange={(e) => setRetentionSlotsDraft(e.target.value)}
-                      className="bg-secondary border-border"
-                      data-testid="retention-slots-input"
-                    />
-                    <p className="text-xs text-muted-foreground">Allowed range: 0 – 10. Current league value: <span className="font-semibold">{retentionSlots}</span></p>
-                  </div>
-                  <Button
-                    onClick={saveRetentionSlots}
-                    disabled={savingRetentionSlots || retentionSlotsDraft === String(retentionSlots)}
-                    data-testid="retention-slots-save-btn"
-                  >
-                    {savingRetentionSlots ? "Saving…" : "Save"}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+            {/* Salary Retention card removed — now lives in the Transactions tab. */}
 
-            <Card className={`bg-card border-border relative ${!isH2H ? "opacity-50 pointer-events-none" : ""}`}>
-              {!isH2H && (
-                <div className="absolute inset-0 z-10 flex items-start justify-center pt-6">
-                  <Badge variant="outline" className="bg-muted/90 backdrop-blur-sm text-muted-foreground border-border text-xs px-3 py-1.5">
+            {/* ─── Iter 103: Roster Lock & Lineup Lock (moved from Transactions) ─── */}
+            {activeLeague?.id && (
+              <RosterLockCard league={activeLeague} reloadLeague={reloadLeague} />
+            )}
+
+            {/* ─── Iter 104: Modernized "Roster Lock Rules" — supplementary
+                style settings the new wired card doesn't cover. The cadence /
+                lock day / lineup lock minutes UI lives in <RosterLockCard>
+                above (single source of truth, persisted via PUT /leagues). */}
+            <Card className={`bg-card border-border ${!isH2H ? "opacity-50 pointer-events-none" : ""}`} data-testid="legacy-roster-lock-rules-card">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Sliders className="h-5 w-5 text-primary" />
+                  Lock Style Preset
+                </CardTitle>
+                <CardDescription>
+                  Choose a high-level lock style. The detailed cadence + lock day + lineup lock time
+                  are configured in the <span className="text-foreground font-medium">Roster Lock &amp; Lineup Lock</span> card above.
+                </CardDescription>
+                {!isH2H && (
+                  <Badge variant="outline" className="bg-muted/90 backdrop-blur-sm text-muted-foreground border-border text-xs px-3 py-1.5 mt-2 self-start">
                     Head-to-Head format required
                   </Badge>
-                </div>
-              )}
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Sliders className="h-5 w-5 text-primary" />
-                  Roster Lock Rules
-                </CardTitle>
-                <CardDescription>Configure when players lock into their roster slots for each matchup period</CardDescription>
+                )}
               </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-3">
-                  <Label>Roster Lock Type</Label>
-                  <p className="text-sm text-muted-foreground">Determines when roster changes are locked for a matchup period</p>
-                  <div className="grid gap-3 md:grid-cols-4">
-                    {[
-                      { value: "daily", label: "Daily Lock", desc: "Rosters lock each day at the start of the first game. Owners can adjust their lineup daily throughout the matchup period." },
-                      { value: "weekly", label: "Weekly Lock", desc: "Rosters lock at the start of the first game of the matchup period. No changes allowed until the next period begins." },
-                      { value: "semi-weekly", label: "Semi-Weekly Lock", desc: "Rosters lock twice per matchup period. Teams get a mid-period roster adjustment window, splitting the week into two lock segments." },
-                      { value: "first-game", label: "First Game of Matchup", desc: "Each player locks individually when their first game of the matchup period begins. Unlocked players can still be adjusted." },
-                    ].map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setRosterLockType(option.value)}
-                        className={`relative flex flex-col gap-1.5 rounded-lg border p-4 text-left transition-all hover:border-primary/50 ${
-                          rosterLockType === option.value
-                            ? "border-primary bg-primary/10 ring-1 ring-primary/30"
-                            : "border-border bg-secondary/50 hover:bg-secondary"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className={`h-3 w-3 rounded-full border-2 flex items-center justify-center ${
-                            rosterLockType === option.value ? "border-primary" : "border-muted-foreground/40"
-                          }`}>
-                            {rosterLockType === option.value && (
-                              <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                            )}
-                          </div>
-                          <span className="font-medium text-sm">{option.label}</span>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                  {[
+                    { value: "daily", label: "Daily Lock", desc: "Adjust lineups every day." },
+                    { value: "weekly", label: "Weekly Lock", desc: "One lock at period start." },
+                    { value: "semi-weekly", label: "Semi-Weekly Lock", desc: "Mid-period adjustment window." },
+                    { value: "first-game", label: "First Game of Matchup", desc: "Each player locks on their own first game." },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setRosterLockType(option.value)}
+                      className={`relative flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-all hover:border-primary/50 ${
+                        rosterLockType === option.value
+                          ? "border-primary bg-primary/10 ring-1 ring-primary/30"
+                          : "border-border bg-secondary/40 hover:bg-secondary"
+                      }`}
+                      data-testid={`lock-style-${option.value}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <div className={`h-3 w-3 rounded-full border-2 flex items-center justify-center ${
+                          rosterLockType === option.value ? "border-primary" : "border-muted-foreground/40"
+                        }`}>
+                          {rosterLockType === option.value && (
+                            <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                          )}
                         </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed pl-5">{option.desc}</p>
-                      </button>
-                    ))}
-                  </div>
+                        <span className="font-medium text-sm">{option.label}</span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground leading-snug pl-5">{option.desc}</p>
+                    </button>
+                  ))}
                 </div>
 
                 {(rosterLockType === "weekly" || rosterLockType === "semi-weekly") && (
-                  <>
-                    <Separator />
-                    <div className="space-y-3">
-                      <Label>Scoring Period Start Day</Label>
-                      <p className="text-sm text-muted-foreground">Choose which day of the week each scoring period begins</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Scoring Period Start Day</Label>
                       <Select value={scoringPeriodStartDay} onValueChange={setScoringPeriodStartDay}>
-                        <SelectTrigger className="w-full md:w-64">
+                        <SelectTrigger className="bg-secondary border-border">
                           <SelectValue />
                         </SelectTrigger>
-                        <SelectContent>
+                        <SelectContent className="bg-popover border-border z-50">
                           {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((day) => (
                             <SelectItem key={day} value={day}>
                               {day.charAt(0).toUpperCase() + day.slice(1)}
@@ -1585,342 +1545,32 @@ const CommissionerSettings = () => {
                         </SelectContent>
                       </Select>
                     </div>
-                  </>
-                )}
-
-                {rosterLockType === "semi-weekly" && (
-                  <>
-                    <Separator />
-                    <div className="space-y-3">
-                      <Label>Mid-Period Roster Adjustment Day</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Teams can make roster changes at the start of this day, splitting the scoring period into two lock segments.
-                      </p>
-                      <Select value={semiWeeklySplitDay} onValueChange={setSemiWeeklySplitDay}>
-                        <SelectTrigger className="w-full md:w-64">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-                            .filter((d) => d !== scoringPeriodStartDay)
-                            .map((day) => (
-                              <SelectItem key={day} value={day}>
-                                {day.charAt(0).toUpperCase() + day.slice(1)}
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                      <div className="rounded-lg border border-border bg-secondary/50 p-3 mt-2">
-                        <p className="text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">Example: </span>
-                          {(() => {
-                            const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-                            const startIdx = days.indexOf(scoringPeriodStartDay);
-                            const splitIdx = days.indexOf(semiWeeklySplitDay);
-                            const startLabel = scoringPeriodStartDay.charAt(0).toUpperCase() + scoringPeriodStartDay.slice(1);
-                            const splitLabel = semiWeeklySplitDay.charAt(0).toUpperCase() + semiWeeklySplitDay.slice(1);
-                            const dayBefore = (idx: number) => {
-                              const d = days[(idx - 1 + 7) % 7];
-                              return d.charAt(0).toUpperCase() + d.slice(1);
-                            };
-                            return `Lock 1: ${startLabel} – ${dayBefore(splitIdx)} · Lock 2: ${splitLabel} – ${dayBefore(startIdx === 0 ? 7 : startIdx)}`;
-                          })()}
-                        </p>
+                    {rosterLockType === "semi-weekly" && (
+                      <div className="space-y-1">
+                        <Label className="text-xs">Mid-Period Adjustment Day</Label>
+                        <Select value={semiWeeklySplitDay} onValueChange={setSemiWeeklySplitDay}>
+                          <SelectTrigger className="bg-secondary border-border">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-popover border-border z-50">
+                            {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+                              .filter((d) => d !== scoringPeriodStartDay)
+                              .map((day) => (
+                                <SelectItem key={day} value={day}>
+                                  {day.charAt(0).toUpperCase() + day.slice(1)}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
                       </div>
-                    </div>
-                  </>
-                )}
-
-                {(rosterLockType === "weekly" || rosterLockType === "semi-weekly") && (
-                  <>
-                    <Separator />
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <Label className="text-base flex items-center gap-2">
-                            <AlertTriangle className="h-4 w-4 text-primary" />
-                            Emergency Roster Changes
-                          </Label>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            Allow teams to make a limited number of roster swaps after weekly lock. Points accrued by the swapped-out player up to that point still count toward the matchup.
-                          </p>
-                        </div>
-                        <Switch
-                          checked={emergencyChangesEnabled}
-                          onCheckedChange={setEmergencyChangesEnabled}
-                        />
-                      </div>
-
-                      {emergencyChangesEnabled && (
-                        <div className="space-y-5 pl-4 border-l-2 border-primary/30 ml-1">
-                          {/* Limits */}
-                          <div className="grid gap-4 sm:grid-cols-2 max-w-md">
-                            <div className="space-y-2">
-                              <Label className="text-sm">Regular Season (per team)</Label>
-                              <Select value={emergencyChangesRegular.toString()} onValueChange={(v) => setEmergencyChangesRegular(parseInt(v))}>
-                                <SelectTrigger className="bg-secondary border-border">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {[1, 2, 3, 4, 5, 6, 8, 10].map(n => (
-                                    <SelectItem key={n} value={n.toString()}>
-                                      {n} change{n > 1 ? "s" : ""}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-
-                            <div className="space-y-2">
-                              <Label className="text-sm">Playoffs (per team)</Label>
-                              <Select value={emergencyChangesPlayoffs.toString()} onValueChange={(v) => setEmergencyChangesPlayoffs(parseInt(v))}>
-                                <SelectTrigger className="bg-secondary border-border">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {[0, 1, 2, 3, 4, 5, 6, 8, 10].map(n => (
-                                    <SelectItem key={n} value={n.toString()}>
-                                      {n === 0 ? "Disabled" : `${n} change${n > 1 ? "s" : ""}`}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          </div>
-
-                          {/* Eligibility Criteria */}
-                          <div className="space-y-3">
-                            <div>
-                              <Label className="text-sm font-medium">Eligibility Criteria</Label>
-                              <p className="text-xs text-muted-foreground mt-0.5">
-                                Which players can be swapped out using an emergency change?
-                              </p>
-                            </div>
-                            <div className="grid gap-2 sm:grid-cols-2 max-w-lg">
-                              {[
-                                { value: "any", label: "Any Player", desc: "Any starting player can be swapped" },
-                                { value: "scratched", label: "Scratched Players", desc: "Player is a healthy scratch from their NHL game" },
-                                { value: "injured", label: "Injured Players", desc: "Player is injured or placed on IR by their NHL team" },
-                                { value: "minors", label: "Sent to Minors", desc: "Player has been assigned to the AHL/minors" },
-                                { value: "suspended", label: "Suspended Players", desc: "Player is serving a league suspension" },
-                                { value: "personal", label: "Personal Leave", desc: "Player is away for personal reasons" },
-                              ].map((option) => {
-                                const isChecked = emergencyEligibility.has(option.value);
-                                const isAny = option.value === "any";
-                                const anySelected = emergencyEligibility.has("any");
-                                return (
-                                  <label
-                                    key={option.value}
-                                    className={`flex items-start gap-2.5 rounded-lg border p-3 cursor-pointer transition-all ${
-                                      isChecked
-                                        ? "border-primary/50 bg-primary/5"
-                                        : "border-border bg-secondary/30 hover:bg-secondary/50"
-                                    } ${!isAny && anySelected ? "opacity-50 pointer-events-none" : ""}`}
-                                  >
-                                    <Checkbox
-                                      checked={isChecked}
-                                      disabled={!isAny && anySelected}
-                                      onCheckedChange={(checked) => {
-                                        setEmergencyEligibility(prev => {
-                                          const next = new Set(prev);
-                                          if (isAny) {
-                                            if (checked) {
-                                              // "Any" clears all others
-                                              return new Set(["any"]);
-                                            } else {
-                                              next.delete("any");
-                                              return next;
-                                            }
-                                          }
-                                          // Non-any option
-                                          next.delete("any");
-                                          if (checked) next.add(option.value);
-                                          else next.delete(option.value);
-                                          if (next.size === 0) next.add("any");
-                                          return next;
-                                        });
-                                      }}
-                                      className="mt-0.5 h-3.5 w-3.5"
-                                    />
-                                    <div>
-                                      <span className="text-sm font-medium">{option.label}</span>
-                                      <p className="text-[11px] text-muted-foreground leading-snug">{option.desc}</p>
-                                    </div>
-                                  </label>
-                                );
-                              })}
-                            </div>
-                          </div>
-
-                          <div className="text-xs text-muted-foreground bg-muted/30 rounded-md p-3 border border-border">
-                            <p className="font-medium text-foreground mb-1">How it works:</p>
-                            <ul className="list-disc list-inside space-y-0.5">
-                              <li>Teams can swap an eligible starting player with a bench player after rosters lock</li>
-                              <li>The swapped-out player's points earned up to the swap still count</li>
-                              <li>The counter resets each season (regular &amp; playoffs tracked separately)</li>
-                              {!emergencyEligibility.has("any") && (
-                                <li className="text-primary">Only players matching the selected criteria above qualify for a swap</li>
-                              )}
-                            </ul>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-
-                <Separator />
-
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-base">Differentiate Goalie Scoring</Label>
-                      <p className="text-sm text-muted-foreground">Enable separate scoring methods and games-played limits for goalies</p>
-                    </div>
-                    <Checkbox
-                      checked={differentiateGoalieScoring}
-                      onCheckedChange={(checked) => setDifferentiateGoalieScoring(checked === true)}
-                    />
+                    )}
                   </div>
+                )}
 
-                  {differentiateGoalieScoring && (
-                    <div className="space-y-6 pl-4 border-l-2 border-primary/30 ml-1">
-                      <div className="space-y-3">
-                        <Label>Goalie Scoring Method</Label>
-                        <p className="text-sm text-muted-foreground">How goalie scores are calculated across the matchup period</p>
-                        <div className="grid gap-3 md:grid-cols-3">
-                          {[
-                            { value: "cumulative", label: "Cumulative", desc: "All goalie game scores are added together for the matchup period total." },
-                            { value: "average-multiplied", label: "Average × Matchups", desc: "The average score across all goalie starts is multiplied by the number of matchup games." },
-                            { value: "best-x", label: "Best X Scores", desc: "Only the top scoring games count toward the matchup total." },
-                          ].map((option) => (
-                            <button
-                              key={option.value}
-                              type="button"
-                              onClick={() => setGoalieScoringMethod(option.value)}
-                              className={`relative flex flex-col gap-1.5 rounded-lg border p-4 text-left transition-all hover:border-primary/50 ${
-                                goalieScoringMethod === option.value
-                                  ? "border-primary bg-primary/10 ring-1 ring-primary/30"
-                                  : "border-border bg-secondary/50 hover:bg-secondary"
-                              }`}
-                            >
-                              <div className="flex items-center gap-2">
-                                <div className={`h-3 w-3 rounded-full border-2 flex items-center justify-center ${
-                                  goalieScoringMethod === option.value ? "border-primary" : "border-muted-foreground/40"
-                                }`}>
-                                  {goalieScoringMethod === option.value && (
-                                    <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                                  )}
-                                </div>
-                                <span className="font-medium text-sm">{option.label}</span>
-                              </div>
-                              <p className="text-xs text-muted-foreground leading-relaxed pl-5">{option.desc}</p>
-                            </button>
-                          ))}
-                        </div>
-
-                        {goalieScoringMethod === "best-x" && (
-                          <div className="space-y-2 max-w-xs">
-                            <Label>Number of Best Scores to Count</Label>
-                            <Select value={goalieBestXCount.toString()} onValueChange={(v) => setGoalieBestXCount(parseInt(v))}>
-                              <SelectTrigger className="bg-secondary border-border">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
-                                  <SelectItem key={n} value={n.toString()}>Best {n} game{n > 1 ? "s" : ""}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        )}
-
-                        {goalieScoringMethod === "average-multiplied" && (
-                          <div className="space-y-2 max-w-xs">
-                            <Label>Multiply Average by (Number of Games)</Label>
-                            <Select value={goalieAvgMultiplierCount.toString()} onValueChange={(v) => setGoalieAvgMultiplierCount(parseInt(v))}>
-                              <SelectTrigger className="bg-secondary border-border">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
-                                  <SelectItem key={n} value={n.toString()}>× {n} game{n > 1 ? "s" : ""}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        )}
-                      </div>
-
-                      <Separator />
-
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <Label>Goalie Games Played Limit</Label>
-                            <p className="text-sm text-muted-foreground">Set a maximum number of goalie starts that count per matchup period</p>
-                          </div>
-                          <Switch
-                            checked={goalieGPLimitEnabled}
-                            onCheckedChange={setGoalieGPLimitEnabled}
-                          />
-                        </div>
-
-                        {goalieGPLimitEnabled && (
-                          <div className="space-y-4 pl-4 border-l-2 border-primary/20 ml-1">
-                            <div className="space-y-2 max-w-xs">
-                              <Label>Maximum Games Played</Label>
-                              <Select value={goalieGPLimit.toString()} onValueChange={(v) => setGoalieGPLimit(parseInt(v))}>
-                                <SelectTrigger className="bg-secondary border-border">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
-                                    <SelectItem key={n} value={n.toString()}>{n} game{n > 1 ? "s" : ""}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-
-                            <div className="space-y-3">
-                              <Label>Games Counting Method</Label>
-                              <p className="text-sm text-muted-foreground">How to determine which games count when the limit is reached</p>
-                              <div className="grid gap-3 md:grid-cols-2">
-                                {[
-                                  { value: "best", label: `Best ${goalieGPLimit} Games`, desc: `Only the ${goalieGPLimit} highest-scoring goalie games count toward the matchup total.` },
-                                  { value: "average", label: `Average × ${goalieGPLimit}`, desc: `The average score of all goalie games is multiplied by ${goalieGPLimit} to determine the matchup total.` },
-                                ].map((option) => (
-                                  <button
-                                    key={option.value}
-                                    type="button"
-                                    onClick={() => setGoalieGPCountMethod(option.value)}
-                                    className={`relative flex flex-col gap-1.5 rounded-lg border p-4 text-left transition-all hover:border-primary/50 ${
-                                      goalieGPCountMethod === option.value
-                                        ? "border-primary bg-primary/10 ring-1 ring-primary/30"
-                                        : "border-border bg-secondary/50 hover:bg-secondary"
-                                    }`}
-                                  >
-                                    <div className="flex items-center gap-2">
-                                      <div className={`h-3 w-3 rounded-full border-2 flex items-center justify-center ${
-                                        goalieGPCountMethod === option.value ? "border-primary" : "border-muted-foreground/40"
-                                      }`}>
-                                        {goalieGPCountMethod === option.value && (
-                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                                        )}
-                                      </div>
-                                      <span className="font-medium text-sm">{option.label}</span>
-                                    </div>
-                                    <p className="text-xs text-muted-foreground leading-relaxed pl-5">{option.desc}</p>
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <p className="text-[11px] text-muted-foreground italic">
+                  Emergency Roster Changes and Goalie Scoring rules now live under{" "}
+                  <span className="font-medium text-foreground">League Structure</span>.
+                </p>
               </CardContent>
             </Card>
           </TabsContent>

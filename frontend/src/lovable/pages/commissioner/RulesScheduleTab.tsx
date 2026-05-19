@@ -212,8 +212,7 @@ export default function RulesScheduleTab() {
         </CardHeader>
       </Card>
 
-      {/* Roster Lock + Lineup Lock + Playoff override */}
-      <RosterLockCard league={league} reloadLeague={reloadLeague} />
+      {/* Roster Lock & Lineup Lock moved to League Setup tab per Iter 103 */}
 
       {/* Salary Cap (with hold-to-accelerate) */}
       <SalaryCapCard league={league} reloadLeague={reloadLeague} />
@@ -325,7 +324,7 @@ const LOCK_TIME_OPTIONS = (() => {
   return opts;
 })();
 
-function RosterLockCard({ league, reloadLeague }: any) {
+export function RosterLockCard({ league, reloadLeague }: any) {
   const [lockType, setLockType] = useState<string>(league?.roster_lock_type || "daily");
   const [lockDay, setLockDay] = useState<string>(league?.roster_lock_day || "monday");
   const [lockSecondDay, setLockSecondDay] = useState<string>(league?.roster_lock_second_day || "thursday");

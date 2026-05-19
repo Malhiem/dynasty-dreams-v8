@@ -18,7 +18,8 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, Loader2, Trophy, Calendar, AlertTriangle, Plus, Trash2, ExternalLink } from "lucide-react";
+import { Save, Loader2, Trophy, Calendar, AlertTriangle, Plus, Trash2, ExternalLink, ShieldAlert, Goal } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import api from "@/lib/api";
 import { Link } from "react-router-dom";
 
@@ -697,6 +698,284 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
             data-testid="co-save-btn">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
             Save Consolation
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+/* ───────────────────────── Emergency Roster Changes Card ─────────────── */
+const ELIGIBILITY_OPTIONS = [
+  { value: "any", label: "Any Player", desc: "Any starting player can be swapped." },
+  { value: "scratched", label: "Healthy Scratch", desc: "Player is a healthy scratch from their NHL game." },
+  { value: "injured", label: "Injured", desc: "Player is injured or placed on IR." },
+  { value: "minors", label: "Sent to Minors", desc: "Player assigned to AHL/minors." },
+  { value: "suspended", label: "Suspended", desc: "Player is serving a league suspension." },
+  { value: "personal", label: "Personal Leave", desc: "Player is on personal leave." },
+];
+
+export function EmergencyRosterChangesCard({ league, reloadLeague }: any) {
+  const [enabled, setEnabled] = useState<boolean>(!!league?.emergency_changes_enabled);
+  const [regular, setRegular] = useState<string>(String(league?.emergency_changes_regular ?? 2));
+  const [playoffs, setPlayoffs] = useState<string>(String(league?.emergency_changes_playoffs ?? 1));
+  const [eligibility, setEligibility] = useState<Set<string>>(
+    new Set(league?.emergency_eligibility || ["any"]),
+  );
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setEnabled(!!league?.emergency_changes_enabled);
+    setRegular(String(league?.emergency_changes_regular ?? 2));
+    setPlayoffs(String(league?.emergency_changes_playoffs ?? 1));
+    setEligibility(new Set(league?.emergency_eligibility || ["any"]));
+  }, [
+    league?.id, league?.emergency_changes_enabled, league?.emergency_changes_regular,
+    league?.emergency_changes_playoffs, league?.emergency_eligibility,
+  ]);
+
+  const toggleEligibility = (value: string) => {
+    setEligibility((prev) => {
+      const next = new Set(prev);
+      if (value === "any") {
+        return new Set(["any"]);
+      }
+      next.delete("any");
+      if (next.has(value)) next.delete(value); else next.add(value);
+      if (next.size === 0) next.add("any");
+      return next;
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/leagues/${league.id}`, {
+        emergency_changes_enabled: enabled,
+        emergency_changes_regular: parseInt(regular, 10) || 0,
+        emergency_changes_playoffs: parseInt(playoffs, 10) || 0,
+        emergency_eligibility: enabled ? Array.from(eligibility) : null,
+      });
+      toast.success("Emergency Roster Changes saved");
+      reloadLeague?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="bg-card border-border" data-testid="emergency-roster-changes-card">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <ShieldAlert className="h-5 w-5 text-amber-400" /> Emergency Roster Changes
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Allow limited mid-period roster swaps after weekly lock. Points accrued
+          by the swapped-out player still count toward the matchup.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Switch checked={enabled} onCheckedChange={setEnabled}
+            id="er-enabled" data-testid="er-enabled" />
+          <Label htmlFor="er-enabled" className="cursor-pointer font-semibold">
+            Enable emergency changes
+          </Label>
+        </div>
+        {enabled && (
+          <>
+            <div className="grid grid-cols-2 gap-3 max-w-md">
+              <div className="space-y-1">
+                <Label className="text-xs">Regular Season (per team)</Label>
+                <Input type="number" min={0} max={10} value={regular}
+                  onChange={(e) => setRegular(e.target.value)}
+                  data-testid="er-regular" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Playoffs (per team)</Label>
+                <Input type="number" min={0} max={10} value={playoffs}
+                  onChange={(e) => setPlayoffs(e.target.value)}
+                  data-testid="er-playoffs" />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs mb-2 block">Eligibility Criteria</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {ELIGIBILITY_OPTIONS.map((opt) => {
+                  const checked = eligibility.has(opt.value);
+                  const anySelected = eligibility.has("any");
+                  const disabled = opt.value !== "any" && anySelected;
+                  return (
+                    <label
+                      key={opt.value}
+                      className={`flex items-start gap-2 rounded-md border p-2.5 cursor-pointer text-xs transition-colors ${
+                        checked ? "border-primary/50 bg-primary/5" : "border-border bg-secondary/30"
+                      } ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={() => !disabled && toggleEligibility(opt.value)}
+                        data-testid={`er-eligibility-${opt.value}`}
+                      />
+                      <div>
+                        <div className="font-medium text-foreground">{opt.label}</div>
+                        <div className="text-[10px] text-muted-foreground">{opt.desc}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          </>
+        )}
+        <div className="flex justify-end">
+          <Button size="sm" onClick={save} disabled={saving || !league?.id}
+            data-testid="er-save-btn">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+            Save Emergency Rules
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/* ───────────────────────── Goalie Scoring Card ───────────────────────── */
+export function GoalieScoringCard({ league, reloadLeague }: any) {
+  const [enabled, setEnabled] = useState<boolean>(!!league?.differentiate_goalie_scoring);
+  const [method, setMethod] = useState<string>(league?.goalie_scoring_method || "cumulative");
+  const [bestX, setBestX] = useState<string>(String(league?.goalie_best_x_count ?? 4));
+  const [avgMult, setAvgMult] = useState<string>(String(league?.goalie_avg_multiplier_count ?? 3));
+  const [gpEnabled, setGpEnabled] = useState<boolean>(!!league?.goalie_gp_limit_enabled);
+  const [gpLimit, setGpLimit] = useState<string>(String(league?.goalie_gp_limit ?? 4));
+  const [gpMethod, setGpMethod] = useState<string>(league?.goalie_gp_count_method || "best");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setEnabled(!!league?.differentiate_goalie_scoring);
+    setMethod(league?.goalie_scoring_method || "cumulative");
+    setBestX(String(league?.goalie_best_x_count ?? 4));
+    setAvgMult(String(league?.goalie_avg_multiplier_count ?? 3));
+    setGpEnabled(!!league?.goalie_gp_limit_enabled);
+    setGpLimit(String(league?.goalie_gp_limit ?? 4));
+    setGpMethod(league?.goalie_gp_count_method || "best");
+  }, [
+    league?.id, league?.differentiate_goalie_scoring, league?.goalie_scoring_method,
+    league?.goalie_best_x_count, league?.goalie_avg_multiplier_count,
+    league?.goalie_gp_limit_enabled, league?.goalie_gp_limit, league?.goalie_gp_count_method,
+  ]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/leagues/${league.id}`, {
+        differentiate_goalie_scoring: enabled,
+        goalie_scoring_method: enabled ? method : null,
+        goalie_best_x_count: enabled && method === "best_x" ? (parseInt(bestX, 10) || 4) : null,
+        goalie_avg_multiplier_count: enabled && method === "average_multiplied" ? (parseInt(avgMult, 10) || 3) : null,
+        goalie_gp_limit_enabled: enabled ? gpEnabled : false,
+        goalie_gp_limit: enabled && gpEnabled ? (parseInt(gpLimit, 10) || 4) : null,
+        goalie_gp_count_method: enabled && gpEnabled ? gpMethod : null,
+      });
+      toast.success("Goalie Scoring saved");
+      reloadLeague?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="bg-card border-border" data-testid="goalie-scoring-card">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <Goal className="h-5 w-5 text-emerald-400" /> Goalie Scoring
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Differentiate goalie scoring with cumulative / Best-X / Average × N methods,
+          and optional games-played cap.
+        </p>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center gap-3">
+          <Switch checked={enabled} onCheckedChange={setEnabled}
+            id="gs-enabled" data-testid="gs-enabled" />
+          <Label htmlFor="gs-enabled" className="cursor-pointer font-semibold">
+            Differentiate goalie scoring
+          </Label>
+        </div>
+        {enabled && (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="space-y-1 sm:col-span-1">
+                <Label className="text-xs">Scoring Method</Label>
+                <Select value={method} onValueChange={setMethod}>
+                  <SelectTrigger className="bg-secondary border-border" data-testid="gs-method">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover border-border z-50">
+                    <SelectItem value="cumulative">Cumulative (all games)</SelectItem>
+                    <SelectItem value="average_multiplied">Average × Games</SelectItem>
+                    <SelectItem value="best_x">Best X Scores</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {method === "best_x" && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Best X (games)</Label>
+                  <Input type="number" min={1} max={8} value={bestX}
+                    onChange={(e) => setBestX(e.target.value)} data-testid="gs-best-x" />
+                </div>
+              )}
+              {method === "average_multiplied" && (
+                <div className="space-y-1">
+                  <Label className="text-xs">Multiply Average by</Label>
+                  <Input type="number" min={1} max={8} value={avgMult}
+                    onChange={(e) => setAvgMult(e.target.value)} data-testid="gs-avg-mult" />
+                </div>
+              )}
+            </div>
+            <div className="border-t border-border pt-3 space-y-3">
+              <div className="flex items-center gap-3">
+                <Switch checked={gpEnabled} onCheckedChange={setGpEnabled}
+                  id="gs-gp-enabled" data-testid="gs-gp-enabled" />
+                <Label htmlFor="gs-gp-enabled" className="cursor-pointer text-sm">
+                  Cap goalie games played per period
+                </Label>
+              </div>
+              {gpEnabled && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-md">
+                  <div className="space-y-1">
+                    <Label className="text-xs">Max Games Played</Label>
+                    <Input type="number" min={1} max={10} value={gpLimit}
+                      onChange={(e) => setGpLimit(e.target.value)} data-testid="gs-gp-limit" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">When over the cap, count…</Label>
+                    <Select value={gpMethod} onValueChange={setGpMethod}>
+                      <SelectTrigger className="bg-secondary border-border" data-testid="gs-gp-method">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover border-border z-50">
+                        <SelectItem value="best">Best {gpLimit} games</SelectItem>
+                        <SelectItem value="average">Average × {gpLimit}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+        <div className="flex justify-end">
+          <Button size="sm" onClick={save} disabled={saving || !league?.id}
+            data-testid="gs-save-btn">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+            Save Goalie Scoring
           </Button>
         </div>
       </CardContent>

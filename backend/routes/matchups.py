@@ -139,13 +139,15 @@ def _build_playoff_bracket(
         field_count = len(teams)
     field_count = int(field_count)
 
+    # Use the same ranking as `routes/leagues._rank_teams` so the bracket
+    # display endpoint computes identical seeds.
     ranked = sorted(
         teams,
         key=lambda t: (
-            int(t.get("wins", 0) or 0),
-            float(t.get("points_for", 0) or 0),
+            -(int(t.get("wins", 0) or 0)),
+            -(float(t.get("points_for", 0) or 0) + float(t.get("live_points", 0) or 0)),
+            str(t.get("_id") or ""),
         ),
-        reverse=True,
     )
     if is_consolation:
         # Consolation seeds = teams ranked BELOW the playoff cut
