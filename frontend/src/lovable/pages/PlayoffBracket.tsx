@@ -167,11 +167,30 @@ export const PlayoffBracketView = ({ leagueId }: { leagueId?: string | null }) =
   return (
     <div className="space-y-5" data-testid="playoff-bracket-page">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Trophy className="h-5 w-5 text-accent" />
           <h2 className="text-lg font-bold text-foreground">
             Playoff Tree <span className="text-sm font-normal text-muted-foreground">· {bracket.playoff_size}-team bracket</span>
           </h2>
+          {/* Iter 105: Surface seeding_method + playoff_format from the backend */}
+          {bracket.playoff_format === "playoff_tree" && bracket.seeding_method && (
+            <span
+              className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30"
+              data-testid="playoff-bracket-seeding-badge"
+            >
+              {bracket.seeding_method === "high_vs_low" && "1 vs N seeding"}
+              {bracket.seeding_method === "adjacent" && "1 v 2 / 3 v 4 seeding"}
+              {bracket.seeding_method === "custom" && "Custom ladder"}
+            </span>
+          )}
+          {bracket.playoff_format === "h2h_matchup" && (
+            <span
+              className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
+              data-testid="playoff-bracket-format-badge"
+            >
+              H2H matchup mode
+            </span>
+          )}
         </div>
         <span
           className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${badgeColor}`}

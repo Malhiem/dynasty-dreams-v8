@@ -117,15 +117,29 @@ def _build_playoff_bracket(
             for m in (entry.get("matchups") or []):
                 home = m.get("home")
                 away = m.get("away")
-                # Skip pure-TBD rows (no notification value if both unset)
-                if home in (None, "", "tbd") and away in (None, "", "tbd"):
+                # Note: We intentionally KEEP rows where both slots are TBD
+                # (winner or loser sentinels) so the bracket UI can render
+                # the placeholder ladder. Pure-empty rows are still filtered.
+                if home in (None, "") and away in (None, ""):
                     continue
+                home_tbd_type = (
+                    "loser" if home == "tbd_loser"
+                    else "winner" if home in (None, "", "tbd")
+                    else None
+                )
+                away_tbd_type = (
+                    "loser" if away == "tbd_loser"
+                    else "winner" if away in (None, "", "tbd")
+                    else None
+                )
                 out.append({
                     "week": wk,
-                    "home_team_id": home if home and home != "tbd" else None,
-                    "away_team_id": away if away and away != "tbd" else None,
-                    "home_team_tbd": home in (None, "", "tbd"),
-                    "away_team_tbd": away in (None, "", "tbd"),
+                    "home_team_id": home if home not in (None, "", "tbd", "tbd_loser") else None,
+                    "away_team_id": away if away not in (None, "", "tbd", "tbd_loser") else None,
+                    "home_team_tbd": home_tbd_type is not None,
+                    "away_team_tbd": away_tbd_type is not None,
+                    "home_tbd_type": home_tbd_type,  # "winner" | "loser" | None
+                    "away_tbd_type": away_tbd_type,
                     "bracket_round": wk - start_wk + 1,
                     "is_playoff": not is_consolation,
                     "is_consolation": is_consolation,

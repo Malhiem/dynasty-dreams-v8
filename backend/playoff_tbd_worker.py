@@ -46,7 +46,8 @@ async def _scan_league(db, league: dict, *, create_notification) -> int:
             if week <= 0:
                 continue
             has_tbd = any(
-                (m.get("home") in (None, "tbd", "")) or (m.get("away") in (None, "tbd", ""))
+                (m.get("home") in (None, "tbd", "tbd_loser", ""))
+                or (m.get("away") in (None, "tbd", "tbd_loser", ""))
                 for m in (entry.get("matchups") or [])
             )
             if not has_tbd:

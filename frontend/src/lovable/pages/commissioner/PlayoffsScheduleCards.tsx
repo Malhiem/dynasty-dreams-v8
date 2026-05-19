@@ -181,13 +181,14 @@ export function RegularSeasonScheduleCard({ league, reloadLeague }: any) {
 
 /* ───────────────────────── Custom Matchup Builder ───────────────────── */
 function CustomMatchupBuilder({
-  weeks, teams, value, onChange, testidPrefix,
+  weeks, teams, value, onChange, testidPrefix, allowLoserSentinel = false,
 }: {
   weeks: number[];
   teams: { id: string; name: string }[];
   value: any[];
   onChange: (next: any[]) => void;
   testidPrefix: string;
+  allowLoserSentinel?: boolean;
 }) {
   const getWeekEntry = (wk: number) => value.find((v: any) => v.week === wk) || { week: wk, matchups: [] };
 
@@ -250,7 +251,10 @@ function CustomMatchupBuilder({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-popover border-border z-50 max-h-72">
-                    <SelectItem value="tbd">TBD (Winner / Loser)</SelectItem>
+                    <SelectItem value="tbd">TBD (Winner of prior)</SelectItem>
+                    {allowLoserSentinel && (
+                      <SelectItem value="tbd_loser">TBD (Loser of prior)</SelectItem>
+                    )}
                     {teams.map((t) => (
                       <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                     ))}
@@ -262,7 +266,10 @@ function CustomMatchupBuilder({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent className="bg-popover border-border z-50 max-h-72">
-                    <SelectItem value="tbd">TBD (Winner / Loser)</SelectItem>
+                    <SelectItem value="tbd">TBD (Winner of prior)</SelectItem>
+                    {allowLoserSentinel && (
+                      <SelectItem value="tbd_loser">TBD (Loser of prior)</SelectItem>
+                    )}
                     {teams.map((t) => (
                       <SelectItem key={t.id} value={t.id}>{t.name}</SelectItem>
                     ))}
@@ -454,9 +461,9 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
           <div className="border-l-2 border-amber-500/40 pl-3 space-y-2">
             <div className="text-xs font-semibold text-amber-300">Custom Playoff Ladder</div>
             <p className="text-[11px] text-muted-foreground">
-              Build each playoff week's matchups. Leave a slot as <strong>TBD</strong> for
-              "Winner of …" / "Loser of …" — you'll get a top-bell notification 2 days
-              before each week starts to finalize it.
+              Build each playoff week's matchups. Leave a slot as <strong>TBD (Winner of prior)</strong>
+              to advance the winner from the previous round. You'll get a notification 2 days before
+              each week starts to finalize.
             </p>
             <CustomMatchupBuilder
               weeks={weeksList}
@@ -666,8 +673,9 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
               <div className="border-l-2 border-violet-500/40 pl-3 space-y-2">
                 <div className="text-xs font-semibold text-violet-300">Custom Consolation Ladder</div>
                 <p className="text-[11px] text-muted-foreground">
-                  Build each week's matchups. Leave any slot as <strong>TBD</strong> for "Winner of …"
-                  — you'll get a notification 2 days before to finalize.
+                  Build each week's matchups. Use <strong>TBD (Winner of prior)</strong> for a
+                  standard advancement bracket, or <strong>TBD (Loser of prior)</strong> to form
+                  a loser's bracket. You'll be notified 2 days before each week starts to finalize.
                 </p>
                 <CustomMatchupBuilder
                   weeks={weeksList}
@@ -675,6 +683,7 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
                   value={customMatchups}
                   onChange={setCustomMatchups}
                   testidPrefix="co-custom"
+                  allowLoserSentinel={true}
                 />
               </div>
             )}
@@ -921,6 +930,7 @@ export function GoalieScoringCard({ league, reloadLeague }: any) {
                     <SelectItem value="cumulative">Cumulative (all games)</SelectItem>
                     <SelectItem value="average_multiplied">Average × Games</SelectItem>
                     <SelectItem value="best_x">Best X Scores</SelectItem>
+                    <SelectItem value="daily_lock">Daily Lock (per-day starter)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -939,6 +949,13 @@ export function GoalieScoringCard({ league, reloadLeague }: any) {
                 </div>
               )}
             </div>
+            {method === "daily_lock" && (
+              <div className="rounded-md border border-cyan-500/30 bg-cyan-500/5 px-3 py-2 text-[11px] text-cyan-200/90">
+                <strong>Daily Lock:</strong> Goalies can be set per-day, scoring only on the
+                day they're slotted. Pair with the games-played cap below to enforce a max
+                starts-per-period quota.
+              </div>
+            )}
             <div className="border-t border-border pt-3 space-y-3">
               <div className="flex items-center gap-3">
                 <Switch checked={gpEnabled} onCheckedChange={setGpEnabled}

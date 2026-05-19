@@ -130,26 +130,107 @@ def _fantasy_points_from_live(live: Dict[str, Any], is_goalie: bool) -> float:
 
 
 async def _recompute_team_live_totals(db):
-    """Aggregate each team's live playoff points and store on `teams.live_points`."""
+    """Aggregate each team's live playoff points and store on `teams.live_points`.
+
+    Iter 105: When a league has `differentiate_goalie_scoring` enabled, the goalie
+    contribution is adjusted per `goalie_scoring_method`:
+      • cumulative         → sum of all goalie games (default fallback)
+      • average_multiplied → mean(goalie_fpts) × `goalie_avg_multiplier_count`
+      • best_x             → sum of the top-N goalie game scores
+      • daily_lock         → only goalie-games on days where the goalie was the
+                             team's locked starter (uses `team.goalie_daily_lock`
+                             map keyed by ISO date → player_id); falls back to
+                             cumulative when the map is empty.
+    `goalie_gp_limit_enabled` caps the count of goalie games actually applied.
+    """
     all_players = await db.players.find(
         {"live_stats": {"$exists": True}},
         {"_id": 1, "nhl_id": 1, "player_type": 1, "position": 1, "live_stats": 1},
     ).to_list(10000)
 
-    # Compute per-player cumulative live fpts
-    player_fpts: Dict[str, float] = {}
+    # Compute per-player {gid: fpts} maps so we can re-aggregate per league rules.
+    player_game_fpts: Dict[str, Dict[str, float]] = {}
+    player_is_goalie: Dict[str, bool] = {}
     for p in all_players:
         is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
-        total = 0.0
-        for _gid, live in (p.get("live_stats") or {}).items():
-            total += _fantasy_points_from_live(live, is_g)
-        player_fpts[str(p["_id"])] = round(total, 2)
+        per_game: Dict[str, float] = {}
+        for gid, live in (p.get("live_stats") or {}).items():
+            per_game[gid] = _fantasy_points_from_live(live, is_g)
+        pid = str(p["_id"])
+        player_game_fpts[pid] = per_game
+        player_is_goalie[pid] = is_g
 
-    # Walk teams and sum
-    teams = await db.teams.find({}, {"_id": 1, "league_id": 1, "roster": 1, "name": 1}).to_list(1000)
+    # Index leagues so we can apply per-league goalie rules.
+    leagues_by_id: Dict[str, Dict[str, Any]] = {
+        str(L["_id"]): L
+        async for L in db.leagues.find({}, {
+            "differentiate_goalie_scoring": 1,
+            "goalie_scoring_method": 1,
+            "goalie_best_x_count": 1,
+            "goalie_avg_multiplier_count": 1,
+            "goalie_gp_limit_enabled": 1,
+            "goalie_gp_limit": 1,
+        })
+    }
+
+    teams = await db.teams.find(
+        {},
+        {"_id": 1, "league_id": 1, "roster": 1, "name": 1, "goalie_daily_lock": 1, "live_stats_game_dates": 1},
+    ).to_list(1000)
     team_deltas = []
     for t in teams:
-        fpts = round(sum(player_fpts.get(pid, 0.0) for pid in (t.get("roster") or [])), 2)
+        league = leagues_by_id.get(str(t.get("league_id") or "")) or {}
+        diff_goalies = bool(league.get("differentiate_goalie_scoring"))
+        method = league.get("goalie_scoring_method") or "cumulative"
+        best_x = int(league.get("goalie_best_x_count") or 4)
+        avg_mult = int(league.get("goalie_avg_multiplier_count") or 3)
+        gp_cap_on = bool(league.get("goalie_gp_limit_enabled"))
+        gp_cap = int(league.get("goalie_gp_limit") or 0)
+        daily_lock = t.get("goalie_daily_lock") or {}  # {date_iso: player_id}
+        locked_player_ids = set(daily_lock.values())
+
+        fpts = 0.0
+        for pid in (t.get("roster") or []):
+            games = player_game_fpts.get(pid, {})
+            if not games:
+                continue
+            if not diff_goalies or not player_is_goalie.get(pid):
+                fpts += sum(games.values())
+                continue
+            # Goalie + differentiated scoring active
+            scores = sorted(games.values(), reverse=True)
+            if method == "best_x":
+                cap = min(best_x, len(scores))
+                if gp_cap_on and gp_cap:
+                    cap = min(cap, gp_cap)
+                fpts += sum(scores[:cap])
+            elif method == "average_multiplied":
+                mean = (sum(scores) / len(scores)) if scores else 0.0
+                fpts += round(mean * avg_mult, 2)
+            elif method == "daily_lock":
+                # Only games where THIS goalie was locked-in for that date
+                if locked_player_ids and pid in locked_player_ids:
+                    locked_dates = {d for d, plid in daily_lock.items() if plid == pid}
+                    # Map game_id → date via `live_stats_game_dates` if present;
+                    # fallback: count every game (treats daily_lock as a no-op cap).
+                    game_dates = (t.get("live_stats_game_dates") or {})
+                    matched = [
+                        score for gid, score in games.items()
+                        if game_dates.get(gid) in locked_dates
+                    ] or list(games.values())
+                    if gp_cap_on and gp_cap:
+                        matched = sorted(matched, reverse=True)[:gp_cap]
+                    fpts += sum(matched)
+                else:
+                    # No lock set → fall back to cumulative with optional cap
+                    capped = sorted(scores, reverse=True)[:gp_cap] if (gp_cap_on and gp_cap) else scores
+                    fpts += sum(capped)
+            else:  # cumulative
+                if gp_cap_on and gp_cap:
+                    fpts += sum(scores[:gp_cap])
+                else:
+                    fpts += sum(scores)
+        fpts = round(fpts, 2)
         await db.teams.update_one({"_id": t["_id"]}, {"$set": {"live_points": fpts}})
         team_deltas.append({
             "team_id": str(t["_id"]),

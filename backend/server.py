@@ -1848,6 +1848,9 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
     # ── Iter 101: enforce roster_lock_type / lineup_lock_minutes_before ──
     # Commissioners bypass the lock so they can still adjust lineups during
     # the freeze window (matches existing override semantics for IR/cap gates).
+    # ── Iter 105: emergency_changes_* bypass — when enabled and the team has
+    # remaining emergency swaps budget, allow the write through and consume a
+    # swap from `team.emergency_swaps_used`.
     if league and not is_commish:
         try:
             from utils.lineup_lock import evaluate_lineup_lock
@@ -1856,12 +1859,35 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
             current_wk = league.get("current_week") or league.get("playoff_start_week")
             lock = evaluate_lineup_lock(league, current_week=current_wk)
             if lock["locked"]:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"{lock['reason']} (next unlock: {lock['next_unlock_iso']})"
-                    ),
+                emergency_on = bool(league.get("emergency_changes_enabled"))
+                in_playoffs = (
+                    current_wk is not None
+                    and league.get("playoff_start_week") is not None
+                    and int(current_wk) >= int(league["playoff_start_week"])
                 )
+                budget = int(
+                    (league.get("emergency_changes_playoffs") or 0) if in_playoffs
+                    else (league.get("emergency_changes_regular") or 0)
+                )
+                used_field = f"emergency_swaps_used_{current_wk}" if current_wk else "emergency_swaps_used"
+                used = int(team.get(used_field) or 0)
+                if emergency_on and budget > 0 and used < budget:
+                    # Allow the save — consume one swap from the budget.
+                    await db.teams.update_one(
+                        {"_id": team["_id"]},
+                        {"$inc": {used_field: 1}},
+                    )
+                    logger.info(
+                        f"Emergency roster swap consumed: team={team['_id']} "
+                        f"week={current_wk} used={used + 1}/{budget}"
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"{lock['reason']} (next unlock: {lock['next_unlock_iso']})"
+                        ),
+                    )
         except HTTPException:
             raise
         except Exception as e:

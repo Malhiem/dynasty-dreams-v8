@@ -13,8 +13,6 @@ import {
   RegularSeasonScheduleCard,
   PlayoffsCard,
   ConsolationCard,
-  EmergencyRosterChangesCard,
-  GoalieScoringCard,
 } from "@/lovable/pages/commissioner/PlayoffsScheduleCards";
 
 /**
@@ -374,10 +372,6 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
           <RegularSeasonScheduleCard league={activeLeague} reloadLeague={reloadLeague} />
           <PlayoffsCard league={activeLeague} reloadLeague={reloadLeague} teams={teams} />
           <ConsolationCard league={activeLeague} reloadLeague={reloadLeague} teams={teams} />
-          {/* Iter 104: Emergency Roster Changes + Goalie Scoring moved from
-              the legacy "Roster Lock Rules" card in League Setup. */}
-          <EmergencyRosterChangesCard league={activeLeague} reloadLeague={reloadLeague} />
-          <GoalieScoringCard league={activeLeague} reloadLeague={reloadLeague} />
         </>
       )}
     </div>

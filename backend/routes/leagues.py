@@ -950,7 +950,7 @@ class LeagueUpdate(BaseModel):
     emergency_changes_playoffs: Optional[int] = Field(default=None, ge=0, le=10)
     emergency_eligibility: Optional[List[str]] = None  # any | scratched | injured | minors | suspended | personal
     differentiate_goalie_scoring: Optional[bool] = None
-    goalie_scoring_method: Optional[str] = Field(default=None, pattern=r"^(cumulative|average_multiplied|best_x)$")
+    goalie_scoring_method: Optional[str] = Field(default=None, pattern=r"^(cumulative|average_multiplied|best_x|daily_lock)$")
     goalie_best_x_count: Optional[int] = Field(default=None, ge=1, le=8)
     goalie_avg_multiplier_count: Optional[int] = Field(default=None, ge=1, le=8)
     goalie_gp_limit_enabled: Optional[bool] = None
@@ -1391,7 +1391,8 @@ async def check_playoff_tbd_deadlines(league_id: str, request: Request):
                 continue
             # Has any TBD slot in any matchup for this week?
             has_tbd = any(
-                (m.get("home") in (None, "tbd", "")) or (m.get("away") in (None, "tbd", ""))
+                (m.get("home") in (None, "tbd", "tbd_loser", ""))
+                or (m.get("away") in (None, "tbd", "tbd_loser", ""))
                 for m in (entry.get("matchups") or [])
             )
             if not has_tbd:

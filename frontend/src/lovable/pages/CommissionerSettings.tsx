@@ -21,6 +21,10 @@ import api from "@/lib/api";
 import TeamsTab from "@/lovable/components/admin/TeamsTab";
 import DivisionsTab from "@/lovable/pages/commissioner/DivisionsTab";
 import RulesScheduleTab, { RosterLockCard } from "@/lovable/pages/commissioner/RulesScheduleTab";
+import {
+  EmergencyRosterChangesCard,
+  GoalieScoringCard,
+} from "@/lovable/pages/commissioner/PlayoffsScheduleCards";
 
 import RostersTab from "@/lovable/pages/commissioner/RostersTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
@@ -1471,7 +1475,14 @@ const CommissionerSettings = () => {
 
             {/* ─── Iter 103: Roster Lock & Lineup Lock (moved from Transactions) ─── */}
             {activeLeague?.id && (
-              <RosterLockCard league={activeLeague} reloadLeague={reloadLeague} />
+              <>
+                <RosterLockCard league={activeLeague} reloadLeague={reloadLeague} />
+                {/* Iter 105: Emergency Roster Changes + Goalie Scoring moved here
+                    from League Structure per user request — keeps all roster-related
+                    rules grouped together in League Setup. */}
+                <EmergencyRosterChangesCard league={activeLeague} reloadLeague={reloadLeague} />
+                <GoalieScoringCard league={activeLeague} reloadLeague={reloadLeague} />
+              </>
             )}
 
             {/* ─── Iter 104: Modernized "Roster Lock Rules" — supplementary
