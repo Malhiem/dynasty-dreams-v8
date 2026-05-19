@@ -1845,6 +1845,28 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
     if not (is_owner or is_commish):
         raise HTTPException(status_code=403, detail="Only the team owner or commissioner may edit lineups")
 
+    # ── Iter 101: enforce roster_lock_type / lineup_lock_minutes_before ──
+    # Commissioners bypass the lock so they can still adjust lineups during
+    # the freeze window (matches existing override semantics for IR/cap gates).
+    if league and not is_commish:
+        try:
+            from utils.lineup_lock import evaluate_lineup_lock
+            # Current week derives from the league's most recent in-progress matchup,
+            # so playoff lock override kicks in only when actually inside playoffs.
+            current_wk = league.get("current_week") or league.get("playoff_start_week")
+            lock = evaluate_lineup_lock(league, current_week=current_wk)
+            if lock["locked"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{lock['reason']} (next unlock: {lock['next_unlock_iso']})"
+                    ),
+                )
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"lineup_lock evaluation skipped: {e}")
+
     raw = payload.get("lineup") or {}
     lineup: dict[str, dict] = {}
     valid_sections = {"forward", "defense", "goalie", "bench", "ir", "ir-plus", "taxi", "minors"}
@@ -2494,6 +2516,19 @@ async def startup():
     except Exception as e:
         logger.warning(f"Could not start ownership snapshot worker: {e}")
 
+    # Kick off the TBD-deadline scanner (every 6h, pings commissioners with
+    # custom playoff/consolation brackets whose next-week TBD slots need to
+    # be finalized in the next 0..2 days).
+    try:
+        from playoff_tbd_worker import tbd_deadline_loop
+        loop = asyncio.get_event_loop()
+        fastapi_app.state.tbd_deadline_task = loop.create_task(
+            tbd_deadline_loop(db, create_notification)
+        )
+        logger.info("TBD deadline worker scheduled")
+    except Exception as e:
+        logger.warning(f"Could not start TBD deadline worker: {e}")
+
 
 @fastapi_app.on_event("shutdown")
 async def shutdown():
@@ -2503,6 +2538,9 @@ async def shutdown():
     snap_task = getattr(fastapi_app.state, "ownership_snapshot_task", None)
     if snap_task:
         snap_task.cancel()
+    tbd_task = getattr(fastapi_app.state, "tbd_deadline_task", None)
+    if tbd_task:
+        tbd_task.cancel()
     client.close()
 
 # Wrap FastAPI with Socket.IO

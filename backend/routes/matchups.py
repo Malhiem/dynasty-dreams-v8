@@ -52,6 +52,146 @@ def generate_round_robin(team_ids):
     return schedule
 
 
+def _seed_pairings(seeded_teams: list, method: str) -> list:
+    """Given an ordered list of team_ids (seed 1 first), return a list of
+    (home, away) Round-1 matchup tuples per the seeding method.
+
+    `high_vs_low`  → 1vN, 2vN-1, 3vN-2, …
+    `adjacent`     → 1v2, 3v4, …
+    """
+    teams = list(seeded_teams)
+    pairs: list = []
+    if method == "adjacent":
+        for i in range(0, len(teams) - 1, 2):
+            pairs.append((teams[i], teams[i + 1]))
+    else:  # high_vs_low (default)
+        i, j = 0, len(teams) - 1
+        while i < j:
+            pairs.append((teams[i], teams[j]))
+            i += 1
+            j -= 1
+    return pairs
+
+
+def _build_playoff_bracket(
+    league: dict,
+    teams: list,
+    *,
+    is_consolation: bool = False,
+) -> list:
+    """Build playoff (or consolation) matchups across the configured weeks.
+
+    Returns a list of {week, home_team_id, away_team_id, is_playoff, is_consolation,
+    bracket_round, status} dicts ready to insert into db.matchups.
+
+    Honors:
+      • playoff_format ∈ {h2h_matchup, playoff_tree}  (h2h_matchup → no bracket)
+      • playoff_seeding_method ∈ {high_vs_low, adjacent, custom}
+      • playoff_custom_matchups → list of {week, matchups: [{home, away}]}
+    """
+    prefix = "consolation_" if is_consolation else "playoff_"
+    fmt = "playoff_tree" if is_consolation else (league.get("playoff_format") or "h2h_matchup")
+    if not is_consolation and fmt != "playoff_tree":
+        return []  # legacy "all regular H2H during playoff weeks" mode
+
+    method = league.get(f"{prefix}seeding_method") or "high_vs_low"
+    start_wk = league.get(f"{prefix}start_week") or league.get("playoff_start_week")
+    end_wk = league.get(f"{prefix}end_week") or league.get("playoff_end_week")
+    if start_wk is None or end_wk is None:
+        return []
+    start_wk, end_wk = int(start_wk), int(end_wk)
+    if end_wk < start_wk:
+        return []
+
+    # ── Custom: trust the commissioner's ladder ──
+    if method == "custom":
+        out = []
+        custom = league.get(f"{prefix}custom_matchups") or []
+        for entry in custom:
+            try:
+                wk = int(entry.get("week", 0))
+            except Exception:
+                continue
+            if wk < start_wk or wk > end_wk:
+                continue
+            for m in (entry.get("matchups") or []):
+                home = m.get("home")
+                away = m.get("away")
+                # Skip pure-TBD rows (no notification value if both unset)
+                if home in (None, "", "tbd") and away in (None, "", "tbd"):
+                    continue
+                out.append({
+                    "week": wk,
+                    "home_team_id": home if home and home != "tbd" else None,
+                    "away_team_id": away if away and away != "tbd" else None,
+                    "home_team_tbd": home in (None, "", "tbd"),
+                    "away_team_tbd": away in (None, "", "tbd"),
+                    "bracket_round": wk - start_wk + 1,
+                    "is_playoff": not is_consolation,
+                    "is_consolation": is_consolation,
+                })
+        return out
+
+    # ── Seeded (high_vs_low or adjacent) ──
+    # Rank teams by wins desc, then PF desc (matches `_rank_teams` in leagues router).
+    field_count = league.get(f"{prefix}teams")
+    if field_count is None:
+        field_count = len(teams)
+    field_count = int(field_count)
+
+    ranked = sorted(
+        teams,
+        key=lambda t: (
+            int(t.get("wins", 0) or 0),
+            float(t.get("points_for", 0) or 0),
+        ),
+        reverse=True,
+    )
+    if is_consolation:
+        # Consolation seeds = teams ranked BELOW the playoff cut
+        playoff_count = int(league.get("playoff_teams") or 0)
+        seeded = ranked[playoff_count: playoff_count + field_count]
+    else:
+        seeded = ranked[:field_count]
+
+    seed_ids = [str(t["_id"]) for t in seeded]
+    round_pairs = _seed_pairings(seed_ids, method)
+
+    out: list = []
+    # Round 1 — start week, real matchups
+    for home, away in round_pairs:
+        out.append({
+            "week": start_wk,
+            "home_team_id": home,
+            "away_team_id": away,
+            "home_team_tbd": False,
+            "away_team_tbd": False,
+            "bracket_round": 1,
+            "is_playoff": not is_consolation,
+            "is_consolation": is_consolation,
+        })
+    # Rounds 2..N — TBD placeholders, one per surviving slot
+    surviving = len(round_pairs)
+    for rnd_offset in range(1, end_wk - start_wk + 1):
+        surviving = max(1, surviving // 2) if rnd_offset > 0 else surviving
+        if surviving < 1:
+            break
+        for _ in range(surviving // 2 if surviving > 1 else 1):
+            out.append({
+                "week": start_wk + rnd_offset,
+                "home_team_id": None,
+                "away_team_id": None,
+                "home_team_tbd": True,
+                "away_team_tbd": True,
+                "bracket_round": rnd_offset + 1,
+                "is_playoff": not is_consolation,
+                "is_consolation": is_consolation,
+            })
+        if surviving == 1:
+            break
+    return out
+
+
 def _build_division_pairings(teams: list, cfg: dict) -> list:
     """Build a flat list of (home, away) pairings per the division-aware schedule config.
 
@@ -227,11 +367,32 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
             m["scoring_format"] = scoring_format
         await db.matchups.insert_many(full_schedule)
 
+    # ── Iter 101: append playoff bracket + consolation bracket ──
+    # Honors `playoff_format`, `playoff_seeding_method`, and `playoff_custom_matchups`
+    # so the bracket UI on /standings (Playoffs tab) renders the configured ladder.
+    bracket_matchups: list = []
+    bracket_matchups.extend(_build_playoff_bracket(league, teams, is_consolation=False))
+    if league.get("consolation_enabled"):
+        bracket_matchups.extend(_build_playoff_bracket(league, teams, is_consolation=True))
+    if bracket_matchups:
+        for m in bracket_matchups:
+            m["league_id"] = input.league_id
+            m["scoring_format"] = scoring_format
+            m["home_team_name"] = team_map.get(m.get("home_team_id") or "", "TBD")
+            m["away_team_name"] = team_map.get(m.get("away_team_id") or "", "TBD")
+            m["home_score"] = 0
+            m["away_score"] = 0
+            m["status"] = "scheduled"
+            m["winner"] = None
+        await db.matchups.insert_many(bracket_matchups)
+
     return {
         "message": f"Generated {len(full_schedule)} matchups for {num_weeks} weeks",
         "weeks": num_weeks,
         "mode": "division_aware" if use_divisional else "round_robin",
         "opponents_per_period": 1 if use_divisional else opponents_per_period,
+        "playoff_matchups": len([m for m in bracket_matchups if m.get("is_playoff")]),
+        "consolation_matchups": len([m for m in bracket_matchups if m.get("is_consolation")]),
     }
 
 

@@ -18,8 +18,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, Loader2, Trophy, Calendar, AlertTriangle, Plus, Trash2 } from "lucide-react";
+import { Save, Loader2, Trophy, Calendar, AlertTriangle, Plus, Trash2, ExternalLink } from "lucide-react";
 import api from "@/lib/api";
+import { Link } from "react-router-dom";
 
 type NhlWeek = { number: number; start_date: string; end_date: string; label: string };
 
@@ -478,7 +479,18 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
           </div>
         )}
 
-        <div className="flex justify-end">
+        <div className="flex justify-between items-center gap-3 flex-wrap">
+          {format === "playoff_tree" && seedingMethod === "custom" ? (
+            <Link
+              to="/standings?tab=playoffs"
+              target="_blank"
+              className="inline-flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 underline-offset-2 hover:underline"
+              data-testid="po-mirror-to-standings"
+            >
+              <ExternalLink className="h-3 w-3" />
+              Preview live bracket on Standings → Playoffs
+            </Link>
+          ) : <span />}
           <Button size="sm" onClick={save} disabled={saving || !league?.id || errors.length > 0}
             data-testid="po-save-btn">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
