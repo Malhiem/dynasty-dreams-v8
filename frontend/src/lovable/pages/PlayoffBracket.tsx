@@ -55,11 +55,18 @@ const SEED_COLOR = [
   "text-muted-foreground",
 ];
 
-const TeamCard = ({ team, isWinner, isLoser }: { team: BracketTeam | null; isWinner?: boolean; isLoser?: boolean }) => {
+const TeamCard = ({ team, isWinner, isLoser, tbdLabel }: { team: BracketTeam | null; isWinner?: boolean; isLoser?: boolean; tbdLabel?: string }) => {
   if (!team) {
     return (
-      <div className="border border-dashed border-border rounded-md p-3 h-[56px] flex items-center gap-2 text-muted-foreground/60 text-xs italic">
-        TBD
+      <div
+        className="border border-dashed border-border rounded-md p-3 h-[56px] flex items-center gap-2 text-muted-foreground/60 text-xs italic"
+        data-testid="bracket-tbd-slot"
+      >
+        {tbdLabel ? (
+          <span className="truncate text-foreground/70 not-italic">{tbdLabel}</span>
+        ) : (
+          <span>TBD</span>
+        )}
       </div>
     );
   }
@@ -98,17 +105,22 @@ const MatchupCard = ({ mu, status }: { mu: Matchup; status: string }) => {
   const hsWin = hs && winnerId === hs.team_id && mu.status && mu.status !== "projected";
   const lsWin = ls && winnerId === ls.team_id && mu.status && mu.status !== "projected";
   const hasScore = typeof mu.home_score === "number" && typeof mu.away_score === "number";
+  // Iter 107: surface "Winner of X vs Y" auto-labels for TBD slots
+  const hsLabel = (mu as any).high_seed_label;
+  const lsLabel = (mu as any).low_seed_label;
   return (
     <div className="stat-card p-2.5 space-y-1.5" data-testid="bracket-matchup">
       <TeamCard
         team={hs}
         isWinner={!!hsWin || (status === "projected" && hs && winnerId === hs.team_id)}
         isLoser={!!lsWin}
+        tbdLabel={hsLabel}
       />
       <TeamCard
         team={ls}
         isWinner={!!lsWin}
         isLoser={!!hsWin || (status === "projected" && hs && winnerId === hs.team_id)}
+        tbdLabel={lsLabel}
       />
       {hasScore && (
         <div className="text-[10px] text-center text-muted-foreground pt-0.5">

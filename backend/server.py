@@ -1939,6 +1939,52 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
                 )
                 used = int(team.get(used_field) or 0)
                 if emergency_on and budget > 0 and used < budget:
+                    # ── Iter 107: Validate eligibility BEFORE consuming the swap ──
+                    # Compare old vs new lineup to find starters being benched.
+                    # Each removed starter must match one of the allowed criteria
+                    # (unless commissioner picked "any" which means no restriction).
+                    eligibility = set(league.get("emergency_eligibility") or ["any"])
+                    if "any" not in eligibility:
+                        STARTER_SECTIONS = {"forward", "defense", "goalie"}
+                        old_lineup = team.get("lineup") or {}
+                        new_lineup = (payload.get("lineup") or {}) if isinstance(payload.get("lineup"), dict) else {}
+                        # Removed starters = players who WERE in a starter section old
+                        # but are NOT in a starter section in the new lineup.
+                        old_starters = {
+                            pid for pid, slot in old_lineup.items()
+                            if isinstance(slot, dict) and slot.get("section") in STARTER_SECTIONS
+                        }
+                        new_starters = {
+                            pid for pid, slot in new_lineup.items()
+                            if isinstance(slot, dict) and slot.get("section") in STARTER_SECTIONS
+                        }
+                        removed_starters = old_starters - new_starters
+                        if removed_starters:
+                            # Map each eligibility value to player status field matchers.
+                            _STATUS_MAP = {
+                                "scratched": lambda p: (p.get("status") or "").lower() in {"scratched", "healthy_scratch", "hs"},
+                                "injured": lambda p: (p.get("status") or "").lower() in {"injured", "ir", "ir-lt", "out", "day-to-day", "dtd"} or bool(p.get("injury_status")),
+                                "minors": lambda p: (p.get("status") or "").lower() in {"minors", "ahl", "assigned"} or (p.get("assignment") or "").lower() == "minors",
+                                "suspended": lambda p: (p.get("status") or "").lower() in {"suspended", "suspension"},
+                                "personal": lambda p: (p.get("status") or "").lower() in {"personal", "personal_leave", "leave"},
+                            }
+                            allowed_matchers = [_STATUS_MAP[v] for v in eligibility if v in _STATUS_MAP]
+                            for pid in removed_starters:
+                                try:
+                                    player = await db.players.find_one({"_id": ObjectId(pid)})
+                                except Exception:
+                                    player = None
+                                if not player:
+                                    continue
+                                if not any(m(player) for m in allowed_matchers):
+                                    raise HTTPException(
+                                        status_code=400,
+                                        detail=(
+                                            f"Emergency swap denied for {player.get('full_name') or player.get('name') or pid}: "
+                                            f"player status doesn't match any allowed criteria "
+                                            f"({', '.join(sorted(eligibility))})."
+                                        ),
+                                    )
                     # Allow the save — consume one swap from the budget.
                     await db.teams.update_one(
                         {"_id": team["_id"]},

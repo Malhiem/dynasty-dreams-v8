@@ -594,6 +594,39 @@ async def get_playoff_bracket(league_id: str):
         if rounds_built and bye_teams_out:
             rounds_built[0]["byes"] = bye_teams_out
 
+        # ── Iter 107: Auto-label "Winner of A vs B" for TBD slots ──
+        # For each Round N TBD slot, find its parent matchup(s) in Round N-1.
+        # Standard bracket math: matchup i in round N feeds from matchups
+        # (2i, 2i+1) in round N-1. The label is either the actual completed
+        # winner's name OR "Winner of {home_abbr} vs {away_abbr}".
+        for i in range(1, len(rounds_built)):
+            prev = rounds_built[i - 1]["matchups"]
+            curr = rounds_built[i]["matchups"]
+            for j, mu in enumerate(curr):
+                # Parent slots: 2j (feeds home), 2j+1 (feeds away)
+                parents = [(2 * j, "home"), (2 * j + 1, "away")]
+                for parent_idx, side in parents:
+                    if parent_idx >= len(prev):
+                        continue
+                    p = prev[parent_idx]
+                    side_slot = mu.get("high_seed" if side == "home" else "low_seed")
+                    if side_slot is not None:
+                        continue  # actual team already assigned
+                    hs, ls = p.get("high_seed"), p.get("low_seed")
+                    if hs and ls:
+                        p_status = p.get("status")
+                        if p_status in ("completed", "final") and p.get("projected_winner"):
+                            wname = (
+                                hs["team_name"] if p["projected_winner"] == hs["team_id"]
+                                else ls["team_name"]
+                            )
+                            label_str = f"Winner: {wname}"
+                        else:
+                            ha = hs.get("team_abbr") or hs.get("team_name") or "?"
+                            la = ls.get("team_abbr") or ls.get("team_name") or "?"
+                            label_str = f"Winner of {ha} vs {la}"
+                        mu[f"{'high' if side == 'home' else 'low'}_seed_label"] = label_str
+
         return {
             "league_id": league_id,
             "playoff_size": playoff_size,
