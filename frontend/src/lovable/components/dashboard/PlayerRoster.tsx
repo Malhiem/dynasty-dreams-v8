@@ -599,6 +599,100 @@ interface PlayerRosterProps {
   /** League ID — required for fetching per-league ownership. */
   leagueId?: string;
 }
+/* ───────── Iter 106: Daily Goalie Picker (per-day starter) ───────── */
+const DailyGoaliePicker = ({ roster, lockMap, onSave, saving, gpLimit, week }: any) => {
+  // Build the 7-day window for the current scoring week (Mon → Sun)
+  const now = new Date();
+  const weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));  // back to Monday
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(weekStart);
+    d.setDate(weekStart.getDate() + i);
+    return d;
+  });
+  const goalies = (roster || []).filter((p: any) =>
+    p.position === "G" || p.player_type === "goalie",
+  );
+  const [draft, setDraft] = useState<Record<string, string>>(lockMap || {});
+  useEffect(() => { setDraft(lockMap || {}); }, [lockMap]);
+  const slottedCount = Object.values(draft).filter(Boolean).length;
+  const overCap = gpLimit && slottedCount > gpLimit;
+
+  const setSlot = (dateIso: string, playerId: string) => {
+    setDraft((prev) => {
+      const next = { ...prev };
+      if (!playerId || playerId === "__none__") delete next[dateIso];
+      else next[dateIso] = playerId;
+      return next;
+    });
+  };
+
+  const fmtDate = (d: Date) =>
+    `${d.toLocaleDateString(undefined, { weekday: "short" })} ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  const toIso = (d: Date) => d.toISOString().slice(0, 10);
+
+  return (
+    <div className="px-4 py-3 border-b border-border bg-emerald-500/5" data-testid="daily-goalie-picker">
+      <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs font-semibold text-emerald-300 uppercase tracking-wider">
+            Daily Goalie Lock · Week {week}
+          </span>
+          <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+            overCap
+              ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
+              : "bg-secondary text-muted-foreground border-border"
+          }`}>
+            {slottedCount} slotted{gpLimit ? ` / ${gpLimit} max` : ""}
+          </span>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs"
+          onClick={() => onSave(draft)}
+          disabled={saving || overCap || JSON.stringify(draft) === JSON.stringify(lockMap || {})}
+          data-testid="daily-goalie-picker-save"
+        >
+          {saving ? "Saving…" : "Save Daily Locks"}
+        </Button>
+      </div>
+      {overCap && (
+        <div className="text-[11px] text-rose-300 mb-2">
+          Exceeds the {gpLimit}-game cap — remove some slots before saving.
+        </div>
+      )}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
+        {days.map((d) => {
+          const iso = toIso(d);
+          const slotted = draft[iso] || "";
+          return (
+            <div key={iso} className="rounded-md border border-border bg-secondary/30 p-2"
+                 data-testid={`daily-goalie-${iso}`}>
+              <div className="text-[10px] font-medium text-muted-foreground mb-1">{fmtDate(d)}</div>
+              <select
+                className="w-full bg-secondary border border-border rounded px-1.5 py-1 text-xs text-foreground"
+                value={slotted}
+                onChange={(e) => setSlot(iso, e.target.value)}
+                data-testid={`daily-goalie-select-${iso}`}
+              >
+                <option value="__none__">— No starter —</option>
+                {goalies.map((g: any) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+            </div>
+          );
+        })}
+      </div>
+      {goalies.length === 0 && (
+        <div className="text-[11px] text-muted-foreground italic mt-2">
+          Your roster has no goalies yet — add one to enable per-day locks.
+        </div>
+      )}
+    </div>
+  );
+};
 
 const PlayerRoster = ({
   isOwnTeam = true,
@@ -701,6 +795,52 @@ const PlayerRoster = ({
     const t = setInterval(fetchOnce, 60_000);
     return () => { cancelled = true; clearInterval(t); };
   }, [leagueId]);
+
+  // ── Iter 106: Emergency swap budget + per-day goalie lock map ──
+  const [emergencyBudget, setEmergencyBudget] = useState<any>(null);
+  const [goalieLockMap, setGoalieLockMap] = useState<Record<string, string>>({});
+  const [savingDailyLock, setSavingDailyLock] = useState(false);
+  useEffect(() => {
+    if (!teamId || !isRealTeamId) { setEmergencyBudget(null); return; }
+    api.get(`/teams/${teamId}/emergency-swap-budget`)
+      .then(({ data }) => setEmergencyBudget(data))
+      .catch(() => setEmergencyBudget(null));
+  }, [teamId, isRealTeamId, lockStatus?.locked]);  // refetch when lock state changes
+
+  useEffect(() => {
+    if (!teamId || !isRealTeamId) { setGoalieLockMap({}); return; }
+    api.get(`/teams/${teamId}`)
+      .then(({ data }) => setGoalieLockMap(data?.goalie_daily_lock || {}))
+      .catch(() => setGoalieLockMap({}));
+  }, [teamId, isRealTeamId]);
+
+  // Pull league goalie config so we know when to render the picker
+  const [leagueGoalieCfg, setLeagueGoalieCfg] = useState<any>(null);
+  useEffect(() => {
+    if (!leagueId) { setLeagueGoalieCfg(null); return; }
+    api.get(`/leagues/${leagueId}`)
+      .then(({ data }) => setLeagueGoalieCfg({
+        differentiate_goalie_scoring: !!data?.differentiate_goalie_scoring,
+        goalie_scoring_method: data?.goalie_scoring_method,
+        goalie_gp_limit_enabled: !!data?.goalie_gp_limit_enabled,
+        goalie_gp_limit: data?.goalie_gp_limit,
+      }))
+      .catch(() => setLeagueGoalieCfg(null));
+  }, [leagueId]);
+
+  const saveGoalieLockMap = async (nextMap: Record<string, string>) => {
+    if (!teamId || !isRealTeamId) return;
+    setSavingDailyLock(true);
+    try {
+      const { data } = await api.put(`/teams/${teamId}/goalie-daily-lock`, { lock_map: nextMap });
+      setGoalieLockMap(data?.lock_map || {});
+      toast.success(`Daily goalie lock saved (${data?.count || 0} day${(data?.count || 0) === 1 ? "" : "s"})`);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save goalie lock");
+    } finally {
+      setSavingDailyLock(false);
+    }
+  };
   // ── Lineup warnings (iter 84) ───────────────────────────────────
   // Backend returns `warnings: [{code, player_id, message, ...}]` after a
   // successful lineup save. Map them by player_id so the row can render
@@ -1169,6 +1309,37 @@ const PlayerRoster = ({
               </div>
             </div>
           </div>
+        )}
+        {/* ── Iter 106: Emergency Swaps chip ── */}
+        {emergencyBudget?.enabled && (
+          <div className="px-4 py-2 border-b border-border bg-secondary/20 flex items-center gap-2 flex-wrap"
+               data-testid="emergency-swap-chip">
+            <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+              emergencyBudget.remaining > 0
+                ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                : "bg-rose-500/10 text-rose-300 border-rose-500/30"
+            }`}>
+              Used {emergencyBudget.used} / {emergencyBudget.budget} emergency swaps {emergencyBudget.scope_label}
+            </span>
+            {emergencyBudget.remaining > 0 ? (
+              <span className="text-[11px] text-muted-foreground">
+                ({emergencyBudget.remaining} left{emergencyBudget.scope === "per_season" ? " for the season" : ""})
+              </span>
+            ) : (
+              <span className="text-[11px] text-rose-300/80">No swaps remaining — wait for the next reset.</span>
+            )}
+          </div>
+        )}
+        {/* ── Iter 106: Per-Day Goalie Picker ── */}
+        {leagueGoalieCfg?.differentiate_goalie_scoring && leagueGoalieCfg?.goalie_scoring_method === "daily_lock" && (
+          <DailyGoaliePicker
+            roster={teamRoster}
+            lockMap={goalieLockMap}
+            onSave={saveGoalieLockMap}
+            saving={savingDailyLock}
+            gpLimit={leagueGoalieCfg.goalie_gp_limit_enabled ? leagueGoalieCfg.goalie_gp_limit : null}
+            week={selectedWeek}
+          />
         )}
         {/* ── Matchup Bar ── */}
         <div className="p-4 border-b border-border bg-secondary/20">

@@ -729,6 +729,7 @@ export function EmergencyRosterChangesCard({ league, reloadLeague }: any) {
   const [enabled, setEnabled] = useState<boolean>(!!league?.emergency_changes_enabled);
   const [regular, setRegular] = useState<string>(String(league?.emergency_changes_regular ?? 2));
   const [playoffs, setPlayoffs] = useState<string>(String(league?.emergency_changes_playoffs ?? 1));
+  const [scope, setScope] = useState<string>(league?.emergency_changes_scope || "per_week");
   const [eligibility, setEligibility] = useState<Set<string>>(
     new Set(league?.emergency_eligibility || ["any"]),
   );
@@ -738,10 +739,11 @@ export function EmergencyRosterChangesCard({ league, reloadLeague }: any) {
     setEnabled(!!league?.emergency_changes_enabled);
     setRegular(String(league?.emergency_changes_regular ?? 2));
     setPlayoffs(String(league?.emergency_changes_playoffs ?? 1));
+    setScope(league?.emergency_changes_scope || "per_week");
     setEligibility(new Set(league?.emergency_eligibility || ["any"]));
   }, [
     league?.id, league?.emergency_changes_enabled, league?.emergency_changes_regular,
-    league?.emergency_changes_playoffs, league?.emergency_eligibility,
+    league?.emergency_changes_playoffs, league?.emergency_changes_scope, league?.emergency_eligibility,
   ]);
 
   const toggleEligibility = (value: string) => {
@@ -764,6 +766,7 @@ export function EmergencyRosterChangesCard({ league, reloadLeague }: any) {
         emergency_changes_enabled: enabled,
         emergency_changes_regular: parseInt(regular, 10) || 0,
         emergency_changes_playoffs: parseInt(playoffs, 10) || 0,
+        emergency_changes_scope: enabled ? scope : null,
         emergency_eligibility: enabled ? Array.from(eligibility) : null,
       });
       toast.success("Emergency Roster Changes saved");
@@ -796,7 +799,7 @@ export function EmergencyRosterChangesCard({ league, reloadLeague }: any) {
         </div>
         {enabled && (
           <>
-            <div className="grid grid-cols-2 gap-3 max-w-md">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
               <div className="space-y-1">
                 <Label className="text-xs">Regular Season (per team)</Label>
                 <Input type="number" min={0} max={10} value={regular}
@@ -808,6 +811,18 @@ export function EmergencyRosterChangesCard({ league, reloadLeague }: any) {
                 <Input type="number" min={0} max={10} value={playoffs}
                   onChange={(e) => setPlayoffs(e.target.value)}
                   data-testid="er-playoffs" />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Budget Resets</Label>
+                <Select value={scope} onValueChange={setScope}>
+                  <SelectTrigger className="bg-secondary border-border" data-testid="er-scope">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-popover border-border z-50">
+                    <SelectItem value="per_week">Each scoring period</SelectItem>
+                    <SelectItem value="per_season">Once per season</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <div>

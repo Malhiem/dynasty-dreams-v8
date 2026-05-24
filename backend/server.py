@@ -266,6 +266,36 @@ class LeagueResponse(BaseModel):
     prorate_min_max_by_period: Optional[bool] = None
     allow_illegal_rosters: Optional[bool] = None
     ir_eligibility_modes: Optional[List[str]] = None
+    # Iter 100-106: roster lock cadence, playoff format, emergency + goalie scoring
+    roster_lock_type: Optional[str] = None
+    roster_lock_day: Optional[str] = None
+    roster_lock_second_day: Optional[str] = None
+    lineup_lock_minutes_before: Optional[int] = None
+    playoff_roster_lock_override: Optional[bool] = None
+    playoff_roster_lock_type: Optional[str] = None
+    playoff_roster_lock_day: Optional[str] = None
+    playoff_roster_lock_second_day: Optional[str] = None
+    playoff_lineup_lock_minutes_before: Optional[int] = None
+    stats_count_start_date: Optional[str] = None
+    stats_count_end_date: Optional[str] = None
+    playoff_format: Optional[str] = None
+    playoff_seeding_method: Optional[str] = None
+    playoff_custom_matchups: Optional[List[dict]] = None
+    consolation_teams: Optional[int] = None
+    consolation_seeding_method: Optional[str] = None
+    consolation_custom_matchups: Optional[List[dict]] = None
+    emergency_changes_enabled: Optional[bool] = None
+    emergency_changes_regular: Optional[int] = None
+    emergency_changes_playoffs: Optional[int] = None
+    emergency_eligibility: Optional[List[str]] = None
+    emergency_changes_scope: Optional[str] = None
+    differentiate_goalie_scoring: Optional[bool] = None
+    goalie_scoring_method: Optional[str] = None
+    goalie_best_x_count: Optional[int] = None
+    goalie_avg_multiplier_count: Optional[int] = None
+    goalie_gp_limit_enabled: Optional[bool] = None
+    goalie_gp_limit: Optional[int] = None
+    goalie_gp_count_method: Optional[str] = None
 
 class TeamCreate(BaseModel):
     name: str
@@ -529,6 +559,36 @@ async def get_league(league_id: str):
         prorate_min_max_by_period=league.get("prorate_min_max_by_period"),
         allow_illegal_rosters=league.get("allow_illegal_rosters"),
         ir_eligibility_modes=league.get("ir_eligibility_modes"),
+        # Iter 100-106: pass-through for lock cadence, playoff format, emergency + goalie
+        roster_lock_type=league.get("roster_lock_type"),
+        roster_lock_day=league.get("roster_lock_day"),
+        roster_lock_second_day=league.get("roster_lock_second_day"),
+        lineup_lock_minutes_before=league.get("lineup_lock_minutes_before"),
+        playoff_roster_lock_override=league.get("playoff_roster_lock_override"),
+        playoff_roster_lock_type=league.get("playoff_roster_lock_type"),
+        playoff_roster_lock_day=league.get("playoff_roster_lock_day"),
+        playoff_roster_lock_second_day=league.get("playoff_roster_lock_second_day"),
+        playoff_lineup_lock_minutes_before=league.get("playoff_lineup_lock_minutes_before"),
+        stats_count_start_date=league.get("stats_count_start_date"),
+        stats_count_end_date=league.get("stats_count_end_date"),
+        playoff_format=league.get("playoff_format"),
+        playoff_seeding_method=league.get("playoff_seeding_method"),
+        playoff_custom_matchups=league.get("playoff_custom_matchups"),
+        consolation_teams=league.get("consolation_teams"),
+        consolation_seeding_method=league.get("consolation_seeding_method"),
+        consolation_custom_matchups=league.get("consolation_custom_matchups"),
+        emergency_changes_enabled=league.get("emergency_changes_enabled"),
+        emergency_changes_regular=league.get("emergency_changes_regular"),
+        emergency_changes_playoffs=league.get("emergency_changes_playoffs"),
+        emergency_eligibility=league.get("emergency_eligibility"),
+        emergency_changes_scope=league.get("emergency_changes_scope"),
+        differentiate_goalie_scoring=league.get("differentiate_goalie_scoring"),
+        goalie_scoring_method=league.get("goalie_scoring_method"),
+        goalie_best_x_count=league.get("goalie_best_x_count"),
+        goalie_avg_multiplier_count=league.get("goalie_avg_multiplier_count"),
+        goalie_gp_limit_enabled=league.get("goalie_gp_limit_enabled"),
+        goalie_gp_limit=league.get("goalie_gp_limit"),
+        goalie_gp_count_method=league.get("goalie_gp_count_method"),
     )
 
 # ─── League Invite System ─────────────────────────────────────
@@ -1869,7 +1929,14 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
                     (league.get("emergency_changes_playoffs") or 0) if in_playoffs
                     else (league.get("emergency_changes_regular") or 0)
                 )
-                used_field = f"emergency_swaps_used_{current_wk}" if current_wk else "emergency_swaps_used"
+                # Iter 106: scope determines whether the counter resets each
+                # scoring period or persists for the whole season.
+                scope = league.get("emergency_changes_scope") or "per_week"
+                used_field = (
+                    f"emergency_swaps_used_{current_wk}"
+                    if scope == "per_week" and current_wk
+                    else "emergency_swaps_used_season"
+                )
                 used = int(team.get(used_field) or 0)
                 if emergency_on and budget > 0 and used < budget:
                     # Allow the save — consume one swap from the budget.

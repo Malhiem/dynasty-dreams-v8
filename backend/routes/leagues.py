@@ -949,6 +949,9 @@ class LeagueUpdate(BaseModel):
     emergency_changes_regular: Optional[int] = Field(default=None, ge=0, le=10)
     emergency_changes_playoffs: Optional[int] = Field(default=None, ge=0, le=10)
     emergency_eligibility: Optional[List[str]] = None  # any | scratched | injured | minors | suspended | personal
+    # Iter 106: budget scope — does the count reset per matchup week, or last
+    # the entire season? Default = per_week (matches iter-104 server-side logic).
+    emergency_changes_scope: Optional[str] = Field(default=None, pattern=r"^(per_week|per_season)$")
     differentiate_goalie_scoring: Optional[bool] = None
     goalie_scoring_method: Optional[str] = Field(default=None, pattern=r"^(cumulative|average_multiplied|best_x|daily_lock)$")
     goalie_best_x_count: Optional[int] = Field(default=None, ge=1, le=8)
@@ -987,6 +990,7 @@ _LEAGUE_UPDATE_ALLOWED = {
     # Iter 104: Emergency Roster Changes + Goalie Scoring (moved from League Setup mock UI)
     "emergency_changes_enabled", "emergency_changes_regular",
     "emergency_changes_playoffs", "emergency_eligibility",
+    "emergency_changes_scope",
     "differentiate_goalie_scoring", "goalie_scoring_method",
     "goalie_best_x_count", "goalie_avg_multiplier_count",
     "goalie_gp_limit_enabled", "goalie_gp_limit", "goalie_gp_count_method",
@@ -1311,6 +1315,95 @@ async def nhl_season_bounds():
         "total_weeks": len(weeks),
     }
 
+
+
+# ─── GET /teams/{team_id}/emergency-swap-budget ─────────────────
+# Returns the team's emergency-swap budget + used count for the current period
+# so the lineup page can render a "Used X / Y" chip on the header.
+@router.get("/teams/{team_id}/emergency-swap-budget")
+async def team_emergency_swap_budget(team_id: str, request: Request):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+    await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    league = await db.leagues.find_one({"_id": _safe_object_id(team["league_id"], "league_id")})
+    if not league or not league.get("emergency_changes_enabled"):
+        return {
+            "enabled": False, "scope": None, "budget": 0,
+            "used": 0, "remaining": 0, "scope_label": None,
+        }
+
+    current_wk = league.get("current_week") or league.get("playoff_start_week")
+    in_playoffs = (
+        current_wk is not None
+        and league.get("playoff_start_week") is not None
+        and int(current_wk) >= int(league["playoff_start_week"])
+    )
+    budget = int(
+        (league.get("emergency_changes_playoffs") or 0) if in_playoffs
+        else (league.get("emergency_changes_regular") or 0)
+    )
+    scope = league.get("emergency_changes_scope") or "per_week"
+    used_field = (
+        f"emergency_swaps_used_{current_wk}"
+        if scope == "per_week" and current_wk
+        else "emergency_swaps_used_season"
+    )
+    used = int(team.get(used_field) or 0)
+    return {
+        "enabled": True,
+        "scope": scope,
+        "budget": budget,
+        "used": used,
+        "remaining": max(0, budget - used),
+        "scope_label": "this week" if scope == "per_week" else "this season",
+        "in_playoffs": in_playoffs,
+        "current_week": current_wk,
+    }
+
+
+# ─── PUT /teams/{team_id}/goalie-daily-lock ─────────────────────
+# Persists the per-day goalie lock map for the team. Body shape:
+#   { "lock_map": {"2026-04-08": "<player_id>", "2026-04-10": "<player_id>"} }
+# When `goalie_scoring_method=daily_lock`, the live-scoring worker only
+# attributes goalie game points on dates present in this map.
+@router.put("/teams/{team_id}/goalie-daily-lock")
+async def update_team_goalie_daily_lock(team_id: str, payload: dict, request: Request):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    league = await db.leagues.find_one({"_id": _safe_object_id(team["league_id"], "league_id")})
+    is_owner = team.get("owner_id") == user["_id"]
+    is_commish = league and (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or (user.get("role") == "admin")
+    )
+    if not (is_owner or is_commish):
+        raise HTTPException(status_code=403, detail="Only the team owner or commissioner may set goalie locks")
+    lock_map = payload.get("lock_map") or {}
+    if not isinstance(lock_map, dict):
+        raise HTTPException(status_code=400, detail="lock_map must be a {date_iso: player_id} object")
+    # Sanitize: keep ISO dates with a player_id string value.
+    sanitized = {}
+    for date_iso, player_id in lock_map.items():
+        if not isinstance(date_iso, str) or len(date_iso) != 10 or date_iso.count("-") != 2:
+            continue
+        if player_id is None or player_id == "":
+            continue
+        sanitized[date_iso] = str(player_id)
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {"goalie_daily_lock": sanitized}},
+    )
+    return {"team_id": team_id, "lock_map": sanitized, "count": len(sanitized)}
 
 
 # ─── GET /leagues/{league_id}/lock-status ──────────────────────
