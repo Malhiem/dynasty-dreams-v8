@@ -1035,7 +1035,34 @@ const PlayerRoster = ({
                       }
                     } catch (e: any) {
                       const detail = e?.response?.data?.detail;
-                      if (detail) {
+                      // ── Iter 108: Polished emergency-eligibility denial toast ──
+                      if (typeof detail === "string" && detail.startsWith("Emergency swap denied for ")) {
+                        // Parse "Emergency swap denied for <name>: player status doesn't match any allowed criteria (a, b, c)."
+                        const nameMatch = detail.match(/Emergency swap denied for ([^:]+):/);
+                        const critMatch = detail.match(/\(([^)]+)\)/);
+                        const name = nameMatch?.[1]?.trim() || "Player";
+                        const crits = (critMatch?.[1] || "")
+                          .split(",")
+                          .map((s: string) => s.trim())
+                          .filter((s: string) => s && s !== "any");
+                        const allowedHuman = crits.length
+                          ? crits.map((c: string) => ({
+                              scratched: "healthy scratch",
+                              injured: "injured / IR",
+                              minors: "in minors",
+                              suspended: "suspended",
+                              personal: "personal leave",
+                            } as Record<string, string>)[c] || c).join(", ")
+                          : "any eligible status";
+                        toast.error(
+                          `${name} isn't eligible for an emergency swap`,
+                          {
+                            description: `Allowed only for players who are: ${allowedHuman}. Pick a different starter or wait for the lock to release.`,
+                            duration: 10000,
+                            icon: <AlertTriangle className="h-4 w-4" />,
+                          },
+                        );
+                      } else if (detail) {
                         toast.error(`Lineup save blocked: ${detail}`, { duration: 8000 });
                       } else {
                         console.warn("lineup save failed", e);

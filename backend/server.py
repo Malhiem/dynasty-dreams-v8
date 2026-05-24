@@ -604,100 +604,7 @@ class ConstitutionUpdate(BaseModel):
     content: str = Field(..., max_length=5000)
 
 
-@api_router.get("/leagues/{league_id}/constitution")
-async def get_constitution(league_id: str):
-    league = await db.leagues.find_one(
-        {"_id": _safe_object_id(league_id, "league_id")},
-        {"constitution": 1, "constitution_updated_at": 1, "constitution_updated_by": 1}
-    )
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    return {
-        "league_id": league_id,
-        "content": league.get("constitution", ""),
-        "updated_at": league.get("constitution_updated_at"),
-        "updated_by": league.get("constitution_updated_by"),
-    }
-
-
-@api_router.put("/leagues/{league_id}/constitution")
-async def update_constitution(league_id: str, payload: ConstitutionUpdate, request: Request):
-    user = await get_current_user(request)
-    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-
-    # Commissioner or co-commissioner can edit
-    is_comm = league["commissioner_id"] == user["_id"]
-    co_comms = league.get("co_commissioners", []) or []
-    is_co_comm = user["_id"] in co_comms
-    if not (is_comm or is_co_comm):
-        raise HTTPException(status_code=403, detail="Only commissioners and co-commissioners can edit the constitution")
-
-    now = datetime.now(timezone.utc)
-    previous = league.get("constitution", "")
-    await db.leagues.update_one(
-        {"_id": league["_id"]},
-        {"$set": {
-            "constitution": payload.content,
-            "constitution_updated_at": now,
-            "constitution_updated_by": user["_id"],
-        }}
-    )
-
-    # Write audit event
-    audit_event = {
-        "league_id": league_id,
-        "actor_id": user["_id"],
-        "actor_name": user.get("name", user.get("email", "Unknown")),
-        "action": "constitution_updated",
-        "role": "commissioner" if is_comm else "co_commissioner",
-        "diff": {
-            "previous_length": len(previous or ""),
-            "new_length": len(payload.content or ""),
-            "preview": (payload.content or "")[:180],
-        },
-        "created_at": now,
-    }
-    await db.audit_log.insert_one(audit_event)
-
-    # Broadcast to league activity feed for visibility
-    try:
-        await db.activity_feed.insert_one({
-            "league_id": league_id,
-            "event_type": "constitution_updated",
-            "description": f"{user.get('name', 'A commissioner')} updated the League Constitution",
-            "message": f"{user.get('name', 'A commissioner')} updated the League Constitution",
-            "actor_id": user["_id"],
-            "actor_name": user.get("name"),
-            "created_at": now,
-        })
-    except Exception:
-        pass
-
-    return {
-        "league_id": league_id,
-        "content": payload.content,
-        "updated_at": now,
-        "updated_by": user["_id"],
-    }
-
-
-@api_router.get("/leagues/{league_id}/audit-log")
-async def get_audit_log(league_id: str, request: Request, limit: int = 100):
-    user = await get_current_user(request)
-    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    is_comm = league["commissioner_id"] == user["_id"]
-    co_comms = league.get("co_commissioners", []) or []
-    is_co_comm = user["_id"] in co_comms
-    if not (is_comm or is_co_comm):
-        raise HTTPException(status_code=403, detail="Only commissioners and co-commissioners can view the audit log")
-    events = await db.audit_log.find({"league_id": league_id}).sort("created_at", -1).limit(max(1, min(limit, 500))).to_list(500)
-    for e in events:
-        e["id"] = str(e.pop("_id"))
-    return {"league_id": league_id, "events": events}
+# Constitution + audit-log routes extracted to routes/constitution_audit.py (iter 108).
 
 
 class LeagueInviteResponse(BaseModel):
@@ -2469,7 +2376,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes, roster as roster_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes, roster as roster_routes, constitution_audit as constitution_audit_routes
 
 _router_deps = {
     "db": db,
@@ -2528,6 +2435,7 @@ contracts_routes.setup(_router_deps)
 activity_routes.setup(_router_deps)
 trade_block_routes.setup(_router_deps)
 roster_routes.setup(_router_deps)
+constitution_audit_routes.setup(_router_deps)
 # Trade engine (extracted iter 93) shares the same deps dict
 _trade_engine_module.setup(_router_deps)
 api_router.include_router(awards_routes.router)
@@ -2552,6 +2460,7 @@ api_router.include_router(contracts_routes.router)
 api_router.include_router(activity_routes.router)
 api_router.include_router(trade_block_routes.router)
 api_router.include_router(roster_routes.router)
+api_router.include_router(constitution_audit_routes.router)
 api_router.include_router(payments_routes.router)
 
 

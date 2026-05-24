@@ -1,7 +1,7 @@
 """Matchups: schedule generation, get-current-week, simulate-week (with auto-crown)."""
 import itertools
 import random as _random
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from bson import ObjectId
@@ -558,6 +558,57 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                                       {"$inc": {"ties": 1, "points_for": home_score, "points_against": away_score}})
             await db.teams.update_one({"_id": ObjectId(m["away_team_id"])},
                                       {"$inc": {"ties": 1, "points_for": away_score, "points_against": home_score}})
+
+        # Iter 108: When a playoff matchup settles, fire a one-time top-bell
+        # notification to every league member ("Round N advanced — Team A defeats
+        # Team B"). Idempotent within 22h via the existing tbd_deadline_pings
+        # collection (we reuse its idempotency key shape).
+        if m.get("is_playoff") and winner and m.get("bracket_round"):
+            try:
+                create_notif = _deps.get("create_notification")
+                if create_notif:
+                    bracket_round = int(m.get("bracket_round") or 1)
+                    winner_team_name = (
+                        m["home_team_name"] if winner == m["home_team_id"]
+                        else m["away_team_name"]
+                    )
+                    loser_team_name = (
+                        m["away_team_name"] if winner == m["home_team_id"]
+                        else m["home_team_name"]
+                    )
+                    ping_key = {
+                        "league_id": input.league_id,
+                        "bracket": "playoff_advance",
+                        "week": int(input.week),
+                        "matchup_id": str(m["_id"]),
+                    }
+                    already = await db.tbd_deadline_pings.find_one({
+                        **ping_key,
+                        "created_at": {
+                            "$gte": datetime.now(timezone.utc) - timedelta(hours=22)
+                        },
+                    })
+                    if not already:
+                        owner_ids = await db.teams.distinct(
+                            "owner_id", {"league_id": input.league_id}
+                        )
+                        for uid in owner_ids:
+                            if not uid:
+                                continue
+                            await create_notif(
+                                uid,
+                                "playoff_bracket_advance",
+                                f"Round {bracket_round} advanced",
+                                f"{winner_team_name} defeats {loser_team_name}",
+                                input.league_id,
+                                "/standings?tab=playoffs",
+                            )
+                        await db.tbd_deadline_pings.insert_one({
+                            **ping_key,
+                            "created_at": datetime.now(timezone.utc),
+                        })
+            except Exception as ex:
+                logger.warning("bracket-advance notification failed: %s", ex)
 
         # Auto-crown for playoff finals
         if m.get("is_final") and winner:
