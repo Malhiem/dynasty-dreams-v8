@@ -1000,6 +1000,7 @@ const PlayerRoster = ({
                   // Persist active lineup to backend so % Start reflects this team.
                   // We map each player's local rosterSection (forward/defense/
                   // goalie/bench/ir/minors) to the team's lineup map.
+                  let saveOk = !isRealTeamId; // demo teams always succeed
                   if (isRealTeamId) {
                     try {
                       const lineup: Record<string, { section: string; slot: string }> = {};
@@ -1008,6 +1009,7 @@ const PlayerRoster = ({
                         lineup[String(p.id)] = { section, slot: p.position || section.toUpperCase().slice(0, 3) };
                       });
                       const { data } = await api.post(`/teams/${teamId}/lineup`, { lineup });
+                      saveOk = true;
                       // ── Lineup warnings (iter 84) ─────────────────────
                       // Backend returns `warnings: [{code, player_id, ...}]`
                       // for things like `min_games_played` violations. Cache
@@ -1066,11 +1068,14 @@ const PlayerRoster = ({
                         toast.error(`Lineup save blocked: ${detail}`, { duration: 8000 });
                       } else {
                         console.warn("lineup save failed", e);
+                        toast.error("Lineup save failed. Please try again.", { duration: 6000 });
                       }
                     }
                   }
-                  setHasUnsavedChanges(false);
-                  toast.success("Roster saved successfully!");
+                  if (saveOk) {
+                    setHasUnsavedChanges(false);
+                    toast.success("Roster saved successfully!");
+                  }
                 },
               }
             : undefined,
