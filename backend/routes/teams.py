@@ -494,14 +494,60 @@ async def get_dead_cap_schedule(team_id: str, request: Request):
 
     Iter 112 — Salary-cap and depth-chart pages consume this to render the
     correct multi-year dead-cap charge per season.
+
+    Iter 113 — Salary-retention rows from the trade engine
+    (`db.salary_retentions` keyed by `retainer_team_id`) are now flattened into
+    per-year entries here using each player's `yearsRemaining` so they show up
+    on the Dead Cap tile/dropdown and the By-Year bar chart alongside buyouts.
     """
     db = _deps["db"]
     _safe_object_id = _deps["_safe_object_id"]
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
-    schedule = team.get("dead_cap_schedule") or []
-    # Aggregate per year
+    schedule = list(team.get("dead_cap_schedule") or [])
+
+    # ── Iter 113 — Inline salary-retention rows ──────────────────────
+    league_id = team.get("league_id")
+    if league_id:
+        from routes.roster import _synthesize_contract
+        cur_year = datetime.now(timezone.utc).year
+        retentions = await db.salary_retentions.find(
+            {"league_id": league_id, "retainer_team_id": team_id},
+        ).to_list(200)
+        for r in retentions:
+            pid = r.get("player_id")
+            amount = float(r.get("amount") or 0)
+            if not pid or amount <= 0:
+                continue
+            try:
+                player = await db.players.find_one({"_id": ObjectId(pid)})
+            except Exception:
+                player = None
+            years_rem = 1
+            if player:
+                contract = player.get("contract") or {}
+                if not contract.get("yearsRemaining"):
+                    is_g = player.get("player_type") == "goalie" or player.get("position") == "G"
+                    contract = _synthesize_contract(
+                        is_g=is_g,
+                        fpts_season=float(player.get("fantasy_points") or 0.0),
+                        points=int(player.get("points") or 0),
+                        nhl_id=player.get("nhl_id"),
+                        age=int(player.get("age") or 27),
+                    )
+                years_rem = max(1, int(contract.get("yearsRemaining") or 1))
+            player_name = (player or {}).get("name", "Retained player")
+            for i in range(years_rem):
+                schedule.append({
+                    "year": cur_year + i,
+                    "amount": int(round(amount)),
+                    "source": "retention",
+                    "player_id": pid,
+                    "player_name": player_name,
+                })
+
+    # ── Aggregate per year + return per-source line items ──
     by_year: dict = {}
     for e in schedule:
         y = int(e.get("year") or 0)

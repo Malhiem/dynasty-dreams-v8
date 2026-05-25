@@ -15,6 +15,8 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useState, useEffect, useMemo } from "react";
@@ -136,32 +138,39 @@ const SalaryCap = () => {
   const capSpace = capLimit - currentSpending - deadCap - totalRetained;
   const capUsagePercent = ((currentSpending + deadCap + totalRetained) / capLimit) * 100;
 
-  // ── By-Year payload (iter 110) ─────────────────────────────────
+  // ── By-Year payload (iter 110, extended iter 113) ───────────────
   // For each of the next 5 NHL seasons, sum the salaries of players whose
   // contract still covers that year. Anything unsigned counts as `unsigned`
   // (rendered as the empty/cap-space portion) so users can see how much of
-  // their cap is locked vs available year-over-year.
+  // their cap is locked vs available year-over-year. Dead cap (buyouts +
+  // retention) is also stacked so the user sees the FULL committed picture.
   const yearBreakdown = useMemo(() => {
     if (contracts.length === 0) return [];
     const minYear = Math.min(...contracts.map((c) => c.endYear - c.yearsRemaining + 1));
     const maxYear = Math.max(...contracts.map((c) => c.endYear));
     const start = Math.min(minYear, new Date().getFullYear());
     const end = Math.min(maxYear, start + 5); // cap at 6-year horizon
-    const out: { year: number; locked: number; available: number; label: string }[] = [];
+    const deadCapByYear: Record<number, number> = {};
+    (deadCapSchedule.schedule || []).forEach((r: any) => {
+      deadCapByYear[r.year] = (deadCapByYear[r.year] || 0) + Number(r.total || 0);
+    });
+    const out: { year: number; locked: number; dead: number; available: number; label: string }[] = [];
     for (let y = start; y <= end; y++) {
       const locked = contracts.reduce((sum, c) => {
         const contractStart = c.endYear - c.yearsRemaining + 1;
         return (y >= contractStart && y <= c.endYear) ? sum + c.salary : sum;
       }, 0);
+      const dead = deadCapByYear[y] || 0;
       out.push({
         year: y,
         locked,
-        available: Math.max(0, capLimit - locked),
+        dead,
+        available: Math.max(0, capLimit - locked - dead),
         label: String(y),
       });
     }
     return out;
-  }, [contracts, capLimit]);
+  }, [contracts, capLimit, deadCapSchedule.schedule]);
 
   const getChartData = () => {
     switch (chartFilter) {
@@ -287,10 +296,11 @@ const SalaryCap = () => {
             </CardContent>
           </Card>
 
-          <Card className="bg-card border-border" data-testid="cap-overview-card-dead">
+          {/* ── Dead Cap tile + drop-down ledger (Iter 113) ────────── */}
+          <Card className="bg-card border-border md:col-span-1" data-testid="cap-overview-card-dead">
             <CardContent className="p-6">
               <div className="flex items-center gap-3 mb-3">
-                <div className="h-10 w-10 rounded-lg bg-accent/20 flex items-center justify-center">
+                <div className="h-10 w-10 rounded-lg bg-accent/20 flex items-center justify-center shrink-0">
                   <AlertTriangle className="h-5 w-5 text-accent" />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -317,6 +327,58 @@ const SalaryCap = () => {
                   <p className="text-xl font-bold text-accent">${(deadCap / 1000000).toFixed(1)}M</p>
                 </div>
               </div>
+              {/* ── Per-player ledger dropdown ── */}
+              {(() => {
+                const currentYearEntries = (deadCapSchedule.schedule || [])
+                  .find((r: any) => r.year === curYear)?.entries || [];
+                if (currentYearEntries.length === 0) {
+                  return (
+                    <p className="text-[10px] text-muted-foreground italic mt-1">
+                      No dead-cap charges this season.
+                    </p>
+                  );
+                }
+                return (
+                  <Collapsible className="mt-1">
+                    <CollapsibleTrigger asChild>
+                      <button
+                        className="flex items-center gap-1 text-[11px] text-cyan-300 hover:text-cyan-200 transition-colors group"
+                        data-testid="cap-dead-cap-ledger-toggle"
+                      >
+                        <ChevronDown className="h-3 w-3 transition-transform group-data-[state=open]:rotate-180" />
+                        <span>View {currentYearEntries.length} dead-cap charge{currentYearEntries.length !== 1 ? "s" : ""}</span>
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="mt-2 space-y-1 max-h-40 overflow-auto pr-1" data-testid="cap-dead-cap-ledger">
+                        {currentYearEntries.map((e: any, i: number) => (
+                          <div
+                            key={`${e.player_id || "x"}-${i}`}
+                            className="flex items-center justify-between gap-2 text-[10px] rounded px-1.5 py-1 bg-secondary/30 border border-border/30"
+                          >
+                            <div className="flex items-center gap-1 min-w-0">
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] px-1 py-0 shrink-0 ${
+                                  e.source === "retention"
+                                    ? "border-rose-500/40 text-rose-400"
+                                    : "border-amber-500/40 text-amber-400"
+                                }`}
+                              >
+                                {e.source === "retention" ? "RET" : "BO"}
+                              </Badge>
+                              <span className="truncate">{e.player_name || "—"}</span>
+                            </div>
+                            <span className="font-mono text-accent shrink-0">
+                              ${(Number(e.amount) / 1_000_000).toFixed(2)}M
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                );
+              })()}
             </CardContent>
           </Card>
         </div>
@@ -365,6 +427,7 @@ const SalaryCap = () => {
                       formatter={(value) => <span className="text-sm text-foreground">{value}</span>}
                     />
                     <Bar dataKey="locked" stackId="cap" name="Locked Salary" fill={CHART_COLORS[0]} radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="dead" stackId="cap" name="Dead Cap (buyouts + retention)" fill={DEAD_CAP_COLOR} radius={[0, 0, 0, 0]} />
                     <Bar dataKey="available" stackId="cap" name="Available (UFAs/RFAs unsigned)" fill={CAP_SPACE_COLOR} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 ) : (
