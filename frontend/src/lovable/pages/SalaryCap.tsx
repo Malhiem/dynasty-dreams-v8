@@ -8,7 +8,10 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { DollarSign, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
-import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from "recharts";
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+} from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useState, useEffect, useMemo } from "react";
 
@@ -19,25 +22,37 @@ interface Contract {
   team: string;
   salary: number;
   yearsRemaining: number;
+  totalYears: number;
+  currentYear: number;
+  endYear: number;
+  endStatus: "UFA" | "RFA" | "ELC" | "Signed";
   status: "active" | "expiring" | "ir";
 }
 
-type ChartFilter = "all" | "players" | "position";
+type ChartFilter = "all" | "players" | "position" | "by_year";
 
+// Distinct, dark-mode-friendly hex palette — replaces the broken
+// `hsl(var(--chart-2))` tokens that were resolving to empty/black on the
+// off-black card background. Picked for visual contrast against `#000`-ish
+// surface and clear separation when shown side-by-side in a legend.
 const CHART_COLORS = [
-  "hsl(var(--primary))",
-  "hsl(var(--chart-2))",
-  "hsl(var(--chart-3))",
-  "hsl(var(--chart-4))",
-  "hsl(var(--chart-5))",
-  "hsl(210, 70%, 50%)",
-  "hsl(280, 60%, 55%)",
-  "hsl(30, 80%, 50%)",
+  "#00D2FF", // cyan (matches --primary)
+  "#FFB020", // gold (matches --accent)
+  "#22C55E", // emerald
+  "#A855F7", // violet
+  "#F472B6", // pink
+  "#3B82F6", // blue
+  "#FB923C", // orange
+  "#14B8A6", // teal
+  "#EAB308", // yellow
+  "#EF4444", // red
+  "#8B5CF6", // purple-2
+  "#06B6D4", // cyan-2
 ];
 
-const CAP_SPACE_COLOR = "hsl(var(--success))";
-const DEAD_CAP_COLOR = "hsl(var(--accent))";
-const RETAINED_COLOR = "hsl(var(--destructive))";
+const CAP_SPACE_COLOR = "#34C759";   // bright emerald (was broken hsl(var(--success)))
+const DEAD_CAP_COLOR = "#FFB020";    // gold/accent
+const RETAINED_COLOR = "#FF3B30";    // red/destructive
 
 const SalaryCap = () => {
   const { league, leagueTeams, myTeam } = useActiveLeague();
@@ -56,17 +71,31 @@ const SalaryCap = () => {
 
   const contracts: Contract[] = useMemo(() => {
     if (!rosterDetail?.players) return [];
-    return rosterDetail.players.map((p: any) => ({
-      id: p.id,
-      player: p.name,
-      position: p.position,
-      team: p.team,
-      salary: p.contract?.salary || 0,
-      yearsRemaining: p.contract?.yearsRemaining || 1,
-      status: p.rosterSection === "ir"
-        ? "ir"
-        : ((p.contract?.type === "UFA" || p.contract?.yearsRemaining === 1) ? "expiring" : "active"),
-    }));
+    return rosterDetail.players.map((p: any) => {
+      const c = p.contract || {};
+      const yearsRemaining = c.yearsRemaining || 1;
+      const totalYears = c.total_years || yearsRemaining;
+      const currentYear = c.current_year || Math.max(1, totalYears - yearsRemaining + 1);
+      // Fallback when older backend response lacks the iter-110 fields.
+      const fallbackEndYear = new Date().getFullYear() + Math.max(0, yearsRemaining - 1);
+      const endYear = c.end_year || fallbackEndYear;
+      const endStatus = c.end_status || (c.type === "ELC" ? "RFA" : (c.type || "UFA"));
+      return {
+        id: p.id,
+        player: p.name,
+        position: p.position,
+        team: p.team,
+        salary: c.salary || 0,
+        yearsRemaining,
+        totalYears,
+        currentYear,
+        endYear,
+        endStatus,
+        status: p.rosterSection === "ir"
+          ? "ir"
+          : ((c.type === "UFA" || yearsRemaining === 1) ? "expiring" : "active"),
+      };
+    });
   }, [rosterDetail]);
 
   const capLimit = Math.max(
@@ -80,6 +109,33 @@ const SalaryCap = () => {
   const retainedSalaries: any[] = [];
   const capSpace = capLimit - currentSpending - deadCap - totalRetained;
   const capUsagePercent = ((currentSpending + deadCap + totalRetained) / capLimit) * 100;
+
+  // ── By-Year payload (iter 110) ─────────────────────────────────
+  // For each of the next 5 NHL seasons, sum the salaries of players whose
+  // contract still covers that year. Anything unsigned counts as `unsigned`
+  // (rendered as the empty/cap-space portion) so users can see how much of
+  // their cap is locked vs available year-over-year.
+  const yearBreakdown = useMemo(() => {
+    if (contracts.length === 0) return [];
+    const minYear = Math.min(...contracts.map((c) => c.endYear - c.yearsRemaining + 1));
+    const maxYear = Math.max(...contracts.map((c) => c.endYear));
+    const start = Math.min(minYear, new Date().getFullYear());
+    const end = Math.min(maxYear, start + 5); // cap at 6-year horizon
+    const out: { year: number; locked: number; available: number; label: string }[] = [];
+    for (let y = start; y <= end; y++) {
+      const locked = contracts.reduce((sum, c) => {
+        const contractStart = c.endYear - c.yearsRemaining + 1;
+        return (y >= contractStart && y <= c.endYear) ? sum + c.salary : sum;
+      }, 0);
+      out.push({
+        year: y,
+        locked,
+        available: Math.max(0, capLimit - locked),
+        label: String(y),
+      });
+    }
+    return out;
+  }, [contracts, capLimit]);
 
   const getChartData = () => {
     switch (chartFilter) {
@@ -107,7 +163,7 @@ const SalaryCap = () => {
 
       default:
         const allData: any[] = [
-          { name: "Player Salaries", value: currentSpending, color: "hsl(var(--primary))" },
+          { name: "Player Salaries", value: currentSpending, color: CHART_COLORS[0] },
         ];
         if (capSpace > 0) allData.push({ name: "Cap Space", value: capSpace, color: CAP_SPACE_COLOR });
         return allData;
@@ -116,7 +172,7 @@ const SalaryCap = () => {
 
   const chartData = getChartData();
   const formatCurrency = (value: number) => `$${(value / 1000000).toFixed(2)}M`;
-  
+
   return (
     <AppLayout>
         <div className="container py-8 space-y-6">
@@ -128,7 +184,7 @@ const SalaryCap = () => {
 
         {/* Cap Overview Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="bg-card border-border">
+          <Card className="bg-card border-border" data-testid="cap-overview-card-limit">
             <CardContent className="p-6">
               <div className="flex items-center gap-3 mb-3">
                 <div className="h-10 w-10 rounded-lg bg-primary/20 flex items-center justify-center">
@@ -142,7 +198,7 @@ const SalaryCap = () => {
             </CardContent>
           </Card>
 
-          <Card className="bg-card border-border">
+          <Card className="bg-card border-border" data-testid="cap-overview-card-hit">
             <CardContent className="p-6">
               <div className="flex items-center gap-3 mb-3">
                 <div className="h-10 w-10 rounded-lg bg-destructive/20 flex items-center justify-center">
@@ -156,21 +212,21 @@ const SalaryCap = () => {
             </CardContent>
           </Card>
 
-          <Card className="bg-card border-border">
+          <Card className="bg-card border-border" data-testid="cap-overview-card-space">
             <CardContent className="p-6">
               <div className="flex items-center gap-3 mb-3">
-                <div className="h-10 w-10 rounded-lg bg-success/20 flex items-center justify-center">
-                  <TrendingDown className="h-5 w-5 text-success" />
+                <div className="h-10 w-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: "rgba(52, 199, 89, 0.18)" }}>
+                  <TrendingDown className="h-5 w-5" style={{ color: CAP_SPACE_COLOR }} />
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Cap Space</p>
-                  <p className="text-xl font-bold text-success">${(capSpace / 1000000).toFixed(1)}M</p>
+                  <p className="text-xl font-bold" style={{ color: CAP_SPACE_COLOR }}>${(capSpace / 1000000).toFixed(1)}M</p>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="bg-card border-border">
+          <Card className="bg-card border-border" data-testid="cap-overview-card-dead">
             <CardContent className="p-6">
               <div className="flex items-center gap-3 mb-3">
                 <div className="h-10 w-10 rounded-lg bg-accent/20 flex items-center justify-center">
@@ -185,55 +241,87 @@ const SalaryCap = () => {
           </Card>
         </div>
 
-        {/* Salary Cap Pie Chart */}
+        {/* Salary Cap Chart — pie or by-year bar */}
         <Card className="bg-card border-border">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle>Cap Breakdown</CardTitle>
             <Select value={chartFilter} onValueChange={(value: ChartFilter) => setChartFilter(value)}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-[180px]" data-testid="cap-chart-filter">
                 <SelectValue placeholder="Filter by..." />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Overview</SelectItem>
                 <SelectItem value="players">By Player</SelectItem>
                 <SelectItem value="position">By Position</SelectItem>
+                <SelectItem value="by_year">By Year</SelectItem>
               </SelectContent>
             </Select>
           </CardHeader>
           <CardContent>
-            <div className="h-[350px]">
+            <div className="h-[350px]" data-testid="cap-chart-container">
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={chartData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={120}
-                    paddingAngle={2}
-                    dataKey="value"
-                    nameKey="name"
-                    label={({ name, value }) => `${name}: ${formatCurrency(value)}`}
-                    labelLine={false}
-                  >
-                    {chartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(value: number) => formatCurrency(value)}
-                    contentStyle={{
-                      backgroundColor: "hsl(var(--card))",
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px",
-                    }}
-                  />
-                  <Legend
-                    verticalAlign="bottom"
-                    height={36}
-                    formatter={(value) => <span className="text-sm text-foreground">{value}</span>}
-                  />
-                </PieChart>
+                {chartFilter === "by_year" ? (
+                  <BarChart data={yearBreakdown} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 30%, 20%)" />
+                    <XAxis dataKey="label" stroke="hsl(215, 20%, 65%)" tick={{ fill: "hsl(215, 20%, 75%)" }} />
+                    <YAxis
+                      stroke="hsl(215, 20%, 65%)"
+                      tick={{ fill: "hsl(215, 20%, 75%)" }}
+                      tickFormatter={(v) => `$${(v / 1_000_000).toFixed(0)}M`}
+                    />
+                    <Tooltip
+                      formatter={(value: number, name: string) => [formatCurrency(value), name]}
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
+                        color: "hsl(var(--foreground))",
+                      }}
+                      labelStyle={{ color: "hsl(var(--foreground))" }}
+                    />
+                    <Legend
+                      verticalAlign="bottom"
+                      height={36}
+                      formatter={(value) => <span className="text-sm text-foreground">{value}</span>}
+                    />
+                    <Bar dataKey="locked" stackId="cap" name="Locked Salary" fill={CHART_COLORS[0]} radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="available" stackId="cap" name="Available (UFAs/RFAs unsigned)" fill={CAP_SPACE_COLOR} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                ) : (
+                  <PieChart>
+                    <Pie
+                      data={chartData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={60}
+                      outerRadius={120}
+                      paddingAngle={2}
+                      dataKey="value"
+                      nameKey="name"
+                      label={({ name, value }) => `${name}: ${formatCurrency(value)}`}
+                      labelLine={false}
+                    >
+                      {chartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} stroke="hsl(222, 30%, 12%)" strokeWidth={1} />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      formatter={(value: number) => formatCurrency(value)}
+                      contentStyle={{
+                        backgroundColor: "hsl(var(--card))",
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px",
+                        color: "hsl(var(--foreground))",
+                      }}
+                      labelStyle={{ color: "hsl(var(--foreground))" }}
+                    />
+                    <Legend
+                      verticalAlign="bottom"
+                      height={36}
+                      formatter={(value) => <span className="text-sm text-foreground">{value}</span>}
+                    />
+                  </PieChart>
+                )}
               </ResponsiveContainer>
             </div>
           </CardContent>
@@ -250,24 +338,28 @@ const SalaryCap = () => {
                 <span className="text-muted-foreground">Used: {capUsagePercent.toFixed(1)}%</span>
                 <span className="text-muted-foreground">Available: {(100 - capUsagePercent).toFixed(1)}%</span>
               </div>
-              <Progress 
-                value={capUsagePercent} 
+              <Progress
+                value={capUsagePercent}
                 className={`h-4 ${capUsagePercent > 95 ? "bg-destructive/20" : "bg-secondary"}`}
               />
               <div className="flex flex-wrap gap-4 text-sm">
                 <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded-full bg-primary"></div>
+                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: CHART_COLORS[0] }}></div>
                   <span className="text-muted-foreground">Active Contracts</span>
                 </div>
                 {totalRetained > 0 && (
                   <div className="flex items-center gap-2">
-                    <div className="h-3 w-3 rounded-full bg-destructive"></div>
+                    <div className="h-3 w-3 rounded-full" style={{ backgroundColor: RETAINED_COLOR }}></div>
                     <span className="text-muted-foreground">Retained Salary</span>
                   </div>
                 )}
                 <div className="flex items-center gap-2">
-                  <div className="h-3 w-3 rounded-full bg-accent"></div>
+                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: DEAD_CAP_COLOR }}></div>
                   <span className="text-muted-foreground">Dead Cap</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-3 w-3 rounded-full" style={{ backgroundColor: CAP_SPACE_COLOR }}></div>
+                  <span className="text-muted-foreground">Cap Space</span>
                 </div>
               </div>
             </div>
@@ -330,13 +422,13 @@ const SalaryCap = () => {
                   <TableHead>Player</TableHead>
                   <TableHead className="text-center">POS</TableHead>
                   <TableHead className="text-right">Salary</TableHead>
-                  <TableHead className="text-center">Years Left</TableHead>
-                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-center">Year</TableHead>
+                  <TableHead className="text-center">Contract Ends</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {contracts.map((contract) => (
-                  <TableRow key={contract.id} className="border-border">
+                  <TableRow key={contract.id} className="border-border" data-testid={`contract-row-${contract.id}`}>
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center text-xs font-bold">
@@ -356,24 +448,30 @@ const SalaryCap = () => {
                     <TableCell className="text-right font-semibold">
                       ${(contract.salary / 1000000).toFixed(2)}M
                     </TableCell>
-                    <TableCell className="text-center">
-                      <span className={contract.yearsRemaining <= 1 ? "text-accent font-medium" : ""}>
-                        {contract.yearsRemaining} {contract.yearsRemaining === 1 ? "year" : "years"}
+                    <TableCell className="text-center" data-testid={`contract-year-${contract.id}`}>
+                      <span className={contract.yearsRemaining <= 1 ? "text-accent font-medium" : "font-medium"}>
+                        {contract.currentYear}/{contract.totalYears}
                       </span>
                     </TableCell>
-                    <TableCell className="text-center">
-                      <Badge 
-                        variant={
-                          contract.status === "active" ? "outline" :
-                          contract.status === "expiring" ? "default" : "destructive"
-                        }
+                    <TableCell className="text-center" data-testid={`contract-ends-${contract.id}`}>
+                      <Badge
+                        variant="outline"
                         className={
-                          contract.status === "active" ? "bg-success/20 text-success border-success/30" :
-                          contract.status === "expiring" ? "bg-accent/20 text-accent border-accent/30" :
-                          ""
+                          contract.endStatus === "UFA"
+                            ? "border-amber-500/40"
+                            : contract.endStatus === "RFA"
+                              ? "border-cyan-500/40"
+                              : "border-border"
+                        }
+                        style={
+                          contract.endStatus === "UFA"
+                            ? { color: DEAD_CAP_COLOR, backgroundColor: "rgba(255, 176, 32, 0.12)" }
+                            : contract.endStatus === "RFA"
+                              ? { color: CHART_COLORS[0], backgroundColor: "rgba(0, 210, 255, 0.12)" }
+                              : undefined
                         }
                       >
-                        {contract.status === "ir" ? "IR" : contract.status.charAt(0).toUpperCase() + contract.status.slice(1)}
+                        {contract.endStatus}/{contract.endYear}
                       </Badge>
                     </TableCell>
                   </TableRow>

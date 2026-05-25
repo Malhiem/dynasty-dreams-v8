@@ -17,10 +17,10 @@
   --brand-primary-hover: #33DBFF;
   --brand-accent: #FFB020;          /* unified gold accent */
   --brand-accent-hover: #FFC957;
-  --success: #34C759;
-  --warning: #FF9F0A;
-  --danger: #FF3B30;
-  --info: #00D2FF;
+  --success: 135 60% 50%;           /* #34C759 — HSL components so `hsl(var(--success))` resolves correctly (iter 110) */
+  --warning: 33 100% 53%;           /* #FF9F0A */
+  --danger: 4 100% 59%;             /* #FF3B30 */
+  --info: 192 100% 50%;             /* #00D2FF */
   --border-default: rgba(255, 255, 255, 0.10);
   --border-focus: #00D2FF;
 
@@ -88,10 +88,10 @@ html.light {
   --brand-primary-hover: #0369A1;
   --brand-accent: #D97706;     /* amber-600: contrast on white */
   --brand-accent-hover: #B45309;
-  --success: #16A34A;
-  --warning: #D97706;
-  --danger: #DC2626;
-  --info: #0284C7;
+  --success: 142 76% 36%;           /* #16A34A — HSL components (iter 110) */
+  --warning: 32 95% 44%;            /* #D97706 */
+  --danger: 0 84% 60%;              /* #DC2626 */
+  --info: 199 89% 39%;              /* #0284C7 */
 
   /* HSL semantic tokens */
   --background: 0 0% 100%;
@@ -354,22 +354,22 @@ input:focus, select:focus, textarea:focus {
 
 .badge-success {
   background-color: rgba(52, 199, 89, 0.2);
-  color: var(--success);
+  color: hsl(var(--success));
 }
 
 .badge-warning {
   background-color: rgba(255, 159, 10, 0.2);
-  color: var(--warning);
+  color: hsl(var(--warning));
 }
 
 .badge-danger {
   background-color: rgba(255, 59, 48, 0.2);
-  color: var(--danger);
+  color: hsl(var(--danger));
 }
 
 .badge-info {
   background-color: rgba(0, 210, 255, 0.2);
-  color: var(--info);
+  color: hsl(var(--info));
 }
 
 /* Responsive grid */

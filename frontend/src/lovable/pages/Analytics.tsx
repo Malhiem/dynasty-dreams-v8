@@ -133,7 +133,10 @@ const COLORS = [
   "hsl(142, 71%, 45%)",
   "hsl(262, 80%, 60%)",
   "hsl(0, 72%, 51%)",
-  "hsl(222, 30%, 40%)",
+  // Iter 110 — bumped from `hsl(222, 30%, 40%)` (dark slate) to a brighter
+  // neutral so the 6th pie wedge stays visible against the dark card
+  // background. Old value silently rendered black-on-black.
+  "hsl(215, 25%, 70%)",
 ];
 
 const Analytics = () => {

@@ -134,6 +134,14 @@ def _synthesize_contract(*, is_g: bool, fpts_season: float, points: int, nhl_id,
     """Mirror the legacy salary-tier synthesis. The roster page renders this
     directly, and the salary-cap router falls back to the same values when
     no explicit contract row exists.
+
+    Iter 110 — Returns these extra fields used by the salary-cap "Year" /
+    "Contract Ends" columns + the By-Year bar chart:
+      - total_years   total length of the deal (1..8)
+      - current_year  which year of the deal the player is in (1-indexed)
+      - end_year      NHL season-end calendar year when the contract expires
+      - end_status    status the player will hold when the deal ends
+                      (ELC→RFA; otherwise RFA if age-at-expiry<27 else UFA)
     """
     if is_g:
         if fpts_season >= 300:
@@ -164,10 +172,32 @@ def _synthesize_contract(*, is_g: bool, fpts_season: float, points: int, nhl_id,
         contract_type = "UFA"
     else:
         contract_type = "Signed"
+
+    # Iter 110 — Year + Contract-Ends + Status-at-expiry surface
+    total_years = max(years_remaining, 1 + (int(nhl_id or 0) % 8))
+    current_year = max(1, total_years - years_remaining + 1)
+    # NHL season convention: a deal with `years_remaining=N` expires after the
+    # season ending in (current_calendar_year + N - 1). For example, in
+    # 2025-26 a 1-year deal ends in calendar year 2026.
+    from datetime import datetime as _dt
+    season_end_year = _dt.utcnow().year if _dt.utcnow().month >= 8 else _dt.utcnow().year
+    end_year = season_end_year + max(0, years_remaining - 1)
+    age_at_expiry = age + max(0, years_remaining - 1)
+    if contract_type == "ELC":
+        end_status = "RFA"  # ELCs always flip to RFA
+    elif contract_type in ("RFA", "UFA"):
+        end_status = contract_type  # already expiring this year
+    else:
+        end_status = "UFA" if age_at_expiry >= 27 else "RFA"
+
     return {
         "salary": salary,
         "yearsRemaining": years_remaining,
         "type": contract_type,
+        "total_years": total_years,
+        "current_year": current_year,
+        "end_year": end_year,
+        "end_status": end_status,
     }
 
 
