@@ -375,11 +375,19 @@ class BuyoutInput(BaseModel):
 
     The buyout schedule defaults to NHL CBA convention: the team pays roughly
     2/3 of remaining salary spread evenly over (2 × yearsRemaining) future
-    seasons as dead cap. Callers may override `buyout_rate` (0.0..1.0) and
-    `years_span` (defaults to 2 × yearsRemaining).
+    seasons as dead cap. Iter 113: a `length_option` shortcut maps to common
+    presets, callers may also override `buyout_rate` / `years_span` directly.
+
+    `length_option` values:
+      - "full"     — 100% of remaining salary spread over 2× term
+      - "two_thirds" / "default" — 2/3 spread over 2× term (CBA default)
+      - "half"     — 50% of remaining salary spread over 2× term
+      - "one_year" — full remaining salary as a single dead-cap year
+      - "minimum"  — 1/3 spread over yearsRemaining
     """
     buyout_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
     years_span: Optional[int] = Field(None, ge=1, le=10)
+    length_option: Optional[str] = Field(None, max_length=24)
 
 
 @router.post("/teams/{team_id}/players/{player_id}/buyout")
@@ -448,13 +456,28 @@ async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, r
         raise HTTPException(status_code=400, detail="This player has already been bought out")
 
     # NHL CBA-inspired defaults: 2/3 of remaining salary over 2× term.
-    rate = float(payload.buyout_rate) if payload.buyout_rate is not None else 2.0 / 3.0
-    span = int(payload.years_span) if payload.years_span else max(2, 2 * years_remaining)
+    # Iter 113 — `length_option` presets short-circuit the rate/span pair.
+    LENGTH_PRESETS = {
+        "full":       (1.0, max(2, 2 * years_remaining)),
+        "two_thirds": (2.0 / 3.0, max(2, 2 * years_remaining)),
+        "default":    (2.0 / 3.0, max(2, 2 * years_remaining)),
+        "half":       (0.5, max(2, 2 * years_remaining)),
+        "one_year":   (1.0, 1),
+        "minimum":    (1.0 / 3.0, max(1, years_remaining)),
+    }
+    if payload.length_option and payload.length_option in LENGTH_PRESETS:
+        preset_rate, preset_span = LENGTH_PRESETS[payload.length_option]
+        rate = float(payload.buyout_rate) if payload.buyout_rate is not None else preset_rate
+        span = int(payload.years_span) if payload.years_span else preset_span
+    else:
+        rate = float(payload.buyout_rate) if payload.buyout_rate is not None else 2.0 / 3.0
+        span = int(payload.years_span) if payload.years_span else max(2, 2 * years_remaining)
     total_dead = int(round(salary * years_remaining * rate))
     annual_dead = int(round(total_dead / span))
     from datetime import datetime as _dt
     cur_year = _dt.now(timezone.utc).year
     schedule_entries = []
+    created_at = _dt.now(timezone.utc)
     for i in range(span):
         schedule_entries.append({
             "year": cur_year + i,
@@ -464,7 +487,9 @@ async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, r
             "player_name": player.get("name", "Unknown"),
             "original_salary": salary,
             "original_years_remaining": years_remaining,
-            "created_at": _dt.now(timezone.utc),
+            "length_option": payload.length_option or "default",
+            "buyout_rate": round(rate, 4),
+            "created_at": created_at,
         })
 
     # Apply: remove player from roster, append schedule.
@@ -488,6 +513,89 @@ async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, r
     }
 
 
+@router.delete("/teams/{team_id}/buyouts/{player_id}")
+async def reverse_buyout(team_id: str, player_id: str, request: Request):
+    """Commissioner-only — undo a buyout. Removes every schedule entry whose
+    source is "buyout" and player_id matches, and re-adds the player to the
+    team's roster. Use this when a new owner takes over a team and the league
+    decides to forgive prior buyout penalties.
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or (user.get("role") == "admin")
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Only the commissioner may reverse buyouts")
+
+    schedule = team.get("dead_cap_schedule") or []
+    matching = [e for e in schedule if e.get("source") == "buyout" and e.get("player_id") == player_id]
+    if not matching:
+        raise HTTPException(status_code=404, detail="No active buyout found for this player")
+    kept = [e for e in schedule if not (e.get("source") == "buyout" and e.get("player_id") == player_id)]
+    roster = list(team.get("roster") or [])
+    if player_id not in roster:
+        roster.append(player_id)
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {"dead_cap_schedule": kept, "roster": roster}},
+    )
+    return {
+        "team_id": team_id,
+        "player_id": player_id,
+        "removed_entries": len(matching),
+        "removed_total": sum(int(e.get("amount") or 0) for e in matching),
+        "reversed": True,
+    }
+
+
+@router.delete("/teams/{team_id}/dead-cap/retention/{player_id}")
+async def cancel_retention_charge(team_id: str, player_id: str, request: Request):
+    """Commissioner-only — forgive a salary-retention charge against this team.
+
+    Deletes the matching row from `db.salary_retentions` (so the schedule
+    endpoint no longer flattens it back in). Intended for "new owner takeover"
+    situations where the league waives prior commitments.
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or (user.get("role") == "admin")
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Only the commissioner may cancel retention charges")
+    result = await db.salary_retentions.delete_many({
+        "league_id": team["league_id"],
+        "retainer_team_id": team_id,
+        "player_id": player_id,
+    })
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="No active retention found for this player")
+    return {"team_id": team_id, "player_id": player_id,
+            "deleted_count": result.deleted_count, "reversed": True}
+
+
+
 @router.get("/teams/{team_id}/dead-cap-schedule")
 async def get_dead_cap_schedule(team_id: str, request: Request):
     """Return the team's full dead-cap schedule (buyouts + retention).
@@ -507,16 +615,25 @@ async def get_dead_cap_schedule(team_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Team not found")
     schedule = list(team.get("dead_cap_schedule") or [])
 
-    # ── Iter 113 — Inline salary-retention rows ──────────────────────
+    # ── Iter 113 — Inline salary-retention rows for *legacy* trades that
+    # pre-date the schedule write. Skip if the team's dead_cap_schedule
+    # already has matching retention entries for this player (to avoid
+    # double-counting after the trade-engine fix in iter 113).
     league_id = team.get("league_id")
     if league_id:
         from routes.roster import _synthesize_contract
         cur_year = datetime.now(timezone.utc).year
+        existing_retention_pids = {
+            e.get("player_id") for e in schedule
+            if e.get("source") == "retention" and e.get("player_id")
+        }
         retentions = await db.salary_retentions.find(
             {"league_id": league_id, "retainer_team_id": team_id},
         ).to_list(200)
         for r in retentions:
             pid = r.get("player_id")
+            if pid in existing_retention_pids:
+                continue  # Already in the schedule — skip on-the-fly merge.
             amount = float(r.get("amount") or 0)
             if not pid or amount <= 0:
                 continue
@@ -538,6 +655,7 @@ async def get_dead_cap_schedule(team_id: str, request: Request):
                     )
                 years_rem = max(1, int(contract.get("yearsRemaining") or 1))
             player_name = (player or {}).get("name", "Retained player")
+            retention_created = r.get("created_at")
             for i in range(years_rem):
                 schedule.append({
                     "year": cur_year + i,
@@ -545,6 +663,7 @@ async def get_dead_cap_schedule(team_id: str, request: Request):
                     "source": "retention",
                     "player_id": pid,
                     "player_name": player_name,
+                    "created_at": retention_created,
                 })
 
     # ── Aggregate per year + return per-source line items ──
@@ -553,11 +672,24 @@ async def get_dead_cap_schedule(team_id: str, request: Request):
         y = int(e.get("year") or 0)
         by_year.setdefault(y, {"year": y, "total": 0, "entries": []})
         by_year[y]["total"] += int(e.get("amount") or 0)
+        # Normalize datetime created_at to ISO so JSON serialization works.
+        created = e.get("created_at")
+        if hasattr(created, "isoformat"):
+            created_iso = created.isoformat()
+        elif isinstance(created, str):
+            created_iso = created
+        else:
+            created_iso = None
         by_year[y]["entries"].append({
             "amount": int(e.get("amount") or 0),
             "source": e.get("source", "buyout"),
             "player_name": e.get("player_name"),
             "player_id": e.get("player_id"),
+            "length_option": e.get("length_option"),
+            "buyout_rate": e.get("buyout_rate"),
+            "original_salary": e.get("original_salary"),
+            "original_years_remaining": e.get("original_years_remaining"),
+            "created_at": created_iso,
         })
     rows = sorted(by_year.values(), key=lambda r: r["year"])
     return {

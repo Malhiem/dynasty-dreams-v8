@@ -717,12 +717,41 @@ async def _execute_multi_party_trade(trade: dict) -> dict:
         await _db().teams.update_one({"_id": ObjectId(tid)}, {"$set": {"roster": roster}})
 
     for r in retentions:
+        retention_doc = {
+            **r,
+            "league_id": league_id,
+            "trade_id": str(trade["_id"]),
+            "created_at": datetime.now(timezone.utc),
+        }
         await _db().salary_retentions.update_one(
             {"league_id": league_id, "player_id": r["player_id"], "retainer_team_id": r["retainer_team_id"]},
-            {"$set": {**r, "league_id": league_id, "trade_id": str(trade["_id"]),
-                      "created_at": datetime.now(timezone.utc)}},
+            {"$set": retention_doc},
             upsert=True,
         )
+        # Iter 113 — Mirror retention into team.dead_cap_schedule so the
+        # schedule endpoint is the single source of truth for both
+        # buyouts AND retention (also picked up by the on-the-fly merge
+        # in routes/teams.get_dead_cap_schedule for legacy rows).
+        try:
+            player = await _db().players.find_one({"_id": ObjectId(r["player_id"])})
+        except Exception:
+            player = None
+        if player:
+            yrs = int((player.get("contract") or {}).get("yearsRemaining") or 1)
+            cur_year = datetime.now(timezone.utc).year
+            schedule_entries = [{
+                "year": cur_year + i,
+                "amount": int(round(float(r.get("amount") or 0))),
+                "source": "retention",
+                "player_id": r["player_id"],
+                "player_name": player.get("name") or "Retained player",
+                "trade_id": str(trade["_id"]),
+                "created_at": datetime.now(timezone.utc),
+            } for i in range(max(1, yrs))]
+            await _db().teams.update_one(
+                {"_id": ObjectId(r["retainer_team_id"])},
+                {"$push": {"dead_cap_schedule": {"$each": schedule_entries}}},
+            )
 
     await _db().trades.update_one(
         {"_id": trade["_id"]},

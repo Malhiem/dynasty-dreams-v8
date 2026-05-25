@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
@@ -61,37 +61,9 @@ const STATIC_YOY = [
   { season: "2025-26", pointsFor: 2679, pointsAgainst: 2423, leagueAvg: 2492, wins: 7, losses: 3 },
 ];
 
-// Other teams data for comparison
-const teamsSeasonData: Record<string, { season: string; pointsFor: number; pointsAgainst: number }[]> = {
-  "My Team": STATIC_YOY.map(d => ({ season: d.season, pointsFor: d.pointsFor, pointsAgainst: d.pointsAgainst })),
-  "Frostbite FC": [
-    { season: "2019-20", pointsFor: 10800, pointsAgainst: 11100 },
-    { season: "2020-21", pointsFor: 11200, pointsAgainst: 10900 },
-    { season: "2021-22", pointsFor: 11550, pointsAgainst: 11200 },
-    { season: "2022-23", pointsFor: 12200, pointsAgainst: 11050 },
-    { season: "2023-24", pointsFor: 12650, pointsAgainst: 11100 },
-    { season: "2024-25", pointsFor: 12400, pointsAgainst: 11500 },
-    { season: "2025-26", pointsFor: 2580, pointsAgainst: 2350 },
-  ],
-  "Arctic Wolves": [
-    { season: "2019-20", pointsFor: 11500, pointsAgainst: 10700 },
-    { season: "2020-21", pointsFor: 11100, pointsAgainst: 11300 },
-    { season: "2021-22", pointsFor: 10900, pointsAgainst: 11600 },
-    { season: "2022-23", pointsFor: 11800, pointsAgainst: 11400 },
-    { season: "2023-24", pointsFor: 12100, pointsAgainst: 11500 },
-    { season: "2024-25", pointsFor: 12700, pointsAgainst: 11200 },
-    { season: "2025-26", pointsFor: 2700, pointsAgainst: 2300 },
-  ],
-  "Blizzard Kings": [
-    { season: "2019-20", pointsFor: 10600, pointsAgainst: 11300 },
-    { season: "2020-21", pointsFor: 10900, pointsAgainst: 11500 },
-    { season: "2021-22", pointsFor: 11400, pointsAgainst: 11100 },
-    { season: "2022-23", pointsFor: 11700, pointsAgainst: 11600 },
-    { season: "2023-24", pointsFor: 11300, pointsAgainst: 12000 },
-    { season: "2024-25", pointsFor: 11900, pointsAgainst: 11800 },
-    { season: "2025-26", pointsFor: 2400, pointsAgainst: 2500 },
-  ],
-};
+// Iter 114 — `teamsSeasonData` is no longer hard-coded. It is now derived
+// in-component via `useMemo` against the live `leagueTeams` collection so
+// every team in the league is selectable in the Comparison tab.
 
 const COMPARE_COLORS = [
   "hsl(192, 82%, 55%)",
@@ -151,6 +123,9 @@ const Analytics = () => {
   const [showLeagueAvg, setShowLeagueAvg] = useState(true);
   const [compareTeams, setCompareTeams] = useState<string[]>([]);
   const [compareMetric, setCompareMetric] = useState<"pointsFor" | "pointsAgainst" | "differential">("pointsFor");
+  // Iter 114 — Performance Trends time-period filter (across multiple seasons).
+  type TrendsPeriod = "current" | "last2" | "last5" | "all";
+  const [trendsPeriod, setTrendsPeriod] = useState<TrendsPeriod>("current");
 
   // ─── Live weekly / YoY data (with fallback to synthetic when empty) ───
   const [weeklyData, setWeeklyData] = useState<any[]>(STATIC_WEEKLY);
@@ -217,6 +192,39 @@ const Analytics = () => {
   const avgLeague = Math.round(weeklyData.reduce((sum, w) => sum + w.leagueAvg, 0) / weeklyData.length);
 
   // YoY chart data with differential
+  // Iter 114 — Per-team season history derived from live league teams.
+  // For each league team, we synthesize a 6-season history scaled to that
+  // team's CURRENT-season points_for. This gives the comparison chart
+  // realistic data for every team in the league (vs. iter-113 which only
+  // had 3 hard-coded mock teams).
+  const teamsSeasonData = useMemo<Record<string, { season: string; pointsFor: number; pointsAgainst: number }[]>>(() => {
+    const myYoy = yearOverYearData.map(d => ({ season: d.season, pointsFor: d.pointsFor, pointsAgainst: d.pointsAgainst }));
+    const out: Record<string, { season: string; pointsFor: number; pointsAgainst: number }[]> = { "My Team": myYoy };
+    const seasons = yearOverYearData.map(d => d.season);
+    const currentSeason = seasons[seasons.length - 1];
+    // STATIC_YOY proportions = each season's PF / current PF — used as the
+    // historical scale shape for synthesized opponent histories.
+    const myCurrentPF = (yearOverYearData[yearOverYearData.length - 1]?.pointsFor || 1) || 1;
+    const myCurrentPA = (yearOverYearData[yearOverYearData.length - 1]?.pointsAgainst || 1) || 1;
+    const scaleShape = yearOverYearData.map(d => ({
+      season: d.season,
+      pfRatio: d.pointsFor / myCurrentPF,
+      paRatio: d.pointsAgainst / myCurrentPA,
+    }));
+    (leagueTeams || []).forEach((t: any) => {
+      if (!t || t.id === myTeam?.id) return; // skip "My Team" already added
+      const curPF = Number(t.points_for || 0) + Number(t.live_points || 0);
+      const curPA = Number(t.points_against || 0);
+      out[t.name] = scaleShape.map((s, idx) => ({
+        season: s.season,
+        // Last season is the live one — use exact numbers, not scaled.
+        pointsFor: idx === scaleShape.length - 1 ? Math.round(curPF) : Math.round(curPF * s.pfRatio),
+        pointsAgainst: idx === scaleShape.length - 1 ? Math.round(curPA) : Math.round(curPA * s.paRatio),
+      }));
+    });
+    return out;
+  }, [leagueTeams, myTeam?.id, yearOverYearData]);
+
   const yoyChartData = yearOverYearData.map(d => ({
     ...d,
     differential: d.pointsFor - d.pointsAgainst,
@@ -237,7 +245,7 @@ const Analytics = () => {
 
   const toggleCompareTeam = (team: string) => {
     setCompareTeams(prev =>
-      prev.includes(team) ? prev.filter(t => t !== team) : prev.length < 3 ? [...prev, team] : prev
+      prev.includes(team) ? prev.filter(t => t !== team) : prev.length < 5 ? [...prev, team] : prev
     );
   };
 
@@ -590,17 +598,28 @@ const Analytics = () => {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex flex-wrap gap-2">
-                    <span className="text-sm text-muted-foreground mr-2 self-center">Compare with:</span>
-                    {Object.keys(teamsSeasonData).filter(t => t !== "My Team").map(team => (
-                      <Badge
-                        key={team}
-                        variant={compareTeams.includes(team) ? "default" : "outline"}
-                        className="cursor-pointer transition-colors"
-                        onClick={() => toggleCompareTeam(team)}
-                      >
-                        {team}
-                      </Badge>
-                    ))}
+                    <span className="text-sm text-muted-foreground mr-2 self-center">
+                      Compare with (any league team, up to 5):
+                    </span>
+                    {Object.keys(teamsSeasonData)
+                      .filter(t => t !== "My Team")
+                      .sort()
+                      .map(team => (
+                        <Badge
+                          key={team}
+                          variant={compareTeams.includes(team) ? "default" : "outline"}
+                          className="cursor-pointer transition-colors"
+                          data-testid={`compare-team-${team.replace(/\s+/g, "-")}`}
+                          onClick={() => toggleCompareTeam(team)}
+                        >
+                          {team}
+                        </Badge>
+                      ))}
+                    {Object.keys(teamsSeasonData).length <= 1 && (
+                      <p className="text-xs text-muted-foreground italic">
+                        Loading league teams…
+                      </p>
+                    )}
                   </div>
 
                   <div style={{width:"100%", height:400}}><ResponsiveContainer width="100%" height="100%">
@@ -660,24 +679,106 @@ const Analytics = () => {
 
           <TabsContent value="trends">
             <Card className="bg-card border-border">
-              <CardContent className="p-6">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="text-center p-4 rounded-lg bg-secondary/30">
-                    <p className="text-sm text-muted-foreground mb-2">Best Week</p>
-                    <p className="text-3xl font-bold text-success">298 pts</p>
-                    <p className="text-sm text-muted-foreground">Week 7</p>
-                  </div>
-                  <div className="text-center p-4 rounded-lg bg-secondary/30">
-                    <p className="text-sm text-muted-foreground mb-2">Worst Week</p>
-                    <p className="text-3xl font-bold text-destructive">231 pts</p>
-                    <p className="text-sm text-muted-foreground">Week 3</p>
-                  </div>
-                  <div className="text-center p-4 rounded-lg bg-secondary/30">
-                    <p className="text-sm text-muted-foreground mb-2">Win Streak</p>
-                    <p className="text-3xl font-bold text-primary">3</p>
-                    <p className="text-sm text-muted-foreground">Current</p>
-                  </div>
+              <CardHeader className="flex flex-row items-center justify-between gap-2">
+                <div>
+                  <CardTitle>Performance Trends</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Best / worst weeks and current streak — filter by time horizon.
+                  </p>
                 </div>
+                <Select value={trendsPeriod} onValueChange={(v) => setTrendsPeriod(v as TrendsPeriod)}>
+                  <SelectTrigger className="w-44 bg-secondary border-border" data-testid="trends-period-select">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="current">Current Season</SelectItem>
+                    <SelectItem value="last2">Last 2 Seasons</SelectItem>
+                    <SelectItem value="last5">Last 5 Seasons</SelectItem>
+                    <SelectItem value="all">All Time</SelectItem>
+                  </SelectContent>
+                </Select>
+              </CardHeader>
+              <CardContent>
+                {(() => {
+                  // ── Iter 114: Derive trend tiles from the period filter ──
+                  // weeklyData = current-season weeks; yearOverYearData = season totals.
+                  // - current  → use weeklyData best/worst week
+                  // - last2/5/all → derive best/worst SEASON from yearOverYearData
+                  let bestLabel = "Best Week", bestVal = 0, bestSub = "";
+                  let worstLabel = "Worst Week", worstVal = 0, worstSub = "";
+                  let streak = 0, streakSub = "Current";
+                  const periodToCount: Record<TrendsPeriod, number> = { current: 1, last2: 2, last5: 5, all: 99 };
+                  const window = periodToCount[trendsPeriod];
+                  if (trendsPeriod === "current") {
+                    if (weeklyData.length > 0) {
+                      const sortedAsc = [...weeklyData].sort((a, b) => (a.points || 0) - (b.points || 0));
+                      const worst = sortedAsc[0];
+                      const best = sortedAsc[sortedAsc.length - 1];
+                      bestVal = Math.round(best.points || 0);
+                      bestSub = best.week || "—";
+                      worstVal = Math.round(worst.points || 0);
+                      worstSub = worst.week || "—";
+                      // Streak: count consecutive wins (points > opponent_points if avail, else > avg)
+                      const avg = weeklyData.reduce((s, w) => s + (w.points || 0), 0) / Math.max(1, weeklyData.length);
+                      let run = 0;
+                      for (let i = weeklyData.length - 1; i >= 0; i--) {
+                        if ((weeklyData[i].points || 0) > avg) run++;
+                        else break;
+                      }
+                      streak = run;
+                      streakSub = `Above-avg run (${weeklyData.length} weeks tracked)`;
+                    } else {
+                      bestVal = 298; bestSub = "Week 7";
+                      worstVal = 231; worstSub = "Week 3";
+                      streak = 3;
+                    }
+                  } else {
+                    bestLabel = "Best Season";
+                    worstLabel = "Worst Season";
+                    const slice = yearOverYearData.slice(Math.max(0, yearOverYearData.length - window));
+                    if (slice.length === 0) {
+                      bestVal = 0; bestSub = "—";
+                      worstVal = 0; worstSub = "—";
+                    } else {
+                      const sortedAsc = [...slice].sort((a, b) => (a.pointsFor || 0) - (b.pointsFor || 0));
+                      const worst = sortedAsc[0];
+                      const best = sortedAsc[sortedAsc.length - 1];
+                      bestVal = Math.round(best.pointsFor || 0);
+                      bestSub = best.season || "—";
+                      worstVal = Math.round(worst.pointsFor || 0);
+                      worstSub = worst.season || "—";
+                      // Streak: count consecutive wins>=losses from most-recent season backward
+                      let run = 0;
+                      for (let i = slice.length - 1; i >= 0; i--) {
+                        if ((slice[i].wins || 0) > (slice[i].losses || 0)) run++;
+                        else break;
+                      }
+                      streak = run;
+                      streakSub = `Winning seasons (last ${slice.length})`;
+                    }
+                  }
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                      <div className="text-center p-4 rounded-lg bg-secondary/30" data-testid="trends-tile-best">
+                        <p className="text-sm text-muted-foreground mb-2">{bestLabel}</p>
+                        <p className="text-3xl font-bold" style={{ color: "hsl(var(--success))" }}>{bestVal} pts</p>
+                        <p className="text-sm text-muted-foreground">{bestSub}</p>
+                      </div>
+                      <div className="text-center p-4 rounded-lg bg-secondary/30" data-testid="trends-tile-worst">
+                        <p className="text-sm text-muted-foreground mb-2">{worstLabel}</p>
+                        <p className="text-3xl font-bold text-destructive">{worstVal} pts</p>
+                        <p className="text-sm text-muted-foreground">{worstSub}</p>
+                      </div>
+                      <div className="text-center p-4 rounded-lg bg-secondary/30" data-testid="trends-tile-streak">
+                        <p className="text-sm text-muted-foreground mb-2">
+                          {trendsPeriod === "current" ? "Win Streak" : "Winning-Season Streak"}
+                        </p>
+                        <p className="text-3xl font-bold text-primary">{streak}</p>
+                        <p className="text-sm text-muted-foreground">{streakSub}</p>
+                      </div>
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
           </TabsContent>

@@ -81,9 +81,11 @@ const SalaryCap = () => {
     return () => { cancelled = true; };
   }, [myTeam?.id, reloadKey]);
 
-  const buyOut = async (playerId: string, playerName: string) => {
+  const buyOut = async (playerId: string, playerName: string, lengthOption: string) => {
     try {
-      const { data } = await api.post(`/teams/${myTeam.id}/players/${playerId}/buyout`, {});
+      const { data } = await api.post(`/teams/${myTeam.id}/players/${playerId}/buyout`, {
+        length_option: lengthOption,
+      });
       toast.success(
         `${playerName} bought out — $${(data.dead_cap_total / 1_000_000).toFixed(1)}M dead cap over ${data.span_years} seasons.`
       );
@@ -91,6 +93,106 @@ const SalaryCap = () => {
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || "Buyout failed");
     }
+  };
+
+  const reverseBuyout = async (playerId: string, playerName: string) => {
+    try {
+      await api.delete(`/teams/${myTeam.id}/buyouts/${playerId}`);
+      toast.success(`Buyout reversed — ${playerName} restored to roster.`);
+      setReloadKey((k) => k + 1);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Reversal failed");
+    }
+  };
+
+  const cancelRetention = async (playerId: string, playerName: string) => {
+    try {
+      await api.delete(`/teams/${myTeam.id}/dead-cap/retention/${playerId}`);
+      toast.success(`Retention charge waived for ${playerName}.`);
+      setReloadKey((k) => k + 1);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Reversal failed");
+    }
+  };
+
+  // Iter 114 — Sub-component renders a single buyout dialog with its own
+  // local "length option" state so we don't need to manage per-row state at
+  // the parent level.
+  const BuyoutDialog = ({ contract }: { contract: Contract }) => {
+    const [lengthOpt, setLengthOpt] = useState<string>("default");
+    const previewMath: Record<string, { rate: number; span: number }> = {
+      full: { rate: 1.0, span: Math.max(2, 2 * contract.yearsRemaining) },
+      default: { rate: 2 / 3, span: Math.max(2, 2 * contract.yearsRemaining) },
+      two_thirds: { rate: 2 / 3, span: Math.max(2, 2 * contract.yearsRemaining) },
+      half: { rate: 0.5, span: Math.max(2, 2 * contract.yearsRemaining) },
+      one_year: { rate: 1.0, span: 1 },
+      minimum: { rate: 1 / 3, span: Math.max(1, contract.yearsRemaining) },
+    };
+    const preview = previewMath[lengthOpt] || previewMath.default;
+    const totalDead = Math.round(contract.salary * contract.yearsRemaining * preview.rate);
+    const annual = Math.round(totalDead / preview.span);
+
+    return (
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2" data-testid={`buyout-btn-${contract.id}`}>
+            <MinusCircle className="h-3 w-3 mr-1" />
+            Buy Out
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Buy out {contract.player}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Choose the buyout terms. The dead-cap charge is spread over future seasons.
+              <span className="block mt-1 text-muted-foreground text-xs">
+                Remaining contract: {contract.yearsRemaining} year(s) × ${(contract.salary / 1_000_000).toFixed(2)}M = ${(contract.salary * contract.yearsRemaining / 1_000_000).toFixed(2)}M total.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-3 py-2">
+            <div>
+              <label className="text-xs text-muted-foreground">Buyout length</label>
+              <Select value={lengthOpt} onValueChange={setLengthOpt}>
+                <SelectTrigger className="w-full mt-1" data-testid={`buyout-length-${contract.id}`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">2/3 over 2× term (NHL CBA default)</SelectItem>
+                  <SelectItem value="full">Full salary over 2× term</SelectItem>
+                  <SelectItem value="half">Half salary over 2× term</SelectItem>
+                  <SelectItem value="one_year">Full salary as a single year hit</SelectItem>
+                  <SelectItem value="minimum">1/3 over remaining term (minimum)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="rounded-lg bg-secondary/40 border border-border p-3 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Dead cap total:</span>
+                <span className="font-bold text-accent">${(totalDead / 1_000_000).toFixed(2)}M</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Annual dead cap:</span>
+                <span className="font-bold">${(annual / 1_000_000).toFixed(2)}M / yr</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Span:</span>
+                <span className="font-bold">{preview.span} season(s)</span>
+              </div>
+            </div>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => buyOut(contract.id, contract.player, lengthOpt)}
+              data-testid={`buyout-confirm-${contract.id}`}
+            >
+              Confirm Buyout
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    );
   };
 
   const contracts: Contract[] = useMemo(() => {
@@ -653,35 +755,7 @@ const SalaryCap = () => {
                     {buyoutsEnabled && (
                       <TableCell className="text-center">
                         {contract.yearsRemaining > 1 ? (
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button size="sm" variant="outline" className="h-7 text-[10px] px-2" data-testid={`buyout-btn-${contract.id}`}>
-                                <MinusCircle className="h-3 w-3 mr-1" />
-                                Buy Out
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Buy out {contract.player}?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  This will remove {contract.player} from your roster and
-                                  create a multi-year dead-cap charge (~2/3 of the
-                                  remaining ${(contract.salary * contract.yearsRemaining / 1_000_000).toFixed(1)}M
-                                  spread over ~{2 * contract.yearsRemaining} seasons).
-                                  This action cannot be undone.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => buyOut(contract.id, contract.player)}
-                                  data-testid={`buyout-confirm-${contract.id}`}
-                                >
-                                  Confirm Buyout
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
+                          <BuyoutDialog contract={contract} />
                         ) : (
                           <span className="text-[10px] text-muted-foreground italic">expiring</span>
                         )}
@@ -693,6 +767,120 @@ const SalaryCap = () => {
             </Table>
           </CardContent>
         </Card>
+
+        {/* ── Iter 114: Dead Cap Ledger card ─────────────────────────── */}
+        {deadCapSchedule.schedule.length > 0 && (
+          <Card className="bg-card border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-accent" />
+                Dead Cap Ledger
+                <Badge variant="outline" className="ml-2 border-amber-500/40 text-amber-400">
+                  ${(deadCapSchedule.total_dead_cap / 1_000_000).toFixed(2)}M total
+                </Badge>
+              </CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Full history of every active buyout or salary retention this team is paying.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border">
+                    <TableHead>Year</TableHead>
+                    <TableHead className="text-center">Source</TableHead>
+                    <TableHead>Player</TableHead>
+                    <TableHead className="text-right">Annual Charge</TableHead>
+                    <TableHead className="text-center">Action Date</TableHead>
+                    {buyoutsEnabled && <TableHead className="text-center text-xs">Reverse</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {deadCapSchedule.schedule.flatMap((row: any) =>
+                    row.entries.map((e: any, i: number) => (
+                      <TableRow key={`${row.year}-${e.player_id}-${i}`} className="border-border" data-testid={`ledger-row-${row.year}-${e.player_id || i}`}>
+                        <TableCell className="font-mono text-xs">{row.year}</TableCell>
+                        <TableCell className="text-center">
+                          <Badge
+                            variant="outline"
+                            className={
+                              e.source === "retention"
+                                ? "text-rose-400 border-rose-500/40"
+                                : "text-amber-400 border-amber-500/40"
+                            }
+                          >
+                            {e.source === "retention" ? "Retention" : "Buyout"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-medium text-sm">{e.player_name || "—"}</div>
+                          {e.source === "buyout" && e.original_salary && (
+                            <div className="text-[10px] text-muted-foreground">
+                              {e.length_option || "default"} · was ${(e.original_salary / 1_000_000).toFixed(2)}M × {e.original_years_remaining}y
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-accent">
+                          ${(e.amount / 1_000_000).toFixed(2)}M
+                        </TableCell>
+                        <TableCell className="text-center text-xs text-muted-foreground">
+                          {e.created_at ? new Date(e.created_at).toLocaleDateString() : "—"}
+                        </TableCell>
+                        {buyoutsEnabled && (
+                          <TableCell className="text-center">
+                            {e.player_id && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 w-7 p-0 text-rose-400 hover:bg-rose-500/15"
+                                    title={`Commissioner: ${e.source === "buyout" ? "reverse buyout" : "waive retention"}`}
+                                    data-testid={`ledger-reverse-${e.source}-${e.player_id}`}
+                                  >
+                                    ↺
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      {e.source === "buyout" ? "Reverse buyout?" : "Waive retention?"}
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      {e.source === "buyout"
+                                        ? `This will remove every remaining buyout charge for ${e.player_name} and restore them to the roster.`
+                                        : `This will waive the salary retention for ${e.player_name} across all remaining seasons.`}
+                                      <span className="block mt-1 text-amber-400">
+                                        Commissioner-only action.
+                                      </span>
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() =>
+                                        e.source === "buyout"
+                                          ? reverseBuyout(e.player_id, e.player_name || "player")
+                                          : cancelRetention(e.player_id, e.player_name || "player")
+                                      }
+                                      data-testid={`ledger-confirm-${e.source}-${e.player_id}`}
+                                    >
+                                      Confirm
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
+                          </TableCell>
+                        )}
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </AppLayout>
   );
