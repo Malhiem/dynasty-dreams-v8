@@ -7,13 +7,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { DollarSign, TrendingUp, TrendingDown, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, HelpCircle } from "lucide-react";
+import { DollarSign, TrendingUp, TrendingDown, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, HelpCircle, MinusCircle } from "lucide-react";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { useState, useEffect, useMemo } from "react";
 
 interface Contract {
@@ -60,6 +63,9 @@ const SalaryCap = () => {
   const leagueTeamsCount = leagueTeams?.length || 0;
   const [chartFilter, setChartFilter] = useState<ChartFilter>("all");
   const [rosterDetail, setRosterDetail] = useState<any>(null);
+  // Iter 112 — Dead-cap schedule pulled from server (buyouts + retention)
+  const [deadCapSchedule, setDeadCapSchedule] = useState<{ schedule: any[]; total_dead_cap: number }>({ schedule: [], total_dead_cap: 0 });
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!myTeam?.id) return;
@@ -67,8 +73,23 @@ const SalaryCap = () => {
     api.get(`/roster/${myTeam.id}/detail`)
       .then(({ data }) => { if (!cancelled) setRosterDetail(data); })
       .catch(() => {});
+    api.get(`/teams/${myTeam.id}/dead-cap-schedule`)
+      .then(({ data }) => { if (!cancelled) setDeadCapSchedule(data); })
+      .catch(() => setDeadCapSchedule({ schedule: [], total_dead_cap: 0 }));
     return () => { cancelled = true; };
-  }, [myTeam?.id]);
+  }, [myTeam?.id, reloadKey]);
+
+  const buyOut = async (playerId: string, playerName: string) => {
+    try {
+      const { data } = await api.post(`/teams/${myTeam.id}/players/${playerId}/buyout`, {});
+      toast.success(
+        `${playerName} bought out — $${(data.dead_cap_total / 1_000_000).toFixed(1)}M dead cap over ${data.span_years} seasons.`
+      );
+      setReloadKey((k) => k + 1);
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Buyout failed");
+    }
+  };
 
   const contracts: Contract[] = useMemo(() => {
     if (!rosterDetail?.players) return [];
@@ -99,13 +120,17 @@ const SalaryCap = () => {
     });
   }, [rosterDetail]);
 
-  const capLimit = Math.max(
-    league?.salary_cap || 82_500_000,
-    // Auto-scale to accommodate synthesized seed contracts (typical dynasty demo)
-    Math.ceil(contracts.reduce((s, c) => s + c.salary, 0) / 5_000_000) * 5_000_000
-  );
+  // Iter 112 — Salary cap value MUST come from the commissioner's setting,
+  // not from the auto-scaling fallback that previously inflated the visual cap
+  // when contracts overshot. If the league has no cap set we fall back to the
+  // NHL default ($82.5M).
+  const capLimit = Number(league?.salary_cap || 82_500_000);
   const currentSpending = contracts.reduce((sum, c) => sum + c.salary, 0);
-  const deadCap = 0; // not yet modelled in DB
+  // Iter 112 — Dead cap for the *current* calendar year (current row of schedule)
+  const curYear = new Date().getFullYear();
+  const deadCap = (deadCapSchedule.schedule || [])
+    .filter((r: any) => r.year === curYear)
+    .reduce((s: number, r: any) => s + Number(r.total || 0), 0);
   const totalRetained = 0;
   const retainedSalaries: any[] = [];
   const capSpace = capLimit - currentSpending - deadCap - totalRetained;
@@ -509,6 +534,9 @@ const SalaryCap = () => {
                   >
                     Contract Ends <SortIcon col="contract_ends" />
                   </TableHead>
+                  {buyoutsEnabled && (
+                    <TableHead className="text-center text-xs">Actions</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -559,6 +587,43 @@ const SalaryCap = () => {
                         {contract.endStatus}/{contract.endYear}
                       </Badge>
                     </TableCell>
+                    {buyoutsEnabled && (
+                      <TableCell className="text-center">
+                        {contract.yearsRemaining > 1 ? (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button size="sm" variant="outline" className="h-7 text-[10px] px-2" data-testid={`buyout-btn-${contract.id}`}>
+                                <MinusCircle className="h-3 w-3 mr-1" />
+                                Buy Out
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Buy out {contract.player}?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This will remove {contract.player} from your roster and
+                                  create a multi-year dead-cap charge (~2/3 of the
+                                  remaining ${(contract.salary * contract.yearsRemaining / 1_000_000).toFixed(1)}M
+                                  spread over ~{2 * contract.yearsRemaining} seasons).
+                                  This action cannot be undone.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => buyOut(contract.id, contract.player)}
+                                  data-testid={`buyout-confirm-${contract.id}`}
+                                >
+                                  Confirm Buyout
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        ) : (
+                          <span className="text-[10px] text-muted-foreground italic">expiring</span>
+                        )}
+                      </TableCell>
+                    )}
                   </TableRow>
                 ))}
               </TableBody>

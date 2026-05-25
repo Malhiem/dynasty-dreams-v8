@@ -365,3 +365,248 @@ async def delete_team_logo(team_id: str, request: Request):
         {"$unset": {"logo_url": "", "logo_updated_at": ""}},
     )
     return {"team_id": team_id, "logo_url": None}
+
+
+# ─── Iter 112: Contract buyouts + Depth-Chart server-side persistence ─────
+
+
+class BuyoutInput(BaseModel):
+    """Initiates a contract buyout for a player on this team.
+
+    The buyout schedule defaults to NHL CBA convention: the team pays roughly
+    2/3 of remaining salary spread evenly over (2 × yearsRemaining) future
+    seasons as dead cap. Callers may override `buyout_rate` (0.0..1.0) and
+    `years_span` (defaults to 2 × yearsRemaining).
+    """
+    buyout_rate: Optional[float] = Field(None, ge=0.0, le=1.0)
+    years_span: Optional[int] = Field(None, ge=1, le=10)
+
+
+@router.post("/teams/{team_id}/players/{player_id}/buyout")
+async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, request: Request):
+    """Commissioner/Owner action — remove a player from the roster and stamp
+    a multi-year dead-cap schedule on the team document.
+
+    Requires `league.contract_buyouts_enabled = True`. Idempotent only for
+    different players — buying out the same player twice is rejected.
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("contract_buyouts_enabled"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Contract buyouts are not enabled for this league. "
+                "Ask the commissioner to enable them under Transactions."
+            ),
+        )
+
+    is_owner = team.get("owner_id") == user["_id"]
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or (user.get("role") == "admin")
+    )
+    if not (is_owner or is_commish):
+        raise HTTPException(status_code=403, detail="Only the team owner or commissioner may initiate buyouts")
+
+    if player_id not in (team.get("roster") or []):
+        raise HTTPException(status_code=400, detail="Player not on this team's roster")
+
+    # Pull the synthesized contract so the buyout math has years_remaining +
+    # salary even when no explicit row is stored.
+    from routes.roster import _synthesize_contract
+    player = await db.players.find_one({"_id": ObjectId(player_id)})
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+    fpts_season = float(player.get("fantasy_points") or 0.0)
+    points = int(player.get("points") or 0)
+    is_g = player.get("player_type") == "goalie" or player.get("position") == "G"
+    contract = (player.get("contract") or {})
+    if not contract:
+        contract = _synthesize_contract(
+            is_g=is_g, fpts_season=fpts_season, points=points,
+            nhl_id=player.get("nhl_id"), age=int(player.get("age") or 27),
+        )
+
+    salary = int(contract.get("salary") or 0)
+    years_remaining = int(contract.get("yearsRemaining") or 1)
+    if salary <= 0 or years_remaining <= 0:
+        raise HTTPException(status_code=400, detail="Player has no remaining contract to buy out")
+
+    # Idempotency — reject double buyout
+    existing_schedule = team.get("dead_cap_schedule") or []
+    if any(entry.get("player_id") == player_id for entry in existing_schedule):
+        raise HTTPException(status_code=400, detail="This player has already been bought out")
+
+    # NHL CBA-inspired defaults: 2/3 of remaining salary over 2× term.
+    rate = float(payload.buyout_rate) if payload.buyout_rate is not None else 2.0 / 3.0
+    span = int(payload.years_span) if payload.years_span else max(2, 2 * years_remaining)
+    total_dead = int(round(salary * years_remaining * rate))
+    annual_dead = int(round(total_dead / span))
+    from datetime import datetime as _dt
+    cur_year = _dt.now(timezone.utc).year
+    schedule_entries = []
+    for i in range(span):
+        schedule_entries.append({
+            "year": cur_year + i,
+            "amount": annual_dead,
+            "source": "buyout",
+            "player_id": player_id,
+            "player_name": player.get("name", "Unknown"),
+            "original_salary": salary,
+            "original_years_remaining": years_remaining,
+            "created_at": _dt.now(timezone.utc),
+        })
+
+    # Apply: remove player from roster, append schedule.
+    new_roster = [pid for pid in (team.get("roster") or []) if pid != player_id]
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {
+            "$set": {"roster": new_roster},
+            "$push": {"dead_cap_schedule": {"$each": schedule_entries}},
+        },
+    )
+
+    return {
+        "team_id": team_id,
+        "player_id": player_id,
+        "player_name": player.get("name"),
+        "dead_cap_total": total_dead,
+        "annual_dead_cap": annual_dead,
+        "span_years": span,
+        "schedule": [{**e, "created_at": e["created_at"].isoformat()} for e in schedule_entries],
+    }
+
+
+@router.get("/teams/{team_id}/dead-cap-schedule")
+async def get_dead_cap_schedule(team_id: str, request: Request):
+    """Return the team's full dead-cap schedule (buyouts + retention).
+
+    Iter 112 — Salary-cap and depth-chart pages consume this to render the
+    correct multi-year dead-cap charge per season.
+    """
+    db = _deps["db"]
+    _safe_object_id = _deps["_safe_object_id"]
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    schedule = team.get("dead_cap_schedule") or []
+    # Aggregate per year
+    by_year: dict = {}
+    for e in schedule:
+        y = int(e.get("year") or 0)
+        by_year.setdefault(y, {"year": y, "total": 0, "entries": []})
+        by_year[y]["total"] += int(e.get("amount") or 0)
+        by_year[y]["entries"].append({
+            "amount": int(e.get("amount") or 0),
+            "source": e.get("source", "buyout"),
+            "player_name": e.get("player_name"),
+            "player_id": e.get("player_id"),
+        })
+    rows = sorted(by_year.values(), key=lambda r: r["year"])
+    return {
+        "team_id": team_id,
+        "schedule": rows,
+        "total_dead_cap": sum(r["total"] for r in rows),
+    }
+
+
+class DepthProjectionsInput(BaseModel):
+    """{ projections: { "<player_id>": [y0, y1, y2] } }"""
+    projections: dict
+
+
+@router.put("/teams/{team_id}/depth-projections")
+async def save_depth_projections(team_id: str, payload: DepthProjectionsInput, request: Request):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if team.get("owner_id") != user["_id"] and user.get("role") != "admin":
+        league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+        if not league or (
+            league.get("commissioner_id") != user["_id"]
+            and user["_id"] not in (league.get("co_commissioners") or [])
+        ):
+            raise HTTPException(status_code=403, detail="Only the team owner may edit projections")
+    # Clamp values defensively (max 1500 PF/season; keep keys as strings).
+    cleaned: dict = {}
+    for pid, arr in (payload.projections or {}).items():
+        if not isinstance(arr, list):
+            continue
+        cleaned[str(pid)] = [
+            max(0, min(1500, int(v) if isinstance(v, (int, float)) else 0)) for v in arr[:3]
+        ]
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {"depth_projections": cleaned}},
+    )
+    return {"team_id": team_id, "saved": True, "count": len(cleaned)}
+
+
+@router.get("/teams/{team_id}/depth-projections")
+async def get_depth_projections(team_id: str, request: Request):
+    db = _deps["db"]
+    _safe_object_id = _deps["_safe_object_id"]
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return {"team_id": team_id, "projections": team.get("depth_projections") or {}}
+
+
+class DepthLineupInput(BaseModel):
+    """{ lineups: { "y0": { "L1-LW": "<player_id>", ... }, "y1": {...}, "y2": {...} } }"""
+    lineups: dict
+
+
+@router.put("/teams/{team_id}/depth-lineup")
+async def save_depth_lineup(team_id: str, payload: DepthLineupInput, request: Request):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if team.get("owner_id") != user["_id"] and user.get("role") != "admin":
+        league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+        if not league or (
+            league.get("commissioner_id") != user["_id"]
+            and user["_id"] not in (league.get("co_commissioners") or [])
+        ):
+            raise HTTPException(status_code=403, detail="Only the team owner may edit lineup")
+    cleaned: dict = {}
+    for ykey, slots in (payload.lineups or {}).items():
+        if ykey not in ("y0", "y1", "y2"):
+            continue
+        if not isinstance(slots, dict):
+            continue
+        cleaned[ykey] = {str(slot): str(pid) for slot, pid in slots.items() if pid}
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {"depth_lineup": cleaned}},
+    )
+    return {"team_id": team_id, "saved": True}
+
+
+@router.get("/teams/{team_id}/depth-lineup")
+async def get_depth_lineup(team_id: str, request: Request):
+    db = _deps["db"]
+    _safe_object_id = _deps["_safe_object_id"]
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return {"team_id": team_id, "lineups": team.get("depth_lineup") or {}}

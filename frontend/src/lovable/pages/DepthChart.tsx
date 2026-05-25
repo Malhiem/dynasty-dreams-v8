@@ -170,37 +170,64 @@ const DepthChart = () => {
     return () => { cancelled = true; };
   }, [myTeam?.id]);
 
-  // ── Player projection state (per team, per year), stored in localStorage ──
-  const projKey = useMemo(() => `dd:depth_proj:${myTeam?.id || "demo"}`, [myTeam?.id]);
+  // ── Player projection state (per team, per year), server-side persisted ──
   const [projections, setProjections] = useState<Record<string, number[]>>({});
+  const [projectionsLoaded, setProjectionsLoaded] = useState(false);
+  const [savingProj, setSavingProj] = useState(false);
 
   useEffect(() => {
     if (!myTeam?.id || !rosterDetail) return;
-    const stored = localStorage.getItem(projKey);
-    if (stored) {
-      try { setProjections(JSON.parse(stored)); return; } catch {}
-    }
-    const fresh: Record<string, number[]> = {};
-    (rosterDetail.players || []).forEach((p: any) => {
-      const baseline = Math.round(p.fantasy_points || 0);
-      // Iter-111 default: gradual decline (-3% / yr) to mimic age curve
-      fresh[p.id] = [baseline, Math.round(baseline * 0.97), Math.round(baseline * 0.94)];
-    });
-    setProjections(fresh);
-  }, [myTeam?.id, rosterDetail, projKey]);
+    let cancelled = false;
+    api.get(`/teams/${myTeam.id}/depth-projections`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const stored = data.projections || {};
+        // Hydrate missing player rows with auto-baseline so the table is never empty.
+        const fresh: Record<string, number[]> = { ...stored };
+        (rosterDetail.players || []).forEach((p: any) => {
+          if (!fresh[p.id]) {
+            const baseline = Math.round(p.fantasy_points || 0);
+            fresh[p.id] = [baseline, Math.round(baseline * 0.97), Math.round(baseline * 0.94)];
+          }
+        });
+        setProjections(fresh);
+        setProjectionsLoaded(true);
+      })
+      .catch(() => {
+        // Fallback to localStorage if server-side hasn't been populated yet
+        const fresh: Record<string, number[]> = {};
+        (rosterDetail.players || []).forEach((p: any) => {
+          const baseline = Math.round(p.fantasy_points || 0);
+          fresh[p.id] = [baseline, Math.round(baseline * 0.97), Math.round(baseline * 0.94)];
+        });
+        setProjections(fresh);
+        setProjectionsLoaded(true);
+      });
+    return () => { cancelled = true; };
+  }, [myTeam?.id, rosterDetail]);
 
-  const saveProjections = () => {
-    localStorage.setItem(projKey, JSON.stringify(projections));
-    toast.success("Projected PFs saved");
+  const saveProjections = async () => {
+    if (!myTeam?.id) return;
+    setSavingProj(true);
+    try {
+      await api.put(`/teams/${myTeam.id}/depth-projections`, { projections });
+      toast.success("Projected PFs saved");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save projections");
+    } finally {
+      setSavingProj(false);
+    }
   };
-  const resetProjections = () => {
+  const resetProjections = async () => {
     const fresh: Record<string, number[]> = {};
     (rosterDetail?.players || []).forEach((p: any) => {
       const baseline = Math.round(p.fantasy_points || 0);
       fresh[p.id] = [baseline, Math.round(baseline * 0.97), Math.round(baseline * 0.94)];
     });
     setProjections(fresh);
-    localStorage.removeItem(projKey);
+    try {
+      if (myTeam?.id) await api.put(`/teams/${myTeam.id}/depth-projections`, { projections: fresh });
+    } catch {}
     toast.success("Projections reset to auto-calculated baseline");
   };
 
@@ -224,6 +251,22 @@ const DepthChart = () => {
     },
   ];
 
+  // ── Dead-cap schedule (Iter 112) — fed into committed-cap arithmetic ──
+  const [deadCapByYear, setDeadCapByYear] = useState<Record<number, number>>({});
+  useEffect(() => {
+    if (!myTeam?.id) return;
+    let cancelled = false;
+    api.get(`/teams/${myTeam.id}/dead-cap-schedule`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const m: Record<number, number> = {};
+        (data.schedule || []).forEach((r: any) => { m[r.year] = r.total; });
+        setDeadCapByYear(m);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [myTeam?.id]);
+
   // ── Compute per-year committed cap (active contract for that year) ──
   const players = rosterDetail?.players || [];
   const yearCommitments = useMemo(() => {
@@ -241,9 +284,13 @@ const DepthChart = () => {
         } else if (c.end_status === "UFA") ufaCount++;
         else rfaCount++;
       });
-      return { committed, signed, ufaCount, rfaCount };
+      // Add dead cap for the specific calendar year
+      const yr = capLimits[offset].year;
+      committed += Number(deadCapByYear[yr] || 0);
+      return { committed, signed, ufaCount, rfaCount, deadCap: Number(deadCapByYear[yr] || 0) };
     });
-  }, [players]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [players, deadCapByYear, capLimits[0]?.year]);
 
   // ── Projected PF total for selected year ─────────────────────────
   const teamProjPF = useMemo(() => {
@@ -288,17 +335,33 @@ const DepthChart = () => {
     return arr;
   }, [players, sortKey, sortDir, projections]);
 
-  // ── NHL Lineup state (per-year), persisted to localStorage ──────
-  const lineupKey = useMemo(() => `dd:depth_lineup:${myTeam?.id || "demo"}`, [myTeam?.id]);
+  // ── NHL Lineup state (per-year), server-side persisted ────────
   const [lineups, setLineups] = useState<Record<string, Record<string, string>>>({});
   useEffect(() => {
     if (!myTeam?.id) return;
-    const stored = localStorage.getItem(lineupKey);
-    if (stored) {
-      try { setLineups(JSON.parse(stored)); return; } catch {}
-    }
-    setLineups({ y0: {}, y1: {}, y2: {} });
-  }, [myTeam?.id, lineupKey]);
+    let cancelled = false;
+    api.get(`/teams/${myTeam.id}/depth-lineup`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const stored = data.lineups || {};
+        setLineups({
+          y0: stored.y0 || {},
+          y1: stored.y1 || {},
+          y2: stored.y2 || {},
+        });
+      })
+      .catch(() => setLineups({ y0: {}, y1: {}, y2: {} }));
+    return () => { cancelled = true; };
+  }, [myTeam?.id]);
+
+  // Debounced persist whenever lineups change locally (skips initial empty)
+  useEffect(() => {
+    if (!myTeam?.id || Object.keys(lineups).length === 0) return;
+    const timer = setTimeout(() => {
+      api.put(`/teams/${myTeam.id}/depth-lineup`, { lineups }).catch(() => {});
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [myTeam?.id, lineups]);
 
   const slotPlan = useMemo(() => buildSlotPlan(Number(league?.roster_spots) || 23), [league?.roster_spots]);
   const yearKey = `y${yearOffset}` as const;
@@ -346,17 +409,12 @@ const DepthChart = () => {
         cur[overId as string] = player.id;
       }
       next[yearKey] = cur;
-      localStorage.setItem(lineupKey, JSON.stringify(next));
       return next;
     });
   };
 
   const resetLineup = () => {
-    setLineups((prev) => {
-      const next = { ...prev, [yearKey]: {} };
-      localStorage.setItem(lineupKey, JSON.stringify(next));
-      return next;
-    });
+    setLineups((prev) => ({ ...prev, [yearKey]: {} }));
     toast.success(`${SEASON_LABEL(capLimits[yearOffset].year)} lineup cleared`);
   };
 
@@ -427,6 +485,11 @@ const DepthChart = () => {
               <p className="text-xl font-bold">{fmt(yearCommitments[yearOffset].committed)}</p>
               <p className="text-[10px] text-muted-foreground mt-1">
                 {yearCommitments[yearOffset].signed} signed
+                {yearCommitments[yearOffset].deadCap > 0 && (
+                  <span className="ml-1 text-amber-400">
+                    · {fmt(yearCommitments[yearOffset].deadCap)} dead
+                  </span>
+                )}
               </p>
             </CardContent>
           </Card>
@@ -473,8 +536,8 @@ const DepthChart = () => {
                   <Button size="sm" variant="outline" onClick={resetProjections} data-testid="depth-proj-reset">
                     <RotateCcw className="h-4 w-4 mr-1" /> Reset PFs
                   </Button>
-                  <Button size="sm" onClick={saveProjections} data-testid="depth-proj-save">
-                    <Save className="h-4 w-4 mr-1" /> Save PFs
+                  <Button size="sm" onClick={saveProjections} disabled={savingProj} data-testid="depth-proj-save">
+                    <Save className="h-4 w-4 mr-1" /> {savingProj ? "Saving…" : "Save PFs"}
                   </Button>
                 </div>
               </CardHeader>
