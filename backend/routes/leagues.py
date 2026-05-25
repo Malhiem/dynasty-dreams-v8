@@ -1,7 +1,10 @@
 """Leagues router: enhanced standings (divisions/conferences/GB/movement) +
-playoff bracket + division management (commissioner-only).
+playoff bracket + division management (commissioner-only) + Iter 109: League CRUD
+(create / list / get) extracted from server.py.
 """
+import secrets
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from typing import List, Optional
 
 from bson import ObjectId
@@ -14,6 +17,321 @@ _deps: dict = {}
 
 def setup(deps: dict) -> None:
     _deps.update(deps)
+
+
+# ─── Enums (extracted from server.py iter 109) ───────────────
+class LeagueFormat(str, Enum):
+    REDRAFT = "redraft"
+    KEEPER = "keeper"
+    DYNASTY = "dynasty"
+    BEST_BALL = "best_ball"
+
+
+class ScoringFormat(str, Enum):
+    HEAD_TO_HEAD = "head_to_head"
+    TOTAL_POINTS = "total_points"
+    ROTISSERIE = "rotisserie"
+    GUILLOTINE = "guillotine"
+    ALL_PLAY = "all_play"
+
+
+class DraftType(str, Enum):
+    SNAKE = "snake"
+    LINEAR = "linear"
+    AUCTION = "auction"
+    CUSTOM = "custom"
+
+
+class UserRole(str, Enum):
+    USER = "user"
+    COMMISSIONER = "commissioner"
+    ADMIN = "admin"
+
+
+# ─── LeagueCreate / LeagueResponse Pydantic models (extracted iter 109) ───
+class LeagueCreate(BaseModel):
+    name: str
+    sport: str = "nhl"
+    format: LeagueFormat
+    scoring_format: ScoringFormat
+    max_teams: int = Field(default=12, ge=4, le=32)
+    salary_cap_enabled: bool = False
+    salary_cap: Optional[float] = None
+    draft_type: DraftType = DraftType.SNAKE
+    roster_spots: int = Field(default=20, ge=10, le=30)
+    keepers_allowed: int = Field(default=0, ge=0, le=10)
+    entry_fee: Optional[float] = None
+    is_private: bool = False
+
+
+class LeagueResponse(BaseModel):
+    id: str
+    name: str
+    sport: str = "nhl"
+    format: str
+    scoring_format: str
+    max_teams: int
+    current_teams: int
+    commissioner_id: str
+    commissioner_name: str
+    co_commissioners: List[str] = []
+    salary_cap_enabled: bool
+    salary_cap: Optional[float]
+    draft_type: str
+    roster_spots: int
+    keepers_allowed: int
+    entry_fee: Optional[float]
+    is_private: bool
+    status: str
+    invite_code: Optional[str] = None
+    created_at: datetime
+    setup_wizard_complete: bool = False
+    # Extended wizard / commissioner-settable fields (single source of truth)
+    bench_spots: Optional[int] = None
+    minors_spots: Optional[int] = None
+    trade_review_period_hours: Optional[int] = None
+    trade_veto_threshold_pct: Optional[int] = None
+    trade_deadline_week: Optional[int] = None
+    waiver_faab_budget: Optional[int] = None
+    waiver_period_days: Optional[int] = None
+    playoff_teams: Optional[int] = None
+    playoff_start_week: Optional[int] = None
+    playoff_rounds: Optional[int] = None
+    playoff_end_week: Optional[int] = None
+    regular_season_weeks: Optional[int] = None
+    salary_retention_enabled: Optional[bool] = None
+    salary_retention_max_pct: Optional[int] = None
+    salary_retention_slots: Optional[int] = None
+    season_start_date: Optional[str] = None
+    season_end_date: Optional[str] = None
+    matchup_length_days: Optional[int] = None
+    opponents_per_matchup_period: Optional[int] = None
+    consolation_enabled: Optional[bool] = None
+    consolation_start_week: Optional[int] = None
+    consolation_end_week: Optional[int] = None
+    consolation_uses_playoff_schedule: Optional[bool] = None
+    ir_slots: Optional[int] = None
+    ir_plus_slots: Optional[int] = None
+    taxi_squad_size: Optional[int] = None
+    position_limits: Optional[dict] = None
+    enforce_position_maxes: Optional[bool] = None
+    min_active_players: Optional[int] = None
+    min_games_played: Optional[int] = None
+    prorate_min_max_by_period: Optional[bool] = None
+    allow_illegal_rosters: Optional[bool] = None
+    ir_eligibility_modes: Optional[List[str]] = None
+    roster_lock_type: Optional[str] = None
+    roster_lock_day: Optional[str] = None
+    roster_lock_second_day: Optional[str] = None
+    lineup_lock_minutes_before: Optional[int] = None
+    playoff_roster_lock_override: Optional[bool] = None
+    playoff_roster_lock_type: Optional[str] = None
+    playoff_roster_lock_day: Optional[str] = None
+    playoff_roster_lock_second_day: Optional[str] = None
+    playoff_lineup_lock_minutes_before: Optional[int] = None
+    stats_count_start_date: Optional[str] = None
+    stats_count_end_date: Optional[str] = None
+    playoff_format: Optional[str] = None
+    playoff_seeding_method: Optional[str] = None
+    playoff_custom_matchups: Optional[List[dict]] = None
+    consolation_teams: Optional[int] = None
+    consolation_seeding_method: Optional[str] = None
+    consolation_custom_matchups: Optional[List[dict]] = None
+    emergency_changes_enabled: Optional[bool] = None
+    emergency_changes_regular: Optional[int] = None
+    emergency_changes_playoffs: Optional[int] = None
+    emergency_eligibility: Optional[List[str]] = None
+    emergency_changes_scope: Optional[str] = None
+    differentiate_goalie_scoring: Optional[bool] = None
+    goalie_scoring_method: Optional[str] = None
+    goalie_best_x_count: Optional[int] = None
+    goalie_avg_multiplier_count: Optional[int] = None
+    goalie_gp_limit_enabled: Optional[bool] = None
+    goalie_gp_limit: Optional[int] = None
+    goalie_gp_count_method: Optional[str] = None
+
+
+# ─── League CRUD endpoints (extracted iter 109) ──────────────
+@router.post("/leagues", response_model=LeagueResponse)
+async def create_league(input: LeagueCreate, request: Request):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+
+    league_doc = {
+        "name": input.name,
+        "sport": input.sport,
+        "format": input.format.value,
+        "scoring_format": input.scoring_format.value,
+        "max_teams": input.max_teams,
+        "current_teams": 0,
+        "commissioner_id": user["_id"],
+        "commissioner_name": user["name"],
+        "salary_cap_enabled": input.salary_cap_enabled,
+        "salary_cap": input.salary_cap if input.salary_cap_enabled else None,
+        "draft_type": input.draft_type.value,
+        "roster_spots": input.roster_spots,
+        "keepers_allowed": input.keepers_allowed,
+        "entry_fee": input.entry_fee,
+        "is_private": input.is_private,
+        "invite_code": secrets.token_urlsafe(8),
+        "status": "setup",
+        "created_at": datetime.now(timezone.utc),
+    }
+    result = await db.leagues.insert_one(league_doc)
+    league_id = str(result.inserted_id)
+
+    # Promote requester to commissioner role if currently a plain user
+    if user["role"] == UserRole.USER.value:
+        await db.users.update_one(
+            {"_id": ObjectId(user["_id"])},
+            {"$set": {"role": UserRole.COMMISSIONER.value}},
+        )
+
+    return LeagueResponse(
+        id=league_id,
+        name=league_doc["name"],
+        sport=league_doc.get("sport", "nhl"),
+        format=league_doc["format"],
+        scoring_format=league_doc["scoring_format"],
+        max_teams=league_doc["max_teams"],
+        current_teams=0,
+        commissioner_id=league_doc["commissioner_id"],
+        commissioner_name=league_doc["commissioner_name"],
+        co_commissioners=league_doc.get("co_commissioners", []) or [],
+        salary_cap_enabled=league_doc["salary_cap_enabled"],
+        salary_cap=league_doc["salary_cap"],
+        draft_type=league_doc["draft_type"],
+        roster_spots=league_doc["roster_spots"],
+        keepers_allowed=league_doc["keepers_allowed"],
+        entry_fee=league_doc["entry_fee"],
+        is_private=league_doc["is_private"],
+        status=league_doc["status"],
+        invite_code=league_doc.get("invite_code"),
+        created_at=league_doc["created_at"],
+        setup_wizard_complete=bool(league_doc.get("setup_wizard_complete", False)),
+    )
+
+
+def _league_to_response(league: dict) -> LeagueResponse:
+    """Hydrate every LeagueResponse field from a raw Mongo league doc."""
+    return LeagueResponse(
+        id=str(league["_id"]),
+        name=league["name"],
+        sport=league.get("sport", "nhl"),
+        format=league["format"],
+        scoring_format=league["scoring_format"],
+        max_teams=league["max_teams"],
+        current_teams=league.get("current_teams", 0),
+        commissioner_id=league["commissioner_id"],
+        commissioner_name=league["commissioner_name"],
+        co_commissioners=league.get("co_commissioners", []) or [],
+        salary_cap_enabled=league["salary_cap_enabled"],
+        salary_cap=league.get("salary_cap"),
+        draft_type=league["draft_type"],
+        roster_spots=league["roster_spots"],
+        keepers_allowed=league["keepers_allowed"],
+        entry_fee=league.get("entry_fee"),
+        is_private=league["is_private"],
+        status=league["status"],
+        invite_code=league.get("invite_code"),
+        created_at=league["created_at"],
+        setup_wizard_complete=bool(league.get("setup_wizard_complete", False)),
+        bench_spots=league.get("bench_spots"),
+        minors_spots=league.get("minors_spots"),
+        trade_review_period_hours=league.get("trade_review_period_hours"),
+        trade_veto_threshold_pct=league.get("trade_veto_threshold_pct"),
+        trade_deadline_week=league.get("trade_deadline_week"),
+        waiver_faab_budget=league.get("waiver_faab_budget"),
+        waiver_period_days=league.get("waiver_period_days"),
+        playoff_teams=league.get("playoff_teams"),
+        playoff_start_week=league.get("playoff_start_week"),
+        playoff_rounds=league.get("playoff_rounds"),
+        playoff_end_week=league.get("playoff_end_week"),
+        regular_season_weeks=league.get("regular_season_weeks"),
+        salary_retention_enabled=league.get("salary_retention_enabled"),
+        salary_retention_max_pct=league.get("salary_retention_max_pct"),
+        salary_retention_slots=league.get("salary_retention_slots"),
+        season_start_date=league.get("season_start_date"),
+        season_end_date=league.get("season_end_date"),
+        matchup_length_days=league.get("matchup_length_days"),
+        opponents_per_matchup_period=league.get("opponents_per_matchup_period"),
+        consolation_enabled=league.get("consolation_enabled"),
+        consolation_start_week=league.get("consolation_start_week"),
+        consolation_end_week=league.get("consolation_end_week"),
+        consolation_uses_playoff_schedule=league.get("consolation_uses_playoff_schedule"),
+        ir_slots=league.get("ir_slots"),
+        ir_plus_slots=league.get("ir_plus_slots"),
+        taxi_squad_size=league.get("taxi_squad_size"),
+        position_limits=league.get("position_limits"),
+        enforce_position_maxes=league.get("enforce_position_maxes"),
+        min_active_players=league.get("min_active_players"),
+        min_games_played=league.get("min_games_played"),
+        prorate_min_max_by_period=league.get("prorate_min_max_by_period"),
+        allow_illegal_rosters=league.get("allow_illegal_rosters"),
+        ir_eligibility_modes=league.get("ir_eligibility_modes"),
+        roster_lock_type=league.get("roster_lock_type"),
+        roster_lock_day=league.get("roster_lock_day"),
+        roster_lock_second_day=league.get("roster_lock_second_day"),
+        lineup_lock_minutes_before=league.get("lineup_lock_minutes_before"),
+        playoff_roster_lock_override=league.get("playoff_roster_lock_override"),
+        playoff_roster_lock_type=league.get("playoff_roster_lock_type"),
+        playoff_roster_lock_day=league.get("playoff_roster_lock_day"),
+        playoff_roster_lock_second_day=league.get("playoff_roster_lock_second_day"),
+        playoff_lineup_lock_minutes_before=league.get("playoff_lineup_lock_minutes_before"),
+        stats_count_start_date=league.get("stats_count_start_date"),
+        stats_count_end_date=league.get("stats_count_end_date"),
+        playoff_format=league.get("playoff_format"),
+        playoff_seeding_method=league.get("playoff_seeding_method"),
+        playoff_custom_matchups=league.get("playoff_custom_matchups"),
+        consolation_teams=league.get("consolation_teams"),
+        consolation_seeding_method=league.get("consolation_seeding_method"),
+        consolation_custom_matchups=league.get("consolation_custom_matchups"),
+        emergency_changes_enabled=league.get("emergency_changes_enabled"),
+        emergency_changes_regular=league.get("emergency_changes_regular"),
+        emergency_changes_playoffs=league.get("emergency_changes_playoffs"),
+        emergency_eligibility=league.get("emergency_eligibility"),
+        emergency_changes_scope=league.get("emergency_changes_scope"),
+        differentiate_goalie_scoring=league.get("differentiate_goalie_scoring"),
+        goalie_scoring_method=league.get("goalie_scoring_method"),
+        goalie_best_x_count=league.get("goalie_best_x_count"),
+        goalie_avg_multiplier_count=league.get("goalie_avg_multiplier_count"),
+        goalie_gp_limit_enabled=league.get("goalie_gp_limit_enabled"),
+        goalie_gp_limit=league.get("goalie_gp_limit"),
+        goalie_gp_count_method=league.get("goalie_gp_count_method"),
+    )
+
+
+@router.get("/leagues", response_model=List[LeagueResponse])
+async def get_leagues(request: Request, my_leagues: bool = False):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = None
+    try:
+        user = await get_current_user(request)
+    except Exception:
+        pass
+
+    query: dict = {}
+    if my_leagues and user:
+        user_teams = await db.teams.find({"owner_id": user["_id"]}, {"league_id": 1}).to_list(100)
+        league_ids = [t["league_id"] for t in user_teams]
+        query = {"$or": [{"commissioner_id": user["_id"]},
+                         {"_id": {"$in": [ObjectId(lid) for lid in league_ids]}}]}
+    elif not my_leagues:
+        query = {"is_private": False}
+
+    leagues = await db.leagues.find(query).to_list(100)
+    return [_league_to_response(league) for league in leagues]
+
+
+@router.get("/leagues/{league_id}", response_model=LeagueResponse)
+async def get_league(league_id: str):
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    return _league_to_response(league)
 
 
 # ─── Pydantic ─────────────────────────────────────────────────
