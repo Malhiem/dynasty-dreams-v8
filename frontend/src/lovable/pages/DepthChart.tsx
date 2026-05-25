@@ -1,612 +1,653 @@
 // @ts-nocheck
-import { useState } from "react";
+/**
+ * Depth Chart — Iter 111 rewrite.
+ *
+ * Replaces the per-position split tables with a single unified Projections
+ * table, surfaces per-year committed-cap / available-cap tiles (driven by the
+ * commissioner's iter-111 Year+1 / Year+2 cap inputs), and adds a second
+ * "NHL Lineup" tab that renders the roster as drag-and-drop tiles in lines
+ * (4 forward lines, 3 defensive pairs, 2 goalies, plus bench) for the
+ * current + Year+1 + Year+2 seasons.
+ *
+ * Editable Projected PF text inputs are persisted per (team, season) to
+ * localStorage so the user can revisit and refine. A `Reset` button restores
+ * the auto-projected values.
+ */
+import { useEffect, useMemo, useState } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Edit2, Save, RotateCcw, ChevronDown, ChevronRight } from "lucide-react";
-import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
+import { Save, RotateCcw, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import api from "@/lib/api";
+import { toast } from "sonner";
+import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
+import {
+  DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
+  DragOverlay,
+} from "@dnd-kit/core";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 
-interface Player {
-  id: number;
-  name: string;
-  position: string;
-  age: number;
-  aav: number;
-  contractYears: number;
-  contractStatus: "Signed" | "RFA" | "UFA";
-  currentPoints: number;
-  projectedPoints: number[];
-}
+const fmt = (n: number) => `$${(n / 1_000_000).toFixed(2)}M`;
+const SEASON_LABEL = (yr: number) => `${yr}-${String(yr + 1).slice(-2)}`;
 
-interface HistoricalData {
-  year: number;
-  totalSalary: number;
-  projectedPF: number;
-  actualPF: number;
-}
+// ── NHL slot layout ────────────────────────────────────────────────
+// Slots are computed dynamically based on the league's roster size, but
+// default to the canonical NHL lineup (4 lines, 3 pairs, 2 goalies).
+type SlotDef = { id: string; label: string; role: "F" | "D" | "G" | "BN"; subLabel?: string };
 
-interface HistoricalRosterPlayer {
-  id: number;
-  name: string;
-  position: string;
-  team: string;
-  G: number;
-  A: number;
-  PPP: number;
-  SOG: number;
-  HIT: number;
-  BLK: number;
-  PIM: number;
-  plusMinus: number;
-  fantasyPts: number;
-}
+const buildSlotPlan = (rosterSpots: number): SlotDef[] => {
+  const total = Math.max(20, rosterSpots || 23);
+  const goalies = 2;
+  const forwardLines = total >= 24 ? 4 : 3;
+  const defensePairs = total >= 22 ? 3 : 2;
+  const startersFD = forwardLines * 3 + defensePairs * 2 + goalies;
+  const bench = Math.max(0, total - startersFD);
 
-const historicalRosters: Record<number, HistoricalRosterPlayer[]> = {
-  2022: [
-    { id: 101, name: "Connor McDavid", position: "C", team: "EDM", G: 44, A: 79, PPP: 38, SOG: 256, HIT: 22, BLK: 14, PIM: 36, plusMinus: 20, fantasyPts: 612 },
-    { id: 102, name: "Leon Draisaitl", position: "C", team: "EDM", G: 55, A: 55, PPP: 42, SOG: 238, HIT: 30, BLK: 12, PIM: 44, plusMinus: 14, fantasyPts: 581 },
-    { id: 103, name: "Nathan MacKinnon", position: "C", team: "COL", G: 32, A: 56, PPP: 28, SOG: 220, HIT: 40, BLK: 26, PIM: 30, plusMinus: 18, fantasyPts: 498 },
-    { id: 104, name: "Cale Makar", position: "D", team: "COL", G: 28, A: 58, PPP: 30, SOG: 214, HIT: 10, BLK: 110, PIM: 22, plusMinus: 28, fantasyPts: 472 },
-    { id: 105, name: "Zach Hyman", position: "LW", team: "EDM", G: 27, A: 28, PPP: 14, SOG: 144, HIT: 74, BLK: 18, PIM: 22, plusMinus: 10, fantasyPts: 298 },
-    { id: 106, name: "Artemi Panarin", position: "LW", team: "NYR", G: 22, A: 52, PPP: 28, SOG: 198, HIT: 16, BLK: 18, PIM: 34, plusMinus: 4, fantasyPts: 426 },
-    { id: 107, name: "Igor Shesterkin", position: "G", team: "NYR", G: 0, A: 0, PPP: 0, SOG: 0, HIT: 0, BLK: 0, PIM: 0, plusMinus: 0, fantasyPts: 214 },
-  ],
-  2023: [
-    { id: 101, name: "Connor McDavid", position: "C", team: "EDM", G: 64, A: 89, PPP: 45, SOG: 280, HIT: 26, BLK: 16, PIM: 32, plusMinus: 34, fantasyPts: 742 },
-    { id: 102, name: "Leon Draisaitl", position: "C", team: "EDM", G: 52, A: 64, PPP: 48, SOG: 248, HIT: 32, BLK: 14, PIM: 48, plusMinus: 22, fantasyPts: 634 },
-    { id: 103, name: "Nathan MacKinnon", position: "C", team: "COL", G: 39, A: 54, PPP: 32, SOG: 232, HIT: 38, BLK: 22, PIM: 28, plusMinus: 24, fantasyPts: 536 },
-    { id: 104, name: "Cale Makar", position: "D", team: "COL", G: 22, A: 60, PPP: 26, SOG: 202, HIT: 12, BLK: 118, PIM: 18, plusMinus: 32, fantasyPts: 490 },
-    { id: 108, name: "Quinn Hughes", position: "D", team: "VAN", G: 14, A: 68, PPP: 28, SOG: 188, HIT: 8, BLK: 96, PIM: 16, plusMinus: 26, fantasyPts: 448 },
-    { id: 106, name: "Artemi Panarin", position: "LW", team: "NYR", G: 28, A: 54, PPP: 32, SOG: 210, HIT: 14, BLK: 20, PIM: 30, plusMinus: 8, fantasyPts: 468 },
-    { id: 109, name: "Andrei Vasilevskiy", position: "G", team: "TBL", G: 0, A: 0, PPP: 0, SOG: 0, HIT: 0, BLK: 0, PIM: 0, plusMinus: 0, fantasyPts: 198 },
-  ],
-  2024: [
-    { id: 101, name: "Connor McDavid", position: "C", team: "EDM", G: 54, A: 82, PPP: 42, SOG: 270, HIT: 24, BLK: 18, PIM: 34, plusMinus: 28, fantasyPts: 698 },
-    { id: 102, name: "Leon Draisaitl", position: "C", team: "EDM", G: 48, A: 62, PPP: 44, SOG: 244, HIT: 28, BLK: 16, PIM: 52, plusMinus: 18, fantasyPts: 604 },
-    { id: 103, name: "Nathan MacKinnon", position: "C", team: "COL", G: 51, A: 70, PPP: 40, SOG: 258, HIT: 42, BLK: 24, PIM: 32, plusMinus: 30, fantasyPts: 672 },
-    { id: 104, name: "Cale Makar", position: "D", team: "COL", G: 26, A: 64, PPP: 34, SOG: 224, HIT: 14, BLK: 122, PIM: 20, plusMinus: 36, fantasyPts: 514 },
-    { id: 108, name: "Quinn Hughes", position: "D", team: "VAN", G: 18, A: 72, PPP: 30, SOG: 196, HIT: 10, BLK: 100, PIM: 14, plusMinus: 30, fantasyPts: 468 },
-    { id: 107, name: "Igor Shesterkin", position: "G", team: "NYR", G: 0, A: 0, PPP: 0, SOG: 0, HIT: 0, BLK: 0, PIM: 0, plusMinus: 0, fantasyPts: 228 },
-    { id: 109, name: "Andrei Vasilevskiy", position: "G", team: "TBL", G: 0, A: 0, PPP: 0, SOG: 0, HIT: 0, BLK: 0, PIM: 0, plusMinus: 0, fantasyPts: 186 },
-  ],
+  const slots: SlotDef[] = [];
+  const lineLabels = ["1st Line", "2nd Line", "3rd Line", "4th Line"];
+  const pairLabels = ["1st Pair", "2nd Pair", "3rd Pair"];
+  for (let i = 0; i < forwardLines; i++) {
+    slots.push({ id: `L${i + 1}-LW`, label: "LW", role: "F", subLabel: lineLabels[i] });
+    slots.push({ id: `L${i + 1}-C`, label: "C", role: "F", subLabel: lineLabels[i] });
+    slots.push({ id: `L${i + 1}-RW`, label: "RW", role: "F", subLabel: lineLabels[i] });
+  }
+  for (let i = 0; i < defensePairs; i++) {
+    slots.push({ id: `D${i + 1}-LD`, label: "LD", role: "D", subLabel: pairLabels[i] });
+    slots.push({ id: `D${i + 1}-RD`, label: "RD", role: "D", subLabel: pairLabels[i] });
+  }
+  for (let i = 0; i < goalies; i++) {
+    slots.push({ id: `G${i + 1}`, label: i === 0 ? "Starter" : "Backup", role: "G" });
+  }
+  for (let i = 0; i < bench; i++) {
+    slots.push({ id: `BN-${i + 1}`, label: `Bench ${i + 1}`, role: "BN" });
+  }
+  return slots;
 };
 
+// ── Tile (draggable) ──────────────────────────────────────────────
+function PlayerTile({ player, dragId }: any) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: dragId,
+    data: { player },
+  });
+  if (!player) return null;
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      data-testid={`lineup-tile-${player.id}`}
+      className={`group rounded-lg border border-border bg-secondary/40 px-2 py-1.5 cursor-grab active:cursor-grabbing transition-shadow ${
+        isDragging ? "opacity-50" : "hover:border-cyan-400/50 hover:shadow-md"
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <div className="h-7 w-7 rounded bg-primary/15 flex items-center justify-center text-[10px] font-bold text-primary shrink-0">
+          {player.team}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold truncate">{player.name}</p>
+          <p className="text-[10px] text-muted-foreground truncate">
+            {player.position} · {fmt(player.contract?.salary || 0)}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
+function SlotDrop({ slot, player }: any) {
+  const { isOver, setNodeRef } = useDroppable({ id: slot.id });
+  const roleColor =
+    slot.role === "F" ? "from-cyan-500/10 to-cyan-500/5" :
+    slot.role === "D" ? "from-amber-500/10 to-amber-500/5" :
+    slot.role === "G" ? "from-emerald-500/10 to-emerald-500/5" :
+    "from-zinc-500/10 to-zinc-500/5";
 
-const mockPlayers: Player[] = [
-  { id: 1, name: "Connor McDavid", position: "C", age: 28, aav: 12500000, contractYears: 4, contractStatus: "Signed", currentPoints: 128, projectedPoints: [130, 125, 120, 115, 110] },
-  { id: 2, name: "Leon Draisaitl", position: "C", age: 29, aav: 8500000, contractYears: 2, contractStatus: "Signed", currentPoints: 110, projectedPoints: [108, 105, 100, 95, 90] },
-  { id: 3, name: "Nathan MacKinnon", position: "C", age: 29, aav: 12600000, contractYears: 6, contractStatus: "Signed", currentPoints: 118, projectedPoints: [115, 112, 108, 105, 100] },
-  { id: 4, name: "Cale Makar", position: "D", age: 26, aav: 9000000, contractYears: 5, contractStatus: "Signed", currentPoints: 90, projectedPoints: [92, 95, 93, 90, 88] },
-  { id: 5, name: "Quinn Hughes", position: "D", age: 25, aav: 7850000, contractYears: 4, contractStatus: "Signed", currentPoints: 85, projectedPoints: [88, 90, 92, 90, 88] },
-  { id: 6, name: "Zach Hyman", position: "LW", age: 32, aav: 5500000, contractYears: 3, contractStatus: "Signed", currentPoints: 54, projectedPoints: [50, 45, 40, 35, 30] },
-  { id: 7, name: "Mikko Rantanen", position: "RW", age: 28, aav: 9250000, contractYears: 1, contractStatus: "Signed", currentPoints: 105, projectedPoints: [102, 100, 98, 95, 92] },
-  { id: 8, name: "Artemi Panarin", position: "LW", age: 33, aav: 11642857, contractYears: 2, contractStatus: "Signed", currentPoints: 96, projectedPoints: [90, 85, 80, 75, 70] },
-  { id: 9, name: "Igor Shesterkin", position: "G", age: 29, aav: 11500000, contractYears: 7, contractStatus: "Signed", currentPoints: 45, projectedPoints: [44, 43, 42, 40, 38] },
-  { id: 10, name: "Andrei Vasilevskiy", position: "G", age: 30, aav: 9500000, contractYears: 4, contractStatus: "Signed", currentPoints: 42, projectedPoints: [41, 40, 38, 36, 34] },
-];
+  return (
+    <div
+      ref={setNodeRef}
+      data-testid={`lineup-slot-${slot.id}`}
+      className={`relative rounded-lg border ${
+        isOver ? "border-primary/70 ring-2 ring-primary/30" : "border-border/50"
+      } bg-gradient-to-br ${roleColor} p-2 min-h-[64px] transition-all`}
+    >
+      <div className="absolute top-1 right-1.5 text-[9px] uppercase tracking-wider font-semibold text-muted-foreground/80">
+        {slot.subLabel ? `${slot.subLabel} · ${slot.label}` : slot.label}
+      </div>
+      <div className="mt-3.5">
+        {player ? (
+          <PlayerTile player={player} dragId={`assigned-${slot.id}`} />
+        ) : (
+          <p className="text-[10px] italic text-muted-foreground text-center mt-1">
+            Drag a player here
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
 
-const mockHistoricalData: HistoricalData[] = [
-  { year: 2022, totalSalary: 75000000, projectedPF: 850, actualPF: 872 },
-  { year: 2023, totalSalary: 78000000, projectedPF: 880, actualPF: 865 },
-  { year: 2024, totalSalary: 82000000, projectedPF: 900, actualPF: 918 },
-];
-
-const currentYear = 2025;
-const positionOrder = ["C", "LW", "RW", "D", "G"];
-const salaryCapLimit = 88000000;
+// Bench pool — droppable for "send to bench"
+function BenchPool({ players, dragIdPrefix }: any) {
+  const { isOver, setNodeRef } = useDroppable({ id: "POOL" });
+  return (
+    <div
+      ref={setNodeRef}
+      data-testid="lineup-pool"
+      className={`rounded-lg border ${isOver ? "border-primary/70 ring-2 ring-primary/30" : "border-border/50"} bg-card/40 p-3`}
+    >
+      <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2">Unassigned Pool</p>
+      {players.length === 0 ? (
+        <p className="text-[11px] italic text-muted-foreground">All players assigned.</p>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
+          {players.map((p: any) => (
+            <PlayerTile key={p.id} player={p} dragId={`${dragIdPrefix}-${p.id}`} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const DepthChart = () => {
-  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
-  const [players, setPlayers] = useState<Player[]>(mockPlayers);
-  const [editingProjections, setEditingProjections] = useState(false);
-  const [customProjections, setCustomProjections] = useState<Record<number, number[]>>(() => {
-    const initial: Record<number, number[]> = {};
-    mockPlayers.forEach(p => {
-      initial[p.id] = [...p.projectedPoints];
+  const { league, myTeam } = useActiveLeague();
+  const [rosterDetail, setRosterDetail] = useState<any>(null);
+  const [yearOffset, setYearOffset] = useState<0 | 1 | 2>(0);
+
+  useEffect(() => {
+    if (!myTeam?.id) return;
+    let cancelled = false;
+    api.get(`/roster/${myTeam.id}/detail`)
+      .then(({ data }) => { if (!cancelled) setRosterDetail(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [myTeam?.id]);
+
+  // ── Player projection state (per team, per year), stored in localStorage ──
+  const projKey = useMemo(() => `dd:depth_proj:${myTeam?.id || "demo"}`, [myTeam?.id]);
+  const [projections, setProjections] = useState<Record<string, number[]>>({});
+
+  useEffect(() => {
+    if (!myTeam?.id || !rosterDetail) return;
+    const stored = localStorage.getItem(projKey);
+    if (stored) {
+      try { setProjections(JSON.parse(stored)); return; } catch {}
+    }
+    const fresh: Record<string, number[]> = {};
+    (rosterDetail.players || []).forEach((p: any) => {
+      const baseline = Math.round(p.fantasy_points || 0);
+      // Iter-111 default: gradual decline (-3% / yr) to mimic age curve
+      fresh[p.id] = [baseline, Math.round(baseline * 0.97), Math.round(baseline * 0.94)];
     });
-    return initial;
-  });
-  const [expandedHistoryYears, setExpandedHistoryYears] = useState<Set<number>>(new Set());
-  const [playerCardOpen, setPlayerCardOpen] = useState(false);
-  const [selectedHistoricalPlayer, setSelectedHistoricalPlayer] = useState<HistoricalRosterPlayer | null>(null);
+    setProjections(fresh);
+  }, [myTeam?.id, rosterDetail, projKey]);
 
-  const yearOffset = selectedYear - currentYear;
-  const years = Array.from({ length: 6 }, (_, i) => currentYear + i);
-
-  const getPlayerStatusForYear = (player: Player, yearOffset: number): { status: string; aav: number | null } => {
-    if (yearOffset < player.contractYears) {
-      return { status: "Signed", aav: player.aav };
-    }
-    const yearsAfterContract = yearOffset - player.contractYears;
-    if (yearsAfterContract === 0) {
-      return { status: player.age + yearOffset >= 27 ? "UFA" : "RFA", aav: null };
-    }
-    return { status: player.age + yearOffset >= 27 ? "UFA" : "RFA", aav: null };
+  const saveProjections = () => {
+    localStorage.setItem(projKey, JSON.stringify(projections));
+    toast.success("Projected PFs saved");
   };
-
-  const getProjectedPoints = (player: Player, yearOffset: number): number => {
-    if (yearOffset < 0) return player.currentPoints;
-    return customProjections[player.id]?.[yearOffset] ?? player.projectedPoints[yearOffset] ?? 0;
-  };
-
-  const handleProjectionChange = (playerId: number, yearIndex: number, value: string) => {
-    const numValue = parseInt(value) || 0;
-    setCustomProjections(prev => ({
-      ...prev,
-      [playerId]: prev[playerId].map((v, i) => i === yearIndex ? numValue : v)
-    }));
-  };
-
   const resetProjections = () => {
-    const reset: Record<number, number[]> = {};
-    mockPlayers.forEach(p => {
-      reset[p.id] = [...p.projectedPoints];
+    const fresh: Record<string, number[]> = {};
+    (rosterDetail?.players || []).forEach((p: any) => {
+      const baseline = Math.round(p.fantasy_points || 0);
+      fresh[p.id] = [baseline, Math.round(baseline * 0.97), Math.round(baseline * 0.94)];
     });
-    setCustomProjections(reset);
+    setProjections(fresh);
+    localStorage.removeItem(projKey);
+    toast.success("Projections reset to auto-calculated baseline");
   };
 
-  const groupedPlayers = positionOrder.reduce((acc, pos) => {
-    acc[pos] = players.filter(p => p.position === pos);
-    return acc;
-  }, {} as Record<string, Player[]>);
+  // ── Future-year caps (iter 111) ─────────────────────────────────
+  const curYear = new Date().getFullYear();
+  const capLimits: { year: number; cap: number; tentative: boolean }[] = [
+    {
+      year: curYear,
+      cap: Number(league?.salary_cap || 82_500_000),
+      tentative: false,
+    },
+    {
+      year: curYear + 1,
+      cap: Number(league?.salary_cap_year_plus_1 || league?.salary_cap || 82_500_000),
+      tentative: !!league?.salary_cap_year_plus_1_tentative,
+    },
+    {
+      year: curYear + 2,
+      cap: Number(league?.salary_cap_year_plus_2 || league?.salary_cap || 82_500_000),
+      tentative: !!league?.salary_cap_year_plus_2_tentative,
+    },
+  ];
 
-  const calculateTeamSummary = (yearOffset: number) => {
-    let totalSalary = 0;
-    let totalProjectedPF = 0;
-    let signedCount = 0;
-    let rfaCount = 0;
-    let ufaCount = 0;
+  // ── Compute per-year committed cap (active contract for that year) ──
+  const players = rosterDetail?.players || [];
+  const yearCommitments = useMemo(() => {
+    return [0, 1, 2].map((offset) => {
+      let committed = 0;
+      let signed = 0;
+      let ufaCount = 0;
+      let rfaCount = 0;
+      players.forEach((p: any) => {
+        const c = p.contract || {};
+        const yearsRem = c.yearsRemaining || 1;
+        if (offset < yearsRem) {
+          committed += Number(c.salary || 0);
+          signed++;
+        } else if (c.end_status === "UFA") ufaCount++;
+        else rfaCount++;
+      });
+      return { committed, signed, ufaCount, rfaCount };
+    });
+  }, [players]);
 
-    players.forEach(player => {
-      const status = getPlayerStatusForYear(player, yearOffset);
-      if (status.aav) {
-        totalSalary += status.aav;
-        signedCount++;
-      } else if (status.status === "RFA") {
-        rfaCount++;
-      } else {
-        ufaCount++;
+  // ── Projected PF total for selected year ─────────────────────────
+  const teamProjPF = useMemo(() => {
+    let total = 0;
+    players.forEach((p: any) => {
+      const arr = projections[p.id] || [];
+      total += Number(arr[yearOffset] || 0);
+    });
+    return Math.round(total);
+  }, [players, projections, yearOffset]);
+
+  // ── Sortable Projections table (iter 111) ────────────────────────
+  type SortKey = "name" | "position" | "team" | "age" | "salary" | "contract_ends" | "pf_y0" | "pf_y1" | "pf_y2";
+  const [sortKey, setSortKey] = useState<SortKey>("pf_y0");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const SortIcon = ({ col }: { col: SortKey }) => {
+    if (sortKey !== col) return <ArrowUpDown className="inline h-3 w-3 ml-1 opacity-40" />;
+    return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
+  };
+  const handleSort = (k: SortKey) => {
+    if (sortKey === k) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortKey(k); setSortDir(["name", "position", "team"].includes(k) ? "asc" : "desc"); }
+  };
+  const sortedPlayers = useMemo(() => {
+    const dir = sortDir === "asc" ? 1 : -1;
+    const arr = [...players];
+    arr.sort((a, b) => {
+      const proj = (p: any, idx: number) => Number(projections[p.id]?.[idx] || 0);
+      switch (sortKey) {
+        case "name": return a.name.localeCompare(b.name) * dir;
+        case "position": return a.position.localeCompare(b.position) * dir;
+        case "team": return (a.team || "").localeCompare(b.team || "") * dir;
+        case "age": return ((a.age || 0) - (b.age || 0)) * dir;
+        case "salary": return ((a.contract?.salary || 0) - (b.contract?.salary || 0)) * dir;
+        case "contract_ends": return ((a.contract?.end_year || 0) - (b.contract?.end_year || 0)) * dir;
+        case "pf_y0": return (proj(a, 0) - proj(b, 0)) * dir;
+        case "pf_y1": return (proj(a, 1) - proj(b, 1)) * dir;
+        case "pf_y2": return (proj(a, 2) - proj(b, 2)) * dir;
+        default: return 0;
       }
-      totalProjectedPF += getProjectedPoints(player, yearOffset);
     });
+    return arr;
+  }, [players, sortKey, sortDir, projections]);
 
-    return { totalSalary, totalProjectedPF, signedCount, rfaCount, ufaCount };
+  // ── NHL Lineup state (per-year), persisted to localStorage ──────
+  const lineupKey = useMemo(() => `dd:depth_lineup:${myTeam?.id || "demo"}`, [myTeam?.id]);
+  const [lineups, setLineups] = useState<Record<string, Record<string, string>>>({});
+  useEffect(() => {
+    if (!myTeam?.id) return;
+    const stored = localStorage.getItem(lineupKey);
+    if (stored) {
+      try { setLineups(JSON.parse(stored)); return; } catch {}
+    }
+    setLineups({ y0: {}, y1: {}, y2: {} });
+  }, [myTeam?.id, lineupKey]);
+
+  const slotPlan = useMemo(() => buildSlotPlan(Number(league?.roster_spots) || 23), [league?.roster_spots]);
+  const yearKey = `y${yearOffset}` as const;
+  const assignedMap = lineups[yearKey] || {};
+
+  const playerById: Record<string, any> = useMemo(() => {
+    const m: Record<string, any> = {};
+    players.forEach((p: any) => { m[p.id] = p; });
+    return m;
+  }, [players]);
+
+  // For year+1/+2, only signed-through-that-year players are eligible.
+  const eligibleForYear = (p: any, offset: number) => {
+    const yearsRem = p.contract?.yearsRemaining || 1;
+    return offset < yearsRem;
+  };
+  const eligiblePlayers = useMemo(() => players.filter((p: any) => eligibleForYear(p, yearOffset)), [players, yearOffset]);
+
+  const assignedPlayerIds = new Set(Object.values(assignedMap));
+  const poolPlayers = eligiblePlayers.filter((p: any) => !assignedPlayerIds.has(p.id));
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
+
+  const handleDragEnd = (event: any) => {
+    const overId = event.over?.id;
+    if (!overId) return;
+    const activeData = event.active?.data?.current;
+    const player = activeData?.player;
+    if (!player) return;
+
+    setLineups((prev) => {
+      const next = { ...prev };
+      const cur = { ...(next[yearKey] || {}) };
+      // Remove player from any existing slot
+      Object.keys(cur).forEach((slotId) => {
+        if (cur[slotId] === player.id) delete cur[slotId];
+      });
+      if (overId === "POOL") {
+        // Sent to bench pool: just remove (already done above)
+      } else {
+        // If another player was in that slot, push them to the pool
+        cur[overId as string] = player.id;
+      }
+      next[yearKey] = cur;
+      localStorage.setItem(lineupKey, JSON.stringify(next));
+      return next;
+    });
   };
 
-  const summary = calculateTeamSummary(yearOffset);
-  const capSpace = salaryCapLimit - summary.totalSalary;
+  const resetLineup = () => {
+    setLineups((prev) => {
+      const next = { ...prev, [yearKey]: {} };
+      localStorage.setItem(lineupKey, JSON.stringify(next));
+      return next;
+    });
+    toast.success(`${SEASON_LABEL(capLimits[yearOffset].year)} lineup cleared`);
+  };
 
-  const formatSalary = (value: number) => {
-    return `$${(value / 1000000).toFixed(2)}M`;
+  const handleProjectionChange = (playerId: string, value: string) => {
+    const num = Math.max(0, Math.min(1500, parseInt(value, 10) || 0));
+    setProjections((prev) => {
+      const cur = prev[playerId] || [0, 0, 0];
+      const next = [...cur];
+      next[yearOffset] = num;
+      return { ...prev, [playerId]: next };
+    });
   };
 
   return (
     <AppLayout>
-      <div className="space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div className="container py-8 space-y-6">
+        <LeagueContextBanner
+          title="Depth Chart"
+          kpiLabel="Projected PF"
+          kpiValue={teamProjPF}
+          primaryHref="/rosters"
+          primaryLabel="Manage Roster"
+        />
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold">Depth Chart</h1>
-            <p className="text-muted-foreground">Long-term team planning and projections</p>
+            <h1 className="text-2xl font-bold">Depth Chart</h1>
+            <p className="text-muted-foreground">
+              Long-term planning · {SEASON_LABEL(capLimits[yearOffset].year)} view
+            </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Select value={selectedYear.toString()} onValueChange={(v) => setSelectedYear(parseInt(v))}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue placeholder="Select Year" />
-              </SelectTrigger>
-              <SelectContent>
-                {years.map(year => (
-                  <SelectItem key={year} value={year.toString()}>
-                    {year}-{(year + 1).toString().slice(-2)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {editingProjections ? (
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={resetProjections}>
-                  <RotateCcw className="h-4 w-4 mr-1" /> Reset
-                </Button>
-                <Button size="sm" onClick={() => setEditingProjections(false)}>
-                  <Save className="h-4 w-4 mr-1" /> Save
-                </Button>
-              </div>
-            ) : (
-              <Button size="sm" variant="outline" onClick={() => setEditingProjections(true)}>
-                <Edit2 className="h-4 w-4 mr-1" /> Edit Projections
+          <div className="flex gap-2">
+            {[0, 1, 2].map((y) => (
+              <Button
+                key={y}
+                size="sm"
+                variant={yearOffset === y ? "default" : "outline"}
+                onClick={() => setYearOffset(y as 0 | 1 | 2)}
+                data-testid={`depth-year-tab-${y}`}
+              >
+                {SEASON_LABEL(capLimits[y].year)}
+                {capLimits[y].tentative && (
+                  <Badge variant="outline" className="ml-2 border-amber-500/40 text-[9px] px-1 py-0">
+                    tentative
+                  </Badge>
+                )}
               </Button>
-            )}
+            ))}
           </div>
         </div>
 
-        {/* Team Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Salary</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{formatSalary(summary.totalSalary)}</div>
-              <p className="text-xs text-muted-foreground">of {formatSalary(salaryCapLimit)} cap</p>
+        {/* 4-tile cap summary for selected year */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Card className="bg-card border-border" data-testid="depth-tile-cap">
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Salary Cap</p>
+              <p className="text-xl font-bold">{fmt(capLimits[yearOffset].cap)}</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {SEASON_LABEL(capLimits[yearOffset].year)}
+                {capLimits[yearOffset].tentative && (
+                  <span className="ml-1 text-amber-400">· tentative</span>
+                )}
+              </p>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Cap Space</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className={`text-2xl font-bold ${capSpace < 0 ? 'text-destructive' : 'text-green-500'}`}>
-                {formatSalary(capSpace)}
-              </div>
-              <p className="text-xs text-muted-foreground">{capSpace < 0 ? 'Over cap!' : 'Available'}</p>
+          <Card className="bg-card border-border" data-testid="depth-tile-committed">
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Committed Cap</p>
+              <p className="text-xl font-bold">{fmt(yearCommitments[yearOffset].committed)}</p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {yearCommitments[yearOffset].signed} signed
+              </p>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Projected PF</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary.totalProjectedPF}</div>
-              <p className="text-xs text-muted-foreground">Fantasy Points</p>
+          <Card className="bg-card border-border" data-testid="depth-tile-space">
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Available Cap Space</p>
+              <p
+                className="text-xl font-bold"
+                style={{
+                  color:
+                    capLimits[yearOffset].cap - yearCommitments[yearOffset].committed < 0
+                      ? "#FF3B30"
+                      : "#34C759",
+                }}
+              >
+                {fmt(capLimits[yearOffset].cap - yearCommitments[yearOffset].committed)}
+              </p>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {yearCommitments[yearOffset].ufaCount} UFA · {yearCommitments[yearOffset].rfaCount} RFA
+              </p>
             </CardContent>
           </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Signed Players</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary.signedCount}</div>
-              <p className="text-xs text-muted-foreground">Under contract</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Pending FAs</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{summary.rfaCount + summary.ufaCount}</div>
-              <p className="text-xs text-muted-foreground">{summary.rfaCount} RFA, {summary.ufaCount} UFA</p>
+          <Card className="bg-card border-border" data-testid="depth-tile-projpf">
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">Team Projected PF</p>
+              <p className="text-xl font-bold">{teamProjPF}</p>
+              <p className="text-[10px] text-muted-foreground mt-1">Editable below ↓</p>
             </CardContent>
           </Card>
         </div>
 
-        <Tabs defaultValue="depth" className="space-y-4">
+        <Tabs defaultValue="table" className="space-y-4">
           <TabsList>
-            <TabsTrigger value="depth">Depth Chart</TabsTrigger>
-            <TabsTrigger value="projections">Multi-Year Projections</TabsTrigger>
-            <TabsTrigger value="history">Historical Data</TabsTrigger>
+            <TabsTrigger value="table" data-testid="depth-view-table">Projections Table</TabsTrigger>
+            <TabsTrigger value="lineup" data-testid="depth-view-lineup">NHL Lineup</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="depth">
-            <Card>
-              <CardHeader>
-                <CardTitle>Roster Depth - {selectedYear}-{(selectedYear + 1).toString().slice(-2)} Season</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-6">
-                  {positionOrder.map(position => (
-                    <div key={position}>
-                      <h3 className="font-semibold text-lg mb-2 flex items-center gap-2">
-                        <Badge variant="outline">{position}</Badge>
-                        <span className="text-muted-foreground text-sm">
-                          ({groupedPlayers[position]?.length || 0} players)
-                        </span>
-                      </h3>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Player</TableHead>
-                            <TableHead>Age</TableHead>
-                            <TableHead>AAV / Status</TableHead>
-                            <TableHead>Contract</TableHead>
-                            <TableHead className="text-right">Proj. PF</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {groupedPlayers[position]?.map(player => {
-                            const status = getPlayerStatusForYear(player, yearOffset);
-                            const projectedAge = player.age + yearOffset;
-                            return (
-                              <TableRow key={player.id}>
-                                <TableCell className="font-medium">{player.name}</TableCell>
-                                <TableCell>{projectedAge}</TableCell>
-                                <TableCell>
-                                  {status.aav ? (
-                                    <span className="font-mono">{formatSalary(status.aav)}</span>
-                                  ) : (
-                                    <Badge variant={status.status === "RFA" ? "secondary" : "destructive"}>
-                                      {status.status}
-                                    </Badge>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  {player.contractYears - yearOffset > 0 ? (
-                                    <span className="text-muted-foreground">
-                                      {player.contractYears - yearOffset} yr{player.contractYears - yearOffset > 1 ? 's' : ''} left
-                                    </span>
-                                  ) : (
-                                    <span className="text-muted-foreground">Expired</span>
-                                  )}
-                                </TableCell>
-                                <TableCell className="text-right font-mono">
-                                  {getProjectedPoints(player, yearOffset)}
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  ))}
+          {/* ── Projections table — single unified column layout ── */}
+          <TabsContent value="table">
+            <Card className="bg-card border-border">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle>Roster — Single-Column View</CardTitle>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={resetProjections} data-testid="depth-proj-reset">
+                    <RotateCcw className="h-4 w-4 mr-1" /> Reset PFs
+                  </Button>
+                  <Button size="sm" onClick={saveProjections} data-testid="depth-proj-save">
+                    <Save className="h-4 w-4 mr-1" /> Save PFs
+                  </Button>
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="projections">
-            <Card>
-              <CardHeader>
-                <CardTitle>Multi-Year Player Projections</CardTitle>
               </CardHeader>
               <CardContent>
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Player</TableHead>
-                      <TableHead>Pos</TableHead>
-                      {years.map(year => (
-                        <TableHead key={year} className="text-center">
-                          {year}-{(year + 1).toString().slice(-2)}
-                        </TableHead>
-                      ))}
+                    <TableRow className="border-border">
+                      <TableHead className="cursor-pointer select-none" onClick={() => handleSort("name")} data-testid="depth-sort-name">
+                        Player <SortIcon col="name" />
+                      </TableHead>
+                      <TableHead className="text-center cursor-pointer select-none" onClick={() => handleSort("position")} data-testid="depth-sort-pos">
+                        Pos <SortIcon col="position" />
+                      </TableHead>
+                      <TableHead className="text-center cursor-pointer select-none" onClick={() => handleSort("team")}>
+                        NHL Team <SortIcon col="team" />
+                      </TableHead>
+                      <TableHead className="text-center cursor-pointer select-none" onClick={() => handleSort("age")}>
+                        Age <SortIcon col="age" />
+                      </TableHead>
+                      <TableHead className="text-right cursor-pointer select-none" onClick={() => handleSort("salary")} data-testid="depth-sort-salary">
+                        Salary <SortIcon col="salary" />
+                      </TableHead>
+                      <TableHead className="text-center cursor-pointer select-none" onClick={() => handleSort("contract_ends")}>
+                        Contract Ends <SortIcon col="contract_ends" />
+                      </TableHead>
+                      <TableHead className="text-center cursor-pointer select-none" onClick={() => handleSort("pf_y0")}>
+                        {SEASON_LABEL(capLimits[0].year)} PF <SortIcon col="pf_y0" />
+                      </TableHead>
+                      <TableHead className="text-center cursor-pointer select-none" onClick={() => handleSort("pf_y1")}>
+                        {SEASON_LABEL(capLimits[1].year)} PF <SortIcon col="pf_y1" />
+                      </TableHead>
+                      <TableHead className="text-center cursor-pointer select-none" onClick={() => handleSort("pf_y2")}>
+                        {SEASON_LABEL(capLimits[2].year)} PF <SortIcon col="pf_y2" />
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {players.map(player => (
-                      <TableRow key={player.id}>
-                        <TableCell className="font-medium">{player.name}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{player.position}</Badge>
-                        </TableCell>
-                        {years.map((year, idx) => {
-                          const status = getPlayerStatusForYear(player, idx);
-                          const isUFA = status.status === "UFA" && !status.aav;
-                          return (
-                            <TableCell key={year} className="text-center">
-                              <div className="flex flex-col items-center gap-1">
-                                {isUFA ? (
-                                  <Badge variant="destructive" className="text-xs">UFA</Badge>
-                                ) : (
-                                  <>
-                                    {editingProjections ? (
-                                      <Input
-                                        type="number"
-                                        value={customProjections[player.id]?.[idx] ?? 0}
-                                        onChange={(e) => handleProjectionChange(player.id, idx, e.target.value)}
-                                        className="w-16 h-8 text-center text-sm"
-                                      />
-                                    ) : (
-                                      <span className="font-mono">{getProjectedPoints(player, idx)}</span>
-                                    )}
-                                    {!status.aav && status.status === "RFA" && (
-                                      <Badge variant="secondary" className="text-xs">RFA</Badge>
-                                    )}
-                                  </>
-                                )}
-                              </div>
+                    {sortedPlayers.map((p: any) => {
+                      const c = p.contract || {};
+                      const elig = (offset: number) => eligibleForYear(p, offset);
+                      return (
+                        <TableRow key={p.id} className="border-border" data-testid={`depth-row-${p.id}`}>
+                          <TableCell className="font-medium">{p.name}</TableCell>
+                          <TableCell className="text-center">
+                            <Badge variant="outline" className="text-[10px]">{p.position}</Badge>
+                          </TableCell>
+                          <TableCell className="text-center text-muted-foreground">{p.team || "—"}</TableCell>
+                          <TableCell className="text-center">{p.age}</TableCell>
+                          <TableCell className="text-right font-mono">{fmt(c.salary || 0)}</TableCell>
+                          <TableCell className="text-center text-xs">
+                            <span className={c.end_status === "UFA" ? "text-amber-400" : "text-cyan-400"}>
+                              {c.end_status || "Signed"}
+                            </span>
+                            <span className="text-muted-foreground">/{c.end_year || curYear}</span>
+                          </TableCell>
+                          {[0, 1, 2].map((off) => (
+                            <TableCell key={off} className="text-center">
+                              {elig(off) ? (
+                                <Input
+                                  type="number"
+                                  value={projections[p.id]?.[off] ?? 0}
+                                  onChange={(e) => {
+                                    const cur = projections[p.id] || [0, 0, 0];
+                                    const next = [...cur];
+                                    next[off] = Math.max(0, Math.min(1500, parseInt(e.target.value, 10) || 0));
+                                    setProjections((prev) => ({ ...prev, [p.id]: next }));
+                                  }}
+                                  className="w-20 h-7 text-center text-xs mx-auto"
+                                  data-testid={`depth-pf-${p.id}-${off}`}
+                                />
+                              ) : (
+                                <Badge variant="outline" className="text-[9px] text-amber-400 border-amber-500/30">
+                                  {c.end_status === "UFA" ? "UFA" : "RFA"}
+                                </Badge>
+                              )}
                             </TableCell>
-                          );
-                        })}
-                      </TableRow>
-                    ))}
-                    <TableRow className="bg-muted/50 font-bold">
-                      <TableCell colSpan={2}>Team Total PF</TableCell>
-                      {years.map((_, idx) => (
-                        <TableCell key={idx} className="text-center font-mono">
-                          {players.reduce((sum, p) => {
-                            const s = getPlayerStatusForYear(p, idx);
-                            const isUFA = s.status === "UFA" && !s.aav;
-                            return sum + (isUFA ? 0 : getProjectedPoints(p, idx));
-                          }, 0)}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                    <TableRow className="bg-muted/50 font-bold">
-                      <TableCell colSpan={2}>Committed Salary</TableCell>
-                      {years.map((_, idx) => {
-                        const totalSal = players.reduce((sum, p) => {
-                          const status = getPlayerStatusForYear(p, idx);
-                          return sum + (status.aav || 0);
+                          ))}
+                        </TableRow>
+                      );
+                    })}
+                    <TableRow className="bg-muted/30 font-bold">
+                      <TableCell colSpan={6} className="text-right text-xs">Team Projected PF</TableCell>
+                      {[0, 1, 2].map((off) => {
+                        const total = players.reduce((s: number, p: any) => {
+                          if (!eligibleForYear(p, off)) return s;
+                          return s + Number(projections[p.id]?.[off] || 0);
                         }, 0);
                         return (
-                          <TableCell key={idx} className="text-center font-mono">
-                            {formatSalary(totalSal)}
+                          <TableCell key={off} className="text-center font-mono" data-testid={`depth-team-pf-${off}`}>
+                            {Math.round(total)}
                           </TableCell>
                         );
                       })}
                     </TableRow>
+                    <TableRow className="bg-muted/30 font-bold">
+                      <TableCell colSpan={6} className="text-right text-xs">Committed Cap</TableCell>
+                      {[0, 1, 2].map((off) => (
+                        <TableCell key={off} className="text-center font-mono">
+                          {fmt(yearCommitments[off].committed)}
+                        </TableCell>
+                      ))}
+                    </TableRow>
                   </TableBody>
                 </Table>
               </CardContent>
             </Card>
           </TabsContent>
 
-          <TabsContent value="history">
-            <Card>
-              <CardHeader>
-                <CardTitle>Historical Performance vs Projections</CardTitle>
+          {/* ── NHL Lineup — drag-drop tile view ─────────────────── */}
+          <TabsContent value="lineup">
+            <Card className="bg-card border-border">
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>NHL Lineup — {SEASON_LABEL(capLimits[yearOffset].year)}</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Drag eligible players from the pool into starting lines + pairs + goalies.
+                    {capLimits[yearOffset].tentative && (
+                      <span className="ml-2 text-amber-400">Cap is tentative — values may change.</span>
+                    )}
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" onClick={resetLineup} data-testid="depth-lineup-reset">
+                  <RotateCcw className="h-4 w-4 mr-1" /> Clear Lineup
+                </Button>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-8"></TableHead>
-                      <TableHead>Season</TableHead>
-                      <TableHead>Total Salary</TableHead>
-                      <TableHead>Projected PF</TableHead>
-                      <TableHead>Actual PF</TableHead>
-                      <TableHead>Variance</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {mockHistoricalData.map(data => {
-                      const variance = data.actualPF - data.projectedPF;
-                      const isExpanded = expandedHistoryYears.has(data.year);
-                      const roster = historicalRosters[data.year] ?? [];
-                      return (
-                        <>
-                          <TableRow
-                            key={data.year}
-                            className="cursor-pointer hover:bg-muted/50"
-                            onClick={() => {
-                              setExpandedHistoryYears(prev => {
-                                const next = new Set(prev);
-                                isExpanded ? next.delete(data.year) : next.add(data.year);
-                                return next;
-                              });
-                            }}
-                          >
-                            <TableCell>
-                              {isExpanded
-                                ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                                : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
-                            </TableCell>
-                            <TableCell className="font-medium">
-                              {data.year}-{(data.year + 1).toString().slice(-2)}
-                            </TableCell>
-                            <TableCell className="font-mono">{formatSalary(data.totalSalary)}</TableCell>
-                            <TableCell className="font-mono">{data.projectedPF}</TableCell>
-                            <TableCell className="font-mono">{data.actualPF}</TableCell>
-                            <TableCell>
-                              <span className={`font-mono ${variance >= 0 ? 'text-green-500' : 'text-destructive'}`}>
-                                {variance >= 0 ? '+' : ''}{variance}
-                              </span>
-                            </TableCell>
-                          </TableRow>
-
-                          {isExpanded && (
-                            <TableRow key={`${data.year}-roster`} className="bg-muted/20">
-                              <TableCell colSpan={6} className="p-0">
-                                <div className="px-6 py-4">
-                                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-                                    {data.year}-{(data.year + 1).toString().slice(-2)} Roster — Player Contributions
-                                  </p>
-                                  <div className="overflow-x-auto">
-                                    <table className="w-full text-sm">
-                                      <thead>
-                                        <tr className="border-b border-border">
-                                          <th className="text-left py-2 pr-4 text-xs text-muted-foreground font-medium">Player</th>
-                                          <th className="text-center py-2 px-2 text-xs text-muted-foreground font-medium">POS</th>
-                                          <th className="text-center py-2 px-2 text-xs text-muted-foreground font-medium">G</th>
-                                          <th className="text-center py-2 px-2 text-xs text-muted-foreground font-medium">A</th>
-                                          <th className="text-center py-2 px-2 text-xs text-muted-foreground font-medium">PPP</th>
-                                          <th className="text-center py-2 px-2 text-xs text-muted-foreground font-medium">SOG</th>
-                                          <th className="text-center py-2 px-2 text-xs text-muted-foreground font-medium">HIT</th>
-                                          <th className="text-center py-2 px-2 text-xs text-muted-foreground font-medium">BLK</th>
-                                          <th className="text-center py-2 px-2 text-xs text-muted-foreground font-medium">PIM</th>
-                                          <th className="text-center py-2 px-2 text-xs text-muted-foreground font-medium">+/-</th>
-                                          <th className="text-right py-2 pl-4 text-xs text-muted-foreground font-medium">FPTS</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {roster.map(p => (
-                                          <tr key={p.id} className="border-b border-border/30 hover:bg-muted/30">
-                                            <td className="py-2 pr-4">
-                                              <button
-                                                className="text-primary hover:underline font-medium text-left"
-                                                onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  setSelectedHistoricalPlayer(p);
-                                                  setPlayerCardOpen(true);
-                                                }}
-                                              >
-                                                {p.name}
-                                              </button>
-                                            </td>
-                                            <td className="py-2 px-2 text-center">
-                                              <Badge variant="outline" className="text-[10px] px-1 py-0">{p.position}</Badge>
-                                            </td>
-                                            <td className="py-2 px-2 text-center font-mono">{p.G}</td>
-                                            <td className="py-2 px-2 text-center font-mono">{p.A}</td>
-                                            <td className="py-2 px-2 text-center font-mono">{p.PPP}</td>
-                                            <td className="py-2 px-2 text-center font-mono">{p.SOG}</td>
-                                            <td className="py-2 px-2 text-center font-mono">{p.HIT}</td>
-                                            <td className="py-2 px-2 text-center font-mono">{p.BLK}</td>
-                                            <td className="py-2 px-2 text-center font-mono">{p.PIM}</td>
-                                            <td className="py-2 px-2 text-center font-mono">{p.plusMinus >= 0 ? `+${p.plusMinus}` : p.plusMinus}</td>
-                                            <td className="py-2 pl-4 text-right font-mono font-semibold text-primary">{p.fantasyPts}</td>
-                                          </tr>
-                                        ))}
-                                        <tr className="bg-muted/40 font-bold">
-                                          <td colSpan={10} className="py-2 pr-4 text-right text-xs text-muted-foreground">Team Total Fantasy Points</td>
-                                          <td className="py-2 pl-4 text-right font-mono text-primary">
-                                            {roster.reduce((sum, p) => sum + p.fantasyPts, 0)}
-                                          </td>
-                                        </tr>
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                        </>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                  {/* Forwards — group into lines of 3 */}
+                  <div className="space-y-4">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-widest text-cyan-300 font-bold mb-2">Forwards</p>
+                      <div className="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-9 xl:grid-cols-12 gap-2">
+                        {slotPlan.filter((s) => s.role === "F").map((slot) => (
+                          <SlotDrop
+                            key={slot.id}
+                            slot={slot}
+                            player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-widest text-amber-300 font-bold mb-2">Defense</p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+                        {slotPlan.filter((s) => s.role === "D").map((slot) => (
+                          <SlotDrop
+                            key={slot.id}
+                            slot={slot}
+                            player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[11px] uppercase tracking-widest text-emerald-300 font-bold mb-2">Goalies</p>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                        {slotPlan.filter((s) => s.role === "G").map((slot) => (
+                          <SlotDrop
+                            key={slot.id}
+                            slot={slot}
+                            player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                    {/* Pool (unassigned players) */}
+                    <BenchPool players={poolPlayers} dragIdPrefix="pool" />
+                  </div>
+                </DndContext>
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
-
-        {selectedHistoricalPlayer && (
-          <PlayerCardModal
-            open={playerCardOpen}
-            onOpenChange={(open) => {
-              setPlayerCardOpen(open);
-              if (!open) setSelectedHistoricalPlayer(null);
-            }}
-            defaultTab="career-stats"
-            player={{
-              id: selectedHistoricalPlayer.id,
-              name: selectedHistoricalPlayer.name,
-              position: selectedHistoricalPlayer.position,
-              team: selectedHistoricalPlayer.team,
-              points: selectedHistoricalPlayer.fantasyPts,
-              dynastyValue: 75,
-              trend: "stable" as const,
-              age: 28,
-              contract: { salary: 7500000, yearsRemaining: 2, type: "Signed" as const },
-              rosterSection: "Starting",
-              statsByPeriod: { "1d": 2, "7d": 14, "14d": 26, "30d": 48, "60d": 92, "100d": 140, season: selectedHistoricalPlayer.fantasyPts },
-              categoryBreakdown: {
-                G: selectedHistoricalPlayer.G,
-                A: selectedHistoricalPlayer.A,
-                PPP: selectedHistoricalPlayer.PPP,
-                SOG: selectedHistoricalPlayer.SOG,
-                HIT: selectedHistoricalPlayer.HIT,
-                BLK: selectedHistoricalPlayer.BLK,
-                PIM: selectedHistoricalPlayer.PIM,
-                "+/-": selectedHistoricalPlayer.plusMinus,
-              },
-              matchupGames: 3,
-              schedule: Array.from({ length: 15 }, (_, i) => ({
-                date: `Feb ${i + 1}, 2026`,
-                opponent: ["BOS", "TOR", "MTL", "NYR", "COL"][i % 5],
-                played: i < 10,
-                goals: i < 10 ? Math.floor(Math.random() * 2) : undefined,
-                assists: i < 10 ? Math.floor(Math.random() * 2) : undefined,
-                pts: i < 10 ? Math.floor(Math.random() * 3) : undefined,
-              })),
-            }}
-          />
-        )}
       </div>
     </AppLayout>
   );

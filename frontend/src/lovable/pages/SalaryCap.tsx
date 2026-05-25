@@ -7,12 +7,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { DollarSign, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
+import { DollarSign, TrendingUp, TrendingDown, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, HelpCircle } from "lucide-react";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip,
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useState, useEffect, useMemo } from "react";
 
 interface Contract {
@@ -173,6 +174,41 @@ const SalaryCap = () => {
   const chartData = getChartData();
   const formatCurrency = (value: number) => `$${(value / 1000000).toFixed(2)}M`;
 
+  // ── Iter 111 — Sortable Active-Contracts table ────────────────
+  type SortKey = "player" | "position" | "salary" | "year" | "contract_ends";
+  const [sortKey, setSortKey] = useState<SortKey>("salary");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir(key === "salary" ? "desc" : "asc"); }
+  };
+  const SortIcon = ({ col }: { col: SortKey }) => {
+    if (sortKey !== col) return <ArrowUpDown className="inline h-3 w-3 ml-1 opacity-40" />;
+    return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
+  };
+  const sortedContracts = useMemo(() => {
+    const arr = [...contracts];
+    const dir = sortDir === "asc" ? 1 : -1;
+    arr.sort((a, b) => {
+      switch (sortKey) {
+        case "player": return a.player.localeCompare(b.player) * dir;
+        case "position": return a.position.localeCompare(b.position) * dir;
+        case "salary": return (a.salary - b.salary) * dir;
+        case "year": return ((a.currentYear / Math.max(1, a.totalYears)) - (b.currentYear / Math.max(1, b.totalYears))) * dir;
+        case "contract_ends": return (a.endYear - b.endYear) * dir
+          || a.endStatus.localeCompare(b.endStatus) * dir;
+        default: return 0;
+      }
+    });
+    return arr;
+  }, [contracts, sortKey, sortDir]);
+
+  // Dead-cap tooltip copy varies by whether the league has buyouts enabled.
+  const buyoutsEnabled = !!(league as any)?.contract_buyouts_enabled;
+  const deadCapTooltip = buyoutsEnabled
+    ? "Dead cap represents charges that stay on your books even though the player is no longer on your roster. In this league it can come from (1) salary retained on an outgoing trade, or (2) a contract buyout (spreads remaining $ across future seasons)."
+    : "Dead cap represents charges that stay on your books even though the player is no longer on your roster. Currently this is limited to salary retained on outgoing trades. Your commissioner can also enable Contract Buyouts (Commissioner → Transactions) which would add buyout-spread dead cap to future seasons.";
+
   return (
     <AppLayout>
         <div className="container py-8 space-y-6">
@@ -232,8 +268,27 @@ const SalaryCap = () => {
                 <div className="h-10 w-10 rounded-lg bg-accent/20 flex items-center justify-center">
                   <AlertTriangle className="h-5 w-5 text-accent" />
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Dead Cap</p>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                    <span>Dead Cap</span>
+                    <TooltipProvider delayDuration={150}>
+                      <UITooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label="What is Dead Cap?"
+                            className="inline-flex items-center justify-center rounded-full hover:bg-muted/40 transition-colors p-0.5"
+                            data-testid="cap-dead-cap-help"
+                          >
+                            <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-xs text-xs leading-relaxed">
+                          {deadCapTooltip}
+                        </TooltipContent>
+                      </UITooltip>
+                    </TooltipProvider>
+                  </div>
                   <p className="text-xl font-bold text-accent">${(deadCap / 1000000).toFixed(1)}M</p>
                 </div>
               </div>
@@ -419,15 +474,45 @@ const SalaryCap = () => {
             <Table>
               <TableHeader>
                 <TableRow className="border-border">
-                  <TableHead>Player</TableHead>
-                  <TableHead className="text-center">POS</TableHead>
-                  <TableHead className="text-right">Salary</TableHead>
-                  <TableHead className="text-center">Year</TableHead>
-                  <TableHead className="text-center">Contract Ends</TableHead>
+                  <TableHead
+                    className="cursor-pointer select-none hover:text-foreground transition-colors"
+                    onClick={() => handleSort("player")}
+                    data-testid="contract-sort-player"
+                  >
+                    Player <SortIcon col="player" />
+                  </TableHead>
+                  <TableHead
+                    className="text-center cursor-pointer select-none hover:text-foreground transition-colors"
+                    onClick={() => handleSort("position")}
+                    data-testid="contract-sort-position"
+                  >
+                    POS <SortIcon col="position" />
+                  </TableHead>
+                  <TableHead
+                    className="text-right cursor-pointer select-none hover:text-foreground transition-colors"
+                    onClick={() => handleSort("salary")}
+                    data-testid="contract-sort-salary"
+                  >
+                    Salary <SortIcon col="salary" />
+                  </TableHead>
+                  <TableHead
+                    className="text-center cursor-pointer select-none hover:text-foreground transition-colors"
+                    onClick={() => handleSort("year")}
+                    data-testid="contract-sort-year"
+                  >
+                    Year <SortIcon col="year" />
+                  </TableHead>
+                  <TableHead
+                    className="text-center cursor-pointer select-none hover:text-foreground transition-colors"
+                    onClick={() => handleSort("contract_ends")}
+                    data-testid="contract-sort-ends"
+                  >
+                    Contract Ends <SortIcon col="contract_ends" />
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {contracts.map((contract) => (
+                {sortedContracts.map((contract) => (
                   <TableRow key={contract.id} className="border-border" data-testid={`contract-row-${contract.id}`}>
                     <TableCell>
                       <div className="flex items-center gap-3">

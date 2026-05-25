@@ -220,6 +220,9 @@ export default function RulesScheduleTab() {
       {/* Salary Retention A/B */}
       <SalaryRetentionCard league={league} reloadLeague={reloadLeague} />
 
+      {/* Contract Buyouts toggle (Iter 111) */}
+      <ContractBuyoutsCard league={league} reloadLeague={reloadLeague} />
+
       {sections.map((section) => (
         <Card
           key={section.title}
@@ -541,11 +544,20 @@ export function RosterLockCard({ league, reloadLeague }: any) {
 function SalaryCapCard({ league, reloadLeague }: any) {
   const [enabled, setEnabled] = useState(!!league?.salary_cap_enabled);
   const [amount, setAmount] = useState<number>(league?.salary_cap || 82500000);
+  // Iter 111 — future-year caps + tentative flags
+  const [yr1, setYr1] = useState<number>(league?.salary_cap_year_plus_1 || (league?.salary_cap || 82500000));
+  const [yr2, setYr2] = useState<number>(league?.salary_cap_year_plus_2 || (league?.salary_cap || 82500000));
+  const [yr1Tentative, setYr1Tentative] = useState(!!league?.salary_cap_year_plus_1_tentative);
+  const [yr2Tentative, setYr2Tentative] = useState(!!league?.salary_cap_year_plus_2_tentative);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     setEnabled(!!league?.salary_cap_enabled);
     setAmount(league?.salary_cap || 82500000);
-  }, [league?.id, league?.salary_cap_enabled, league?.salary_cap]);
+    setYr1(league?.salary_cap_year_plus_1 || (league?.salary_cap || 82500000));
+    setYr2(league?.salary_cap_year_plus_2 || (league?.salary_cap || 82500000));
+    setYr1Tentative(!!league?.salary_cap_year_plus_1_tentative);
+    setYr2Tentative(!!league?.salary_cap_year_plus_2_tentative);
+  }, [league?.id, league?.salary_cap_enabled, league?.salary_cap, league?.salary_cap_year_plus_1, league?.salary_cap_year_plus_2, league?.salary_cap_year_plus_1_tentative, league?.salary_cap_year_plus_2_tentative]);
 
   const save = async () => {
     setSaving(true);
@@ -553,6 +565,10 @@ function SalaryCapCard({ league, reloadLeague }: any) {
       await api.put(`/leagues/${league.id}/admin/cap-settings`, {
         salary_cap_enabled: enabled,
         salary_cap: enabled ? amount : null,
+        salary_cap_year_plus_1: enabled ? yr1 : null,
+        salary_cap_year_plus_2: enabled ? yr2 : null,
+        salary_cap_year_plus_1_tentative: yr1Tentative,
+        salary_cap_year_plus_2_tentative: yr2Tentative,
       });
       toast.success(enabled ? `Salary cap set to $${fmtMoney(amount)}` : "Salary cap disabled");
       reloadLeague?.();
@@ -563,6 +579,8 @@ function SalaryCapCard({ league, reloadLeague }: any) {
     }
   };
 
+  const curYr = new Date().getFullYear();
+
   return (
     <Card className="bg-card border-border" data-testid="rules-schedule-salary-cap-card">
       <CardHeader>
@@ -571,7 +589,8 @@ function SalaryCapCard({ league, reloadLeague }: any) {
           Salary Cap
         </CardTitle>
         <CardDescription>
-          Hold the ▲/▼ buttons to accelerate by $100k → $500k → $1M.
+          Hold the ▲/▼ buttons to accelerate by $100k → $500k → $1M. Future-year
+          caps drive the Depth-Chart multi-year cap planner.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -587,20 +606,59 @@ function SalaryCapCard({ league, reloadLeague }: any) {
           </Label>
         </div>
         {enabled && (
-          <div className="max-w-sm">
-            <Label className="text-xs">Cap amount</Label>
-            <SmartNumberInput
-              value={amount}
-              onChange={setAmount}
-              min={0}
-              max={300000000}
-              step={100000}
-              fastStep={500000}
-              turboStep={1000000}
-              prefix="$"
-              format={fmtMoney}
-              testId="rules-schedule-cap-amount"
-            />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <Label className="text-xs">Current cap ({curYr}-{String(curYr + 1).slice(-2)})</Label>
+              <SmartNumberInput
+                value={amount} onChange={setAmount}
+                min={0} max={300000000}
+                step={100000} fastStep={500000} turboStep={1000000}
+                prefix="$" format={fmtMoney}
+                testId="rules-schedule-cap-amount"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Year + 1 ({curYr + 1}-{String(curYr + 2).slice(-2)})</Label>
+              <SmartNumberInput
+                value={yr1} onChange={setYr1}
+                min={0} max={300000000}
+                step={100000} fastStep={500000} turboStep={1000000}
+                prefix="$" format={fmtMoney}
+                testId="rules-schedule-cap-yr1"
+              />
+              <div className="flex items-center gap-2 mt-2">
+                <Checkbox
+                  id="cap-yr1-tentative"
+                  checked={yr1Tentative}
+                  onCheckedChange={(v) => setYr1Tentative(!!v)}
+                  data-testid="rules-schedule-cap-yr1-tentative"
+                />
+                <Label htmlFor="cap-yr1-tentative" className="text-xs cursor-pointer">
+                  Tentative — subject to change
+                </Label>
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Year + 2 ({curYr + 2}-{String(curYr + 3).slice(-2)})</Label>
+              <SmartNumberInput
+                value={yr2} onChange={setYr2}
+                min={0} max={300000000}
+                step={100000} fastStep={500000} turboStep={1000000}
+                prefix="$" format={fmtMoney}
+                testId="rules-schedule-cap-yr2"
+              />
+              <div className="flex items-center gap-2 mt-2">
+                <Checkbox
+                  id="cap-yr2-tentative"
+                  checked={yr2Tentative}
+                  onCheckedChange={(v) => setYr2Tentative(!!v)}
+                  data-testid="rules-schedule-cap-yr2-tentative"
+                />
+                <Label htmlFor="cap-yr2-tentative" className="text-xs cursor-pointer">
+                  Tentative — subject to change
+                </Label>
+              </div>
+            </div>
           </div>
         )}
         <div className="flex justify-end">
@@ -723,6 +781,65 @@ function SalaryRetentionCard({ league, reloadLeague }: any) {
           <Button size="sm" onClick={save} disabled={saving} data-testid="rules-schedule-retention-save">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
             Save Retention
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+
+function ContractBuyoutsCard({ league, reloadLeague }: any) {
+  const [enabled, setEnabled] = useState(!!league?.contract_buyouts_enabled);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setEnabled(!!league?.contract_buyouts_enabled);
+  }, [league?.id, league?.contract_buyouts_enabled]);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await api.put(`/leagues/${league.id}/admin/cap-settings`, {
+        contract_buyouts_enabled: enabled,
+      });
+      toast.success(enabled ? "Contract buyouts enabled" : "Contract buyouts disabled");
+      reloadLeague?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to update buyouts setting");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="bg-card border-border" data-testid="rules-schedule-contract-buyouts-card">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <ArrowRightLeft className="h-5 w-5 text-amber-400" />
+          Contract Buyouts
+        </CardTitle>
+        <CardDescription>
+          When enabled, teams may buy out a player&apos;s remaining contract. Buyouts
+          create dead-cap charges spread over subsequent seasons (per NHL CBA
+          convention — typically 2× the remaining term).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center gap-3">
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            id="rs-buyouts-enabled"
+            data-testid="rules-schedule-contract-buyouts-toggle"
+          />
+          <Label htmlFor="rs-buyouts-enabled" className="cursor-pointer">
+            Allow contract buyouts (creates dead cap)
+          </Label>
+        </div>
+        <div className="flex justify-end">
+          <Button size="sm" onClick={save} disabled={saving} data-testid="rules-schedule-contract-buyouts-save">
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}
+            Save Buyouts
           </Button>
         </div>
       </CardContent>

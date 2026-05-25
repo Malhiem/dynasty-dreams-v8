@@ -149,6 +149,12 @@ class LeagueResponse(BaseModel):
     goalie_gp_limit_enabled: Optional[bool] = None
     goalie_gp_limit: Optional[int] = None
     goalie_gp_count_method: Optional[str] = None
+    # Iter 111 — Future-year salary caps + Contract Buyouts toggle
+    salary_cap_year_plus_1: Optional[int] = None
+    salary_cap_year_plus_2: Optional[int] = None
+    salary_cap_year_plus_1_tentative: Optional[bool] = None
+    salary_cap_year_plus_2_tentative: Optional[bool] = None
+    contract_buyouts_enabled: Optional[bool] = None
 
 
 # ─── League CRUD endpoints (extracted iter 109) ──────────────
@@ -299,6 +305,11 @@ def _league_to_response(league: dict) -> LeagueResponse:
         goalie_gp_limit_enabled=league.get("goalie_gp_limit_enabled"),
         goalie_gp_limit=league.get("goalie_gp_limit"),
         goalie_gp_count_method=league.get("goalie_gp_count_method"),
+        salary_cap_year_plus_1=league.get("salary_cap_year_plus_1"),
+        salary_cap_year_plus_2=league.get("salary_cap_year_plus_2"),
+        salary_cap_year_plus_1_tentative=league.get("salary_cap_year_plus_1_tentative"),
+        salary_cap_year_plus_2_tentative=league.get("salary_cap_year_plus_2_tentative"),
+        contract_buyouts_enabled=league.get("contract_buyouts_enabled"),
     )
 
 
@@ -1075,6 +1086,15 @@ async def get_playoff_bracket(league_id: str):
 class CapSettingsUpdate(BaseModel):
     salary_cap_enabled: Optional[bool] = None
     salary_cap: Optional[int] = None
+    # Iter 111 — future-year caps + "tentative" flags, consumed by the
+    # Depth-Chart / Salary-Cap / Analytics pages for multi-year planning.
+    salary_cap_year_plus_1: Optional[int] = None
+    salary_cap_year_plus_2: Optional[int] = None
+    salary_cap_year_plus_1_tentative: Optional[bool] = None
+    salary_cap_year_plus_2_tentative: Optional[bool] = None
+    # Iter 111 — Contract Buyouts toggle (Transactions section). When enabled,
+    # buyouts may create dead-cap charges over subsequent seasons.
+    contract_buyouts_enabled: Optional[bool] = None
     salary_retention_slots: Optional[int] = Field(None, ge=0, le=10)
     minors_enabled: Optional[bool] = None  # if your league offers a minor-league/prospects pool
 
@@ -1166,6 +1186,17 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
         updates["salary_retention_slots"] = int(payload.salary_retention_slots)
     if payload.minors_enabled is not None:
         updates["minors_enabled"] = bool(payload.minors_enabled)
+    # Iter 111 — future-year caps + tentative flags
+    if payload.salary_cap_year_plus_1 is not None:
+        updates["salary_cap_year_plus_1"] = int(payload.salary_cap_year_plus_1)
+    if payload.salary_cap_year_plus_2 is not None:
+        updates["salary_cap_year_plus_2"] = int(payload.salary_cap_year_plus_2)
+    if payload.salary_cap_year_plus_1_tentative is not None:
+        updates["salary_cap_year_plus_1_tentative"] = bool(payload.salary_cap_year_plus_1_tentative)
+    if payload.salary_cap_year_plus_2_tentative is not None:
+        updates["salary_cap_year_plus_2_tentative"] = bool(payload.salary_cap_year_plus_2_tentative)
+    if payload.contract_buyouts_enabled is not None:
+        updates["contract_buyouts_enabled"] = bool(payload.contract_buyouts_enabled)
 
     # Start the trial clock if any premium feature is now enabled and the
     # league hasn't paid yet. Idempotent — won't reset an existing clock.
@@ -1185,6 +1216,11 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
     return {
         "salary_cap_enabled": bool(fresh.get("salary_cap_enabled")),
         "salary_cap": fresh.get("salary_cap"),
+        "salary_cap_year_plus_1": fresh.get("salary_cap_year_plus_1"),
+        "salary_cap_year_plus_2": fresh.get("salary_cap_year_plus_2"),
+        "salary_cap_year_plus_1_tentative": bool(fresh.get("salary_cap_year_plus_1_tentative")),
+        "salary_cap_year_plus_2_tentative": bool(fresh.get("salary_cap_year_plus_2_tentative")),
+        "contract_buyouts_enabled": bool(fresh.get("contract_buyouts_enabled")),
         "salary_retention_slots": fresh.get("salary_retention_slots"),
         "minors_enabled": bool(fresh.get("minors_enabled")),
         "premium_status": _premium_status(fresh),
