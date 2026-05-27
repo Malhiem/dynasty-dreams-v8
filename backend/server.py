@@ -277,146 +277,16 @@ class ConstitutionUpdate(BaseModel):
 
 
 
-# ─── League Premium (Stripe) ─────────────────────────────────
-
-@api_router.get("/leagues/{league_id}/premium")
-async def get_league_premium(league_id: str, request: Request):
-    """Return premium status + feature list for a league."""
-    await get_current_user(request)
-    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    return {
-        "league_id": league_id,
-        "premium": bool(league.get("premium", False)),
-        "activated_at": league.get("premium_activated_at").isoformat() if league.get("premium_activated_at") else None,
-        "price_usd": PAYMENT_PACKAGES["league_premium"]["amount"],
-        "features": LEAGUE_PREMIUM_FEATURES,
-        "unlocked_features": league.get("premium_features", []),
-    }
+# ─── League Premium → routes/payments.py (iter 115) ──────────
 
 
-# ─── Personalized League Recommendations ─────────────────────
-
-@api_router.get("/recommendations/leagues")
-async def recommend_leagues(
-    request: Request,
-    commitment: str = Query("any", description="casual | serious | hardcore | any"),
-    scoring: str = Query("any", description="head_to_head | rotisserie | total_points | any"),
-    draft_style: str = Query("any", description="snake | auction | any"),
-    limit: int = Query(5, ge=1, le=20),
-):
-    """Personalized league recommendations based on user state + preferences.
-    Returns a ranked list — user's own in-progress leagues first, then open public
-    leagues scored against the three preference dimensions."""
-    user = await get_current_user(request)
-
-    # 1) User's own leagues (continue where you left off)
-    own_team_docs = await db.teams.find({"owner_id": user["_id"]}).to_list(200)
-    own_league_ids = list({t["league_id"] for t in own_team_docs})
-    own_leagues = []
-    if own_league_ids:
-        cursor = db.leagues.find({"_id": {"$in": [ObjectId(lid) for lid in own_league_ids]}})
-        own_leagues = await cursor.to_list(50)
-
-    # 2) Candidate open leagues (not private, room available)
-    cursor = db.leagues.find({
-        "is_private": {"$ne": True},
-        "$expr": {"$lt": ["$current_teams", "$max_teams"]},
-        "_id": {"$nin": [l["_id"] for l in own_leagues]},
-    })
-    candidates = await cursor.to_list(200)
-
-    # Commitment buckets (map to format)
-    commitment_format_map = {
-        "casual":   ["redraft", "best_ball"],
-        "serious":  ["keeper"],
-        "hardcore": ["dynasty"],
-    }
-
-    def score(lg: dict) -> int:
-        s = 0
-        fmt = lg.get("format", "")
-        sc = lg.get("scoring_format", "")
-        dr = lg.get("draft_type", "")
-
-        if commitment in commitment_format_map and fmt in commitment_format_map[commitment]:
-            s += 40
-        elif commitment == "any":
-            s += 10
-
-        if scoring != "any" and sc == scoring:
-            s += 30
-        elif scoring == "any":
-            s += 10
-
-        if draft_style != "any" and dr == draft_style:
-            s += 20
-        elif draft_style == "any":
-            s += 5
-
-        # Bonus: room to join
-        fill = (lg.get("current_teams", 0) / max(1, lg.get("max_teams", 1)))
-        if fill < 0.75:
-            s += 10
-        return s
-
-    # Score each candidate once and keep alongside the doc for reuse
-    scored = [(score(lg), lg) for lg in candidates]
-    scored.sort(key=lambda t: t[0], reverse=True)
-    ranked = scored[:limit]
-
-    def _format(lg: dict, reason: str, is_own: bool, s: int) -> dict:
-        return {
-            "id": str(lg["_id"]),
-            "name": lg["name"],
-            "format": lg.get("format", ""),
-            "scoring_format": lg.get("scoring_format", ""),
-            "draft_type": lg.get("draft_type", ""),
-            "current_teams": lg.get("current_teams", 0),
-            "max_teams": lg.get("max_teams", 0),
-            "entry_fee": lg.get("entry_fee"),
-            "invite_code": lg.get("invite_code"),
-            "premium": bool(lg.get("premium", False)),
-            "is_own": is_own,
-            "match_score": s,
-            "match_reason": reason,
-        }
-
-    results = []
-    for lg in own_leagues[:3]:
-        results.append(_format(lg, "Continue where you left off", is_own=True, s=100))
-    for s, lg in ranked:
-        reason_parts = []
-        if commitment != "any" and lg.get("format") in commitment_format_map.get(commitment, []):
-            reason_parts.append(f"matches your {commitment} commitment")
-        if scoring != "any" and lg.get("scoring_format") == scoring:
-            reason_parts.append(f"{scoring.replace('_',' ')} scoring")
-        if draft_style != "any" and lg.get("draft_type") == draft_style:
-            reason_parts.append(f"{draft_style} draft")
-        reason = ", ".join(reason_parts) or "Great open league with room to join"
-        results.append(_format(lg, reason, is_own=False, s=s))
-
-    return {
-        "has_active_leagues": len(own_leagues) > 0,
-        "preferences": {"commitment": commitment, "scoring": scoring, "draft_style": draft_style},
-        "recommendations": results[:limit + 3],
-    }
+# ─── League Recommendations → routes/recommendations.py (iter 115) ──
 
 
 # ─── Live Scoring routes extracted → routes/live_scoring.py (Iter 108) ─────
 
 
-# ─── Sport-Agnostic Player Fetch ──────────────────────────────
-
-@api_router.get("/sports")
-async def get_supported_sports():
-    return [
-        {"id": "nhl", "name": "NHL", "full_name": "National Hockey League", "positions": ["C", "LW", "RW", "D", "G"], "active": True, "player_count": await db.players.count_documents({"season": "2025-2026"})},
-        {"id": "nfl", "name": "NFL", "full_name": "National Football League", "positions": ["QB", "RB", "WR", "TE", "K", "DEF"], "active": False, "player_count": 0},
-        {"id": "nba", "name": "NBA", "full_name": "National Basketball Association", "positions": ["PG", "SG", "SF", "PF", "C"], "active": False, "player_count": 0},
-        {"id": "mlb", "name": "MLB", "full_name": "Major League Baseball", "positions": ["C", "1B", "2B", "3B", "SS", "OF", "SP", "RP"], "active": False, "player_count": 0}
-    ]
+# ─── Sports catalogue → routes/sports.py (iter 115) ──────────
 
 
 # ─── Team CRUD + _team_to_response → routes/teams.py (Iter 108) ─────
@@ -520,27 +390,8 @@ async def _activity_routes_marker():
     raise HTTPException(status_code=410, detail="Use routes/activity.py")
 
 
-@api_router.get("/leagues/{league_id}/pending-trades")
-async def get_pending_trades(league_id: str):
-    """Trades currently in flight (status in pending/voting/conditional). Intended for the
-    league homepage 'Pending Trades' panel."""
-    trades = await db.trades.find({
-        "league_id": league_id,
-        "status": {"$in": ["pending", "voting", "conditional"]},
-    }).sort("submitted_at", -1).to_list(100)
-    for t in trades:
-        t["_id"] = str(t["_id"])
-    return {"league_id": league_id, "pending_trades": trades, "count": len(trades)}
-
-
-@api_router.post("/activity/{league_id}/chat")
-async def post_league_chat(league_id: str, input: DraftChatRequest, request: Request):
-    user = await get_current_user(request)
-    team = await db.teams.find_one({"league_id": league_id, "owner_id": user["_id"]})
-    sender = team["name"] if team else user["name"]
-
-    await log_activity(league_id, "chat", input.text, user["_id"], {"sender": sender})
-    return {"message": "Chat posted"}
+# /leagues/{league_id}/pending-trades + /activity/{league_id}/chat
+# moved to routes/trades.py + routes/activity.py respectively (iter 115).
 
 
 from trade_waiver_engine import (
@@ -676,7 +527,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes, roster as roster_routes, constitution_audit as constitution_audit_routes, live_scoring as live_scoring_routes, scoring as scoring_routes, lineup as lineup_routes, league_invites as league_invites_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes, roster as roster_routes, constitution_audit as constitution_audit_routes, live_scoring as live_scoring_routes, scoring as scoring_routes, lineup as lineup_routes, league_invites as league_invites_routes, recommendations as recommendations_routes, sports as sports_routes, admin as admin_routes
 
 _router_deps = {
     "db": db,
@@ -729,6 +580,9 @@ live_scoring_routes.setup(_router_deps)
 scoring_routes.setup(_router_deps)
 lineup_routes.setup(_router_deps)
 league_invites_routes.setup(_router_deps)
+recommendations_routes.setup(_router_deps)
+sports_routes.setup(_router_deps)
+admin_routes.setup(_router_deps)
 # Late-bind get_team_week_summary (now defined inside routes/live_scoring.py)
 _router_deps["get_team_week_summary"] = live_scoring_routes.get_team_week_summary
 users_routes.setup(_router_deps)
@@ -774,22 +628,12 @@ api_router.include_router(scoring_routes.router)
 api_router.include_router(lineup_routes.router)
 api_router.include_router(league_invites_routes.router)
 api_router.include_router(payments_routes.router)
+api_router.include_router(recommendations_routes.router)
+api_router.include_router(sports_routes.router)
+api_router.include_router(admin_routes.router)
 
 
-@api_router.post("/admin/snapshot-ownership")
-async def admin_snapshot_ownership(request: Request):
-    """Site-admin trigger to capture an ownership snapshot RIGHT NOW.
-
-    Useful when site operators want the % Change column to populate before
-    the natural 24h tick fires. Auth: only the user with email ==
-    ADMIN_EMAIL can call this.
-    """
-    user = await get_current_user(request)
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
-    if user.get("email") != admin_email:
-        raise HTTPException(status_code=403, detail="Site admin only")
-    from ownership_snapshot_worker import snapshot_once
-    return await snapshot_once(db)
+# Admin endpoint /admin/snapshot-ownership → routes/admin.py (iter 115)
 
 
 # Include router

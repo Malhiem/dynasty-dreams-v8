@@ -84,6 +84,27 @@ def _stripe_client(request: Request) -> StripeCheckout:
 # ─── Endpoints ───────────────────────────────────────────────────
 
 
+@router.get("/leagues/{league_id}/premium")
+async def get_league_premium(league_id: str, request: Request):
+    """Return premium status + feature list for a league."""
+    db = _db()
+    await _get_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    return {
+        "league_id": league_id,
+        "premium": bool(league.get("premium", False)),
+        "activated_at": (
+            league.get("premium_activated_at").isoformat()
+            if league.get("premium_activated_at") else None
+        ),
+        "price_usd": PAYMENT_PACKAGES["league_premium"]["amount"],
+        "features": LEAGUE_PREMIUM_FEATURES,
+        "unlocked_features": league.get("premium_features", []),
+    }
+
+
 @router.post("/payments/create")
 async def create_checkout(input: PaymentCreate, request: Request):
     db = _db()

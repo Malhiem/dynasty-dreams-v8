@@ -444,6 +444,20 @@ async def get_trade(trade_id: str):
     return trade
 
 
+@router.get("/leagues/{league_id}/pending-trades")
+async def get_pending_trades(league_id: str):
+    """Trades currently in flight (status in pending/voting/conditional).
+    Powers the league homepage 'Pending Trades' panel."""
+    db = _db()
+    trades = await db.trades.find({
+        "league_id": league_id,
+        "status": {"$in": ["pending", "voting", "conditional"]},
+    }).sort("submitted_at", -1).to_list(100)
+    for t in trades:
+        t["_id"] = str(t["_id"])
+    return {"league_id": league_id, "pending_trades": trades, "count": len(trades)}
+
+
 @router.post("/trades/{trade_id}/accept")
 async def accept_trade(trade_id: str, request: Request):
     db = _db()

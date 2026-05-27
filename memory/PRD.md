@@ -149,7 +149,7 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 
 ## Backlog
 - **P0**: NFL player data ingestion script (sport-agnostic model ready)
-- **P1**: Continue `server.py` split (still ~4,406 lines) — extract `/trades`, `/players`, `/auth`, `/users`, `/waivers`, `/live_scoring` routers next
+- **P1**: Multi-sport expansion (NFL/NBA/MLB) — ingestion scripts + sports-agnostic adjustments. server.py now down to ~752 LOC (mostly app entrypoint + infra; further extraction not worth the cost)
 - **P1**: Mobile EAS Build pipeline (iOS + Android distribution)
 - **P1**: Expo push notifications for championship/consolation crown events
 - **P1**: Gate premium-only commissioner actions (draft scheduling, multi-year contracts, taxi squad, custom scoring, webhooks) server-side once league.premium=true
@@ -157,7 +157,6 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **P1**: Wire Stripe checkout to actual Pro upgrade flow ($2.50/mo) — admin toggle is the current workaround
 - **P2**: Wrap Analytics charts with explicit minWidth/minHeight to suppress recharts ResponsiveContainer width(-1)/height(-1) console warnings
 - **P2**: Standardize `/api/activity` response to flat list (currently returns paginated `{items, total, page, pages}` dict while other list endpoints like `/api/trades`, `/api/trade-block` return flat lists)
-- **P2**: Refactor `server.py` (~4100 lines) → modular FastAPI routers (auth, leagues, drafts, trades, players, payments, live_scoring, rosters, waivers, activity)
 - **P2**: Extract shared hook `useLeagueContext(myTeam, opponentTeam)` from Matchup/Standings/Roster
 - **P2**: Add opt-in `?include=roster` query param to `GET /api/teams` to keep list lean when rosters not needed
 - **P2**: Delete dead mock-generator code in `PlayerRoster.tsx` (fallback path no longer reachable for real teamIds)
@@ -166,16 +165,40 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **P2**: EAS Build for iOS/Android distribution
 - **P2**: Mobile app API wiring for Lovable features (React Native in /app/mobile)
 
+## Iter 115 (Feb 27, 2026) — Final server.py extraction
+Completed the long-running `server.py` modularisation. Six remaining endpoints
+moved to their proper routers:
+
+- `GET /api/leagues/{id}/premium` → `routes/payments.py`
+- `GET /api/recommendations/leagues` → new `routes/recommendations.py`
+- `GET /api/sports` → new `routes/sports.py`
+- `GET /api/leagues/{id}/pending-trades` → `routes/trades.py`
+- `POST /api/activity/{id}/chat` → `routes/activity.py`
+- `POST /api/admin/snapshot-ownership` → new `routes/admin.py`
+
+`server.py` shrank from **909 → 752 LOC** (-157). Remaining content is the
+FastAPI app entrypoint (auth helpers, JWT, Socket.IO setup, dep-injection
+wiring, startup events) — appropriate for a `main.py` module. Both P2
+polish items from the iter-114 backlog (emergency-eligibility toast +
+playoff bracket advancement notification) were verified to already be in
+place from earlier work.
+
+**Tests:** `tests/test_iter115_route_extraction.py` (5/5 PASS) +
+iter108-114 regression (28/28 PASS) — total 33/33 recent-iter green.
+
 ## Architecture
 ```
 /app/
 ├── backend/
-│   ├── server.py              # FastAPI + WebSocket hub (3180 lines — refactor pending)
+│   ├── server.py              # FastAPI + WebSocket hub (752 lines — fully modular)
+│   ├── routes/                # 33 routers — every endpoint lives here
 │   ├── draft_engine.py        # Snake + Auction draft
 │   ├── trade_waiver_engine.py # Trades, waivers, FAAB
+│   ├── services/              # trade_engine and shared business logic
+│   ├── utils/                 # lineup_lock, roster_rules
 │   ├── seed_nhl_data.py       # NHL player ingestion
-│   ├── seed_demo_leagues.py   # NEW: 5-format demo league seeder
-│   └── tests/                 # pytest regression suite
+│   ├── seed_demo_leagues.py   # 5-format demo league seeder
+│   └── tests/                 # pytest regression suite (iter108-iter115)
 ├── frontend/                  # React (CRA) + Tailwind + shadcn/ui
 ├── mobile/                    # React Native + Expo (app.json, jsEngine=jsc for bundling)
 └── memory/                    # PRD, test_credentials

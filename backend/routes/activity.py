@@ -11,7 +11,8 @@ would force a sprawling import refactor for no architectural gain.
 """
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from pydantic import BaseModel
 
 router = APIRouter()
 _deps: dict = {}
@@ -114,3 +115,26 @@ async def get_league_transactions(
             "created_at": it.get("created_at"),
         })
     return {"league_id": league_id, "transactions": out, "count": len(out)}
+
+
+
+# Pydantic body for legacy activity-feed chat (separate from /chat/* channels)
+
+
+class _LeagueChatBody(BaseModel):
+    text: str
+
+
+@router.post("/activity/{league_id}/chat")
+async def post_league_chat(league_id: str, input: _LeagueChatBody, request: Request):
+    """Legacy activity-feed chat — appends a 'chat' event to the league
+    activity feed. Distinct from /chat/* channels; preserved for the
+    homepage activity ticker."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    log_activity = _deps["log_activity"]
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"league_id": league_id, "owner_id": user["_id"]})
+    sender = team["name"] if team else user.get("name") or user.get("email") or "Member"
+    await log_activity(league_id, "chat", input.text, user["_id"], {"sender": sender})
+    return {"message": "Chat posted"}
