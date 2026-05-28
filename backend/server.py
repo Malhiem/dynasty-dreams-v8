@@ -639,6 +639,36 @@ api_router.include_router(admin_routes.router)
 # Include router
 fastapi_app.include_router(api_router)
 
+# ─── Per-request metrics middleware (powers /api/admin/health-deep) ──
+import time as _time_metrics  # noqa: E402
+from metrics import record as _record_metric  # noqa: E402
+
+
+@fastapi_app.middleware("http")
+async def _metrics_middleware(request: Request, call_next):
+    """Records (method, route_template, status, latency_ms) for every
+    HTTP request handled by the API. Route template (e.g. `/api/teams/
+    {team_id}/dead-cap`) is captured AFTER the route resolves so dynamic
+    path params don't fragment the metrics buckets."""
+    start = _time_metrics.perf_counter()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        latency_ms = (_time_metrics.perf_counter() - start) * 1000.0
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", None) or request.url.path
+        # Strip socket.io polling endpoints — they fire constantly and would
+        # drown the signal we actually care about.
+        if "/socket.io" not in route_path:
+            try:
+                _record_metric(request.method, route_path, status_code, latency_ms)
+            except Exception:
+                pass  # Metrics must NEVER break the response path.
+
+
 # CORS
 fastapi_app.add_middleware(
     CORSMiddleware,

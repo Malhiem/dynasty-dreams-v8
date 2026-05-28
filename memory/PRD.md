@@ -165,6 +165,34 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **P2**: EAS Build for iOS/Android distribution
 - **P2**: Mobile app API wiring for Lovable features (React Native in /app/mobile)
 
+## Iter 116 (Feb 28, 2026) — Admin Health Deep Probe
+New operational visibility endpoint for the upcoming admin operations
+console.
+
+- New `/app/backend/metrics.py` — in-memory per-route metrics collector
+  (count, error count, 4xx count, avg / p50 / p95 / max latency, last
+  status, last seen). Thread-safe, with a 200-sample rolling window per
+  route so p95 reflects recent traffic only.
+- New `@fastapi_app.middleware("http")` in `server.py` records each
+  finished request. Buckets by **route template** (`/api/teams/{team_id}/
+  dead-cap`) — not concrete path — so dynamic params collapse cleanly.
+  Socket.io polling is filtered out.
+- New `GET /api/admin/health-deep?top=N` (admin-only) returns:
+  `{ok, checked_at, service:{uptime, total_requests, error_rate_pct, …},
+    database:{alive, ping_ms}, workers:{live_scoring,
+    ownership_snapshot, tbd_deadline}, routes:[…]}`
+  Routes are sorted by p95 latency descending so the slowest endpoints
+  appear first.
+- DB liveness uses `await db.command("ping")` with a 2s timeout.
+- Worker liveness checks `app.state.<task>.done() is False` for each
+  background coroutine.
+- `routes/admin.py` rewritten to host both `/snapshot-ownership` and the
+  new `/health-deep`.
+
+**Tests:** `tests/test_iter116_health_deep.py` (5/5 PASS) covering
+auth gating, full envelope shape, traffic tracking, and route-template
+bucketing.
+
 ## Iter 115 (Feb 27, 2026) — Final server.py extraction
 Completed the long-running `server.py` modularisation. Six remaining endpoints
 moved to their proper routers:
