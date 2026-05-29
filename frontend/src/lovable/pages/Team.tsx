@@ -9,6 +9,7 @@ import TradeBlockManager from "@/lovable/components/team/TradeBlockManager";
 import LiveTeamHeader from "@/lovable/components/dashboard/LiveTeamHeader";
 import TeamDraftPicks from "@/lovable/components/dashboard/TeamDraftPicks";
 import TeamSalaryCap from "@/lovable/components/dashboard/TeamSalaryCap";
+import TeamClaimCounter from "@/lovable/components/dashboard/TeamClaimCounter";
 import CommissionerPendingTrades from "@/lovable/components/dashboard/CommissionerPendingTrades";
 import StatCard from "@/lovable/components/dashboard/StatCard";
 import { Trophy, TrendingUp, Users, Shield, ArrowRightLeft, X, AlertTriangle, DollarSign, UserMinus, UserPlus, CheckCircle2, ChevronDown, Crown } from "lucide-react";
@@ -702,6 +703,9 @@ const Team = () => {
                     ? "Manage your dynasty roster"
                     : `Owner: ${selectedTeam.owner} · View-only (trade available)`}
               </p>
+              <div className="mt-2">
+                <TeamClaimCounter teamId={selectedTeamId} refreshKey={rosterReloadKey} />
+              </div>
             </div>
           </div>
 

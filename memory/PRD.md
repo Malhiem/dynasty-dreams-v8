@@ -165,6 +165,19 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **P2**: EAS Build for iOS/Android distribution
 - **P2**: Mobile app API wiring for Lovable features (React Native in /app/mobile)
 
+## Iter 117 (Feb 28, 2026) — League → Transactions configuration + salary-cap orphan bug fix
+
+**Bug fixed**: Zarek's Frozen team page showed "Salary cap is disabled for this league" even though the league had a $88M cap visible in admin settings. Root cause: when the commissioner toggled `salary_cap_enabled=False` via `PUT /api/leagues/{id}/admin/cap-settings`, only `salary_cap` was nulled — `salary_cap_year_plus_1` and `salary_cap_year_plus_2` were left as orphans. That created leagues with disabled cap + $88M Year+2 still present, confusing both the team page and any future re-enable. Fix: the disable path now nulls all three cap amounts + clears the two `*_tentative` flags. A one-time DB heal cleaned the existing Ice Kings record.
+
+**New transactions configuration system**:
+- **Schema**: `leagues.transactions_config` envelope with five sub-sections — `claim_limits` (season + week × total/fa/waivers, null=unlimited), `claim_rules` (lock-at-first-game, allow-non-playoff, prevent_injured radio, prevent_minors, pending/failed visibility), `free_agency` (system_type radio, auto/manual priority sub-configs, drag-and-drop manual priority order + scheduled rotation rows, picks-per-round policy, waivers-reset-after-claim, priority recompute live/weekly), `waiver` (master toggle, processing days/scheduled with up to 3 slots, abuse window), `draft_claims` (allow claims before draft, allow drops during draft).
+- **Routes** (`routes/transactions_config.py`): `GET /api/leagues/{id}/transactions-config`, `PUT` (commissioner-only with manual-priority team-id validation), `GET /api/teams/{team_id}/claim-counts` (gated by `claim_rules.pending_visibility`).
+- **Enforcement** (`utils/transactions_enforce.py`): shared `enforce_claim()` / `enforce_drop()` invoked from `routes/roster.py` and `routes/waivers.py`. Order: claim limits → injured/minors filters → lock-at-first-game → non-playoff block → abuse window.
+- **Commissioner UI** (`commissioner/TransactionsConfigCards.tsx`): four cards (Claims Limits, Claim Rules, Free Agency, Waiver Wire) rendered atop the existing Transactions tab + a `<TransactionsDraftRulesCard>` added to the Draft tab.
+- **Roster page chip**: `TeamClaimCounter.tsx` renders `Claims · Season X/cap · Week Y/cap` next to the team header, with visibility honoring the league's `pending_visibility` setting.
+
+**Tests** — `tests/test_iter117_transactions_config.py` (8/8 PASS): cap orphan fix, defaults envelope, full round-trip, non-commissioner 403, bad manual-priority team_id 400, owner-visible claim counts, non-member-hidden claim counts, season-FA-cap blocks-add 400.
+
 ## Iter 116 (Feb 28, 2026) — Admin Health Deep Probe
 New operational visibility endpoint for the upcoming admin operations
 console.

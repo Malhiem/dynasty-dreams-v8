@@ -486,6 +486,13 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     if input.player_id in current_roster:
         raise HTTPException(status_code=400, detail="Player already on roster")
 
+    # ── Transactions-config gates (iter 117) ────────────────────────
+    # Season/week caps, injured/minors filters, lock-at-first-game,
+    # non-playoff block, abuse window. Raises 400 with a human reason on
+    # the first hit.
+    from utils.transactions_enforce import enforce_claim
+    await enforce_claim(db, team_id=team_id, league=league, player=player, tx_kind="fa")
+
     # ── Position-limit pre-check (league.enforce_position_maxes) ────
     from utils.roster_rules import check_position_limits
     roster_obj_ids = []
@@ -599,6 +606,8 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
             "team_id": team_id, "team_name": team["name"],
             "player_id": input.player_id, "player_name": player["name"],
             "position": player.get("position"),
+            "season": league.get("season") or "2025-2026",
+            "week": int(league.get("current_week") or 1),
         },
     )
     return {"message": f"Added {player['name']} to roster"}
@@ -621,6 +630,11 @@ async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
     if input.player_id not in current_roster:
         raise HTTPException(status_code=400, detail="Player not on roster")
 
+    # ── Transactions-config gates for drops (iter 117) ─────────────
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    from utils.transactions_enforce import enforce_drop
+    await enforce_drop(db, team_id=team_id, league=league or {})
+
     await db.teams.update_one(
         {"_id": ObjectId(team_id)},
         {"$pull": {"roster": input.player_id}},
@@ -638,6 +652,8 @@ async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
         metadata={
             "team_id": team_id, "team_name": team["name"],
             "player_id": input.player_id, "player_name": name,
+            "season": (league or {}).get("season") or "2025-2026",
+            "week": int((league or {}).get("current_week") or 1),
         },
     )
     return {"message": f"Dropped {name} from roster"}

@@ -351,6 +351,10 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     if existing:
         raise HTTPException(status_code=400, detail="You already have a pending claim for this player")
 
+    # ── Transactions-config gates (iter 117) ────────────────────────
+    from utils.transactions_enforce import enforce_claim
+    await enforce_claim(db, team_id=str(team["_id"]), league=league, player=player, tx_kind="waiver")
+
     claim_doc = {
         "league_id": input.league_id,
         "team_id": str(team["_id"]),
@@ -364,6 +368,8 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
         "drop_player_id": input.drop_player_id,
         "drop_player_name": None,
         "status": "pending",
+        "season": league.get("season") or "2025-2026",
+        "week": int(league.get("current_week") or 1),
         "created_at": datetime.now(timezone.utc).isoformat(),
         # `waiver_period_days` is configurable in League Admin. Defaults to 1
         # day (24h) to preserve legacy behaviour when unset. `0` means claims

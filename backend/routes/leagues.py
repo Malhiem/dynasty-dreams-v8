@@ -1177,7 +1177,16 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
     if payload.salary_cap_enabled is not None:
         updates["salary_cap_enabled"] = bool(payload.salary_cap_enabled)
         if not payload.salary_cap_enabled:
+            # Iter 117 bug fix — disabling the cap must also clear current
+            # and future-year amounts so the league can't end up in the
+            # inconsistent "disabled with $88M Year+2 still set" state that
+            # made teams appear cap-locked when their league record said
+            # otherwise. Tentative flags are reset to false for cleanliness.
             updates["salary_cap"] = None
+            updates["salary_cap_year_plus_1"] = None
+            updates["salary_cap_year_plus_2"] = None
+            updates["salary_cap_year_plus_1_tentative"] = False
+            updates["salary_cap_year_plus_2_tentative"] = False
         elif payload.salary_cap is not None:
             updates["salary_cap"] = int(payload.salary_cap)
     elif payload.salary_cap is not None:

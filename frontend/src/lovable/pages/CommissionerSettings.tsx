@@ -28,6 +28,7 @@ import {
 
 import RostersTab from "@/lovable/pages/commissioner/RostersTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
+import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/pages/commissioner/TransactionsConfigCards";
 import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
 import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
@@ -790,7 +791,7 @@ const CommissionerSettings = () => {
   );
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(generateMockAuditLog());
   const [auditFilterCategory, setAuditFilterCategory] = useState<string>("all");
-  const { league: activeLeague, reloadLeague } = useActiveLeague();
+  const { league: activeLeague, leagueTeams, reloadLeague } = useActiveLeague();
 
   // ─── Setup Wizard (first-time) ─────────────────────────────────
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -1694,6 +1695,8 @@ const CommissionerSettings = () => {
 
           {/* Rules & Schedule Tab */}
           <TabsContent value="rules-schedule" className="space-y-6">
+            <TransactionsConfigCards leagueId={activeLeague?.id} leagueTeams={leagueTeams} />
+            <Separator />
             <RulesScheduleTab />
           </TabsContent>
 
@@ -1854,6 +1857,7 @@ const CommissionerSettings = () => {
 
           {/* Draft Tab */}
           <TabsContent value="draft" className="space-y-6">
+            <TransactionsDraftRulesCard leagueId={activeLeague?.id} />
             <Card className="bg-card border-border">
               <CardHeader>
                 <CardTitle>Draft Type</CardTitle>
