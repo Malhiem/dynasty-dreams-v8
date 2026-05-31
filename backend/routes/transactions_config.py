@@ -336,19 +336,35 @@ async def get_team_claim_counts(team_id: str, request: Request):
 
     is_owner = team.get("owner_id") == user["_id"]
     is_comm = _is_commissioner(league, user)
-    if audience == "user":
+    cfg_obj = TransactionsConfig(**(league.get("transactions_config") or {}))
+    # Iter 122 — when the waiver section is enabled, the waiver
+    # pending_visibility takes precedence over the global one. This is
+    # also where the `all_teams_anonymous` audience surfaces.
+    if cfg_obj.waiver.enabled:
+        audience = cfg_obj.waiver.pending_visibility
+    else:
+        audience = rules.get("pending_visibility") or "user"
+
+    anonymous = False
+    if audience == "user" or audience == "own":
         visible = is_owner or is_comm
     elif audience == "all_teams":
-        # Any league member counts. We assume a logged-in user with a team
-        # in the league qualifies; otherwise treat as no-access.
         own_team = await db.teams.find_one({"league_id": team["league_id"], "owner_id": user["_id"]})
         visible = bool(own_team) or is_comm
+    elif audience == "all_teams_anonymous":
+        own_team = await db.teams.find_one({"league_id": team["league_id"], "owner_id": user["_id"]})
+        visible = bool(own_team) or is_comm
+        # Owner + commissioner still see real counts; everyone else gets
+        # the anonymized treatment (visible=true but anonymous=true).
+        if visible and not (is_owner or is_comm):
+            anonymous = True
     else:  # "league_admin"
         visible = is_comm
 
     if not visible:
         return {
             "visible": False,
+            "anonymous": False,
             "audience": audience,
             "season": {"total": 0, "fa": 0, "waivers": 0},
             "week": {"total": 0, "fa": 0, "waivers": 0},
@@ -386,8 +402,106 @@ async def get_team_claim_counts(team_id: str, request: Request):
 
     return {
         "visible": True,
+        "anonymous": anonymous,
         "audience": audience,
         "season": {"total": s_total, "fa": s_fa, "waivers": s_wv},
         "week": {"total": w_total, "fa": w_fa, "waivers": w_wv},
         "limits": cfg["claim_limits"],
+    }
+
+
+# ─── Iter 122 — Waiver priority order endpoint ─────────────────────
+
+
+@router.get("/leagues/{league_id}/waiver-priority")
+async def get_waiver_priority(league_id: str, request: Request):
+    """Returns the league's current effective waiver priority order plus,
+    if the requesting user owns a team in this league, that team's rank
+    in the queue (1 = picks first).
+
+    Response
+    --------
+    {
+      "league_id": "...",
+      "enabled": bool,
+      "priority_order": "reverse_standings_serpentine"|"reverse_standings"|"manual"|"random",
+      "order": [{"team_id", "team_name", "rank"}, ...],
+      "my_rank": int|null,
+      "my_team_id": str|null,
+      "total_teams": int,
+    }
+    """
+    db = _db()
+    user = await _get_user(request)
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid league_id")
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    cfg = TransactionsConfig(**(league.get("transactions_config") or {}))
+    w = cfg.waiver
+    teams = await db.teams.find({"league_id": league_id}).to_list(60)
+    teams_by_id = {str(t["_id"]): t for t in teams}
+
+    def _rank_reverse_standings() -> list[str]:
+        # Lowest-ranked first (reverse of standings)
+        ordered = sorted(
+            teams,
+            key=lambda t: (
+                int(t.get("wins") or 0),
+                float(t.get("points_for") or 0),
+            ),
+        )
+        return [str(t["_id"]) for t in ordered]
+
+    if w.priority_order == "manual":
+        # Use the LM-input order; if any team is missing append them to
+        # the end so we don't leave anyone out.
+        order_ids = list(w.manual_priority_order or [])
+        for t in teams:
+            tid = str(t["_id"])
+            if tid not in order_ids:
+                order_ids.append(tid)
+    elif w.priority_order == "random":
+        # Deterministic per (league, current_week) so the page doesn't
+        # reshuffle on every refresh; the actual claim processor reshuffles
+        # at processing time. Seed = "{league_id}-{week}".
+        import random
+        seed = f"{league_id}-{int(league.get('current_week') or 1)}"
+        rng = random.Random(seed)
+        ids = [str(t["_id"]) for t in teams]
+        rng.shuffle(ids)
+        order_ids = ids
+    else:
+        # reverse_standings and reverse_standings_serpentine — first round
+        # is the same (lowest team first). The serpentine flip only matters
+        # for round 2+, which we don't predict here.
+        order_ids = _rank_reverse_standings()
+
+    my_team_id = None
+    my_rank = None
+    for t in teams:
+        if t.get("owner_id") == user["_id"]:
+            my_team_id = str(t["_id"])
+            break
+    if my_team_id and my_team_id in order_ids:
+        my_rank = order_ids.index(my_team_id) + 1
+
+    return {
+        "league_id": league_id,
+        "enabled": w.enabled,
+        "priority_order": w.priority_order,
+        "order": [
+            {
+                "team_id": tid,
+                "team_name": (teams_by_id.get(tid) or {}).get("name", "?"),
+                "rank": i + 1,
+            }
+            for i, tid in enumerate(order_ids)
+        ],
+        "my_rank": my_rank,
+        "my_team_id": my_team_id,
+        "total_teams": len(teams),
     }

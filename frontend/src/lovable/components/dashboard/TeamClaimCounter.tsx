@@ -33,6 +33,26 @@ export default function TeamClaimCounter({ teamId, refreshKey }) {
 
   if (!data || !data.visible) return null;
 
+  // Iter 122 — Anonymous mode: only the total counts surface, not the
+  // free-agency / waiver breakdown (which could reveal strategy). Owners
+  // and commissioners are unaffected — they always see the full breakdown.
+  if (data.anonymous) {
+    return (
+      <div
+        className="inline-flex items-center gap-2 rounded-md border border-border bg-secondary/40 px-3 py-1.5 text-xs"
+        data-testid="team-claim-counter-anonymous"
+      >
+        <Activity className="h-3.5 w-3.5 text-cyan-400" />
+        <span className="font-medium">Claims</span>
+        <span className="text-muted-foreground">·</span>
+        <span data-testid="team-claim-counter-season-anon">Season {data.season.total}</span>
+        <span className="text-muted-foreground">·</span>
+        <span data-testid="team-claim-counter-week-anon">Week {data.week.total}</span>
+        <span className="text-[10px] text-muted-foreground italic ml-1">(league total view)</span>
+      </div>
+    );
+  }
+
   const sLimits = data.limits?.season || {};
   const wLimits = data.limits?.week || {};
 

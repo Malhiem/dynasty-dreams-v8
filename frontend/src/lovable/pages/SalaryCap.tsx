@@ -1,6 +1,8 @@
 // @ts-nocheck
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import { useAuth } from "@/contexts/AuthContext";
+import CapFloorWatchlistCard from "@/lovable/components/dashboard/CapFloorWatchlistCard";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -63,6 +65,9 @@ const RETAINED_COLOR = "#FF3B30";    // red/destructive
 
 const SalaryCap = () => {
   const { league, leagueTeams, myTeam } = useActiveLeague();
+  const { user } = useAuth();
+  const isCommissioner =
+    !!user?.id && !!league?.commissioner_id && league.commissioner_id === user.id;
   const leagueTeamsCount = leagueTeams?.length || 0;
   const [chartFilter, setChartFilter] = useState<ChartFilter>("all");
   const [rosterDetail, setRosterDetail] = useState<any>(null);
@@ -584,6 +589,9 @@ const SalaryCap = () => {
             </CardContent>
           </Card>
         )}
+
+        {/* Iter 122 — Cap Floor Watchlist (commissioner-only) */}
+        <CapFloorWatchlistCard leagueId={league?.id} isCommissioner={isCommissioner} />
 
         {/* Salary Cap Chart — pie or by-year bar */}
         <Card className="bg-card border-border">

@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useState, useRef } from "react";
 import {
   Activity, Database, Server, Pause, Play, RefreshCw, AlertTriangle,
-  CheckCircle2, XCircle, ChevronUp, ChevronDown,
+  CheckCircle2, XCircle, ChevronUp, ChevronDown, Settings,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -24,16 +24,45 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 const REFRESH_MS = 15000;
 
 // Latency / error thresholds for the traffic-light column. Tuned for our
-// median request profile (most reads should be < 200 ms). Tweak here once
-// the alerts feature lands.
-const WARN_P95 = 500;
-const BAD_P95 = 1500;
-const WARN_ERR_PCT = 1.0;
-const BAD_ERR_PCT = 5.0;
+// median request profile (most reads should be < 200 ms). Defaults; the
+// admin can override per-deployment via the Ops Console's "Thresholds"
+// dialog — overrides persist in localStorage (key: dd-ops-thresholds).
+const DEFAULT_WARN_P95 = 500;
+const DEFAULT_BAD_P95 = 1500;
+const DEFAULT_WARN_ERR_PCT = 1.0;
+const DEFAULT_BAD_BAD_PCT = 5.0;
+const THRESHOLDS_LS_KEY = "dd-ops-thresholds";
+
+function defaultThresholds() {
+  return {
+    warn_p95: DEFAULT_WARN_P95,
+    bad_p95: DEFAULT_BAD_P95,
+    warn_err_pct: DEFAULT_WARN_ERR_PCT,
+    bad_err_pct: DEFAULT_BAD_BAD_PCT,
+  };
+}
+
+/**
+ * Count the routes currently breaching the configured thresholds. Used by
+ * the alert banner shown atop the console — admins know at a glance how
+ * many endpoints need attention without scanning the table.
+ */
+function countBreaches(routes, thresholds) {
+  let bad = 0;
+  let warn = 0;
+  (routes || []).forEach((r) => {
+    if (r.p95_latency_ms > thresholds.bad_p95 || r.error_rate_pct > thresholds.bad_err_pct) bad++;
+    else if (r.p95_latency_ms > thresholds.warn_p95 || r.error_rate_pct > thresholds.warn_err_pct) warn++;
+  });
+  return { bad, warn };
+}
 
 function fmtUptime(seconds) {
   if (!seconds && seconds !== 0) return "—";
@@ -46,10 +75,10 @@ function fmtUptime(seconds) {
   return `${Math.floor(seconds)}s`;
 }
 
-function StatusDot({ p95, errPct }) {
+function StatusDot({ p95, errPct, thresholds }) {
   let level = "ok";
-  if (p95 > BAD_P95 || errPct > BAD_ERR_PCT) level = "bad";
-  else if (p95 > WARN_P95 || errPct > WARN_ERR_PCT) level = "warn";
+  if (p95 > thresholds.bad_p95 || errPct > thresholds.bad_err_pct) level = "bad";
+  else if (p95 > thresholds.warn_p95 || errPct > thresholds.warn_err_pct) level = "warn";
 
   const Cls = level === "bad" ? "text-rose-400" : level === "warn" ? "text-amber-400" : "text-emerald-400";
   const Icon = level === "bad" ? XCircle : level === "warn" ? AlertTriangle : CheckCircle2;
@@ -78,6 +107,17 @@ export default function OperationsConsole() {
   const [paused, setPaused] = useState(false);
   const [sortKey, setSortKey] = useState("p95_latency_ms");
   const [sortDir, setSortDir] = useState("desc");
+  // Iter 122 — admin-configurable thresholds, persisted in localStorage so
+  // each operator can tune for their deployment without round-tripping
+  // through the API.
+  const [thresholds, setThresholds] = useState(() => {
+    try {
+      const raw = typeof window !== "undefined" && window.localStorage.getItem(THRESHOLDS_LS_KEY);
+      if (raw) return { ...defaultThresholds(), ...JSON.parse(raw) };
+    } catch (e) { /* ignore */ }
+    return defaultThresholds();
+  });
+  const [showSettings, setShowSettings] = useState(false);
   const timerRef = useRef(null);
 
   const fetchOnce = async () => {
@@ -99,6 +139,10 @@ export default function OperationsConsole() {
     timerRef.current = setInterval(fetchOnce, REFRESH_MS);
     return () => timerRef.current && clearInterval(timerRef.current);
   }, [paused]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem(THRESHOLDS_LS_KEY, JSON.stringify(thresholds)); } catch (e) { /* ignore */ }
+  }, [thresholds]);
 
   const sortedRoutes = useMemo(() => {
     if (!data?.routes) return [];
@@ -183,6 +227,9 @@ export default function OperationsConsole() {
             <Button size="sm" variant={paused ? "default" : "outline"} onClick={() => setPaused((p) => !p)} className="gap-1" data-testid="ops-toggle-pause">
               {paused ? <><Play className="h-3 w-3" /> Resume</> : <><Pause className="h-3 w-3" /> Pause</>}
             </Button>
+            <Button size="sm" variant="outline" onClick={() => setShowSettings(true)} className="gap-1" data-testid="ops-open-thresholds">
+              <Settings className="h-3 w-3" /> Thresholds
+            </Button>
           </div>
         </div>
       </CardHeader>
@@ -195,7 +242,7 @@ export default function OperationsConsole() {
           <SummaryTile
             label="Error rate"
             value={`${data.service.error_rate_pct.toFixed(2)}%`}
-            tone={data.service.error_rate_pct >= BAD_ERR_PCT ? "bad" : data.service.error_rate_pct >= WARN_ERR_PCT ? "warn" : "ok"}
+            tone={data.service.error_rate_pct >= thresholds.bad_err_pct ? "bad" : data.service.error_rate_pct >= thresholds.warn_err_pct ? "warn" : "ok"}
             testId="ops-error-rate"
           />
         </div>
@@ -212,6 +259,35 @@ export default function OperationsConsole() {
           <Pill ok={data.workers.ownership_snapshot} label="Ownership snapshot" sub={data.workers.ownership_snapshot ? "running" : "stopped"} icon={Server} />
           <Pill ok={data.workers.tbd_deadline} label="TBD deadline" sub={data.workers.tbd_deadline ? "running" : "stopped"} icon={Server} />
         </div>
+
+        {/* Iter 122 — Threshold-driven alert banner. Shows the user
+            exactly how many endpoints are breaching their configured
+            limits before they scan the table. */}
+        {(() => {
+          const { bad, warn } = countBreaches(sortedRoutes, thresholds);
+          if (bad === 0 && warn === 0) return null;
+          return (
+            <div
+              className={`rounded-md border p-3 text-sm flex items-center gap-3 ${
+                bad > 0
+                  ? "border-rose-500/40 bg-rose-500/10 text-rose-300"
+                  : "border-amber-500/40 bg-amber-500/10 text-amber-300"
+              }`}
+              data-testid="ops-threshold-banner"
+            >
+              {bad > 0 ? <XCircle className="h-4 w-4" /> : <AlertTriangle className="h-4 w-4" />}
+              <span className="font-semibold">
+                {bad > 0
+                  ? `${bad} route${bad === 1 ? "" : "s"} above critical threshold`
+                  : `${warn} route${warn === 1 ? "" : "s"} above warning threshold`}
+                {bad > 0 && warn > 0 ? ` (+ ${warn} on watch)` : ""}
+              </span>
+              <span className="text-xs opacity-80">
+                Critical: p95 &gt; {thresholds.bad_p95}ms or errors &gt; {thresholds.bad_err_pct}%.
+              </span>
+            </div>
+          );
+        })()}
 
         {/* Per-route table */}
         <div className="rounded-md border border-border overflow-x-auto">
@@ -237,7 +313,7 @@ export default function OperationsConsole() {
               )}
               {sortedRoutes.map((r) => (
                 <TableRow key={`${r.method} ${r.route}`} data-testid={`ops-route-row`}>
-                  <TableCell><StatusDot p95={r.p95_latency_ms} errPct={r.error_rate_pct} /></TableCell>
+                  <TableCell><StatusDot p95={r.p95_latency_ms} errPct={r.error_rate_pct} thresholds={thresholds} /></TableCell>
                   <TableCell className="font-mono text-xs">{r.method}</TableCell>
                   <TableCell className="font-mono text-xs truncate max-w-[420px]">{r.route}</TableCell>
                   <TableCell className="text-right text-xs">{r.count}</TableCell>
@@ -246,7 +322,7 @@ export default function OperationsConsole() {
                   <TableCell className="text-right text-xs">{r.error_rate_pct.toFixed(2)}</TableCell>
                   <TableCell className="text-right text-xs">{r.avg_latency_ms.toFixed(0)}</TableCell>
                   <TableCell className="text-right text-xs">{r.p50_latency_ms.toFixed(0)}</TableCell>
-                  <TableCell className={`text-right text-xs ${r.p95_latency_ms > BAD_P95 ? "text-rose-400 font-semibold" : r.p95_latency_ms > WARN_P95 ? "text-amber-400" : ""}`}>{r.p95_latency_ms.toFixed(0)}</TableCell>
+                  <TableCell className={`text-right text-xs ${r.p95_latency_ms > thresholds.bad_p95 ? "text-rose-400 font-semibold" : r.p95_latency_ms > thresholds.warn_p95 ? "text-amber-400" : ""}`}>{r.p95_latency_ms.toFixed(0)}</TableCell>
                   <TableCell className="text-right text-xs">{r.max_latency_ms.toFixed(0)}</TableCell>
                 </TableRow>
               ))}
@@ -255,10 +331,77 @@ export default function OperationsConsole() {
         </div>
 
         <p className="text-[10px] text-muted-foreground">
-          Latencies in ms. Status icon: green ≤ {WARN_P95} ms p95 & ≤ {WARN_ERR_PCT}% errors · amber up to {BAD_P95} ms / {BAD_ERR_PCT}% · red beyond.
+          Latencies in ms. Status icon: green ≤ {thresholds.warn_p95} ms p95 & ≤ {thresholds.warn_err_pct}% errors · amber up to {thresholds.bad_p95} ms / {thresholds.bad_err_pct}% · red beyond.
         </p>
       </CardContent>
+
+      {/* Iter 122 — Threshold settings dialog */}
+      <ThresholdsDialog open={showSettings} onOpenChange={setShowSettings} thresholds={thresholds} onSave={setThresholds} />
     </Card>
+  );
+}
+
+function ThresholdsDialog({ open, onOpenChange, thresholds, onSave }) {
+  const [draft, setDraft] = useState(thresholds);
+  useEffect(() => { if (open) setDraft(thresholds); }, [open, thresholds]);
+  const upd = (k) => (v) => setDraft((d) => ({ ...d, [k]: v }));
+  const reset = () => setDraft(defaultThresholds());
+  const submit = () => { onSave(draft); onOpenChange(false); };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="bg-popover border-border z-50" data-testid="ops-thresholds-dialog">
+        <DialogHeader>
+          <DialogTitle>Operations Alert Thresholds</DialogTitle>
+          <DialogDescription>
+            Tune the warning + critical levels for p95 latency and 5xx error
+            rate. Stored locally per admin — doesn't change anyone else's view.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-2">
+          <div className="space-y-2">
+            <Label className="text-xs">Warn p95 (ms)</Label>
+            <Input
+              type="number" min={0} max={10000}
+              value={draft.warn_p95}
+              onChange={(e) => upd("warn_p95")(Number(e.target.value) || 0)}
+              data-testid="ops-threshold-warn-p95"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs">Critical p95 (ms)</Label>
+            <Input
+              type="number" min={0} max={30000}
+              value={draft.bad_p95}
+              onChange={(e) => upd("bad_p95")(Number(e.target.value) || 0)}
+              data-testid="ops-threshold-bad-p95"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs">Warn error rate (%)</Label>
+            <Input
+              type="number" min={0} max={100} step={0.1}
+              value={draft.warn_err_pct}
+              onChange={(e) => upd("warn_err_pct")(Number(e.target.value) || 0)}
+              data-testid="ops-threshold-warn-err"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label className="text-xs">Critical error rate (%)</Label>
+            <Input
+              type="number" min={0} max={100} step={0.1}
+              value={draft.bad_err_pct}
+              onChange={(e) => upd("bad_err_pct")(Number(e.target.value) || 0)}
+              data-testid="ops-threshold-bad-err"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={reset} data-testid="ops-threshold-reset">Reset to defaults</Button>
+          <Button onClick={submit} data-testid="ops-threshold-save">Save</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
