@@ -10,7 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
-import { Settings, Users, Trophy, Shield, Plus, X, Target, LayoutGrid, AlertTriangle, Flag, ClipboardCheck, Wrench, ScrollText, ArrowRightLeft, UserCog, Sliders, FileText, Calendar, Upload, ImageIcon } from "lucide-react";
+import { Settings, Users, Trophy, Shield, Plus, X, Target, LayoutGrid, AlertTriangle, Flag, ClipboardCheck, Wrench, ScrollText, ArrowRightLeft, UserCog, Sliders, FileText, Calendar, Upload, ImageIcon, DollarSign } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useState, useRef, useEffect } from "react";
@@ -20,7 +20,7 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
 import TeamsTab from "@/lovable/components/admin/TeamsTab";
 import DivisionsTab from "@/lovable/pages/commissioner/DivisionsTab";
-import RulesScheduleTab, { RosterLockCard } from "@/lovable/pages/commissioner/RulesScheduleTab";
+import RulesScheduleTab, { RosterLockCard, SalaryCapCard, SalaryRetentionCard, ContractBuyoutsCard } from "@/lovable/pages/commissioner/RulesScheduleTab";
 import {
   EmergencyRosterChangesCard,
   GoalieScoringCard,
@@ -1189,6 +1189,10 @@ const CommissionerSettings = () => {
               <Sliders className="h-4 w-4 mr-2" />
               Transactions
             </TabsTrigger>
+            <TabsTrigger value="salary-cap-contracts" className="data-[state=active]:bg-primary/20" data-testid="tab-salary-cap-contracts">
+              <DollarSign className="h-4 w-4 mr-2" />
+              Salary Cap & Contracts
+            </TabsTrigger>
             <TabsTrigger value="scoring" className="data-[state=active]:bg-primary/20">
               <Target className="h-4 w-4 mr-2" />
               Scoring
@@ -1698,6 +1702,23 @@ const CommissionerSettings = () => {
             <TransactionsConfigCards leagueId={activeLeague?.id} leagueTeams={leagueTeams} />
             <Separator />
             <RulesScheduleTab />
+          </TabsContent>
+
+          {/* Iter 121 — Salary Cap & Contracts Tab */}
+          <TabsContent value="salary-cap-contracts" className="space-y-6" data-testid="salary-cap-contracts-tab">
+            {activeLeague?.id ? (
+              <>
+                <SalaryCapCard league={activeLeague} reloadLeague={reloadLeague} />
+                <SalaryRetentionCard league={activeLeague} reloadLeague={reloadLeague} />
+                <ContractBuyoutsCard league={activeLeague} reloadLeague={reloadLeague} />
+              </>
+            ) : (
+              <Card className="bg-card border-border">
+                <CardContent className="py-6 text-sm text-muted-foreground italic">
+                  Select a league to edit salary cap & contract settings.
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           {/* Scoring Tab */}

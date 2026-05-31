@@ -43,17 +43,8 @@ type SectionSpec = {
 };
 
 const sections: SectionSpec[] = [
-  {
-    title: "Roster Shape",
-    description: "Defines the active roster + bench + minor-league pool sizes for every team.",
-    icon: <Users className="h-5 w-5 text-cyan-400" />,
-    testid: "rules-schedule-roster-card",
-    fields: [
-      { key: "roster_spots", label: "Active Roster Slots", min: 10, max: 40, defaultPlaceholder: "20" },
-      { key: "bench_spots", label: "Bench Spots", min: 0, max: 20, defaultPlaceholder: "4" },
-      { key: "minors_spots", label: "Minor League Spots", min: 0, max: 20, defaultPlaceholder: "5" },
-    ],
-  },
+  // Iter 121 — "Roster Shape" removed (was a duplicate of the same controls
+  // already exposed on the dedicated Rosters tab).
   {
     title: "Trade Settings",
     description: "Controls how trades are reviewed, vetoed, and locked at the deadline.",
@@ -214,14 +205,8 @@ export default function RulesScheduleTab() {
 
       {/* Roster Lock & Lineup Lock moved to League Setup tab per Iter 103 */}
 
-      {/* Salary Cap (with hold-to-accelerate) */}
-      <SalaryCapCard league={league} reloadLeague={reloadLeague} />
-
-      {/* Salary Retention A/B */}
-      <SalaryRetentionCard league={league} reloadLeague={reloadLeague} />
-
-      {/* Contract Buyouts toggle (Iter 111) */}
-      <ContractBuyoutsCard league={league} reloadLeague={reloadLeague} />
+      {/* Iter 121 — Salary Cap, Salary Retention, Contract Buyouts moved to
+          the dedicated "Salary Cap and Contracts" tab. */}
 
       {sections.map((section) => (
         <Card
@@ -541,7 +526,7 @@ export function RosterLockCard({ league, reloadLeague }: any) {
   );
 }
 
-function SalaryCapCard({ league, reloadLeague }: any) {
+export function SalaryCapCard({ league, reloadLeague }: any) {
   const [enabled, setEnabled] = useState(!!league?.salary_cap_enabled);
   const [amount, setAmount] = useState<number>(league?.salary_cap || 82500000);
   // Iter 111 — future-year caps + tentative flags
@@ -775,7 +760,7 @@ function SalaryCapCard({ league, reloadLeague }: any) {
   );
 }
 
-function SalaryRetentionCard({ league, reloadLeague }: any) {
+export function SalaryRetentionCard({ league, reloadLeague }: any) {
   const [enabled, setEnabled] = useState(!!league?.salary_retention_enabled);
   const [slots, setSlots] = useState<string>(String(league?.salary_retention_slots ?? 3));
   const [maxPct, setMaxPct] = useState<string>(String(league?.salary_retention_max_pct ?? 50));
@@ -892,7 +877,7 @@ function SalaryRetentionCard({ league, reloadLeague }: any) {
 }
 
 
-function ContractBuyoutsCard({ league, reloadLeague }: any) {
+export function ContractBuyoutsCard({ league, reloadLeague }: any) {
   const [enabled, setEnabled] = useState(!!league?.contract_buyouts_enabled);
   const [saving, setSaving] = useState(false);
   useEffect(() => {

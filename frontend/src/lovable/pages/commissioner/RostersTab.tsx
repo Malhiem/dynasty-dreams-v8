@@ -66,6 +66,12 @@ export default function RostersTab() {
   // IR Settings
   const [irModes, setIrModes] = useState<string[]>(["IR"]);
 
+  // Iter 121 — Prospect eligibility guidelines (consumed by waiver-section
+  // `prevent_prospects` toggle in League Admin → Transactions). Defaults
+  // mirror the NHL convention used by the enforcement helper.
+  const [prospectMaxAge, setProspectMaxAge] = useState("");
+  const [prospectMaxGames, setProspectMaxGames] = useState("");
+
   // Seed local state from the league document
   useEffect(() => {
     if (!league?.id) return;
@@ -85,6 +91,8 @@ export default function RostersTab() {
     setProrateByPeriod(!!league.prorate_min_max_by_period);
     setAllowIllegal(league.allow_illegal_rosters !== false);
     setIrModes(Array.isArray(league.ir_eligibility_modes) ? league.ir_eligibility_modes : ["IR"]);
+    setProspectMaxAge(league.prospect_max_age != null ? String(league.prospect_max_age) : "");
+    setProspectMaxGames(league.prospect_max_career_games != null ? String(league.prospect_max_career_games) : "");
   }, [league?.id, league]);
 
   const toggleIrMode = (key: string) => {
@@ -102,6 +110,8 @@ export default function RostersTab() {
       ["taxi_squad_size", taxiSquad, 0, 20],
       ["min_active_players", minActivePlayers, 0, 40],
       ["min_games_played", minGamesPlayed, 0, 200],
+      ["prospect_max_age", prospectMaxAge, 16, 30],
+      ["prospect_max_career_games", prospectMaxGames, 0, 500],
     ];
     for (const [key, raw, lo, hi] of numFields) {
       const n = parseIntOrNull(raw);
@@ -325,6 +335,55 @@ export default function RostersTab() {
               data-testid="rosters-allow-illegal"
             />
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Iter 121 — Prospect Eligibility (consumed by waiver "Prevent claims on prospects") */}
+      <Card className="bg-card border-border" data-testid="rosters-prospect-eligibility-card">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ListChecks className="h-5 w-5 text-indigo-400" />
+            Prospect Eligibility
+          </CardTitle>
+          <CardDescription>
+            Defines who counts as a "prospect" for league rules — used by the
+            <em className="px-1">Prevent claims on prospects</em> toggle in
+            League Administration → Transactions → Waivers. A player who is
+            BOTH under the age limit AND under the career-games limit is
+            treated as a prospect.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="prospect-max-age">Max age (16–30, default 24)</Label>
+              <Input
+                id="prospect-max-age"
+                type="number" min={16} max={30}
+                value={prospectMaxAge}
+                onChange={(e) => setProspectMaxAge(e.target.value)}
+                placeholder="24"
+                data-testid="rosters-prospect-max-age"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="prospect-max-games">Max career games (0–500, default 100)</Label>
+              <Input
+                id="prospect-max-games"
+                type="number" min={0} max={500}
+                value={prospectMaxGames}
+                onChange={(e) => setProspectMaxGames(e.target.value)}
+                placeholder="100"
+                data-testid="rosters-prospect-max-games"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Leave blank to use the league-wide defaults (24 years / 100 GP).
+            Players explicitly flagged <code className="text-xs">is_prospect: true</code>
+            in the player record are also treated as prospects regardless of these
+            thresholds.
+          </p>
         </CardContent>
       </Card>
 

@@ -165,6 +165,50 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **P2**: EAS Build for iOS/Android distribution
 - **P2**: Mobile app API wiring for Lovable features (React Native in /app/mobile)
 
+## Iter 121 (Mar 1, 2026) — UI reorganization + Cap Floor / Priority Order surfaces
+
+**Five changes, mostly UI:**
+
+1. **Roster Shape removed from Transactions tab** — was a duplicate of the
+   roster-size controls already on the dedicated Rosters tab. Section
+   spec deleted from `RulesScheduleTab.tsx`.
+
+2. **New "Salary Cap & Contracts" tab in League Administration** — moved
+   `SalaryCapCard`, `SalaryRetentionCard`, `ContractBuyoutsCard` out of
+   the Transactions tab into a dedicated tab (`tab-salary-cap-contracts`).
+   Cards are now exported from `RulesScheduleTab.tsx` so the new tab
+   can import and render them directly. No API changes — same
+   `/admin/cap-settings` endpoint.
+
+3. **Prospect Eligibility card on Rosters tab** — exposes the league's
+   `prospect_max_age` (16-30, default 24) and `prospect_max_career_games`
+   (0-500, default 100) which the iter 119 waiver enforcement
+   (`_player_is_prospect`) already reads. UI lives on the Rosters tab
+   per the user's instruction; the waiver toggle in
+   Transactions → Waivers continues to govern whether the rule is
+   actually enforced.
+
+4. **Cap Floor surfaced on Salary Cap page** —
+   * Switched the By-Year chart from `BarChart` to `ComposedChart` so a
+     dashed amber `Cap Floor` step-line overlays the locked / dead / available
+     bar stacks, year-by-year.
+   * New "Cap Floor Compliance" card above the By-Year chart, shown only
+     when `cap_floor_enabled`. Shows the calling team's payroll vs the
+     floor, an "Above floor" / "Below floor — $X short" badge, and
+     three tiles for This year / Year+1 / Year+2 floor values.
+
+5. **Waiver Priority Order surfaced on Waivers page** — new
+   `WaiverPriorityOrderCard` consumes
+   `/api/leagues/{id}/transactions-config` and renders the league's
+   chosen `priority_order` with its label + blurb (and the manual list
+   when `priority_order === "manual"`). Hidden when waiver section is
+   disabled.
+
+**Tests** — `tests/test_iter121_ui_reorg_and_floor_surface.py` (6/6 PASS):
+file-presence assertions for each of the five tasks + a regression that
+the cap-settings endpoint still round-trips floor values after the
+cards moved tabs.
+
 ## Iter 120 (Mar 1, 2026) — Cap Floor + Waiver Wire System (priority order)
 
 **Cap Floor (Salary Cap settings)**

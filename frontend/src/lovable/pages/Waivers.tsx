@@ -2,6 +2,7 @@
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
+import WaiverPriorityOrderCard from "@/lovable/components/dashboard/WaiverPriorityOrderCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -220,6 +221,11 @@ const Waivers = () => {
             <p className="text-muted-foreground">FAAB bidding and waiver claims</p>
           </div>
         </div>
+
+        <WaiverPriorityOrderCard
+          leagueId={league?.id}
+          teamsById={Object.fromEntries((leagueTeams || []).map((t) => [t.id, t]))}
+        />
 
         {/* FAAB Overview */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

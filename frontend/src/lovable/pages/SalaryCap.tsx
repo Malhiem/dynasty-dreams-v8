@@ -10,7 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { DollarSign, TrendingUp, TrendingDown, AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, HelpCircle, MinusCircle } from "lucide-react";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, ReferenceLine,
+  ComposedChart, Line,
 } from "recharts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -246,6 +247,18 @@ const SalaryCap = () => {
   // (rendered as the empty/cap-space portion) so users can see how much of
   // their cap is locked vs available year-over-year. Dead cap (buyouts +
   // retention) is also stacked so the user sees the FULL committed picture.
+  // Iter 121 — Surface cap FLOOR alongside the ceiling on the By-Year chart
+  // and in the compliance card. Floors come from league.cap_floor (current),
+  // league.cap_floor_year_plus_1, league.cap_floor_year_plus_2. Anything
+  // beyond Year+2 falls back to the most recent floor (admins can extend
+  // by saving new values on the Salary Cap & Contracts tab).
+  const floorEnabled = !!(league as any)?.cap_floor_enabled;
+  const floorCurrent = Number((league as any)?.cap_floor || 0);
+  const floorYr1 = Number((league as any)?.cap_floor_year_plus_1 || floorCurrent);
+  const floorYr2 = Number((league as any)?.cap_floor_year_plus_2 || floorYr1);
+  const capYr1 = Number((league as any)?.salary_cap_year_plus_1 || capLimit);
+  const capYr2 = Number((league as any)?.salary_cap_year_plus_2 || capYr1);
+
   const yearBreakdown = useMemo(() => {
     if (contracts.length === 0) return [];
     const minYear = Math.min(...contracts.map((c) => c.endYear - c.yearsRemaining + 1));
@@ -256,8 +269,25 @@ const SalaryCap = () => {
     (deadCapSchedule.schedule || []).forEach((r: any) => {
       deadCapByYear[r.year] = (deadCapByYear[r.year] || 0) + Number(r.total || 0);
     });
-    const out: { year: number; locked: number; dead: number; available: number; label: string }[] = [];
+    const currentYear = new Date().getFullYear();
+    const capForYear = (y: number) => {
+      const off = y - currentYear;
+      if (off <= 0) return capLimit;
+      if (off === 1) return capYr1;
+      if (off === 2) return capYr2;
+      return capYr2;
+    };
+    const floorForYear = (y: number) => {
+      if (!floorEnabled) return 0;
+      const off = y - currentYear;
+      if (off <= 0) return floorCurrent;
+      if (off === 1) return floorYr1;
+      if (off === 2) return floorYr2;
+      return floorYr2;
+    };
+    const out: { year: number; locked: number; dead: number; available: number; label: string; cap: number; floor: number }[] = [];
     for (let y = start; y <= end; y++) {
+      const yearCap = capForYear(y);
       const locked = contracts.reduce((sum, c) => {
         const contractStart = c.endYear - c.yearsRemaining + 1;
         return (y >= contractStart && y <= c.endYear) ? sum + c.salary : sum;
@@ -267,12 +297,14 @@ const SalaryCap = () => {
         year: y,
         locked,
         dead,
-        available: Math.max(0, capLimit - locked - dead),
+        available: Math.max(0, yearCap - locked - dead),
+        cap: yearCap,
+        floor: floorForYear(y),
         label: String(y),
       });
     }
     return out;
-  }, [contracts, capLimit, deadCapSchedule.schedule]);
+  }, [contracts, capLimit, capYr1, capYr2, floorEnabled, floorCurrent, floorYr1, floorYr2, deadCapSchedule.schedule]);
 
   const getChartData = () => {
     switch (chartFilter) {
@@ -485,6 +517,74 @@ const SalaryCap = () => {
           </Card>
         </div>
 
+        {/* Iter 121 — Cap Floor compliance card. Shown only when the league
+            has the floor enabled. Highlights teams below the floor + how
+            much they need to spend to comply (per current year). */}
+        {floorEnabled && floorCurrent > 0 && (
+          <Card className="bg-card border-border" data-testid="cap-floor-compliance-card">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <MinusCircle className="h-4 w-4 text-amber-400" />
+                Cap Floor Compliance
+              </CardTitle>
+              <CardDescription>
+                Minimum team payroll required by this league for {new Date().getFullYear()}: <strong className="text-amber-400">${(floorCurrent / 1_000_000).toFixed(1)}M</strong>.
+                {' '}Teams below the floor on the league's compliance date may be assessed a penalty per the league constitution.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-0">
+              {(() => {
+                const cur = currentSpending + deadCap + totalRetained;
+                const isMyTeamCompliant = cur >= floorCurrent;
+                const shortfall = floorCurrent - cur;
+                return (
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="text-muted-foreground">Your team's payroll:</span>
+                      <span className="font-mono font-bold">${(cur / 1_000_000).toFixed(1)}M</span>
+                    </div>
+                    {isMyTeamCompliant ? (
+                      <Badge className="bg-emerald-500/15 border border-emerald-500/40 text-emerald-300" data-testid="cap-floor-compliant">
+                        Above floor
+                      </Badge>
+                    ) : (
+                      <div className="flex items-center gap-2" data-testid="cap-floor-below">
+                        <Badge className="bg-rose-500/15 border border-rose-500/40 text-rose-300">
+                          Below floor
+                        </Badge>
+                        <span className="text-xs text-amber-300">
+                          ${(shortfall / 1_000_000).toFixed(1)}M short
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+              {/* Year-by-year floor preview */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4">
+                <div className="rounded-md border border-border bg-secondary/30 px-3 py-2">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">This year</div>
+                  <div className="text-sm font-bold text-amber-300" data-testid="cap-floor-current">
+                    ${(floorCurrent / 1_000_000).toFixed(1)}M
+                  </div>
+                </div>
+                <div className="rounded-md border border-border bg-secondary/30 px-3 py-2">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Year + 1</div>
+                  <div className="text-sm font-bold text-amber-300" data-testid="cap-floor-yr1">
+                    ${(floorYr1 / 1_000_000).toFixed(1)}M
+                  </div>
+                </div>
+                <div className="rounded-md border border-border bg-secondary/30 px-3 py-2">
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Year + 2</div>
+                  <div className="text-sm font-bold text-amber-300" data-testid="cap-floor-yr2">
+                    ${(floorYr2 / 1_000_000).toFixed(1)}M
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Salary Cap Chart — pie or by-year bar */}
         <Card className="bg-card border-border">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -505,7 +605,7 @@ const SalaryCap = () => {
             <div className="h-[350px]" data-testid="cap-chart-container">
               <ResponsiveContainer width="100%" height="100%">
                 {chartFilter === "by_year" ? (
-                  <BarChart data={yearBreakdown} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+                  <ComposedChart data={yearBreakdown} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 30%, 20%)" />
                     <XAxis dataKey="label" stroke="hsl(215, 20%, 65%)" tick={{ fill: "hsl(215, 20%, 75%)" }} />
                     <YAxis
@@ -531,7 +631,23 @@ const SalaryCap = () => {
                     <Bar dataKey="locked" stackId="cap" name="Locked Salary" fill={CHART_COLORS[0]} radius={[0, 0, 0, 0]} />
                     <Bar dataKey="dead" stackId="cap" name="Dead Cap (buyouts + retention)" fill={DEAD_CAP_COLOR} radius={[0, 0, 0, 0]} />
                     <Bar dataKey="available" stackId="cap" name="Available (UFAs/RFAs unsigned)" fill={CAP_SPACE_COLOR} radius={[4, 4, 0, 0]} />
-                  </BarChart>
+                    {/* Iter 121 — Cap floor reference line. Only shown when the
+                        league actually has a floor configured. Since floors are
+                        year-specific, render a per-year ReferenceLine segment
+                        using the same dataKey hook that recharts provides. */}
+                    {floorEnabled && (
+                      <Line
+                        type="stepAfter"
+                        dataKey="floor"
+                        stroke="#f59e0b"
+                        strokeWidth={2}
+                        strokeDasharray="5 5"
+                        dot={{ r: 3, fill: "#f59e0b" }}
+                        name="Cap Floor"
+                        legendType="line"
+                      />
+                    )}
+                  </ComposedChart>
                 ) : (
                   <PieChart>
                     <Pie
