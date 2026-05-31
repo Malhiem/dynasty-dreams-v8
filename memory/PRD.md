@@ -165,6 +165,45 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **P2**: EAS Build for iOS/Android distribution
 - **P2**: Mobile app API wiring for Lovable features (React Native in /app/mobile)
 
+## Iter 120 (Mar 1, 2026) — Cap Floor + Waiver Wire System (priority order)
+
+**Cap Floor (Salary Cap settings)**
+* New A/B switch under the existing Salary Cap card. Only shown when the
+  ceiling is enabled. Mirrors the ceiling shape: `cap_floor`,
+  `cap_floor_year_plus_1`, `cap_floor_year_plus_2`, each with their own
+  `*_tentative` flag.
+* Defensive enforcement in `PUT /api/leagues/{id}/admin/cap-settings`:
+  * Disabling `cap_floor_enabled` nulls all three floor amounts + clears
+    the tentative flags.
+  * Disabling `salary_cap_enabled` (ceiling) ALSO clears the floor —
+    keeping the floor without a ceiling would re-introduce the orphan
+    class fixed in iter 117.
+* Client-side guard: cap floor can't exceed the ceiling at the same year
+  level; UI toasts before saving.
+
+**Waiver Wire System (Waivers section)**
+* Renamed the "Waiver Wire" card to "Waivers" (matches the user's mental
+  model — section heading is the noun).
+* New "Waiver Wire System" dropdown at the top of the enabled block.
+  Current options: `auto_priority` (Automated Priority Order). Schema is
+  future-extensible (bidding/FAAB can slot in here).
+* New "Priority Order" radio with the four options:
+  * `reverse_standings_serpentine` — full description rendered inline
+    (4-team league example: 4,3,2,1,1,2,3,4,4,3,2,1…)
+  * `reverse_standings` — same order every round
+  * `manual` — LM-input ordered list (drag-via-up/down) auto-seeded
+    with all league teams; server validates team_ids belong to league
+  * `random` — fresh random order each cycle
+* Wired into `WaiverConfig`: `system_type`, `priority_order`,
+  `manual_priority_order`. Defaults: `auto_priority` +
+  `reverse_standings_serpentine`.
+
+**Tests** — `tests/test_iter120_cap_floor_waiver_priority.py` (9/9 PASS):
+floor round-trip, disable-floor-clears-values, disable-ceiling-clears-
+floor, waiver system defaults, parametrised priority round-trip for the
+three non-manual options, manual priority team_id validation (good +
+bad ids).
+
 ## Iter 119 (Mar 1, 2026) — Mobile crown deep-link + extended Waiver section
 
 **Mobile crown deep-link**

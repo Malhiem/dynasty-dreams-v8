@@ -549,6 +549,15 @@ function SalaryCapCard({ league, reloadLeague }: any) {
   const [yr2, setYr2] = useState<number>(league?.salary_cap_year_plus_2 || (league?.salary_cap || 82500000));
   const [yr1Tentative, setYr1Tentative] = useState(!!league?.salary_cap_year_plus_1_tentative);
   const [yr2Tentative, setYr2Tentative] = useState(!!league?.salary_cap_year_plus_2_tentative);
+  // Iter 120 — Cap Floor (mirrors the ceiling). Default seeds at 70% of
+  // the current ceiling — typical of pro leagues. The LM can edit before
+  // saving; doesn't write until enabled is on.
+  const [floorEnabled, setFloorEnabled] = useState(!!league?.cap_floor_enabled);
+  const [floor, setFloor] = useState<number>(league?.cap_floor || Math.round((league?.salary_cap || 82500000) * 0.7));
+  const [floorYr1, setFloorYr1] = useState<number>(league?.cap_floor_year_plus_1 || Math.round((league?.salary_cap_year_plus_1 || league?.salary_cap || 82500000) * 0.7));
+  const [floorYr2, setFloorYr2] = useState<number>(league?.cap_floor_year_plus_2 || Math.round((league?.salary_cap_year_plus_2 || league?.salary_cap || 82500000) * 0.7));
+  const [floorYr1Tentative, setFloorYr1Tentative] = useState(!!league?.cap_floor_year_plus_1_tentative);
+  const [floorYr2Tentative, setFloorYr2Tentative] = useState(!!league?.cap_floor_year_plus_2_tentative);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     setEnabled(!!league?.salary_cap_enabled);
@@ -557,9 +566,21 @@ function SalaryCapCard({ league, reloadLeague }: any) {
     setYr2(league?.salary_cap_year_plus_2 || (league?.salary_cap || 82500000));
     setYr1Tentative(!!league?.salary_cap_year_plus_1_tentative);
     setYr2Tentative(!!league?.salary_cap_year_plus_2_tentative);
-  }, [league?.id, league?.salary_cap_enabled, league?.salary_cap, league?.salary_cap_year_plus_1, league?.salary_cap_year_plus_2, league?.salary_cap_year_plus_1_tentative, league?.salary_cap_year_plus_2_tentative]);
+    setFloorEnabled(!!league?.cap_floor_enabled);
+    setFloor(league?.cap_floor || Math.round((league?.salary_cap || 82500000) * 0.7));
+    setFloorYr1(league?.cap_floor_year_plus_1 || Math.round((league?.salary_cap_year_plus_1 || league?.salary_cap || 82500000) * 0.7));
+    setFloorYr2(league?.cap_floor_year_plus_2 || Math.round((league?.salary_cap_year_plus_2 || league?.salary_cap || 82500000) * 0.7));
+    setFloorYr1Tentative(!!league?.cap_floor_year_plus_1_tentative);
+    setFloorYr2Tentative(!!league?.cap_floor_year_plus_2_tentative);
+  }, [league?.id, league?.salary_cap_enabled, league?.salary_cap, league?.salary_cap_year_plus_1, league?.salary_cap_year_plus_2, league?.salary_cap_year_plus_1_tentative, league?.salary_cap_year_plus_2_tentative, league?.cap_floor_enabled, league?.cap_floor, league?.cap_floor_year_plus_1, league?.cap_floor_year_plus_2, league?.cap_floor_year_plus_1_tentative, league?.cap_floor_year_plus_2_tentative]);
 
   const save = async () => {
+    // Iter 120 — block floors above ceilings before round-tripping to the API
+    if (enabled && floorEnabled) {
+      if (floor > amount) { toast.error("Cap floor can't exceed the cap ceiling"); return; }
+      if (floorYr1 > yr1) { toast.error("Year+1 floor can't exceed Year+1 ceiling"); return; }
+      if (floorYr2 > yr2) { toast.error("Year+2 floor can't exceed Year+2 ceiling"); return; }
+    }
     setSaving(true);
     try {
       await api.put(`/leagues/${league.id}/admin/cap-settings`, {
@@ -569,6 +590,13 @@ function SalaryCapCard({ league, reloadLeague }: any) {
         salary_cap_year_plus_2: enabled ? yr2 : null,
         salary_cap_year_plus_1_tentative: yr1Tentative,
         salary_cap_year_plus_2_tentative: yr2Tentative,
+        // Iter 120 — Cap Floor (only meaningful when ceiling is on)
+        cap_floor_enabled: enabled && floorEnabled,
+        cap_floor: enabled && floorEnabled ? floor : null,
+        cap_floor_year_plus_1: enabled && floorEnabled ? floorYr1 : null,
+        cap_floor_year_plus_2: enabled && floorEnabled ? floorYr2 : null,
+        cap_floor_year_plus_1_tentative: floorYr1Tentative,
+        cap_floor_year_plus_2_tentative: floorYr2Tentative,
       });
       toast.success(enabled ? `Salary cap set to $${fmtMoney(amount)}` : "Salary cap disabled");
       reloadLeague?.();
@@ -659,6 +687,81 @@ function SalaryCapCard({ league, reloadLeague }: any) {
                 </Label>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Iter 120 — Cap Floor (parallels the ceiling). Only meaningful
+            when the ceiling is enabled; backend clears these fields if
+            the ceiling is turned off in the same save. */}
+        {enabled && (
+          <div className="rounded-md border border-border p-4 space-y-3" data-testid="rules-schedule-cap-floor-block">
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={floorEnabled}
+                onCheckedChange={setFloorEnabled}
+                id="rs-cap-floor-enabled"
+                data-testid="rules-schedule-cap-floor-enabled"
+              />
+              <Label htmlFor="rs-cap-floor-enabled" className="cursor-pointer text-sm">
+                Enable cap floor (minimum team payroll)
+              </Label>
+            </div>
+            {floorEnabled && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label className="text-xs">Current floor ({curYr}-{String(curYr + 1).slice(-2)})</Label>
+                  <SmartNumberInput
+                    value={floor} onChange={setFloor}
+                    min={0} max={300000000}
+                    step={100000} fastStep={500000} turboStep={1000000}
+                    prefix="$" format={fmtMoney}
+                    testId="rules-schedule-cap-floor-amount"
+                  />
+                </div>
+                <div>
+                  <Label className="text-xs">Year + 1 floor ({curYr + 1}-{String(curYr + 2).slice(-2)})</Label>
+                  <SmartNumberInput
+                    value={floorYr1} onChange={setFloorYr1}
+                    min={0} max={300000000}
+                    step={100000} fastStep={500000} turboStep={1000000}
+                    prefix="$" format={fmtMoney}
+                    testId="rules-schedule-cap-floor-yr1"
+                  />
+                  <div className="flex items-center gap-2 mt-2">
+                    <Checkbox
+                      id="cap-floor-yr1-tentative"
+                      checked={floorYr1Tentative}
+                      onCheckedChange={(v) => setFloorYr1Tentative(!!v)}
+                      data-testid="rules-schedule-cap-floor-yr1-tentative"
+                    />
+                    <Label htmlFor="cap-floor-yr1-tentative" className="text-xs cursor-pointer">
+                      Tentative — subject to change
+                    </Label>
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">Year + 2 floor ({curYr + 2}-{String(curYr + 3).slice(-2)})</Label>
+                  <SmartNumberInput
+                    value={floorYr2} onChange={setFloorYr2}
+                    min={0} max={300000000}
+                    step={100000} fastStep={500000} turboStep={1000000}
+                    prefix="$" format={fmtMoney}
+                    testId="rules-schedule-cap-floor-yr2"
+                  />
+                  <div className="flex items-center gap-2 mt-2">
+                    <Checkbox
+                      id="cap-floor-yr2-tentative"
+                      checked={floorYr2Tentative}
+                      onCheckedChange={(v) => setFloorYr2Tentative(!!v)}
+                      data-testid="rules-schedule-cap-floor-yr2-tentative"
+                    />
+                    <Label htmlFor="cap-floor-yr2-tentative" className="text-xs cursor-pointer">
+                      Tentative — subject to change
+                    </Label>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
         <div className="flex justify-end">

@@ -110,6 +110,13 @@ class WaiverProcessingSchedule(BaseModel):
 
 WaiverVisibility = Literal["own", "all_teams", "all_teams_anonymous", "league_admin"]
 WaiverInjuredPolicy = Literal["off", "nhl_ir", "all_flags"]
+WaiverSystemType = Literal["auto_priority"]
+WaiverPriorityOrder = Literal[
+    "reverse_standings_serpentine",
+    "reverse_standings",
+    "manual",
+    "random",
+]
 
 
 class WaiverClaimLimits(BaseModel):
@@ -123,6 +130,14 @@ class WaiverClaimLimits(BaseModel):
 
 class WaiverConfig(BaseModel):
     enabled: bool = False  # master toggle — separates waiver from FA rules
+    # Iter 120 — Waiver Wire System (currently only Automated Priority
+    # Order; future-extensible if we add bidding/FAAB-mode tied to waivers).
+    system_type: WaiverSystemType = "auto_priority"
+    priority_order: WaiverPriorityOrder = "reverse_standings_serpentine"
+    # Manual ordering when priority_order = "manual". team_ids in priority
+    # order, highest first. Server validates ids belong to this league.
+    manual_priority_order: List[str] = Field(default_factory=list)
+
     processing_mode: WaiverProcessingMode = "days"
     processing_days_count: int = Field(default=2, ge=0, le=7)
     processing_schedule: List[WaiverProcessingSchedule] = Field(default_factory=list)
@@ -212,6 +227,21 @@ def _validate_waiver_claim_limits(cfg: dict) -> None:
                             detail=f"Waiver claim limits: Waiver Wire cap ({wv}) exceeds Total cap ({total}).")
 
 
+def _validate_waiver_manual_priority(cfg: dict, team_ids_in_league: set[str]) -> None:
+    """When the Waivers section uses Manual priority order, every team_id
+    referenced must belong to this league."""
+    w = cfg.get("waiver") or {}
+    if not w.get("enabled"):
+        return
+    if w.get("priority_order") != "manual":
+        return
+    bad = [tid for tid in (w.get("manual_priority_order") or [])
+           if tid not in team_ids_in_league]
+    if bad:
+        raise HTTPException(status_code=400,
+                            detail=f"waiver.manual_priority_order has team_ids not in this league: {bad}")
+
+
 # ─── Endpoints ───────────────────────────────────────────────────────
 
 
@@ -248,6 +278,7 @@ async def update_transactions_config(league_id: str, payload: TransactionsConfig
     cfg_dict = payload.model_dump()
     _validate_manual_priority(cfg_dict, team_ids)
     _validate_waiver_claim_limits(cfg_dict)
+    _validate_waiver_manual_priority(cfg_dict, team_ids)
 
     await db.leagues.update_one(
         {"_id": ObjectId(league_id)},

@@ -1097,6 +1097,13 @@ class CapSettingsUpdate(BaseModel):
     contract_buyouts_enabled: Optional[bool] = None
     salary_retention_slots: Optional[int] = Field(None, ge=0, le=10)
     minors_enabled: Optional[bool] = None  # if your league offers a minor-league/prospects pool
+    # Iter 120 — Salary cap FLOOR (mirrors the ceiling shape)
+    cap_floor_enabled: Optional[bool] = None
+    cap_floor: Optional[int] = None
+    cap_floor_year_plus_1: Optional[int] = None
+    cap_floor_year_plus_2: Optional[int] = None
+    cap_floor_year_plus_1_tentative: Optional[bool] = None
+    cap_floor_year_plus_2_tentative: Optional[bool] = None
 
 
 def _premium_status(league: dict) -> dict:
@@ -1207,6 +1214,42 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
     if payload.contract_buyouts_enabled is not None:
         updates["contract_buyouts_enabled"] = bool(payload.contract_buyouts_enabled)
 
+    # ── Iter 120 — Salary cap FLOOR (parallels the ceiling) ────────
+    # Floor is only meaningful when the ceiling is enabled. When the
+    # ceiling flips off, floor goes off + values clear (same defensive
+    # pattern as the iter-117 ceiling-orphan fix).
+    if payload.cap_floor_enabled is not None:
+        updates["cap_floor_enabled"] = bool(payload.cap_floor_enabled)
+        if not payload.cap_floor_enabled:
+            updates["cap_floor"] = None
+            updates["cap_floor_year_plus_1"] = None
+            updates["cap_floor_year_plus_2"] = None
+            updates["cap_floor_year_plus_1_tentative"] = False
+            updates["cap_floor_year_plus_2_tentative"] = False
+        elif payload.cap_floor is not None:
+            updates["cap_floor"] = int(payload.cap_floor)
+    elif payload.cap_floor is not None:
+        updates["cap_floor"] = int(payload.cap_floor)
+    if payload.cap_floor_year_plus_1 is not None:
+        updates["cap_floor_year_plus_1"] = int(payload.cap_floor_year_plus_1)
+    if payload.cap_floor_year_plus_2 is not None:
+        updates["cap_floor_year_plus_2"] = int(payload.cap_floor_year_plus_2)
+    if payload.cap_floor_year_plus_1_tentative is not None:
+        updates["cap_floor_year_plus_1_tentative"] = bool(payload.cap_floor_year_plus_1_tentative)
+    if payload.cap_floor_year_plus_2_tentative is not None:
+        updates["cap_floor_year_plus_2_tentative"] = bool(payload.cap_floor_year_plus_2_tentative)
+
+    # If the ceiling is being disabled in this same call, also clear the
+    # floor — keeping the floor while the ceiling is off would be
+    # ambiguous and re-introduces the same orphan class we fixed in 117.
+    if payload.salary_cap_enabled is False:
+        updates["cap_floor_enabled"] = False
+        updates["cap_floor"] = None
+        updates["cap_floor_year_plus_1"] = None
+        updates["cap_floor_year_plus_2"] = None
+        updates["cap_floor_year_plus_1_tentative"] = False
+        updates["cap_floor_year_plus_2_tentative"] = False
+
     # Start the trial clock if any premium feature is now enabled and the
     # league hasn't paid yet. Idempotent — won't reset an existing clock.
     new_cap = updates.get("salary_cap_enabled", league.get("salary_cap_enabled"))
@@ -1230,6 +1273,12 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
         "salary_cap_year_plus_1_tentative": bool(fresh.get("salary_cap_year_plus_1_tentative")),
         "salary_cap_year_plus_2_tentative": bool(fresh.get("salary_cap_year_plus_2_tentative")),
         "contract_buyouts_enabled": bool(fresh.get("contract_buyouts_enabled")),
+        "cap_floor_enabled": bool(fresh.get("cap_floor_enabled")),
+        "cap_floor": fresh.get("cap_floor"),
+        "cap_floor_year_plus_1": fresh.get("cap_floor_year_plus_1"),
+        "cap_floor_year_plus_2": fresh.get("cap_floor_year_plus_2"),
+        "cap_floor_year_plus_1_tentative": bool(fresh.get("cap_floor_year_plus_1_tentative")),
+        "cap_floor_year_plus_2_tentative": bool(fresh.get("cap_floor_year_plus_2_tentative")),
         "salary_retention_slots": fresh.get("salary_retention_slots"),
         "minors_enabled": bool(fresh.get("minors_enabled")),
         "premium_status": _premium_status(fresh),

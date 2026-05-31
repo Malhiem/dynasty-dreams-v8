@@ -53,6 +53,10 @@ const DEFAULT_CFG = {
   },
   waiver: {
     enabled: false,
+    // Iter 120 — Waiver Wire System + priority order
+    system_type: "auto_priority",
+    priority_order: "reverse_standings_serpentine",
+    manual_priority_order: [],
     processing_mode: "days",
     processing_days_count: 2,
     processing_schedule: [],
@@ -655,7 +659,7 @@ function WaiverVisibilityRadio({ label, value, onChange, testId }) {
   );
 }
 
-export function WaiverWireCard({ cfg, setCfg }) {
+export function WaiverWireCard({ cfg, setCfg, leagueTeams }) {
   const w = cfg.waiver;
   const set = (key) => (val) => setCfg((prev) => ({ ...prev, waiver: { ...prev.waiver, [key]: val } }));
   const setLimit = (key) => (val) =>
@@ -666,6 +670,28 @@ export function WaiverWireCard({ cfg, setCfg }) {
         claim_limits: { ...(prev.waiver.claim_limits || {}), [key]: val },
       },
     }));
+
+  // Iter 120 — auto-seed manual priority list with all teams the first
+  // time the LM picks "manual" so the page isn't a confusing empty list.
+  useEffect(() => {
+    if (w.enabled
+      && w.priority_order === "manual"
+      && (w.manual_priority_order || []).length === 0
+      && (leagueTeams || []).length > 0
+    ) {
+      set("manual_priority_order")(leagueTeams.map((t) => t.id));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [w.enabled, w.priority_order, leagueTeams?.length]);
+
+  const moveOrder = (idx, dir) => {
+    const next = [...(w.manual_priority_order || [])];
+    const swap = idx + dir;
+    if (swap < 0 || swap >= next.length) return;
+    [next[idx], next[swap]] = [next[swap], next[idx]];
+    set("manual_priority_order")(next);
+  };
+  const teamName = (id) => (leagueTeams || []).find((t) => t.id === id)?.name || id;
 
   // Inline validation: FA / Waiver cap must not exceed Total when set
   const limits = w.claim_limits || {};
@@ -685,7 +711,7 @@ export function WaiverWireCard({ cfg, setCfg }) {
   return (
     <Card className="bg-card border-border" data-testid="transactions-waiver-card">
       <CardHeader>
-        <CardTitle>Waiver Wire</CardTitle>
+        <CardTitle>Waivers</CardTitle>
         <CardDescription>
           Enable a separate waiver-wire rule set distinct from free-agency.
           When off, free-agency rules govern all add/drop flows.
@@ -707,6 +733,106 @@ export function WaiverWireCard({ cfg, setCfg }) {
         {w.enabled && (
           <div className="rounded-md border border-border p-4 space-y-5">
 
+            {/* Iter 120 — Waiver Wire System dropdown */}
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Waiver Wire System</Label>
+              <Select value={w.system_type} onValueChange={set("system_type")}>
+                <SelectTrigger className="bg-secondary border-border w-full md:w-80" data-testid="waiver-system-type">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-popover border-border z-50">
+                  <SelectItem value="auto_priority">Automated Priority Order</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {w.system_type === "auto_priority" && (
+              <div className="space-y-3 rounded-md border border-border p-3" data-testid="waiver-auto-priority-block">
+                <Label className="text-sm font-semibold">Priority Order</Label>
+                <RadioGroup
+                  value={w.priority_order}
+                  onValueChange={set("priority_order")}
+                  className="flex flex-col gap-3"
+                  data-testid="waiver-priority-order-group"
+                >
+                  <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border p-3">
+                    <RadioGroupItem value="reverse_standings_serpentine" data-testid="waiver-priority-serpentine" className="mt-0.5" />
+                    <span>
+                      <strong>Reverse Order of Standings — Serpentine</strong>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        When claims process, the lowest-ranked team in the current
+                        standings gets first pick, then the second lowest, and so on
+                        up to first place. The next round reverses: first place picks
+                        first, then second, down to last. Teams with no pending claims
+                        are skipped. In a 4-team league: 4, 3, 2, 1, 1, 2, 3, 4, 4, 3,
+                        2, 1, … until everyone is out of claims.
+                      </p>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border p-3">
+                    <RadioGroupItem value="reverse_standings" data-testid="waiver-priority-reverse" className="mt-0.5" />
+                    <span>
+                      <strong>Reverse Order of Standings (non-serpentine)</strong>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Same order every round: lowest-ranked team always picks first,
+                        first place always picks last. Round-robin until all claims
+                        are processed.
+                      </p>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border p-3">
+                    <RadioGroupItem value="manual" data-testid="waiver-priority-manual" className="mt-0.5" />
+                    <span>
+                      <strong>Manual</strong>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        League Administrator sets the priority order below. Same
+                        order applies every round.
+                      </p>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border p-3">
+                    <RadioGroupItem value="random" data-testid="waiver-priority-random" className="mt-0.5" />
+                    <span>
+                      <strong>Random</strong>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Each processing cycle assigns a fresh random order.
+                      </p>
+                    </span>
+                  </label>
+                </RadioGroup>
+
+                {w.priority_order === "manual" && (
+                  <div className="space-y-2 pt-1">
+                    <Label className="text-xs">Manual order (highest priority first)</Label>
+                    <div className="rounded-md border border-border max-h-72 overflow-y-auto" data-testid="waiver-manual-order-list">
+                      {(w.manual_priority_order || []).length === 0 ? (
+                        <div className="text-sm text-muted-foreground italic p-3">
+                          No teams yet — auto-seeds when leagueTeams loads.
+                        </div>
+                      ) : (w.manual_priority_order || []).map((tid, idx) => (
+                        <div key={tid} className="flex items-center justify-between gap-2 p-2 border-b border-border last:border-0" data-testid={`waiver-manual-row-${idx}`}>
+                          <div className="flex items-center gap-2">
+                            <GripVertical className="h-4 w-4 text-muted-foreground" />
+                            <span className="text-xs text-muted-foreground w-6">{idx + 1}.</span>
+                            <span className="text-sm font-medium">{teamName(tid)}</span>
+                          </div>
+                          <div className="flex gap-1">
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => moveOrder(idx, -1)} disabled={idx === 0} data-testid={`waiver-manual-up-${idx}`}>
+                              <ChevronUp className="h-4 w-4" />
+                            </Button>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => moveOrder(idx, +1)} disabled={idx === (w.manual_priority_order || []).length - 1} data-testid={`waiver-manual-down-${idx}`}>
+                              <ChevronDown className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <Separator />
             {/* Iter 119 — per-Setting claim limits */}
             <div>
               <div className="text-sm font-semibold mb-2">Max claims per Setting (1-500 or Unlimited)</div>
@@ -979,7 +1105,7 @@ export default function TransactionsConfigCards({ leagueId, leagueTeams }) {
       <ClaimsLimitsCard cfg={cfg} setCfg={setCfg} onSave={() => save(cfg)} saving={saving} />
       <ClaimRulesCard cfg={cfg} setCfg={setCfg} />
       <FreeAgencyCard cfg={cfg} setCfg={setCfg} leagueTeams={leagueTeams || []} />
-      <WaiverWireCard cfg={cfg} setCfg={setCfg} />
+      <WaiverWireCard cfg={cfg} setCfg={setCfg} leagueTeams={leagueTeams || []} />
       <div className="flex justify-end">
         <Button onClick={() => save(cfg)} disabled={saving} className="gap-2" data-testid="transactions-bottom-save-btn">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
