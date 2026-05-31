@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/hooks/use-toast";
+import OperationsConsole from "@/lovable/pages/site-admin/OperationsConsole";
 
 // Mock admin auth
 const CURRENT_USER = {
@@ -204,6 +205,8 @@ export default function SiteAdmin() {
       </header>
 
       <div className="max-w-[1600px] mx-auto px-6 py-6 space-y-6">
+        <OperationsConsole />
+
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {[

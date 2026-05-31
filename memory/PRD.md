@@ -165,6 +165,37 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **P2**: EAS Build for iOS/Android distribution
 - **P2**: Mobile app API wiring for Lovable features (React Native in /app/mobile)
 
+## Iter 118 (Feb 28, 2026) — Operations Console UI + crown push notifications
+
+**Operations Console (site admin):** new card at the top of the Site Admin
+page (`/site-admin`) that consumes the iter-116 `/api/admin/health-deep`
+endpoint and renders:
+  * service tiles (uptime, total requests, 5xx count, error rate %)
+  * traffic-light pills for MongoDB + each worker (live_scoring,
+    ownership_snapshot, tbd_deadline)
+  * sortable per-route table (count, 4xx, 5xx, err%, avg/p50/p95/max)
+    with status icons coloured against the threshold matrix (green ≤
+    500ms p95 & ≤1% errors · amber up to 1.5s p95 / 5% errors · red beyond)
+  * 15s auto-refresh with a Pause/Resume + Refresh-now button so admins
+    can pin a snapshot while investigating.
+
+**Crown push notifications:** `routes/awards.py` now fires Expo pushes
+the moment a team transitions to `championship_won` or `consolation_won`
+(False→True). Implementation:
+  * Detect first-time transitions only (idempotent across re-saves).
+  * Winning team owner gets `🏆 You won the Championship!` (or `🥈 ...
+    Consolation!`) with a `is_winner: true` payload.
+  * All other league members get `🏆 {team} won the Championship` with
+    `is_winner: false`.
+  * Payload includes `{type:"crown", event, league_id, team_id, season}`
+    so the mobile app can deep-link to the trophy room.
+  * Audit-log entry `crown_notification_sent` recorded for visibility.
+
+**Tests:** `tests/test_iter118_ops_console_crown_push.py` 5/5 PASS
+covering health-deep envelope shape, first-time vs repeat championship
+awards, and direct invocation of `_dispatch_crown_push` for both
+championship 🏆 and consolation 🥈 paths with a mocked `send_push`.
+
 ## Iter 117 (Feb 28, 2026) — League → Transactions configuration + salary-cap orphan bug fix
 
 **Bug fixed**: Zarek's Frozen team page showed "Salary cap is disabled for this league" even though the league had a $88M cap visible in admin settings. Root cause: when the commissioner toggled `salary_cap_enabled=False` via `PUT /api/leagues/{id}/admin/cap-settings`, only `salary_cap` was nulled — `salary_cap_year_plus_1` and `salary_cap_year_plus_2` were left as orphans. That created leagues with disabled cap + $88M Year+2 still present, confusing both the team page and any future re-enable. Fix: the disable path now nulls all three cap amounts + clears the two `*_tentative` flags. A one-time DB heal cleaned the existing Ice Kings record.

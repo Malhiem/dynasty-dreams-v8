@@ -128,6 +128,7 @@ async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate
     update_set: dict = {}
     update_unset: dict = {}
     changes: list = []
+    crown_event: Optional[str] = None  # "championship" | "consolation" | None
     field_map = [
         ("championship_won", "championship_won_at"),
         ("division_winner", "division_winner_at"),
@@ -140,6 +141,15 @@ async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate
         if v is True:
             update_set[db_field] = now
             changes.append(f"{db_field} set")
+            # Track crown transitions for push notifications (only on
+            # NEW awards — if the team already had this award we don't
+            # spam the league again).
+            if attr == "championship_won" and not team.get("championship_won_at"):
+                crown_event = "championship"
+            elif attr == "consolation_won" and not team.get("consolation_won_at"):
+                # Don't overwrite championship_event if both flipped in one
+                # request — championship takes precedence in the notif.
+                crown_event = crown_event or "consolation"
         elif v is False:
             update_unset[db_field] = ""
             changes.append(f"{db_field} cleared")
@@ -197,6 +207,23 @@ async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate
                                league_id, str(t.get("_id")), ex)
 
     fresh = await db.teams.find_one({"_id": team["_id"]})
+
+    # ── Crown push notifications (iter 118) ───────────────────────
+    # Fire once when a team transitions to championship_won / consolation_won.
+    # Sent to every league member EXCEPT the team owner being congratulated
+    # — that person gets a special "winner" notification with a stronger
+    # sound + emoji prefix. Best-effort: never block the response on push
+    # delivery; the helper already swallows exceptions internally.
+    if crown_event:
+        try:
+            import asyncio
+            asyncio.create_task(_dispatch_crown_push(
+                league=league, team=fresh, event=crown_event,
+            ))
+        except Exception as ex:
+            logger.warning("crown push dispatch failed league=%s team=%s ev=%s: %s",
+                           league_id, team_id, crown_event, ex)
+
     return {
         "team_id": team_id,
         "team_name": fresh.get("name"),
@@ -261,3 +288,74 @@ async def list_team_rewards(league_id: str):
     for r in rewards:
         r["_id"] = str(r["_id"])
     return {"league_id": league_id, "rewards": rewards}
+
+
+
+# ─── Crown push helper (iter 118) ──────────────────────────────────
+
+
+async def _dispatch_crown_push(league: dict, team: dict, event: str) -> None:
+    """Fire Expo push notifications for a championship/consolation crown.
+
+    `event` ∈ {"championship", "consolation"}. The winner gets a "You won!"
+    message; everyone else in the league gets a "Team X won..." message.
+    Best-effort — failures are logged, never raised.
+    """
+    from routes.push import send_push  # local import to avoid circular at module load
+
+    db = _db()
+    league_id = str(league.get("_id"))
+    team_name = team.get("name", "A team")
+    season = league.get("season") or "2025-2026"
+    league_name = league.get("name", "your league")
+
+    is_champ = event == "championship"
+    trophy = "🏆" if is_champ else "🥈"
+    title_winner = f"{trophy} You won the {'Championship' if is_champ else 'Consolation'}!"
+    body_winner = f"{league_name} · {season}. Congrats on the {'championship' if is_champ else 'consolation'} crown."
+    title_others = f"{trophy} {team_name} won the {'Championship' if is_champ else 'Consolation'}"
+    body_others = f"{league_name} · {season}. Better luck next year — or trade up your draft picks now."
+
+    # Distinct user_ids — pull the owner of the winning team + every other
+    # team's owner in the league.
+    winner_owner_id = str(team.get("owner_id") or "")
+    league_teams = await db.teams.find(
+        {"league_id": league_id},
+        {"owner_id": 1},
+    ).to_list(60)
+    other_owner_ids = [
+        str(t.get("owner_id")) for t in league_teams
+        if t.get("owner_id") and str(t.get("owner_id")) != winner_owner_id
+    ]
+
+    data_payload = {
+        "type": "crown",
+        "event": event,
+        "league_id": league_id,
+        "team_id": str(team.get("_id")),
+        "team_name": team_name,
+        "season": season,
+    }
+
+    if winner_owner_id:
+        await send_push(
+            [winner_owner_id], title_winner, body_winner,
+            data={**data_payload, "is_winner": True},
+        )
+    if other_owner_ids:
+        await send_push(
+            other_owner_ids, title_others, body_others,
+            data={**data_payload, "is_winner": False},
+        )
+
+    # Audit-log entry so commissioners can see the notification went out.
+    try:
+        await db.audit_log.insert_one({
+            "league_id": league_id,
+            "action": "crown_notification_sent",
+            "description": f"{trophy} {event.title()} crown notification dispatched for {team_name}",
+            "diff": {**data_payload, "recipients": 1 + len(other_owner_ids)},
+            "created_at": datetime.now(timezone.utc),
+        })
+    except Exception:
+        pass
