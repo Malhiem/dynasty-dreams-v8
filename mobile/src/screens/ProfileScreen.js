@@ -20,6 +20,13 @@ export default function ProfileScreen({ route, navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
 
+  // Crown deep-link params — set by `navigateFromPush` when the user taps
+  // a championship/consolation push. We show a celebratory banner at the
+  // top of the screen so the navigation has an obvious destination.
+  const highlightEvent = route?.params?.highlightEvent;       // "championship" | "consolation"
+  const isWinner = !!route?.params?.isWinner;
+  const highlightSeason = route?.params?.season;
+
   const load = useCallback(async () => {
     if (!username) return;
     try {
@@ -63,6 +70,33 @@ export default function ProfileScreen({ route, navigation }) {
   return (
     <SafeAreaView style={s.container}>
       <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00D2FF" />}>
+        {highlightEvent ? (
+          <View
+            style={[
+              s.crownBanner,
+              highlightEvent === 'championship' ? s.crownBannerChamp : s.crownBannerConsol,
+            ]}
+            testID={`crown-banner-${highlightEvent}`}
+          >
+            <Text style={s.crownBannerEmoji}>
+              {highlightEvent === 'championship' ? '🏆' : '🥈'}
+            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={s.crownBannerTitle}>
+                {isWinner
+                  ? (highlightEvent === 'championship'
+                      ? `You won the Championship!`
+                      : `You won the Consolation!`)
+                  : (highlightEvent === 'championship'
+                      ? `New Champion crowned`
+                      : `Consolation winner crowned`)}
+              </Text>
+              {highlightSeason ? (
+                <Text style={s.crownBannerSub}>{highlightSeason}</Text>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
         <View style={s.header}>
           <View style={s.avatar}><Text style={s.avatarText}>{profile.display_name?.[0]?.toUpperCase() || '?'}</Text></View>
           <Text style={s.username}>{profile.display_name?.toUpperCase()}</Text>
@@ -209,6 +243,18 @@ const s = StyleSheet.create({
   rankBadge: { backgroundColor: '#00D2FF20', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
   rankText: { color: '#00D2FF', fontSize: 11, fontWeight: '700' },
   teamStatsRow: { flexDirection: 'row', gap: 6, marginTop: 6 },
+  // Iter 119 — crown deep-link banner. Shown when the user taps a
+  // championship/consolation push notification; lives at the very top of
+  // the screen so the destination matches the notification's emoji.
+  crownBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    margin: 16, padding: 14, borderRadius: 12, borderWidth: 1,
+  },
+  crownBannerChamp: { backgroundColor: '#fbbf2422', borderColor: '#fbbf2466' },
+  crownBannerConsol: { backgroundColor: '#34d39922', borderColor: '#34d39955' },
+  crownBannerEmoji: { fontSize: 32 },
+  crownBannerTitle: { color: '#fff', fontSize: 16, fontWeight: '900', letterSpacing: -0.3 },
+  crownBannerSub: { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 },
   teamStat: { color: '#A1A1AA', fontSize: 11 },
   teamStatDim: { color: '#52525B', fontSize: 11 },
 });

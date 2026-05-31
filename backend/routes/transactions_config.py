@@ -108,6 +108,19 @@ class WaiverProcessingSchedule(BaseModel):
     time: str  # "HH:MM"
 
 
+WaiverVisibility = Literal["own", "all_teams", "all_teams_anonymous", "league_admin"]
+WaiverInjuredPolicy = Literal["off", "nhl_ir", "all_flags"]
+
+
+class WaiverClaimLimits(BaseModel):
+    """Waiver-section per-Setting claim caps (applied when waiver.enabled).
+    Each null = Unlimited; otherwise 1-500. Validation: FA and Waivers must
+    not exceed Total when Total is finite."""
+    total: Optional[int] = Field(default=None, ge=1, le=500)
+    fa: Optional[int] = Field(default=None, ge=1, le=500)
+    waivers: Optional[int] = Field(default=None, ge=1, le=500)
+
+
 class WaiverConfig(BaseModel):
     enabled: bool = False  # master toggle — separates waiver from FA rules
     processing_mode: WaiverProcessingMode = "days"
@@ -115,6 +128,15 @@ class WaiverConfig(BaseModel):
     processing_schedule: List[WaiverProcessingSchedule] = Field(default_factory=list)
     abuse_window_enabled: bool = False
     abuse_window_days: int = Field(default=3, ge=1, le=7)
+    # ── Iter 119 — waiver-section-specific overrides ──
+    claim_limits: WaiverClaimLimits = Field(default_factory=WaiverClaimLimits)
+    prevent_injured: WaiverInjuredPolicy = "off"
+    prevent_minors: bool = False
+    prevent_prospects: bool = False
+    pending_visibility: WaiverVisibility = "own"
+    failed_visibility: WaiverVisibility = "own"
+    force_drop_on_claim: bool = False
+    force_claim_on_drop: bool = False
 
 
 class DraftClaimRules(BaseModel):
@@ -169,6 +191,27 @@ def _validate_manual_priority(cfg: dict, team_ids_in_league: set[str]) -> None:
                                 detail=f"manual_priority_schedule team_order has unknown team_ids: {bad}")
 
 
+def _validate_waiver_claim_limits(cfg: dict) -> None:
+    """Per the iter 119 spec: when waiver-section claim caps are set, FA
+    and Waiver buckets must not exceed Total (when Total is finite). The
+    UI also flags this inline but the API is the contract-of-record."""
+    w = cfg.get("waiver") or {}
+    if not w.get("enabled"):
+        return
+    lim = w.get("claim_limits") or {}
+    total = lim.get("total")
+    if total is None:
+        return  # Total is unlimited, no constraint
+    fa = lim.get("fa")
+    wv = lim.get("waivers")
+    if fa is not None and fa > total:
+        raise HTTPException(status_code=400,
+                            detail=f"Waiver claim limits: Free Agency cap ({fa}) exceeds Total cap ({total}).")
+    if wv is not None and wv > total:
+        raise HTTPException(status_code=400,
+                            detail=f"Waiver claim limits: Waiver Wire cap ({wv}) exceeds Total cap ({total}).")
+
+
 # ─── Endpoints ───────────────────────────────────────────────────────
 
 
@@ -204,6 +247,7 @@ async def update_transactions_config(league_id: str, payload: TransactionsConfig
     team_ids = {str(t["_id"]) for t in teams}
     cfg_dict = payload.model_dump()
     _validate_manual_priority(cfg_dict, team_ids)
+    _validate_waiver_claim_limits(cfg_dict)
 
     await db.leagues.update_one(
         {"_id": ObjectId(league_id)},

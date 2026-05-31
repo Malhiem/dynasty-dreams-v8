@@ -58,6 +58,15 @@ const DEFAULT_CFG = {
     processing_schedule: [],
     abuse_window_enabled: false,
     abuse_window_days: 3,
+    // Iter 119 — waiver-section-specific overrides
+    claim_limits: { total: null, fa: null, waivers: null },
+    prevent_injured: "off",
+    prevent_minors: false,
+    prevent_prospects: false,
+    pending_visibility: "own",
+    failed_visibility: "own",
+    force_drop_on_claim: false,
+    force_claim_on_drop: false,
   },
   draft_claims: {
     allow_claims_before_draft: false,
@@ -584,9 +593,86 @@ function ScheduleRow({ row, idx, onChange, onRemove, leagueTeams, teamName }) {
 
 /* ───────────── Waiver Wire card ──────────────────────────────────── */
 
+function WaiverLimitField({ label, value, onChange, error, testId }) {
+  const unlimited = value === null || value === undefined || value === "";
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs">{label}</Label>
+      <div className="flex items-center gap-2">
+        <Select
+          value={unlimited ? "unlimited" : "limited"}
+          onValueChange={(v) => onChange(v === "unlimited" ? null : (value ?? 1))}
+        >
+          <SelectTrigger className="bg-secondary border-border w-32 h-8" data-testid={`${testId}-mode`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="bg-popover border-border z-50">
+            <SelectItem value="unlimited">Unlimited</SelectItem>
+            <SelectItem value="limited">Limited…</SelectItem>
+          </SelectContent>
+        </Select>
+        {!unlimited && (
+          <Input
+            type="number" min={1} max={500}
+            value={value ?? ""}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === "") return onChange(null);
+              const n = Math.min(Math.max(parseInt(raw, 10) || 0, 1), 500);
+              onChange(n);
+            }}
+            className={`bg-secondary border-border w-24 h-8 ${error ? "border-rose-500" : ""}`}
+            data-testid={`${testId}-input`}
+          />
+        )}
+      </div>
+      {error && (
+        <p className="text-[10px] text-rose-400" data-testid={`${testId}-error`}>{error}</p>
+      )}
+    </div>
+  );
+}
+
+function WaiverVisibilityRadio({ label, value, onChange, testId }) {
+  return (
+    <div className="space-y-2">
+      <Label className="text-sm">{label}</Label>
+      <RadioGroup value={value} onValueChange={onChange} className="flex flex-col gap-2" data-testid={`${testId}-group`}>
+        <label className="flex items-center gap-2 cursor-pointer text-sm">
+          <RadioGroupItem value="own" data-testid={`${testId}-own`} /> Own Team
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer text-sm">
+          <RadioGroupItem value="all_teams" data-testid={`${testId}-all`} /> All Teams
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer text-sm">
+          <RadioGroupItem value="all_teams_anonymous" data-testid={`${testId}-anon`} /> All Teams (anonymous — number only)
+        </label>
+        <label className="flex items-center gap-2 cursor-pointer text-sm">
+          <RadioGroupItem value="league_admin" data-testid={`${testId}-admin`} /> League Admin only
+        </label>
+      </RadioGroup>
+    </div>
+  );
+}
+
 export function WaiverWireCard({ cfg, setCfg }) {
   const w = cfg.waiver;
   const set = (key) => (val) => setCfg((prev) => ({ ...prev, waiver: { ...prev.waiver, [key]: val } }));
+  const setLimit = (key) => (val) =>
+    setCfg((prev) => ({
+      ...prev,
+      waiver: {
+        ...prev.waiver,
+        claim_limits: { ...(prev.waiver.claim_limits || {}), [key]: val },
+      },
+    }));
+
+  // Inline validation: FA / Waiver cap must not exceed Total when set
+  const limits = w.claim_limits || {};
+  const faError = limits.total != null && limits.fa != null && limits.fa > limits.total
+    ? `Exceeds Total (${limits.total})` : null;
+  const wvError = limits.total != null && limits.waivers != null && limits.waivers > limits.total
+    ? `Exceeds Total (${limits.total})` : null;
 
   const addSlot = () => {
     if (w.processing_schedule.length >= 3) {
@@ -619,7 +705,24 @@ export function WaiverWireCard({ cfg, setCfg }) {
         </div>
 
         {w.enabled && (
-          <div className="rounded-md border border-border p-4 space-y-4">
+          <div className="rounded-md border border-border p-4 space-y-5">
+
+            {/* Iter 119 — per-Setting claim limits */}
+            <div>
+              <div className="text-sm font-semibold mb-2">Max claims per Setting (1-500 or Unlimited)</div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <WaiverLimitField label="Total" value={limits.total} onChange={setLimit("total")} testId="waiver-limit-total" />
+                <WaiverLimitField label="Free Agency" value={limits.fa} onChange={setLimit("fa")} error={faError} testId="waiver-limit-fa" />
+                <WaiverLimitField label="Waiver Wire" value={limits.waivers} onChange={setLimit("waivers")} error={wvError} testId="waiver-limit-waivers" />
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-2">
+                Free Agency and Waiver Wire caps cannot exceed the Total cap when Total is finite.
+              </p>
+            </div>
+
+            <Separator />
+
+            {/* Processing window */}
             <div className="space-y-2">
               <Label className="text-sm">Claims processed</Label>
               <RadioGroup value={w.processing_mode} onValueChange={set("processing_mode")} className="flex flex-col gap-2">
@@ -701,6 +804,79 @@ export function WaiverWireCard({ cfg, setCfg }) {
 
             <Separator />
 
+            {/* Iter 119 — player filters */}
+            <div className="space-y-3">
+              <Label className="text-sm font-semibold">Player eligibility filters</Label>
+
+              <div className="space-y-2">
+                <Label className="text-xs">Prevent claims for injured players</Label>
+                <RadioGroup value={w.prevent_injured} onValueChange={set("prevent_injured")} className="flex flex-wrap gap-4" data-testid="waiver-prevent-injured-group">
+                  <label className="flex items-center gap-2 cursor-pointer text-sm">
+                    <RadioGroupItem value="off" data-testid="waiver-prevent-injured-off" /> Off
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm">
+                    <RadioGroupItem value="nhl_ir" data-testid="waiver-prevent-injured-ir" /> NHL Injury Reserve
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer text-sm">
+                    <RadioGroupItem value="all_flags" data-testid="waiver-prevent-injured-flags" /> All Injury Flags
+                  </label>
+                </RadioGroup>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Switch checked={w.prevent_minors} onCheckedChange={set("prevent_minors")} id="waiver-prevent-minors" data-testid="waiver-prevent-minors" />
+                <Label htmlFor="waiver-prevent-minors" className="cursor-pointer text-sm">
+                  Prevent claims on players in minors
+                </Label>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <Switch checked={w.prevent_prospects} onCheckedChange={set("prevent_prospects")} id="waiver-prevent-prospects" data-testid="waiver-prevent-prospects" />
+                <Label htmlFor="waiver-prevent-prospects" className="cursor-pointer text-sm">
+                  Prevent claims on prospects (per league prospect guidelines)
+                </Label>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Iter 119 — visibility */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <WaiverVisibilityRadio
+                label="Pending claims viewable by"
+                value={w.pending_visibility}
+                onChange={set("pending_visibility")}
+                testId="waiver-pending-visibility"
+              />
+              <WaiverVisibilityRadio
+                label="Failed claims viewable by"
+                value={w.failed_visibility}
+                onChange={set("failed_visibility")}
+                testId="waiver-failed-visibility"
+              />
+            </div>
+
+            <Separator />
+
+            {/* Iter 119 — force toggles */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <Switch checked={w.force_drop_on_claim} onCheckedChange={set("force_drop_on_claim")} id="waiver-force-drop" data-testid="waiver-force-drop-on-claim" />
+                <Label htmlFor="waiver-force-drop" className="cursor-pointer text-sm">
+                  Force drop on each claim (or move a player to injury reserve)
+                </Label>
+              </div>
+              <div className="flex items-center gap-3">
+                <Switch checked={w.force_claim_on_drop} onCheckedChange={set("force_claim_on_drop")} id="waiver-force-claim" data-testid="waiver-force-claim-on-drop" />
+                <Label htmlFor="waiver-force-claim" className="cursor-pointer text-sm">
+                  Force claim on each drop (require an add when dropping)
+                </Label>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Existing abuse rule */}
             <div className="space-y-2">
               <div className="flex items-center gap-3">
                 <Switch

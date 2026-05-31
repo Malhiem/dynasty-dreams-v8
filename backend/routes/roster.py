@@ -635,6 +635,18 @@ async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
     from utils.transactions_enforce import enforce_drop
     await enforce_drop(db, team_id=team_id, league=league or {})
 
+    # Iter 119 — Force-claim-on-drop: when the waiver section's
+    # `force_claim_on_drop` toggle is on, drops via this standalone
+    # endpoint are blocked. Owners must use the trade/claim/transaction
+    # endpoints that bundle an add with the drop.
+    tx_cfg = ((league or {}).get("transactions_config") or {})
+    waiver_cfg = (tx_cfg.get("waiver") or {})
+    if waiver_cfg.get("enabled") and waiver_cfg.get("force_claim_on_drop"):
+        raise HTTPException(
+            status_code=400,
+            detail="This league requires you to select a replacement player when dropping. Use a roster move that includes both an add and a drop.",
+        )
+
     await db.teams.update_one(
         {"_id": ObjectId(team_id)},
         {"$pull": {"roster": input.player_id}},

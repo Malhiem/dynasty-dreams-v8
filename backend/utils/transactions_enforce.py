@@ -64,6 +64,28 @@ async def _enforce_claim_limits(db, team_id: str, league: dict, tx_kind: TxKind)
     season = league.get("season") or "2025-2026"
     current_week = int(league.get("current_week") or 1)
 
+    # Iter 119 — when the waiver section is enabled AND this is a waiver
+    # claim, the waiver-section's per-Setting limits override the global
+    # season/week buckets. Force_* gates are enforced upstream in
+    # routes/waivers.py + routes/roster.py before this is called.
+    if tx_kind == "waiver" and cfg.waiver.enabled:
+        wlim = cfg.waiver.claim_limits
+        # All-time waiver count for this team (per-Setting, not per-season)
+        try:
+            cnt = await db.waiver_claims.count_documents({
+                "team_id": team_id,
+                "status": {"$in": ["won", "lost", "pending"]},
+            })
+        except Exception:
+            cnt = 0
+        if wlim.total is not None and cnt >= wlim.total:
+            raise HTTPException(status_code=400,
+                                detail=f"Waiver setting cap reached ({cnt}/{wlim.total}).")
+        if wlim.waivers is not None and cnt >= wlim.waivers:
+            raise HTTPException(status_code=400,
+                                detail=f"Waiver Wire cap reached ({cnt}/{wlim.waivers}).")
+        # Don't short-circuit — also honour global season/week caps below.
+
     # Season-wide
     season_total = await _count_claims(db, team_id, season, None, "fa") + \
                    await _count_claims(db, team_id, season, None, "waiver")
@@ -122,15 +144,49 @@ def _player_is_minor(player: dict, league: dict) -> bool:
     return (gp <= max_games) or (age is not None and age <= max_age)
 
 
-async def _enforce_player_filters(player: dict, league: dict) -> None:
+async def _enforce_player_filters(player: dict, league: dict, tx_kind: TxKind) -> None:
     cfg = _cfg(league)
     rules = cfg.claim_rules
+    # Global rules first
     if _player_is_injured(player, rules.prevent_injured):
         raise HTTPException(status_code=400,
                             detail=f"Claims for injured players are blocked by this league ({rules.prevent_injured}).")
     if rules.prevent_minors and _player_is_minor(player, league):
         raise HTTPException(status_code=400,
                             detail="Claims for minor-league-eligible players are blocked by this league.")
+    # Iter 119 — when waiver-specific filters are enabled and stricter, they
+    # take precedence for waiver claims.
+    if tx_kind == "waiver" and cfg.waiver.enabled:
+        w = cfg.waiver
+        if w.prevent_injured != "off" and _player_is_injured(player, w.prevent_injured):
+            raise HTTPException(status_code=400,
+                                detail=f"Waiver: claims for injured players ({w.prevent_injured}) are blocked.")
+        if w.prevent_minors and _player_is_minor(player, league):
+            raise HTTPException(status_code=400,
+                                detail="Waiver: claims for minor-league-eligible players are blocked.")
+        if w.prevent_prospects and _player_is_prospect(player, league):
+            raise HTTPException(status_code=400,
+                                detail="Waiver: claims for prospects are blocked by this league.")
+
+
+def _player_is_prospect(player: dict, league: dict) -> bool:
+    """Prospect = player flagged `is_prospect`, OR meeting the league's
+    `prospect_max_age` / `prospect_max_career_games` guideline. We default
+    to NHL convention: ≤24 yrs and ≤100 career games."""
+    if player.get("is_prospect") is True:
+        return True
+    gp = int(player.get("games_played") or 0)
+    bd = player.get("birth_date")
+    age = None
+    if bd:
+        try:
+            bd_dt = datetime.fromisoformat(bd.split("T")[0]) if isinstance(bd, str) else bd
+            age = (datetime.now(timezone.utc).replace(tzinfo=None) - bd_dt).days // 365
+        except Exception:
+            age = None
+    max_age = int(league.get("prospect_max_age") or 24)
+    max_games = int(league.get("prospect_max_career_games") or 100)
+    return (gp <= max_games) and (age is not None and age <= max_age)
 
 
 async def _enforce_lock_at_first_game(db, league: dict) -> None:
@@ -214,7 +270,7 @@ async def enforce_claim(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     await _enforce_claim_limits(db, team_id, league, tx_kind)
-    await _enforce_player_filters(player, league)
+    await _enforce_player_filters(player, league, tx_kind)
     await _enforce_lock_at_first_game(db, league)
     await _enforce_non_playoff_block(db, league, team)
     await _enforce_abuse_window(db, team_id, league, str(player["_id"]), tx_kind)

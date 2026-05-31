@@ -355,6 +355,18 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     from utils.transactions_enforce import enforce_claim
     await enforce_claim(db, team_id=str(team["_id"]), league=league, player=player, tx_kind="waiver")
 
+    # Iter 119 — Force-drop-on-claim: when the waiver section's
+    # `force_drop_on_claim` toggle is on, every waiver claim MUST nominate
+    # a drop_player_id (or move the player to IR — that path isn't
+    # implemented yet, so we require an explicit drop for now).
+    tx_cfg = (league.get("transactions_config") or {})
+    waiver_cfg = (tx_cfg.get("waiver") or {})
+    if waiver_cfg.get("enabled") and waiver_cfg.get("force_drop_on_claim") and not input.drop_player_id:
+        raise HTTPException(
+            status_code=400,
+            detail="This league requires every waiver claim to include a player to drop (or move to IR).",
+        )
+
     claim_doc = {
         "league_id": input.league_id,
         "team_id": str(team["_id"]),

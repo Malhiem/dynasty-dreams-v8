@@ -165,6 +165,51 @@ All 86 teams have auto-drafted 20–28-player rosters. Demo owner password: `Dem
 - **P2**: EAS Build for iOS/Android distribution
 - **P2**: Mobile app API wiring for Lovable features (React Native in /app/mobile)
 
+## Iter 119 (Mar 1, 2026) — Mobile crown deep-link + extended Waiver section
+
+**Mobile crown deep-link**
+* New `navigateFromPush(data)` helper in `mobile/src/navigation/AppNavigator.js`
+  routes tapped notifications based on `data.type`:
+  * `crown` → navigates to Profile (Trophy Case) with `highlightEvent`,
+    `isWinner`, `season`, `highlightLeagueId`, `highlightTeamId` route params.
+* `App.js` passes the helper into `usePushRegistration(userId, navigateFromPush)`
+  so the existing Expo push-response listener now deep-links instead of no-op.
+* `ProfileScreen.js` shows a celebratory banner at the top when the
+  highlight params are present — gold for championship 🏆, green for
+  consolation 🥈. testIDs `crown-banner-championship` /
+  `crown-banner-consolation`.
+* Verified by `test_navigation_helper_file_present` (asserts wiring) +
+  iter 118 crown-dispatch tests (asserts payload shape).
+
+**Extended Waiver section — added per the iter 117 follow-up**
+* New `waiver.claim_limits` bucket (Total / Free Agency / Waiver Wire,
+  each null=Unlimited or 1-500). Cross-field validation: FA and Waiver
+  caps cannot exceed Total when Total is finite — enforced both inline
+  in the UI and server-side in `PUT /api/leagues/{id}/transactions-config`.
+* `waiver.prevent_injured` (off | nhl_ir | all_flags) — separate from
+  the global `claim_rules.prevent_injured`; takes precedence on waiver
+  flows when set.
+* `waiver.prevent_minors`, `waiver.prevent_prospects` (new) — the
+  prospect filter falls back to NHL convention (≤24 yrs AND ≤100 GP)
+  if the league hasn't set `prospect_max_age` / `prospect_max_career_games`.
+* `waiver.pending_visibility` / `failed_visibility` — extended set with
+  the new `all_teams_anonymous` option (count only, names hidden).
+* `waiver.force_drop_on_claim` — every waiver claim MUST nominate a
+  `drop_player_id` or it 400s with a clear reason.
+* `waiver.force_claim_on_drop` — standalone `/api/roster/{id}/drop`
+  endpoint refuses dropss when on; the owner must pair the drop with
+  an add through an add-with-drop flow.
+
+**Enforcement**: `utils/transactions_enforce.py` extended:
+* Waiver-section-specific `claim_limits` take precedence on waiver flow.
+* Waiver-section player filters layered on top of the global ones.
+* New `_player_is_prospect(player, league)` helper.
+
+**Tests** — `tests/test_iter119_waiver_section_and_mobile_crown.py` (6/6 PASS):
+schema validation (FA>Total, Waiver>Total), full schema round-trip,
+force_drop_on_claim 400, force_claim_on_drop 400, mobile navigation
+helper wiring presence.
+
 ## Iter 118 (Feb 28, 2026) — Operations Console UI + crown push notifications
 
 **Operations Console (site admin):** new card at the top of the Site Admin

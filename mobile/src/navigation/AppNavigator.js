@@ -1,8 +1,51 @@
 import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../contexts/AuthContext';
+
+// Navigation ref — lets non-component callers (e.g. push notification
+// response handlers in App.js) navigate without prop-drilling through the
+// tree. See `navigateFromPush` below for the typed entrypoint we expose
+// for the crown-event deep-link.
+export const navigationRef = createNavigationContainerRef();
+
+/**
+ * Deep-link router for push notification taps. Reads `data.type` and routes
+ * accordingly. Safe to call before mount — silently no-ops if the navigator
+ * isn't ready yet.
+ *
+ * Supported types:
+ *   • "crown"   → Profile screen (Trophy Case section)
+ *   • default   → Notifications screen so the user sees the full list
+ */
+export function navigateFromPush(data) {
+  if (!navigationRef.isReady() || !data || typeof data !== 'object') return;
+  try {
+    if (data.type === 'crown') {
+      // Profile is inside the Home tab → navigate via nested route. We
+      // pass the league_id so the screen could (future enhancement) deep-
+      // scroll to the trophy that was just awarded.
+      navigationRef.navigate('Home', {
+        screen: 'Profile',
+        params: {
+          highlightLeagueId: data.league_id,
+          highlightTeamId: data.team_id,
+          highlightEvent: data.event,        // "championship" | "consolation"
+          season: data.season,
+          isWinner: !!data.is_winner,
+        },
+      });
+      return;
+    }
+    // Fallback for any other typed notification — show the full list
+    navigationRef.navigate('Home', { screen: 'Notifications' });
+  } catch (e) {
+    // Don't crash the app on a malformed payload
+    // eslint-disable-next-line no-console
+    console.warn('[push-nav] failed', e?.message || e);
+  }
+}
 
 // Screens
 import LoginScreen from '../screens/LoginScreen';
@@ -143,7 +186,7 @@ export default function AppNavigator() {
   if (loading) return null; // Splash screen would go here
 
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       {user ? <MainTabs /> : <AuthNavigator />}
     </NavigationContainer>
   );
