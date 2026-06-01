@@ -25,6 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Separator } from "@/components/ui/separator";
+import InfoHint from "@/components/ui/info-hint";
 
 const DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -179,7 +180,13 @@ export function ClaimsLimitsCard({ cfg, setCfg, onSave, saving }) {
   return (
     <Card className="bg-card border-border" data-testid="transactions-claim-limits-card">
       <CardHeader>
-        <CardTitle>Claims Limits</CardTitle>
+        <CardTitle>
+          Claims Limits
+          <InfoHint
+            testId="info-claims-limits"
+            text="Caps how many add/drop transactions each team can make. Per Season caps the entire year; Per Week resets every Tuesday at midnight. Leave a row blank for unlimited."
+          />
+        </CardTitle>
         <CardDescription>
           Per-team caps on roster claims. Toggle a field on to set a number,
           off to leave it unlimited. Season values are 1-600, weekly values
@@ -188,7 +195,10 @@ export function ClaimsLimitsCard({ cfg, setCfg, onSave, saving }) {
       </CardHeader>
       <CardContent className="space-y-4">
         <div>
-          <div className="text-sm font-semibold text-foreground/80 mb-2">Per Season</div>
+          <div className="text-sm font-semibold text-foreground/80 mb-2">
+            Per Season
+            <InfoHint testId="info-claims-season" text="Maximum claims per team for the entire regular season. Resets at draft day each year." />
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <LimitField label="Total" value={cfg.claim_limits.season.total} onChange={set("claim_limits.season.total")} max={600} testId="claims-season-total" />
             <LimitField label="Free Agency" value={cfg.claim_limits.season.fa} onChange={set("claim_limits.season.fa")} max={600} testId="claims-season-fa" />
@@ -197,7 +207,10 @@ export function ClaimsLimitsCard({ cfg, setCfg, onSave, saving }) {
         </div>
         <Separator />
         <div>
-          <div className="text-sm font-semibold text-foreground/80 mb-2">Per Week</div>
+          <div className="text-sm font-semibold text-foreground/80 mb-2">
+            Per Week
+            <InfoHint testId="info-claims-week" text="Rolling weekly cap. Resets every Tuesday at 12:00 AM local league time. Useful for stopping waiver-wire spam." />
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <LimitField label="Total" value={cfg.claim_limits.week.total} onChange={set("claim_limits.week.total")} max={100} testId="claims-week-total" />
             <LimitField label="Free Agency" value={cfg.claim_limits.week.fa} onChange={set("claim_limits.week.fa")} max={100} testId="claims-week-fa" />
@@ -224,7 +237,13 @@ export function ClaimRulesCard({ cfg, setCfg }) {
   return (
     <Card className="bg-card border-border" data-testid="transactions-claim-rules-card">
       <CardHeader>
-        <CardTitle>Claim & Drop Rules</CardTitle>
+        <CardTitle>
+          Claim & Drop Rules
+          <InfoHint
+            testId="info-claim-rules"
+            text="Universal guardrails on roster moves. These apply whether the team is grabbing a free agent or winning a waiver claim."
+          />
+        </CardTitle>
         <CardDescription>
           Universal rules across both free-agency and waiver flows.
         </CardDescription>
@@ -239,6 +258,10 @@ export function ClaimRulesCard({ cfg, setCfg }) {
           />
           <Label htmlFor="lock-first-game" className="cursor-pointer">
             Lock claims/drops at first game of the day
+            <InfoHint
+              testId="info-lock-at-first-game"
+              text="Once the day's first NHL puck drops, every roster locks until tomorrow. Prevents owners from yanking starters mid-night."
+            />
           </Label>
         </div>
 
@@ -251,11 +274,21 @@ export function ClaimRulesCard({ cfg, setCfg }) {
           />
           <Label htmlFor="allow-non-playoff" className="cursor-pointer">
             Allow teams not in playoffs to make claims/drops
+            <InfoHint
+              testId="info-allow-non-playoff"
+              text="When OFF, only teams active in the league playoffs can transact. Common in dynasty leagues to stop bottom teams from dumping for next year mid-postseason."
+            />
           </Label>
         </div>
 
         <div className="space-y-2">
-          <Label className="text-sm">Prevent claims for injured players</Label>
+          <Label className="text-sm">
+            Prevent claims for injured players
+            <InfoHint
+              testId="info-prevent-injured"
+              text="OFF = always allowed. NHL IR = block adds for players on the team's IR. All Flags = block adds for any flagged status (IR, DTD, suspended, healthy scratch)."
+            />
+          </Label>
           <RadioGroup
             value={cfg.claim_rules.prevent_injured}
             onValueChange={set("prevent_injured")}
@@ -368,7 +401,13 @@ export function FreeAgencyCard({ cfg, setCfg, leagueTeams }) {
   return (
     <Card className="bg-card border-border" data-testid="transactions-free-agency-card">
       <CardHeader>
-        <CardTitle>Free Agency</CardTitle>
+        <CardTitle>
+          Free Agency
+          <InfoHint
+            testId="info-free-agency"
+            text="How free-agent acquisitions are processed. Open = first-come-first-served, no waiting; Bidding = blind FAAB bids; Priority Order = highest-priority team wins."
+          />
+        </CardTitle>
         <CardDescription>
           How free-agent pickups are processed in this league.
         </CardDescription>
@@ -713,7 +752,13 @@ export function WaiverWireCard({ cfg, setCfg, leagueTeams }) {
   return (
     <Card className="bg-card border-border" data-testid="transactions-waiver-card">
       <CardHeader>
-        <CardTitle>Waivers</CardTitle>
+        <CardTitle>
+          Waivers
+          <InfoHint
+            testId="info-waivers"
+            text="Separate rule set for the waiver wire (priority claims) versus open free-agency. Turn off to make every add/drop run through free-agency rules."
+          />
+        </CardTitle>
         <CardDescription>
           Enable a separate waiver-wire rule set distinct from free-agency.
           When off, free-agency rules govern all add/drop flows.
@@ -737,7 +782,13 @@ export function WaiverWireCard({ cfg, setCfg, leagueTeams }) {
 
             {/* Iter 120 — Waiver Wire System dropdown */}
             <div className="space-y-2">
-              <Label className="text-sm font-semibold">Waiver Wire System</Label>
+              <Label className="text-sm font-semibold">
+                Waiver Wire System
+                <InfoHint
+                  testId="info-waiver-system-type"
+                  text="Automated Priority Order = teams win claims by current priority rank, recalculated each cycle. FAAB = teams bid blind dollars, highest bid wins (priority breaks ties)."
+                />
+              </Label>
               <Select value={w.system_type} onValueChange={set("system_type")}>
                 <SelectTrigger className="bg-secondary border-border w-full md:w-80" data-testid="waiver-system-type">
                   <SelectValue />
@@ -764,6 +815,10 @@ export function WaiverWireCard({ cfg, setCfg, leagueTeams }) {
                   <div className="flex-1">
                     <Label className="text-sm font-semibold text-emerald-200">
                       FAAB Customization
+                      <InfoHint
+                        testId="info-faab-customization"
+                        text="FAAB (Free Agent Acquisition Budget) gives every team a single budget at draft. Owners enter blind dollar bids on each claim; highest bid wins, ties broken by current priority order. Unspent budget can roll over or reset depending on the per-season setting below."
+                      />
                     </Label>
                     <p className="text-xs text-muted-foreground mt-0.5">
                       Configure the per-team blind-bid budget and the clearing
@@ -775,6 +830,10 @@ export function WaiverWireCard({ cfg, setCfg, leagueTeams }) {
                   <div className="space-y-1">
                     <Label htmlFor="waiver-faab-budget" className="text-xs">
                       FAAB Budget per Team ($)
+                      <InfoHint
+                        testId="info-faab-budget"
+                        text="Dollars each team gets to spend on FAAB bids this season. Common values: $100 (default), $200, $500 (deep markets). Reset at the start of each draft."
+                      />
                     </Label>
                     <Input
                       id="waiver-faab-budget"
@@ -797,6 +856,10 @@ export function WaiverWireCard({ cfg, setCfg, leagueTeams }) {
                   <div className="space-y-1">
                     <Label htmlFor="waiver-clearing-period" className="text-xs">
                       Waiver Clearing Period (days)
+                      <InfoHint
+                        testId="info-clearing-period"
+                        text="Number of days a claim sits before bids are evaluated. 0 = instant (bid placed, processed immediately). 1-2 days is standard. 7 = weekly process."
+                      />
                     </Label>
                     <Input
                       id="waiver-clearing-period"
@@ -822,7 +885,13 @@ export function WaiverWireCard({ cfg, setCfg, leagueTeams }) {
 
             {w.system_type === "auto_priority" && (
               <div className="space-y-3 rounded-md border border-border p-3" data-testid="waiver-auto-priority-block">
-                <Label className="text-sm font-semibold">Priority Order</Label>
+                <Label className="text-sm font-semibold">
+                  Priority Order
+                  <InfoHint
+                    testId="info-priority-order"
+                    text="How the priority queue is recalculated each waiver cycle. Serpentine reverses direction every round (snake draft style). Non-serpentine keeps the same order. Manual lets the commissioner drag teams. Random reseeds each cycle."
+                  />
+                </Label>
                 <RadioGroup
                   value={w.priority_order}
                   onValueChange={set("priority_order")}
@@ -1127,7 +1196,13 @@ export function TransactionsDraftRulesCard({ leagueId }) {
   return (
     <Card className="bg-card border-border" data-testid="transactions-draft-rules-card">
       <CardHeader>
-        <CardTitle>Draft Day Transactions</CardTitle>
+        <CardTitle>
+          Draft Day Transactions
+          <InfoHint
+            testId="info-draft-day-transactions"
+            text="Rules that apply only during the live draft. Useful for dynasty leagues that want to allow drops mid-draft to clear roster space for prospects."
+          />
+        </CardTitle>
         <CardDescription>Allow claim or drop activity around the league's scheduled draft.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

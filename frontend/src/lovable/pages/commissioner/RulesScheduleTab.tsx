@@ -21,6 +21,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import SmartNumberInput from "@/components/ui/smart-number-input";
 import CBABadge from "@/lovable/components/CBABadge";
 import VetoThresholdPreview from "@/lovable/components/VetoThresholdPreview";
+import InfoHint from "@/components/ui/info-hint";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 
@@ -203,6 +204,12 @@ export default function RulesScheduleTab() {
                 <div key={field.key} className="space-y-2">
                   <Label htmlFor={`rs-${field.key}`} className="text-sm">
                     {field.label}
+                    {field.helper && (
+                      <InfoHint
+                        testId={`info-${field.key}`}
+                        text={field.helper}
+                      />
+                    )}
                     {field.min !== undefined && field.max !== undefined && (
                       <span className="ml-2 text-xs text-muted-foreground">
                         ({field.min}–{field.max})
@@ -592,6 +599,10 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
           />
           <Label htmlFor="rs-cap-enabled" className="cursor-pointer">
             Enable salary cap
+            <InfoHint
+              testId="info-cap-enabled"
+              text="When ON, teams have a maximum payroll. Going over the cap blocks adds/trades. Pair with the Cap Floor below to also enforce a minimum payroll."
+            />
           </Label>
         </div>
         {enabled && (
@@ -665,6 +676,10 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
               />
               <Label htmlFor="rs-cap-floor-enabled" className="cursor-pointer text-sm">
                 Enable cap floor (minimum team payroll)
+                <InfoHint
+                  testId="info-cap-floor-enabled"
+                  text="Forces teams to spend at least this much every year. Used to stop tanking. Teams below the floor at season start trigger a Cap Floor Watchlist alert."
+                />
               </Label>
             </div>
             {floorEnabled && (
@@ -808,6 +823,10 @@ export function SalaryRetentionCard({ league, reloadLeague }: any) {
           />
           <Label htmlFor="rs-retention-enabled" className="cursor-pointer font-semibold">
             Allow salary retention in trades?
+            <InfoHint
+              testId="info-retention-enabled"
+              text="Mirrors the NHL CBA: when ON, the trading team can keep a % of a player's cap hit on their books to make the deal work. Configure the per-team slot count and max retained % below."
+            />
           </Label>
         </div>
         {enabled && (
@@ -881,6 +900,10 @@ export function ContractBuyoutsCard({ league, reloadLeague }: any) {
         <CardTitle className="flex items-center gap-2 text-lg">
           <ArrowRightLeft className="h-5 w-5 text-amber-400" />
           Contract Buyouts
+          <InfoHint
+            testId="info-contract-buyouts"
+            text="Per NHL CBA: a bought-out contract creates a dead-cap charge spread over 2× the remaining term, at roughly 1/3 of the AAV. Useful escape hatch for albatross contracts in dynasty leagues."
+          />
         </CardTitle>
         <CardDescription>
           When enabled, teams may buy out a player&apos;s remaining contract. Buyouts
