@@ -46,6 +46,25 @@ function defaultThresholds() {
     bad_p95: DEFAULT_BAD_P95,
     warn_err_pct: DEFAULT_WARN_ERR_PCT,
     bad_err_pct: DEFAULT_BAD_BAD_PCT,
+    // Iter 122-b: per-route overrides. Keys are `${method} ${route}` strings;
+    // values are { warn_p95, bad_p95 }. Falls back to the globals above when
+    // a route is not explicitly overridden.
+    per_route: {},
+  };
+}
+
+/**
+ * Pull the route-specific warn/bad p95 thresholds, falling back to the
+ * global values when an override hasn't been configured.
+ */
+function thresholdsForRoute(thresholds, route) {
+  const key = `${route.method} ${route.route}`;
+  const override = thresholds?.per_route?.[key];
+  return {
+    warn_p95: override?.warn_p95 ?? thresholds.warn_p95,
+    bad_p95: override?.bad_p95 ?? thresholds.bad_p95,
+    warn_err_pct: thresholds.warn_err_pct,
+    bad_err_pct: thresholds.bad_err_pct,
   };
 }
 
@@ -58,8 +77,9 @@ function countBreaches(routes, thresholds) {
   let bad = 0;
   let warn = 0;
   (routes || []).forEach((r) => {
-    if (r.p95_latency_ms > thresholds.bad_p95 || r.error_rate_pct > thresholds.bad_err_pct) bad++;
-    else if (r.p95_latency_ms > thresholds.warn_p95 || r.error_rate_pct > thresholds.warn_err_pct) warn++;
+    const t = thresholdsForRoute(thresholds, r);
+    if (r.p95_latency_ms > t.bad_p95 || r.error_rate_pct > t.bad_err_pct) bad++;
+    else if (r.p95_latency_ms > t.warn_p95 || r.error_rate_pct > t.warn_err_pct) warn++;
   });
   return { bad, warn };
 }
@@ -290,7 +310,10 @@ export default function OperationsConsole() {
         })()}
 
         {/* Per-route table */}
-        <div className="rounded-md border border-border overflow-x-auto">
+        <div
+          className="rounded-md border border-border overflow-x-auto"
+          data-testid="health-deep-section"
+        >
           <Table data-testid="ops-route-table">
             <TableHeader>
               <TableRow>
@@ -311,9 +334,11 @@ export default function OperationsConsole() {
               {sortedRoutes.length === 0 && (
                 <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground italic py-4">No traffic recorded yet.</TableCell></TableRow>
               )}
-              {sortedRoutes.map((r) => (
+              {sortedRoutes.map((r) => {
+                const rowT = thresholdsForRoute(thresholds, r);
+                return (
                 <TableRow key={`${r.method} ${r.route}`} data-testid={`ops-route-row`}>
-                  <TableCell><StatusDot p95={r.p95_latency_ms} errPct={r.error_rate_pct} thresholds={thresholds} /></TableCell>
+                  <TableCell><StatusDot p95={r.p95_latency_ms} errPct={r.error_rate_pct} thresholds={rowT} /></TableCell>
                   <TableCell className="font-mono text-xs">{r.method}</TableCell>
                   <TableCell className="font-mono text-xs truncate max-w-[420px]">{r.route}</TableCell>
                   <TableCell className="text-right text-xs">{r.count}</TableCell>
@@ -322,10 +347,11 @@ export default function OperationsConsole() {
                   <TableCell className="text-right text-xs">{r.error_rate_pct.toFixed(2)}</TableCell>
                   <TableCell className="text-right text-xs">{r.avg_latency_ms.toFixed(0)}</TableCell>
                   <TableCell className="text-right text-xs">{r.p50_latency_ms.toFixed(0)}</TableCell>
-                  <TableCell className={`text-right text-xs ${r.p95_latency_ms > thresholds.bad_p95 ? "text-rose-400 font-semibold" : r.p95_latency_ms > thresholds.warn_p95 ? "text-amber-400" : ""}`}>{r.p95_latency_ms.toFixed(0)}</TableCell>
+                  <TableCell className={`text-right text-xs ${r.p95_latency_ms > rowT.bad_p95 ? "text-rose-400 font-semibold" : r.p95_latency_ms > rowT.warn_p95 ? "text-amber-400" : ""}`}>{r.p95_latency_ms.toFixed(0)}</TableCell>
                   <TableCell className="text-right text-xs">{r.max_latency_ms.toFixed(0)}</TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </div>
@@ -336,21 +362,74 @@ export default function OperationsConsole() {
       </CardContent>
 
       {/* Iter 122 — Threshold settings dialog */}
-      <ThresholdsDialog open={showSettings} onOpenChange={setShowSettings} thresholds={thresholds} onSave={setThresholds} />
+      <ThresholdsDialog open={showSettings} onOpenChange={setShowSettings} thresholds={thresholds} onSave={setThresholds} routes={sortedRoutes} />
     </Card>
   );
 }
 
-function ThresholdsDialog({ open, onOpenChange, thresholds, onSave }) {
+function ThresholdsDialog({ open, onOpenChange, thresholds, onSave, routes }) {
   const [draft, setDraft] = useState(thresholds);
   useEffect(() => { if (open) setDraft(thresholds); }, [open, thresholds]);
   const upd = (k) => (v) => setDraft((d) => ({ ...d, [k]: v }));
   const reset = () => setDraft(defaultThresholds());
   const submit = () => { onSave(draft); onOpenChange(false); };
 
+  const setPerRoute = (routeKey, field, value) => {
+    setDraft((d) => {
+      const next = { ...(d.per_route || {}) };
+      const cur = { ...(next[routeKey] || {}) };
+      if (value === "" || value == null || Number.isNaN(Number(value))) {
+        delete cur[field];
+      } else {
+        cur[field] = Number(value);
+      }
+      if (Object.keys(cur).length === 0) {
+        delete next[routeKey];
+      } else {
+        next[routeKey] = cur;
+      }
+      return { ...d, per_route: next };
+    });
+  };
+
+  const clearRoute = (routeKey) => {
+    setDraft((d) => {
+      const next = { ...(d.per_route || {}) };
+      delete next[routeKey];
+      return { ...d, per_route: next };
+    });
+  };
+
+  // Top 10 routes by p95 — most likely candidates for per-route tuning.
+  // Plus any route that already has an override saved so it stays editable.
+  const topRoutes = useMemo(() => {
+    const byP95 = [...(routes || [])]
+      .sort((a, b) => (b.p95_latency_ms || 0) - (a.p95_latency_ms || 0))
+      .slice(0, 10);
+    const seen = new Set(byP95.map((r) => `${r.method} ${r.route}`));
+    const overrideKeys = Object.keys(draft.per_route || {});
+    overrideKeys.forEach((k) => {
+      if (!seen.has(k)) {
+        const [method, ...rest] = k.split(" ");
+        byP95.push({
+          method,
+          route: rest.join(" "),
+          p95_latency_ms: 0,
+          error_rate_pct: 0,
+          count: 0,
+        });
+        seen.add(k);
+      }
+    });
+    return byP95;
+  }, [routes, draft.per_route]);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="bg-popover border-border z-50" data-testid="ops-thresholds-dialog">
+      <DialogContent
+        className="bg-popover border-border z-50 max-w-2xl max-h-[80vh] overflow-y-auto"
+        data-testid="ops-thresholds-dialog"
+      >
         <DialogHeader>
           <DialogTitle>Operations Alert Thresholds</DialogTitle>
           <DialogDescription>
@@ -394,6 +473,95 @@ function ThresholdsDialog({ open, onOpenChange, thresholds, onSave }) {
               onChange={(e) => upd("bad_err_pct")(Number(e.target.value) || 0)}
               data-testid="ops-threshold-bad-err"
             />
+          </div>
+        </div>
+
+        {/* Iter 122-b — Per-route p95 latency overrides */}
+        <div className="border-t border-border pt-3 mt-2 space-y-2" data-testid="ops-per-route-section">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <Label className="text-sm font-semibold">Per-route p95 overrides</Label>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                Leave blank to inherit the global thresholds. Heavy
+                endpoints (e.g. live scoring, draft) often need higher
+                warn/critical limits than reads.
+              </p>
+            </div>
+          </div>
+          <div className="rounded-md border border-border overflow-x-auto">
+            <Table data-testid="ops-per-route-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="text-[10px]">Route</TableHead>
+                  <TableHead className="text-right text-[10px]">Current p95</TableHead>
+                  <TableHead className="text-right text-[10px]">Warn (ms)</TableHead>
+                  <TableHead className="text-right text-[10px]">Critical (ms)</TableHead>
+                  <TableHead className="w-8"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {topRoutes.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center text-muted-foreground italic text-xs py-3">
+                      No routes yet — generate some traffic to see them here.
+                    </TableCell>
+                  </TableRow>
+                )}
+                {topRoutes.map((r) => {
+                  const key = `${r.method} ${r.route}`;
+                  const override = draft.per_route?.[key] || {};
+                  const safeKey = key.replace(/[^a-zA-Z0-9_-]+/g, "-");
+                  return (
+                    <TableRow key={key}>
+                      <TableCell className="font-mono text-[10px] truncate max-w-[200px]" title={key}>
+                        <span className="opacity-60">{r.method}</span> {r.route}
+                      </TableCell>
+                      <TableCell className="text-right text-[10px]">
+                        {(r.p95_latency_ms || 0).toFixed(0)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={30000}
+                          placeholder={String(draft.warn_p95)}
+                          value={override.warn_p95 ?? ""}
+                          onChange={(e) => setPerRoute(key, "warn_p95", e.target.value)}
+                          className="h-7 text-[11px] w-20 ml-auto"
+                          data-testid={`latency-threshold-input-${safeKey}`}
+                        />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={60000}
+                          placeholder={String(draft.bad_p95)}
+                          value={override.bad_p95 ?? ""}
+                          onChange={(e) => setPerRoute(key, "bad_p95", e.target.value)}
+                          className="h-7 text-[11px] w-20 ml-auto"
+                          data-testid={`latency-threshold-bad-input-${safeKey}`}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {(override.warn_p95 != null || override.bad_p95 != null) && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 text-muted-foreground hover:text-rose-400"
+                            onClick={() => clearRoute(key)}
+                            data-testid={`latency-threshold-clear-${safeKey}`}
+                            title="Clear override"
+                          >
+                            <XCircle className="h-3 w-3" />
+                          </Button>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         </div>
         <DialogFooter>

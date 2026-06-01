@@ -50,6 +50,7 @@ interface ClaimHistory {
   winner: string;
   winningBid: number;
   processedAt: string;
+  winningTeamId?: string;
 }
 
 const Waivers = () => {
@@ -63,6 +64,10 @@ const Waivers = () => {
   const [liveHistory, setLiveHistory] = useState<any[]>([]);
   const [liveBudget, setLiveBudget] = useState<any>(null);
   const [liveOrder, setLiveOrder] = useState<any[]>([]);
+  // Iter 122 — pending_visibility audience controls whether non-owners can
+  // see pending claim team names. "all_teams_anonymous" masks them to
+  // "Team A", "Team B", … for everyone except the team owner + commissioner.
+  const [txConfig, setTxConfig] = useState<any>(null);
 
   // Claim modal state ────────────────────────────────────────────────
   const [claimModalOpen, setClaimModalOpen] = useState(false);
@@ -91,6 +96,10 @@ const Waivers = () => {
       setLiveBudget(bRes.data);
       setLiveOrder(oRes.data?.order || oRes.data || []);
     });
+    // Iter 122 — fetch transactions-config for the anonymous visibility audience
+    api.get(`/leagues/${league.id}/transactions-config`)
+      .then(({ data }) => { if (!cancelled) setTxConfig(data); })
+      .catch(() => { if (!cancelled) setTxConfig(null); });
     return () => { cancelled = true; };
   }, [league?.id, myTeam?.id]);
 
@@ -209,7 +218,42 @@ const Waivers = () => {
     winner: h.winning_team_name || "—",
     winningBid: h.winning_bid || 0,
     processedAt: (h.processed_at || "").slice(0, 10),
+    winningTeamId: h.winning_team_id || h.team_id || "",
   })), [liveHistory]);
+
+  // Iter 122 — Anonymous waiver visibility variant.
+  // When the league's waiver pending_visibility is set to "all_teams_anonymous",
+  // mask team names to "Team A", "Team B", ... for non-commissioners viewing
+  // OTHER owners' claims. Commissioner + the claim's own owner still see real
+  // names. We derive a stable label per teamId so the masking is consistent
+  // across renders + tabs (same team always shows as the same letter).
+  const isCommish = !!(
+    league?.commissioner_id && myTeam?.owner_id && league.commissioner_id === myTeam.owner_id
+  );
+  const waiverVisibility =
+    txConfig?.waiver?.pending_visibility || txConfig?.claim_rules?.pending_visibility || "own";
+  const isAnonymousMode =
+    waiverVisibility === "all_teams_anonymous" && !isCommish;
+
+  const teamLabelMap = useMemo(() => {
+    if (!isAnonymousMode) return null;
+    const sorted = [...(leagueTeams || [])].sort((a: any, b: any) =>
+      String(a.id).localeCompare(String(b.id)),
+    );
+    const map: Record<string, string> = {};
+    sorted.forEach((t: any, idx: number) => {
+      const letter = String.fromCharCode(65 + (idx % 26));
+      const suffix = idx >= 26 ? `${Math.floor(idx / 26) + 1}` : "";
+      map[t.id] = `Team ${letter}${suffix}`;
+    });
+    return map;
+  }, [isAnonymousMode, leagueTeams]);
+
+  const maskTeamName = (teamId: string | undefined, fallbackName: string | undefined) => {
+    if (!isAnonymousMode) return fallbackName || "—";
+    if (myTeam?.id && teamId === myTeam.id) return fallbackName || "You";
+    return teamLabelMap?.[teamId || ""] || "Anonymous";
+  };
 
   return (
     <AppLayout>
@@ -226,6 +270,24 @@ const Waivers = () => {
           leagueId={league?.id}
           teamsById={Object.fromEntries((leagueTeams || []).map((t) => [t.id, t]))}
         />
+
+        {/* Iter 122 — Anonymous waiver visibility banner */}
+        {isAnonymousMode && (
+          <div
+            className="rounded-md border border-purple-500/30 bg-purple-500/5 p-3 flex items-center gap-3"
+            data-testid="waiver-anonymous-mode"
+          >
+            <AlertTriangle className="h-4 w-4 text-purple-300 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-purple-200">Anonymous waiver mode</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Team identities are masked on pending claims and history while
+                waivers are in flight. Your own team always shows as "You" and
+                names reveal after the league commissioner switches visibility.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* FAAB Overview */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -425,14 +487,30 @@ const Waivers = () => {
               <CardContent>
                 <div className="space-y-4">
                   {claimHistory.map((claim) => (
-                    <div key={claim.id} className="flex items-center justify-between p-4 rounded-lg bg-secondary/30">
+                    <div
+                      key={claim.id}
+                      className="flex items-center justify-between p-4 rounded-lg bg-secondary/30"
+                      data-testid={`waiver-history-row-${claim.id}`}
+                    >
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center text-xs font-bold">
                           {claim.team}
                         </div>
                         <div>
                           <p className="font-medium">{claim.player}</p>
-                          <p className="text-sm text-muted-foreground">Won by <TeamLink name={claim.winner} /></p>
+                          <p className="text-sm text-muted-foreground">
+                            Won by{" "}
+                            {isAnonymousMode ? (
+                              <span
+                                className="font-medium text-purple-300"
+                                data-testid={`waiver-history-winner-anon-${claim.id}`}
+                              >
+                                {maskTeamName(claim.winningTeamId, claim.winner)}
+                              </span>
+                            ) : (
+                              <TeamLink name={claim.winner} />
+                            )}
+                          </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-4">

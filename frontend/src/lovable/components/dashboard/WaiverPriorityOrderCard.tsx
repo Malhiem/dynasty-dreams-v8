@@ -106,19 +106,49 @@ export default function WaiverPriorityOrderCard({ leagueId, teamsById }) {
         </div>
       </div>
 
-      {/* Iter 122 — Full queue with the user's team highlighted */}
+      {/* Iter 122 — Full queue with the user's team highlighted +
+          explicit "Next up" indicator on rank #1 visible to all viewers */}
       {queue.length > 0 && (
         <div className="rounded-md border border-amber-500/20 bg-background/30 p-2" data-testid="waiver-priority-queue">
+          {/* Iter 122-b: "Next team up" headline so every owner sees who
+              is on the hook for the next contested claim, not just the
+              user whose team happens to be #1. */}
+          {queue[0] && (
+            <div
+              className="mb-2 flex items-center gap-2 px-2 py-1.5 rounded bg-amber-500/15 border border-amber-500/40"
+              data-testid="waiver-next-team-up"
+            >
+              <Crown className="h-3.5 w-3.5 text-amber-300 flex-shrink-0" />
+              <span className="text-[10px] uppercase tracking-wide text-amber-300/80">Next up</span>
+              <span
+                className="text-xs font-semibold text-amber-100 truncate"
+                data-testid="waiver-next-team-up-name"
+              >
+                {queue[0].team_name}
+              </span>
+              <span className="ml-auto text-[10px] text-amber-300/70">
+                Rank #1{priorityData?.my_team_id === queue[0].team_id ? " · that's you" : ""}
+              </span>
+            </div>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-1">
             {queue.map((row) => {
               const isMe = priorityData?.my_team_id === row.team_id;
+              const isFirst = row.rank === 1;
               return (
                 <div
                   key={row.team_id}
-                  className={`text-xs px-2 py-1 rounded flex items-center gap-2 ${isMe ? "bg-emerald-500/15 text-emerald-200 font-semibold border border-emerald-500/40" : "text-foreground/80"}`}
+                  className={`text-xs px-2 py-1 rounded flex items-center gap-2 ${
+                    isMe
+                      ? "bg-emerald-500/15 text-emerald-200 font-semibold border border-emerald-500/40"
+                      : isFirst
+                        ? "bg-amber-500/10 text-amber-200 font-semibold border border-amber-500/30"
+                        : "text-foreground/80"
+                  }`}
                   data-testid={isMe ? "waiver-queue-me" : "waiver-queue-row"}
                 >
                   <span className="text-muted-foreground w-6 text-right">{row.rank}.</span>
+                  {isFirst && <Crown className="h-3 w-3 text-amber-300 flex-shrink-0" />}
                   <span className="truncate">{row.team_name}</span>
                   {isMe && <span className="ml-auto text-[10px] uppercase tracking-wide">you</span>}
                 </div>
