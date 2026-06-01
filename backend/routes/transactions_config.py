@@ -110,7 +110,7 @@ class WaiverProcessingSchedule(BaseModel):
 
 WaiverVisibility = Literal["own", "all_teams", "all_teams_anonymous", "league_admin"]
 WaiverInjuredPolicy = Literal["off", "nhl_ir", "all_flags"]
-WaiverSystemType = Literal["auto_priority"]
+WaiverSystemType = Literal["auto_priority", "faab"]
 WaiverPriorityOrder = Literal[
     "reverse_standings_serpentine",
     "reverse_standings",
@@ -152,6 +152,12 @@ class WaiverConfig(BaseModel):
     failed_visibility: WaiverVisibility = "own"
     force_drop_on_claim: bool = False
     force_claim_on_drop: bool = False
+    # ── Iter 126 — FAAB system settings ──
+    # Surface when system_type == "faab". Per-team budget + clearing period.
+    # `processing_days_count` continues to drive the clearing window for
+    # both auto_priority and faab systems so existing UI bindings still
+    # work end-to-end.
+    faab_budget: int = Field(default=100, ge=0, le=10000)
 
 
 class DraftClaimRules(BaseModel):

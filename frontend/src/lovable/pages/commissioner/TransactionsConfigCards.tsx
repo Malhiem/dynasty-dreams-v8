@@ -71,6 +71,8 @@ const DEFAULT_CFG = {
     failed_visibility: "own",
     force_drop_on_claim: false,
     force_claim_on_drop: false,
+    // Iter 126 — FAAB system settings (visible when system_type == "faab")
+    faab_budget: 100,
   },
   draft_claims: {
     allow_claims_before_draft: false,
@@ -741,10 +743,82 @@ export function WaiverWireCard({ cfg, setCfg, leagueTeams }) {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent className="bg-popover border-border z-50">
-                  <SelectItem value="auto_priority">Automated Priority Order</SelectItem>
+                  <SelectItem value="auto_priority" data-testid="waiver-system-auto-priority">Automated Priority Order</SelectItem>
+                  <SelectItem value="faab" data-testid="waiver-system-faab">Free Agent Acquisition Budget (FAAB)</SelectItem>
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                {w.system_type === "faab"
+                  ? "Teams bid blind FAAB dollars on claims; highest bid wins (priority order tiebreaks ties)."
+                  : "Highest priority team wins each claim; the order recalculates each processing cycle."}
+              </p>
             </div>
+
+            {/* Iter 126 — FAAB customization (visible only when FAAB system) */}
+            {w.system_type === "faab" && (
+              <div
+                className="space-y-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-4"
+                data-testid="waiver-faab-block"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex-1">
+                    <Label className="text-sm font-semibold text-emerald-200">
+                      FAAB Customization
+                    </Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Configure the per-team blind-bid budget and the clearing
+                      window before winning bids are processed.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="waiver-faab-budget" className="text-xs">
+                      FAAB Budget per Team ($)
+                    </Label>
+                    <Input
+                      id="waiver-faab-budget"
+                      type="number"
+                      min={0}
+                      max={10000}
+                      value={w.faab_budget ?? ""}
+                      onChange={(e) => {
+                        const v = e.target.value === "" ? null : Number(e.target.value);
+                        set("faab_budget")(v ?? 0);
+                      }}
+                      data-testid="waiver-faab-budget-input"
+                      placeholder="100"
+                      className="bg-background"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Reset per season at draft. Common values: $100 (default), $500 (deep markets).
+                    </p>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="waiver-clearing-period" className="text-xs">
+                      Waiver Clearing Period (days)
+                    </Label>
+                    <Input
+                      id="waiver-clearing-period"
+                      type="number"
+                      min={0}
+                      max={7}
+                      value={w.processing_days_count ?? ""}
+                      onChange={(e) => {
+                        const v = e.target.value === "" ? 0 : Number(e.target.value);
+                        set("processing_days_count")(Math.max(0, Math.min(7, v)));
+                      }}
+                      data-testid="waiver-clearing-period-input"
+                      placeholder="1"
+                      className="bg-background"
+                    />
+                    <p className="text-[10px] text-muted-foreground">
+                      Days a claim sits before bids are evaluated. 0 = instant.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {w.system_type === "auto_priority" && (
               <div className="space-y-3 rounded-md border border-border p-3" data-testid="waiver-auto-priority-block">

@@ -76,30 +76,6 @@ const sections: SectionSpec[] = [
       },
     ],
   },
-  {
-    title: "Waivers",
-    description: "FAAB budgets + waiver clearing period.",
-    icon: <Trophy className="h-5 w-5 text-emerald-400" />,
-    testid: "rules-schedule-waivers-card",
-    fields: [
-      {
-        key: "waiver_faab_budget",
-        label: "FAAB Budget per Team",
-        min: 0,
-        max: 10000,
-        unit: "$",
-        defaultPlaceholder: "100",
-      },
-      {
-        key: "waiver_period_days",
-        label: "Waiver Period (days)",
-        min: 0,
-        max: 7,
-        helper: "Days a claim sits before processing.",
-        defaultPlaceholder: "1",
-      },
-    ],
-  },
 ];
 
 const ALL_KEYS = sections.flatMap((s) => s.fields.map((f) => f.key));
