@@ -37,11 +37,42 @@ async def _evaluate_conditions(trade): return await _deps["_evaluate_conditions"
 
 
 def _enforce_trade_deadline(league: dict) -> None:
-    """Reject new trade proposals once the league's trade deadline week has
-    passed. Reads `trade_deadline_week` from `db.leagues` (single source of
-    truth) and the league's `current_week`. No-op when either is unset (i.e.
-    the league hasn't configured a deadline yet — preserves legacy behaviour).
+    """Reject new trade proposals once the league's trade deadline has passed.
+
+    Two layers of enforcement (newest takes precedence):
+      1. `trade_deadline_at` (ISO 8601 datetime, Iter 128) — if present and
+         the current UTC time is past it, block. This is the exact-moment
+         lock that commissioners can set in admin → Trade Settings.
+      2. `trade_deadline_week` (legacy week-number) — if the league has a
+         `current_week` past the deadline week, block.
+
+    Either layer can be unset; missing values are silently skipped to
+    preserve legacy behaviour for leagues that never configured a deadline.
     """
+    # ── Layer 1: explicit datetime ─────────────────────────────────
+    deadline_at = league.get("trade_deadline_at")
+    if deadline_at:
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            dt = _dt.fromisoformat(str(deadline_at).replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_tz.utc)
+            now = _dt.now(_tz.utc)
+            if now >= dt:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Trade deadline ({dt.isoformat()}) has passed; "
+                        "new proposals are locked."
+                    ),
+                )
+        except HTTPException:
+            raise
+        except (ValueError, TypeError):
+            # Malformed datetime — fall through to week-based check.
+            pass
+
+    # ── Layer 2: legacy week number ────────────────────────────────
     deadline = league.get("trade_deadline_week")
     current = league.get("current_week")
     try:

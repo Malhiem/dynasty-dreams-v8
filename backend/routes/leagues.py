@@ -92,6 +92,7 @@ class LeagueResponse(BaseModel):
     trade_review_period_hours: Optional[int] = None
     trade_veto_threshold_pct: Optional[int] = None
     trade_deadline_week: Optional[int] = None
+    trade_deadline_at: Optional[str] = None
     waiver_faab_budget: Optional[int] = None
     waiver_period_days: Optional[int] = None
     playoff_teams: Optional[int] = None
@@ -248,6 +249,7 @@ def _league_to_response(league: dict) -> LeagueResponse:
         trade_review_period_hours=league.get("trade_review_period_hours"),
         trade_veto_threshold_pct=league.get("trade_veto_threshold_pct"),
         trade_deadline_week=league.get("trade_deadline_week"),
+        trade_deadline_at=league.get("trade_deadline_at"),
         waiver_faab_budget=league.get("waiver_faab_budget"),
         waiver_period_days=league.get("waiver_period_days"),
         playoff_teams=league.get("playoff_teams"),
@@ -1320,6 +1322,11 @@ class LeagueUpdate(BaseModel):
     trade_review_period_hours: Optional[int] = Field(default=None, ge=0, le=168)
     trade_veto_threshold_pct: Optional[int] = Field(default=None, ge=0, le=100)
     trade_deadline_week: Optional[int] = Field(default=None, ge=1, le=30)
+    # Iter 128 — explicit trade deadline datetime (ISO 8601, UTC). When set,
+    # takes precedence over `trade_deadline_week`. Allows the LM to specify a
+    # precise moment (e.g. "March 7, 2026 at 3:00 PM ET") rather than a coarse
+    # week number. None = fall back to week-based enforcement.
+    trade_deadline_at: Optional[str] = Field(default=None, max_length=40)
     # Waiver settings
     waiver_faab_budget: Optional[int] = Field(default=None, ge=0, le=10000)
     waiver_period_days: Optional[int] = Field(default=None, ge=0, le=7)
@@ -1410,6 +1417,7 @@ _LEAGUE_UPDATE_ALLOWED = {
     "is_private", "name", "roster_spots", "bench_spots", "minors_spots",
     "scoring_format", "max_teams", "keepers_allowed", "entry_fee",
     "trade_review_period_hours", "trade_veto_threshold_pct", "trade_deadline_week",
+    "trade_deadline_at",
     "waiver_faab_budget", "waiver_period_days",
     "playoff_teams", "playoff_start_week", "playoff_rounds", "playoff_end_week",
     "regular_season_weeks",

@@ -85,6 +85,10 @@ export default function RulesScheduleTab() {
   const { league, reloadLeague } = useActiveLeague();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+  // Iter 128 — exact trade deadline datetime. Stored separately from the
+  // numeric `draft` map since this value is an ISO string and shouldn't be
+  // run through `parseInt` in buildPayload. Bound to <Input type="datetime-local">.
+  const [deadlineAt, setDeadlineAt] = useState<string>("");
 
   // Seed local draft from the league document
   useEffect(() => {
@@ -95,14 +99,34 @@ export default function RulesScheduleTab() {
       next[key] = v === null || v === undefined ? "" : String(v);
     }
     setDraft(next);
-  }, [league?.id, ...ALL_KEYS.map((k) => (league as any)?.[k])]);
+    // Iter 128 — seed the deadline picker; datetime-local needs "YYYY-MM-DDTHH:mm" form
+    const rawAt = (league as any)?.trade_deadline_at;
+    if (rawAt) {
+      try {
+        const d = new Date(rawAt);
+        if (!Number.isNaN(d.getTime())) {
+          // Convert UTC ISO → local "YYYY-MM-DDTHH:mm" for the input
+          const pad = (n: number) => String(n).padStart(2, "0");
+          setDeadlineAt(
+            `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+          );
+        } else {
+          setDeadlineAt("");
+        }
+      } catch {
+        setDeadlineAt("");
+      }
+    } else {
+      setDeadlineAt("");
+    }
+  }, [league?.id, ...ALL_KEYS.map((k) => (league as any)?.[k]), (league as any)?.trade_deadline_at]);
 
   const onChange = (key: string, value: string) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
   };
 
-  const buildPayload = (): Record<string, number> | null => {
-    const payload: Record<string, number> = {};
+  const buildPayload = (): Record<string, number | string | null> | null => {
+    const payload: Record<string, number | string | null> = {};
     for (const section of sections) {
       for (const field of section.fields) {
         const raw = (draft[field.key] ?? "").trim();
@@ -124,6 +148,22 @@ export default function RulesScheduleTab() {
         if (current !== parsed) payload[field.key] = parsed;
       }
     }
+
+    // ── Iter 128: trade_deadline_at (local datetime → ISO UTC) ──
+    const currentAt = (league as any)?.trade_deadline_at || null;
+    const trimmed = deadlineAt.trim();
+    if (trimmed === "") {
+      if (currentAt) payload.trade_deadline_at = null;
+    } else {
+      const dt = new Date(trimmed);
+      if (Number.isNaN(dt.getTime())) {
+        toast.error("Trade deadline date/time is invalid");
+        return null;
+      }
+      const iso = dt.toISOString();
+      if (currentAt !== iso) payload.trade_deadline_at = iso;
+    }
+
     return payload;
   };
 
@@ -244,6 +284,48 @@ export default function RulesScheduleTab() {
                       pct={parseInt(draft.trade_veto_threshold_pct || "0", 10)}
                       testId="rules-schedule-veto-preview"
                     />
+                  )}
+                  {/* Iter 128 — exact trade deadline date+time picker */}
+                  {field.key === "trade_deadline_week" && draft.trade_deadline_week && (
+                    <div
+                      className="space-y-1 mt-3 p-3 rounded-md border border-amber-500/30 bg-amber-500/5"
+                      data-testid="trade-deadline-at-block"
+                    >
+                      <Label htmlFor="rs-trade-deadline-at" className="text-xs flex items-center">
+                        Exact Trade Deadline (date &amp; time)
+                        <InfoHint
+                          testId="info-trade-deadline-at"
+                          text="Optional: pin the deadline to an exact moment instead of waiting until the end of the configured week. When set, this datetime takes precedence over the week number. Saved in your local timezone and enforced UTC-server-side."
+                        />
+                      </Label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id="rs-trade-deadline-at"
+                          type="datetime-local"
+                          value={deadlineAt}
+                          onChange={(e) => setDeadlineAt(e.target.value)}
+                          className="bg-secondary border-border max-w-xs"
+                          data-testid="rules-schedule-trade-deadline-at-input"
+                        />
+                        {deadlineAt && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs text-muted-foreground hover:text-rose-300"
+                            onClick={() => setDeadlineAt("")}
+                            data-testid="rules-schedule-trade-deadline-at-clear"
+                          >
+                            Clear
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        {deadlineAt
+                          ? `Trades lock at ${new Date(deadlineAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })} (your local time).`
+                          : "Leave blank to use the week-end fallback from the value above."}
+                      </p>
+                    </div>
                   )}
                 </div>
               ))}
