@@ -169,6 +169,113 @@ async def get_league_transactions(
     return {"league_id": league_id, "transactions": out, "count": len(out)}
 
 
+# ─── Iter 125: Trade History dedicated endpoint ────────────────────────
+# Powers the League History → Transactions → Trades view with an A/B
+# switch between Executed and Vetoed trades. Each row carries
+# proposer/target (From/To), veto vote count, executed/vetoed timestamp,
+# and a compact asset summary for both sides.
+def _summarize_assets(assets: list[dict]) -> list[str]:
+    """Compact human-readable summary of trade assets for table display."""
+    out: list[str] = []
+    for a in (assets or []):
+        kind = (a or {}).get("asset_type") or "asset"
+        if kind == "player":
+            name = a.get("player_name") or "Unknown player"
+            pos = a.get("position") or ""
+            out.append(f"{name}{f' ({pos})' if pos else ''}")
+        elif kind == "pick":
+            year = a.get("pick_year")
+            rnd = a.get("pick_round")
+            if year and rnd:
+                out.append(f"{year} R{rnd}")
+            else:
+                # Pick reference by id only — fall back to short slug
+                pid = a.get("pick_id") or ""
+                out.append(f"Pick {pid[-4:]}" if pid else "Draft pick")
+        elif kind == "faab":
+            amt = a.get("faab_amount") or 0
+            out.append(f"${amt} FAAB")
+        else:
+            out.append(kind)
+    return out
+
+
+@router.get("/leagues/{league_id}/trade-history")
+async def get_league_trade_history(
+    league_id: str,
+    status: Optional[str] = "executed",
+    team_id: Optional[str] = None,
+    position: Optional[str] = None,
+    limit: int = 50,
+):
+    """Returns trade rows for the League History Trades view.
+
+    Filters:
+      - `status`:   "executed" (default) or "vetoed".
+      - `team_id`:  rows where the team is proposer OR target.
+      - `position`: matches any asset.player.position on either side
+                    (C / W / D / G; W matches LW + RW).
+      - `limit`:    1..500, default 50.
+    """
+    db = _deps["db"]
+    if status not in ("executed", "vetoed"):
+        status = "executed"
+    query: dict = {"league_id": league_id, "status": status}
+    if team_id:
+        query["$or"] = [{"proposer_team_id": team_id}, {"target_team_id": team_id}]
+
+    rows = (
+        await db.trades.find(query)
+        .sort("processed_at", -1)
+        .limit(max(1, min(limit, 500)))
+        .to_list(limit)
+    )
+
+    # Position filter — applied client-server side after fetch since the
+    # asset shape stores `position` per player asset and we want to match
+    # either side.
+    pos_targets: set[str] = set()
+    if position:
+        p = position.upper()
+        pos_targets = {"LW", "RW", "W"} if p == "W" else {p}
+
+    out: list[dict] = []
+    for t in rows:
+        offered = t.get("assets_offered") or []
+        requested = t.get("assets_requested") or []
+        if pos_targets:
+            all_positions = {
+                ((a or {}).get("position") or "").upper() for a in (offered + requested)
+            }
+            if not (all_positions & pos_targets):
+                continue
+        votes = t.get("votes") or {}
+        out.append({
+            "id": str(t["_id"]),
+            "status": t.get("status"),
+            "from_team_id": t.get("proposer_team_id"),
+            "from_team_name": t.get("proposer_team_name") or "—",
+            "to_team_id": t.get("target_team_id"),
+            "to_team_name": t.get("target_team_name") or "—",
+            "from_assets": _summarize_assets(offered),
+            "to_assets": _summarize_assets(requested),
+            "from_asset_positions": [
+                (a.get("position") or "").upper() for a in offered if (a or {}).get("position")
+            ],
+            "to_asset_positions": [
+                (a.get("position") or "").upper() for a in requested if (a or {}).get("position")
+            ],
+            "veto_count": int(votes.get("veto") or 0),
+            "approve_count": int(votes.get("approve") or 0),
+            "voters_total": len(votes.get("choices") or {}),
+            "submitted_at": t.get("submitted_at"),
+            "processed_at": t.get("processed_at"),
+            "message": t.get("message"),
+            "conditional": bool(t.get("conditional")),
+        })
+    return {"league_id": league_id, "status": status, "trades": out, "count": len(out)}
+
+
 
 # Pydantic body for legacy activity-feed chat (separate from /chat/* channels)
 

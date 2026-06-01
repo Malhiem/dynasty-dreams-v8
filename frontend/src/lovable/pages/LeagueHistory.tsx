@@ -837,9 +837,16 @@ function TransactionsTabContent({ leagueId, leagueTeams }: { leagueId?: string; 
   const [teamId, setTeamId] = useState("all");
   const [position, setPosition] = useState("all");
   const [limit, setLimit] = useState(50);
+  // Iter 125 — trades-specific state. A/B switch between Executed and
+  // Vetoed only matters when the Trades category is selected.
+  const [tradeStatus, setTradeStatus] = useState<"executed" | "vetoed">("executed");
+  const [tradeRows, setTradeRows] = useState<any[]>([]);
+  const [tradeLoading, setTradeLoading] = useState(false);
+
+  const isTradeView = category === "trades";
 
   useEffect(() => {
-    if (!leagueId) return;
+    if (!leagueId || isTradeView) return;
     let cancelled = false;
     setLoading(true);
     const params = new URLSearchParams();
@@ -853,7 +860,25 @@ function TransactionsTabContent({ leagueId, leagueTeams }: { leagueId?: string; 
       .catch(() => { if (!cancelled) setRows([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [leagueId, category, teamId, position, limit]);
+  }, [leagueId, category, teamId, position, limit, isTradeView]);
+
+  // Iter 125 — fetch trade-history when the Trades category is active.
+  useEffect(() => {
+    if (!leagueId || !isTradeView) return;
+    let cancelled = false;
+    setTradeLoading(true);
+    const params = new URLSearchParams();
+    params.set("status", tradeStatus);
+    params.set("limit", String(limit));
+    if (teamId !== "all") params.set("team_id", teamId);
+    if (position !== "all") params.set("position", position);
+    api
+      .get(`/leagues/${leagueId}/trade-history?${params.toString()}`)
+      .then(({ data }) => { if (!cancelled) setTradeRows(data?.trades || []); })
+      .catch(() => { if (!cancelled) setTradeRows([]); })
+      .finally(() => { if (!cancelled) setTradeLoading(false); });
+    return () => { cancelled = true; };
+  }, [leagueId, isTradeView, tradeStatus, teamId, position, limit]);
 
   const teamLookup = useMemo(() => {
     const m: Record<string, any> = {};
@@ -876,7 +901,11 @@ function TransactionsTabContent({ leagueId, leagueTeams }: { leagueId?: string; 
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span data-testid="transactions-result-count">
-              {loading ? "Loading…" : `${rows.length} transaction${rows.length === 1 ? "" : "s"}`}
+              {isTradeView
+                ? (tradeLoading
+                    ? "Loading…"
+                    : `${tradeRows.length} ${tradeStatus === "vetoed" ? "vetoed" : "executed"} trade${tradeRows.length === 1 ? "" : "s"}`)
+                : (loading ? "Loading…" : `${rows.length} transaction${rows.length === 1 ? "" : "s"}`)}
             </span>
           </div>
         </div>
@@ -963,7 +992,16 @@ function TransactionsTabContent({ leagueId, leagueTeams }: { leagueId?: string; 
         </div>
 
         {/* Result list */}
-        {loading && rows.length === 0 ? (
+        {/* Iter 125 — Trades view: A/B switch + tabular history */}
+        {isTradeView ? (
+          <TradesHistoryView
+            tradeRows={tradeRows}
+            tradeLoading={tradeLoading}
+            tradeStatus={tradeStatus}
+            setTradeStatus={setTradeStatus}
+            teamLookup={teamLookup}
+          />
+        ) : loading && rows.length === 0 ? (
           <p className="text-sm text-muted-foreground italic py-6 text-center" data-testid="transactions-loading">
             Loading transactions…
           </p>
@@ -1072,5 +1110,200 @@ function TransactionsTabContent({ leagueId, leagueTeams }: { leagueId?: string; 
         )}
       </CardContent>
     </Card>
+  );
+}
+
+
+// ─── Iter 125: Trades History view (A/B switch + table) ───────────────
+// When the Trades category is selected on the Transactions tab, render a
+// dedicated table view with an Executed/Vetoed A/B switch and explicit
+// From / To / Veto-votes / Executed-at columns. Wired to
+// GET /api/leagues/{id}/trade-history.
+
+function TradesHistoryView({
+  tradeRows,
+  tradeLoading,
+  tradeStatus,
+  setTradeStatus,
+  teamLookup,
+}: {
+  tradeRows: any[];
+  tradeLoading: boolean;
+  tradeStatus: "executed" | "vetoed";
+  setTradeStatus: (s: "executed" | "vetoed") => void;
+  teamLookup: Record<string, any>;
+}) {
+  const stamp = tradeStatus === "vetoed" ? "Vetoed at" : "Executed at";
+  return (
+    <div className="space-y-3" data-testid="trades-history-view">
+      {/* A/B switch */}
+      <div
+        className="inline-flex items-center rounded-lg border border-border bg-secondary/40 p-1"
+        role="tablist"
+        data-testid="trades-history-ab-switch"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tradeStatus === "executed"}
+          data-testid="trades-history-switch-executed"
+          onClick={() => setTradeStatus("executed")}
+          className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition ${
+            tradeStatus === "executed"
+              ? "bg-cyan-500/20 text-cyan-200 shadow-inner"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Trade History
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={tradeStatus === "vetoed"}
+          data-testid="trades-history-switch-vetoed"
+          onClick={() => setTradeStatus("vetoed")}
+          className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition ${
+            tradeStatus === "vetoed"
+              ? "bg-rose-500/20 text-rose-200 shadow-inner"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          Vetoed Trades
+        </button>
+      </div>
+
+      {/* Table */}
+      {tradeLoading && tradeRows.length === 0 ? (
+        <p className="text-sm text-muted-foreground italic py-6 text-center" data-testid="trades-history-loading">
+          Loading trades…
+        </p>
+      ) : tradeRows.length === 0 ? (
+        <div
+          className="text-center py-10 border border-dashed border-border rounded-lg"
+          data-testid="trades-history-empty"
+        >
+          <ArrowRightLeft className="h-10 w-10 text-muted-foreground/40 mx-auto mb-2" />
+          <p className="text-sm font-medium text-muted-foreground">
+            {tradeStatus === "vetoed"
+              ? "No vetoed trades — the league has voted everything through."
+              : "No executed trades match these filters."}
+          </p>
+          <p className="text-xs text-muted-foreground/70 mt-1">
+            Try clearing a filter or flipping the switch above.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-border overflow-x-auto" data-testid="trades-history-table-wrapper">
+          <Table data-testid="trades-history-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="text-[11px] uppercase tracking-wide">From</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Assets sent</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide w-8 text-center">→</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">To</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide">Assets received</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide text-center">Votes against</TableHead>
+                <TableHead className="text-[11px] uppercase tracking-wide text-right">{stamp}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tradeRows.map((t) => {
+                const fromTeam = t.from_team_id ? teamLookup[t.from_team_id] : null;
+                const toTeam = t.to_team_id ? teamLookup[t.to_team_id] : null;
+                const vetoTone =
+                  t.veto_count >= 3
+                    ? "bg-rose-500/15 text-rose-300 border-rose-500/40"
+                    : t.veto_count > 0
+                      ? "bg-amber-500/15 text-amber-300 border-amber-500/40"
+                      : "bg-secondary/40 text-muted-foreground border-border";
+                return (
+                  <TableRow key={t.id} data-testid={`trades-history-row-${t.id}`}>
+                    <TableCell>
+                      <Link
+                        to={fromTeam ? `/trophy-room/team/${fromTeam.id}` : "#"}
+                        className="text-sm font-semibold text-foreground hover:text-cyan-300"
+                        data-testid={`trades-history-from-${t.id}`}
+                      >
+                        {t.from_team_name}
+                      </Link>
+                      {t.conditional && (
+                        <Badge variant="outline" className="ml-2 text-[9px] py-0 px-1 bg-violet-500/15 text-violet-300 border-violet-500/40">
+                          COND
+                        </Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1" data-testid={`trades-history-from-assets-${t.id}`}>
+                        {(t.from_assets || []).slice(0, 4).map((label: string, i: number) => (
+                          <Badge
+                            key={`f-${i}`}
+                            variant="outline"
+                            className="text-[10px] py-0 px-1.5 bg-secondary/60"
+                          >
+                            {label}
+                          </Badge>
+                        ))}
+                        {t.from_assets && t.from_assets.length > 4 && (
+                          <span className="text-[10px] text-muted-foreground italic">
+                            +{t.from_assets.length - 4}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center text-muted-foreground">
+                      <ArrowRightLeft className="h-4 w-4 mx-auto text-cyan-300/70" />
+                    </TableCell>
+                    <TableCell>
+                      <Link
+                        to={toTeam ? `/trophy-room/team/${toTeam.id}` : "#"}
+                        className="text-sm font-semibold text-foreground hover:text-cyan-300"
+                        data-testid={`trades-history-to-${t.id}`}
+                      >
+                        {t.to_team_name}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1" data-testid={`trades-history-to-assets-${t.id}`}>
+                        {(t.to_assets || []).slice(0, 4).map((label: string, i: number) => (
+                          <Badge
+                            key={`t-${i}`}
+                            variant="outline"
+                            className="text-[10px] py-0 px-1.5 bg-secondary/60"
+                          >
+                            {label}
+                          </Badge>
+                        ))}
+                        {t.to_assets && t.to_assets.length > 4 && (
+                          <span className="text-[10px] text-muted-foreground italic">
+                            +{t.to_assets.length - 4}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-center">
+                      <Badge
+                        variant="outline"
+                        className={`${vetoTone} border font-mono text-[11px]`}
+                        data-testid={`trades-history-veto-${t.id}`}
+                        title={`${t.veto_count} veto · ${t.approve_count} approve · ${t.voters_total} total voters`}
+                      >
+                        {t.veto_count}
+                        {t.voters_total > 0 ? ` / ${t.voters_total}` : ""}
+                      </Badge>
+                    </TableCell>
+                    <TableCell
+                      className="text-right text-[11px] text-muted-foreground whitespace-nowrap"
+                      data-testid={`trades-history-time-${t.id}`}
+                    >
+                      {fmtDate(t.processed_at || t.submitted_at)}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+    </div>
   );
 }
