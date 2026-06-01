@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Trophy, Crown, Award, TrendingUp, TrendingDown, Target, Users, BarChart3, Medal, Gift } from "lucide-react";
+import { Trophy, Crown, Award, TrendingUp, TrendingDown, Target, Users, BarChart3, Medal, Gift, ArrowRightLeft, UserPlus, UserMinus, ListChecks, History } from "lucide-react";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { TrophyRoomView } from "@/lovable/pages/TrophyRoom";
@@ -440,7 +440,7 @@ const LeagueHistory = () => {
               </CardContent>
             </Card>
           )}
-          <TabsList className="grid w-full grid-cols-4 lg:w-auto lg:inline-grid">
+          <TabsList className="grid w-full grid-cols-5 lg:w-auto lg:inline-grid">
             <TabsTrigger value="lifetime" className="flex items-center gap-2" data-testid="league-history-tab-lifetime">
               <Users className="h-4 w-4" />
               Lifetime Records
@@ -452,6 +452,10 @@ const LeagueHistory = () => {
             <TabsTrigger value="awards" className="flex items-center gap-2" data-testid="league-history-tab-awards">
               <Award className="h-4 w-4" />
               Player Awards
+            </TabsTrigger>
+            <TabsTrigger value="transactions" className="flex items-center gap-2" data-testid="league-history-tab-transactions">
+              <History className="h-4 w-4" />
+              Transactions
             </TabsTrigger>
             <TabsTrigger value="trophyroom" className="flex items-center gap-2" data-testid="league-history-tab-trophy-room">
               <Crown className="h-4 w-4" />
@@ -735,6 +739,11 @@ const LeagueHistory = () => {
             </div>
           </TabsContent>
 
+          {/* Transactions Tab (Iter 124) */}
+          <TabsContent value="transactions" className="space-y-6">
+            <TransactionsTabContent leagueId={league?.id} leagueTeams={leagueTeams || []} />
+          </TabsContent>
+
           {/* Trophy Room Tab */}
           <TabsContent value="trophyroom" className="space-y-6">
             <div data-testid="league-history-trophy-room">
@@ -748,3 +757,320 @@ const LeagueHistory = () => {
 };
 
 export default LeagueHistory;
+
+// ─── Transactions tab (Iter 124) ──────────────────────────────────────
+// Surfaces every roster/trade/lineup move in the league, filtered by
+// category (Adds/Drops · Trades · Lineup Changes), by acting team, and
+// by player position. Wired to GET /api/leagues/{id}/transactions.
+
+type TxRow = {
+  id: string;
+  type: string;
+  description: string;
+  team_id?: string;
+  team_name?: string;
+  player_id?: string;
+  player_name?: string;
+  player_position?: string;
+  bid_amount?: number;
+  winning_team_name?: string;
+  winning_bid?: number;
+  moves?: Array<{ player_id: string; player_name: string; position: string; from: string; to: string }>;
+  move_count?: number;
+  created_at?: string;
+};
+
+const CATEGORY_OPTIONS = [
+  { value: "all", label: "All", icon: ListChecks },
+  { value: "adds_drops", label: "Adds & Drops", icon: UserPlus },
+  { value: "trades", label: "Trades", icon: ArrowRightLeft },
+  { value: "lineup_changes", label: "Lineup Changes", icon: History },
+];
+
+const POSITION_OPTIONS = [
+  { value: "all", label: "All Positions" },
+  { value: "C", label: "C — Center" },
+  { value: "W", label: "W — Wing (L/R)" },
+  { value: "D", label: "D — Defense" },
+  { value: "G", label: "G — Goalie" },
+];
+
+function TypeBadge({ type }: { type: string }) {
+  const cfg: Record<string, { label: string; cls: string; Icon: any }> = {
+    roster_add: { label: "ADD", cls: "bg-emerald-500/15 text-emerald-300 border-emerald-500/40", Icon: UserPlus },
+    roster_drop: { label: "DROP", cls: "bg-rose-500/15 text-rose-300 border-rose-500/40", Icon: UserMinus },
+    waiver_won: { label: "WAIVER WON", cls: "bg-violet-500/15 text-violet-300 border-violet-500/40", Icon: UserPlus },
+    waiver_lost: { label: "WAIVER LOST", cls: "bg-slate-500/15 text-slate-300 border-slate-500/40", Icon: UserMinus },
+    trade_executed: { label: "TRADE", cls: "bg-cyan-500/15 text-cyan-300 border-cyan-500/40", Icon: ArrowRightLeft },
+    lineup_change: { label: "LINEUP", cls: "bg-amber-500/15 text-amber-300 border-amber-500/40", Icon: History },
+  };
+  const c = cfg[type] || { label: type.toUpperCase(), cls: "bg-secondary/40 text-foreground border-border", Icon: ListChecks };
+  const Icon = c.Icon;
+  return (
+    <Badge className={`${c.cls} border gap-1 font-semibold`} variant="outline">
+      <Icon className="h-3 w-3" />
+      {c.label}
+    </Badge>
+  );
+}
+
+function fmtDate(iso?: string): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "2-digit",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso.slice(0, 10);
+  }
+}
+
+function TransactionsTabContent({ leagueId, leagueTeams }: { leagueId?: string; leagueTeams: any[] }) {
+  const [rows, setRows] = useState<TxRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [category, setCategory] = useState("all");
+  const [teamId, setTeamId] = useState("all");
+  const [position, setPosition] = useState("all");
+  const [limit, setLimit] = useState(50);
+
+  useEffect(() => {
+    if (!leagueId) return;
+    let cancelled = false;
+    setLoading(true);
+    const params = new URLSearchParams();
+    params.set("limit", String(limit));
+    if (category !== "all") params.set("category", category);
+    if (teamId !== "all") params.set("team_id", teamId);
+    if (position !== "all") params.set("position", position);
+    api
+      .get(`/leagues/${leagueId}/transactions?${params.toString()}`)
+      .then(({ data }) => { if (!cancelled) setRows(data?.transactions || []); })
+      .catch(() => { if (!cancelled) setRows([]); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [leagueId, category, teamId, position, limit]);
+
+  const teamLookup = useMemo(() => {
+    const m: Record<string, any> = {};
+    (leagueTeams || []).forEach((t) => { m[t.id] = t; });
+    return m;
+  }, [leagueTeams]);
+
+  return (
+    <Card className="bg-card border-border" data-testid="league-history-transactions-card">
+      <CardHeader>
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <History className="h-5 w-5 text-amber-400" />
+              All Transactions
+            </CardTitle>
+            <CardDescription>
+              Every roster move, trade, and lineup change across every team this season.
+            </CardDescription>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <span data-testid="transactions-result-count">
+              {loading ? "Loading…" : `${rows.length} transaction${rows.length === 1 ? "" : "s"}`}
+            </span>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Filter row */}
+        <div className="space-y-3" data-testid="transactions-filter-bar">
+          {/* Category pills */}
+          <div className="flex flex-wrap gap-2" data-testid="transactions-category-pills">
+            {CATEGORY_OPTIONS.map((opt) => {
+              const active = category === opt.value;
+              const Icon = opt.icon;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setCategory(opt.value)}
+                  data-testid={`transactions-category-${opt.value}`}
+                  aria-pressed={active}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+                    active
+                      ? "bg-amber-500/15 border-amber-500/50 text-amber-200"
+                      : "bg-secondary/30 border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Team + Position selects */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">Team:</span>
+              <select
+                value={teamId}
+                onChange={(e) => setTeamId(e.target.value)}
+                data-testid="transactions-team-filter"
+                className="bg-secondary/40 border border-border rounded px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40 max-w-[220px]"
+              >
+                <option value="all">All teams</option>
+                {(leagueTeams || []).map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex flex-wrap gap-1 items-center" data-testid="transactions-position-pills">
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">Position:</span>
+              {POSITION_OPTIONS.map((opt) => {
+                const active = position === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setPosition(opt.value)}
+                    data-testid={`transactions-position-${opt.value}`}
+                    aria-pressed={active}
+                    className={`px-2.5 py-1 rounded-md text-xs border transition ${
+                      active
+                        ? "bg-cyan-500/15 border-cyan-500/50 text-cyan-200"
+                        : "bg-secondary/30 border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground"
+                    }`}
+                  >
+                    {opt.value === "all" ? "All" : opt.value}
+                  </button>
+                );
+              })}
+            </div>
+
+            {(category !== "all" || teamId !== "all" || position !== "all") && (
+              <button
+                type="button"
+                onClick={() => { setCategory("all"); setTeamId("all"); setPosition("all"); }}
+                data-testid="transactions-clear-filters"
+                className="ml-auto px-2.5 py-1 rounded-md text-[11px] border border-rose-500/40 bg-rose-500/10 text-rose-200 hover:bg-rose-500/20"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Result list */}
+        {loading && rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic py-6 text-center" data-testid="transactions-loading">
+            Loading transactions…
+          </p>
+        ) : rows.length === 0 ? (
+          <div
+            className="text-center py-10 border border-dashed border-border rounded-lg"
+            data-testid="transactions-empty"
+          >
+            <History className="h-10 w-10 text-muted-foreground/40 mx-auto mb-2" />
+            <p className="text-sm font-medium text-muted-foreground">No transactions match these filters.</p>
+            <p className="text-xs text-muted-foreground/70 mt-1">
+              Try clearing a filter or broadening the category.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2" data-testid="transactions-list">
+            {rows.map((tx) => {
+              const team = tx.team_id ? teamLookup[tx.team_id] : null;
+              return (
+                <div
+                  key={tx.id}
+                  className="flex items-start gap-3 p-3 rounded-lg border border-border bg-secondary/20 hover:bg-secondary/40 transition"
+                  data-testid={`transactions-row-${tx.id}`}
+                >
+                  <div className="flex-shrink-0 pt-0.5">
+                    <TypeBadge type={tx.type} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {tx.team_name && (
+                        <Link
+                          to={team ? `/trophy-room/team/${team.id}` : "#"}
+                          className="text-sm font-semibold text-foreground hover:text-amber-300 truncate"
+                          data-testid={`transactions-team-link-${tx.id}`}
+                        >
+                          {tx.team_name}
+                        </Link>
+                      )}
+                      {tx.player_position && (
+                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 bg-secondary/60">
+                          {tx.player_position}
+                        </Badge>
+                      )}
+                      <span className="text-[10px] text-muted-foreground ml-auto" data-testid={`transactions-time-${tx.id}`}>
+                        {fmtDate(tx.created_at)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                      {tx.description}
+                    </p>
+                    {/* Lineup-change moves breakdown */}
+                    {tx.moves && tx.moves.length > 0 && (
+                      <div className="mt-2 space-y-1" data-testid={`transactions-moves-${tx.id}`}>
+                        {tx.moves.slice(0, 5).map((m, i) => (
+                          <div
+                            key={`${m.player_id}-${i}`}
+                            className="flex items-center gap-2 text-[11px] text-muted-foreground"
+                          >
+                            <span className="font-medium text-foreground/90">{m.player_name}</span>
+                            {m.position && (
+                              <Badge variant="outline" className="text-[9px] py-0 px-1 bg-secondary/60">
+                                {m.position}
+                              </Badge>
+                            )}
+                            <span className="font-mono text-[10px] tracking-tight">
+                              <span className="text-rose-300/80">{m.from}</span>
+                              <span className="mx-1 text-muted-foreground">→</span>
+                              <span className="text-emerald-300">{m.to}</span>
+                            </span>
+                          </div>
+                        ))}
+                        {tx.moves.length > 5 && (
+                          <p className="text-[10px] text-muted-foreground italic">
+                            + {tx.moves.length - 5} more move{tx.moves.length - 5 === 1 ? "" : "s"}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                    {/* Waiver bid surfacing */}
+                    {tx.bid_amount != null && tx.type.startsWith("waiver_") && (
+                      <p className="text-[11px] text-violet-300 mt-1">
+                        FAAB bid: <span className="font-semibold">${tx.bid_amount}</span>
+                        {tx.winning_team_name && tx.winning_team_name !== tx.team_name && (
+                          <> · Won by {tx.winning_team_name} (${tx.winning_bid})</>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+
+            {rows.length >= limit && (
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => setLimit((l) => Math.min(l + 50, 500))}
+                  data-testid="transactions-load-more"
+                  className="px-4 py-1.5 rounded-md text-xs border border-border bg-secondary/40 hover:bg-secondary/60 text-foreground"
+                >
+                  Load more ({limit + 50 > 500 ? 500 : limit + 50} max)
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

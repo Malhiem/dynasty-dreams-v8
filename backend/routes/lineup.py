@@ -229,10 +229,69 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
                         ),
                     })
 
+    # ── Iter 124: log lineup_change activity for the League History
+    # transactions feed. We diff old vs new lineup, summarize the moves,
+    # and best-effort write an activity row (so a slow write never breaks
+    # the save). Owner+commissioner edits are both captured so the
+    # commissioner-edit audit trail is visible to all members.
+    old_lineup = team.get("lineup") or {}
+    moves: list[dict] = []
+    for pid, info in lineup.items():
+        old_info = old_lineup.get(pid) or {}
+        if (old_info.get("section") or "") != info.get("section"):
+            try:
+                player = await db.players.find_one({"_id": ObjectId(pid)})
+            except Exception:
+                player = None
+            pname = (player or {}).get("full_name") or (player or {}).get("name") or f"Player {pid[:6]}"
+            ppos = (player or {}).get("position") or (player or {}).get("primary_position") or ""
+            moves.append({
+                "player_id": pid,
+                "player_name": pname,
+                "position": ppos,
+                "from": (old_info.get("section") or "bench").upper(),
+                "to": info.get("section", "bench").upper(),
+            })
+
     await db.teams.update_one(
         {"_id": ObjectId(team_id)},
         {"$set": {"lineup": lineup, "lineup_updated_at": datetime.now(timezone.utc)}},
     )
+
+    if moves:
+        try:
+            log_activity = _deps.get("log_activity")
+            if log_activity:
+                summary_bits = [
+                    f"{m['player_name']} ({m['position'] or '—'}) {m['from']} → {m['to']}"
+                    for m in moves[:3]
+                ]
+                more = "" if len(moves) <= 3 else f" + {len(moves) - 3} more"
+                message = (
+                    f"{team.get('name') or 'Team'} updated lineup: "
+                    + ", ".join(summary_bits)
+                    + more
+                )
+                await log_activity(
+                    team["league_id"],
+                    "lineup_change",
+                    message,
+                    user["_id"],
+                    {
+                        "team_id": str(team["_id"]),
+                        "team_name": team.get("name"),
+                        "moves": moves,
+                        "move_count": len(moves),
+                        # Surface a representative position so the Transactions
+                        # tab's position-filter has something to bite on for
+                        # single-player moves. Multi-player moves keep
+                        # `moves[]` so the filter can still match any of them.
+                        "player_position": moves[0]["position"],
+                    },
+                )
+        except Exception:
+            pass
+
     return {
         "team_id": team_id,
         "lineup_size": len(lineup),

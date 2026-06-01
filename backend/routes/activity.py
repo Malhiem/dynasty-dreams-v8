@@ -63,27 +63,45 @@ async def get_league_transactions(
     limit: int = 30,
     since: Optional[str] = None,
     team_id: Optional[str] = None,
+    category: Optional[str] = None,
+    position: Optional[str] = None,
 ):
     """Returns the most recent player transactions for a league in a normalized shape.
 
-    Types: roster_add, roster_drop, waiver_won, waiver_lost, trade_executed.
+    Types: roster_add, roster_drop, waiver_won, waiver_lost, trade_executed,
+    lineup_change.
 
     Filters:
-      - `since`:  ISO date string ("2026-04-01") — only events on/after this date.
-      - `team_id`: filter by metadata.team_id (the actor team).
+      - `since`:    ISO date string ("2026-04-01") — only events on/after this date.
+      - `team_id`:  filter by metadata.team_id (the actor team).
+      - `category`: one of `adds_drops` (roster_add/roster_drop/waiver_won/waiver_lost),
+                    `trades` (trade_executed), `lineup_changes` (lineup_change).
+                    Defaults to all categories.
+      - `position`: one of C / LW / RW / W / D / G — matches `metadata.player_position`
+                    or any `metadata.moves[].position` (lineup changes). `W` matches
+                    both LW and RW.
     """
     db = _deps["db"]
+
+    # Iter 124 — category subfilter for the League History Transactions tab.
+    category_map = {
+        "adds_drops": ["roster_add", "roster_drop", "waiver_won", "waiver_lost"],
+        "trades": ["trade_executed"],
+        "lineup_changes": ["lineup_change"],
+    }
+    all_types = [
+        "roster_add",
+        "roster_drop",
+        "waiver_won",
+        "waiver_lost",
+        "trade_executed",
+        "lineup_change",
+    ]
+    types = category_map.get(category, all_types) if category else all_types
+
     query: dict = {
         "league_id": league_id,
-        "event_type": {
-            "$in": [
-                "roster_add",
-                "roster_drop",
-                "waiver_won",
-                "waiver_lost",
-                "trade_executed",
-            ]
-        },
+        "event_type": {"$in": types},
     }
     if since:
         try:
@@ -93,7 +111,36 @@ async def get_league_transactions(
         except Exception:
             pass
     if team_id:
-        query["metadata.team_id"] = team_id
+        # Team filter has to span BOTH the single-actor activity rows
+        # (metadata.team_id) AND trade rows that store team_ids on either
+        # side (metadata.from_team_id / metadata.to_team_id), so a trade
+        # involving the filtered team still surfaces.
+        query["$or"] = [
+            {"metadata.team_id": team_id},
+            {"metadata.from_team_id": team_id},
+            {"metadata.to_team_id": team_id},
+            {"metadata.team_ids": team_id},
+        ]
+
+    if position:
+        pos_targets: list[str] = []
+        p = position.upper()
+        if p == "W":
+            pos_targets = ["LW", "RW", "W"]
+        else:
+            pos_targets = [p]
+        # Match across the canonical metadata.player_position OR any
+        # moves[].position entry (lineup_change rows).
+        pos_clauses = [
+            {"metadata.player_position": {"$in": pos_targets}},
+            {"metadata.moves.position": {"$in": pos_targets}},
+            {"metadata.players.position": {"$in": pos_targets}},
+        ]
+        if "$or" in query:
+            query = {"$and": [query, {"$or": pos_clauses}]}
+        else:
+            query["$or"] = pos_clauses
+
     cursor = db.activity_feed.find(query).sort("created_at", -1).limit(max(1, min(limit, 500)))
     items = await cursor.to_list(limit)
     out = []
@@ -108,10 +155,15 @@ async def get_league_transactions(
             "team_name": meta.get("team_name"),
             "player_id": meta.get("player_id"),
             "player_name": meta.get("player_name"),
+            "player_position": meta.get("player_position"),
             "bid_amount": meta.get("bid_amount"),
             "winning_team_name": meta.get("winning_team_name"),
             "winning_bid": meta.get("winning_bid"),
             "competing_claims": meta.get("competing_claims") or [],
+            # Iter 124 — surface the lineup-change moves so the UI can
+            # render per-player section transitions.
+            "moves": meta.get("moves") or [],
+            "move_count": meta.get("move_count"),
             "created_at": it.get("created_at"),
         })
     return {"league_id": league_id, "transactions": out, "count": len(out)}
