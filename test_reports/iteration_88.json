@@ -1,0 +1,43 @@
+{
+  "summary": "Frontend verification of Iter 122 features for Dynasty Dreams. Backend auth verified via direct API (200 OK). Web automation was hampered: (1) login form submit click did not navigate (button click did not produce an auth state — likely httpOnly-cookie-only flow that needs natural form submission), and (2) after a few API requests Cloudflare's bot-challenge page intercepted subsequent navigations, blocking deeper visual verification. Compensated with thorough code review of every referenced file. Findings below identify two real gaps vs. the review request, plus several testid/UX observations.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Waivers.tsx", "issue": "Anonymous waiver visibility variant is NOT implemented on the Waivers page itself. The `My Claims` and `Claim History` blocks render team names directly with no consumption of the `anonymous` flag returned by GET /api/leagues/{id}/waiver-priority or the `all_teams_anonymous` audience from /transactions-config. Only the dashboard widget `TeamClaimCounter` (testid `team-claim-counter-anonymous`) honors anonymous mode. So when a commissioner toggles the anonymous variant, the Waivers page UI does NOT obscure team names as the spec requires.", "selector": "[data-testid='waiver-claim-modal'], Tabs my-claims/history tables", "priority": "HIGH"},
+      {"component": "WaiverPriorityOrderCard.tsx", "issue": "No explicit 'next team up' indicator/testid. The 'You're Xth in line' badge (testid `waiver-my-rank`) only highlights the CURRENT user's rank, never which team is rank #1 / next in queue. The card lacks a dedicated `waiver-next-team-up` testid and visual cue (e.g. crown on rank 1). The first row of `waiver-priority-queue` is not differentiated unless it happens to be you.", "selector": "[data-testid='waiver-priority-queue']", "priority": "HIGH"},
+      {"component": "OperationsConsole.tsx", "issue": "Per-route latency threshold EDITOR is missing. The Thresholds dialog (`ops-thresholds-dialog`) only exposes 4 GLOBAL inputs: warn_p95, bad_p95, warn_err_pct, bad_err_pct. The review request expects per-route inputs with testid `latency-threshold-input-{route}` — none exist in the codebase. Additionally, threshold overrides are persisted only in localStorage (`dd-ops-thresholds`) and are not synced server-side, so per-deployment shared thresholds are not possible.", "selector": "[data-testid='ops-thresholds-dialog']", "priority": "HIGH"},
+      {"component": "OperationsConsole.tsx", "issue": "Spec mentions a `health-deep-section` testid that does not exist anywhere in the page. The console root is `ops-console-card` only.", "selector": "[data-testid='health-deep-section']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Web login via form submit", "issue": "Filling email/password and clicking the Sign In button did not transition off /login (page stayed at /login, automation saw 401 from /api/auth/me calls). Direct POST /api/auth/login returns 200 with access_token+refresh, so backend is healthy. Likely AuthContext relies on httpOnly cookie set during form submit and the automation submit click did not trigger the form's onSubmit. Real human users should be unaffected, but worth verifying that the Sign In button properly submits the form and that AuthContext reads the cookie/token consistently.", "affected_selectors": ["button[type='submit']"]},
+      {"flow": "Automation deeper coverage", "issue": "After several /api requests in-session, Cloudflare presented its bot-challenge interstitial for subsequent navigations, preventing visual verification of /salary-cap, /waivers and /site-admin. This is a test-environment limitation, not an app bug."}
+    ],
+    "design_issues": [
+      {"screen": "Waivers", "issues": ["Priority queue rows for teams that are NOT the user have no visual rank-1 highlight; the 'next team up' should be visually distinct (e.g. amber/Crown icon) so all owners see it at a glance, not just the current user."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter122_watchlist_thresholds_anon_priority.py (already passing 26/26 per main agent — not re-run this iteration)"
+  ],
+  "action_items": [
+    "Wire the `anonymous` flag from /api/leagues/{id}/waiver-priority (and `all_teams_anonymous` audience from transactions-config) into Waivers.tsx so pending claims, My Claims and Claim History obscure team names with a label like `Team ##` and add a testid such as `waiver-anonymous-mode` on the page.",
+    "Add an explicit `waiver-next-team-up` badge/testid on WaiverPriorityOrderCard.tsx highlighting the team at rank #1 (e.g. Crown icon + 'Next up'); ensure the highlight is visible to ALL viewers, not only when rank#1 == my team.",
+    "Add per-route latency threshold inputs in ThresholdsDialog (testid pattern `latency-threshold-input-{route}`) and persist them via a backend endpoint so admins share thresholds across the team rather than localStorage-only. Also expose `health-deep-section` testid wrapping the route table or add to spec list.",
+    "Manually validate PlayerRoster.tsx emergency-eligibility toast (lines 1041-1066): trigger a 400 from POST roster save with detail starting `Emergency swap denied for X:` and confirm the toast title `X isn't eligible for an emergency swap` and human-readable criteria render. Could not exercise live in this run because no lineup-lock state was reproducible."
+  ],
+  "critical_code_review_comments": [
+    "CapFloorWatchlistCard.tsx — clean, commissioner-gated, proper testids (`cap-floor-watchlist-card`, `cap-floor-below-count`, `cap-floor-watchlist-count`, `cap-floor-toggle-all`, `cap-floor-watchlist-table`, `cap-floor-row-{status}`). Card renders nothing when `!floor_enabled` which is correct but means a commissioner of a league without a configured floor will see no surface even after Iter 122 — confirm at least one seeded league has cap_floor_enabled+cap_floor>0 for the admin user.",
+    "OperationsConsole.tsx — thresholds stored only in localStorage; multiple admins won't share state; no server persistence; lacks per-route configuration even though the alert banner says 'route(s) above critical threshold' implying per-route knowledge. Consider adding a `health-deep-section` data-testid wrapping the route table for spec alignment.",
+    "Waivers.tsx — does not import or consume any `anonymous` flag. `all_teams_anonymous` visibility audience is plumbed in backend but not honored in the page itself. Two distinct surfaces (Waivers page + dashboard widget) need to behave consistently.",
+    "WaiverPriorityOrderCard.tsx — `waiver-queue-me` only fires when current user is in the queue; first place team has no distinct testid/visual. Add `waiver-next-team-up` for rank===1.",
+    "PlayerRoster.tsx — toast code path needs runtime test; could not reproduce trigger conditions in-session."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "partial — code review complete; runtime verification blocked by Cloudflare bot challenge and login-form submission quirk"},
+  "test_credentials": "Admin: admin@dynastydreams.com / Admin123! (verified via direct API POST /api/auth/login — 200 OK)",
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Cloudflare bot challenge will fire if the playwright session makes many /api/* fetch() calls before navigation; use direct browser navigation + slow human-like interactions and avoid fetch() loops. For login, prefer pressing Enter inside the password field or click the form's submit (page.locator('form').evaluate(f => f.requestSubmit())) so the React onSubmit fires and AuthContext receives the cookie. Retest items: (1) Waivers anonymous mode after main agent wires it in, (2) explicit `waiver-next-team-up` testid, (3) per-route threshold editor `latency-threshold-input-{route}`, (4) PlayerRoster emergency-eligibility toast via mock 400 response.",
+  "rca of the issue": "Two missing implementations identified by code grep, not by runtime: (a) Waivers.tsx never references the string 'anonymous' anywhere; (b) WaiverPriorityOrderCard.tsx contains no 'next' / 'next-team-up' string nor distinct rank-1 styling. These are feature gaps, not bugs in existing code. Mitigation: add the missing UI as listed in action_items."
+}
