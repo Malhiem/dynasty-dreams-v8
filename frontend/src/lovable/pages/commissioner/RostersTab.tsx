@@ -18,6 +18,7 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Save, Loader2, Users, ShieldAlert, ListChecks, HeartPulse } from "lucide-react";
 import api from "@/lib/api";
+import InfoHint from "@/components/ui/info-hint";
 import { useActiveLeague } from "@/hooks/use-active-league";
 
 const POSITIONS = [
@@ -192,13 +193,22 @@ export default function RostersTab() {
       {/* Roster Size */}
       <Card className="bg-card border-border" data-testid="rosters-size-card">
         <CardHeader>
-          <CardTitle>Roster Size</CardTitle>
+          <CardTitle>
+            Roster Size
+            <InfoHint
+              testId="info-roster-size"
+              text="Defines the total capacity each team has across every roster section. Bench is non-active backup, IR holds players the NHL has flagged as injured (no cap relief), and IR+ holds long-term injury (frees their cap hit). Prospect pool is the dynasty farm system."
+            />
+          </CardTitle>
           <CardDescription>Active roster, bench, IR, and prospect pool capacity.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
             <div className="space-y-2">
-              <Label htmlFor="roster-size-active">Active Roster (10–40)</Label>
+              <Label htmlFor="roster-size-active">
+                Active Roster (10–40)
+                <InfoHint testId="info-active-roster" text="Players eligible to earn points each scoring period. Excludes bench, IR, IR+, prospects, and taxi squad." />
+              </Label>
               <Input id="roster-size-active" type="number" min={10} max={40}
                 value={rosterSpots} onChange={(e) => setRosterSpots(e.target.value)}
                 placeholder="20" data-testid="rosters-roster-spots-input" />
@@ -210,13 +220,19 @@ export default function RostersTab() {
                 placeholder="4" data-testid="rosters-bench-spots-input" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="roster-size-ir">IR Slots (0–15)</Label>
+              <Label htmlFor="roster-size-ir">
+                IR Slots (0–15)
+                <InfoHint testId="info-ir-slots" text="Short-term IR holds NHL-flagged injured players. Frees an active slot but their cap hit still counts. Eligibility usually requires IR/DTD/Suspended designation." />
+              </Label>
               <Input id="roster-size-ir" type="number" min={0} max={15}
                 value={irSlots} onChange={(e) => setIrSlots(e.target.value)}
                 placeholder="3" data-testid="rosters-ir-slots-input" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="roster-size-ir-plus">IR+ Slots (0–10)</Label>
+              <Label htmlFor="roster-size-ir-plus">
+                IR+ Slots (0–10)
+                <InfoHint testId="info-ir-plus-slots" text="Long-term IR. Frees BOTH an active slot AND the player's cap hit. Designed for season-ending injuries; commissioner usually has to approve placements." />
+              </Label>
               <Input id="roster-size-ir-plus" type="number" min={0} max={10}
                 value={irPlusSlots} onChange={(e) => setIrPlusSlots(e.target.value)}
                 placeholder="2" data-testid="rosters-ir-plus-slots-input" />

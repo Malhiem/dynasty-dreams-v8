@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { UserLeagueMenu } from "./UserLeagueMenu";
 import CurrentLeagueDropdown from "./CurrentLeagueDropdown";
 import { useUiScale } from "@/hooks/use-ui-scale";
+import TradeDeadlineRibbon from "@/lovable/components/TradeDeadlineRibbon";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -60,6 +61,8 @@ export function AppLayout({ children, onSettingsClick }: AppLayoutProps) {
               <UserLeagueMenu />
             </div>
           </header>
+          {/* Iter 129 — Trade Deadline Countdown Ribbon (auto-hides when unset) */}
+          <TradeDeadlineRibbon />
           <main className="flex-1 overflow-auto">
             {children}
           </main>

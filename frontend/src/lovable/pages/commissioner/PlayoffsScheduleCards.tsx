@@ -22,6 +22,7 @@ import { Save, Loader2, Trophy, Calendar, AlertTriangle, Plus, Trash2, ExternalL
 import { Checkbox } from "@/components/ui/checkbox";
 import api from "@/lib/api";
 import { Link } from "react-router-dom";
+import InfoHint from "@/components/ui/info-hint";
 
 type NhlWeek = { number: number; start_date: string; end_date: string; label: string };
 
@@ -94,6 +95,10 @@ export function RegularSeasonScheduleCard({ league, reloadLeague }: any) {
         <CardTitle className="flex items-center gap-2 text-lg">
           <Calendar className="h-5 w-5 text-cyan-400" />
           Regular Season Schedule
+          <InfoHint
+            testId="info-regular-season-schedule"
+            text="Configure the regular season: length in weeks, matchup period (daily/weekly), and the NHL stats counting window. Powers the live scoreboard and standings."
+          />
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           Season length, matchup period, opponents per period, and the NHL stats counting window.
@@ -375,6 +380,10 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-lg">
           <Trophy className="h-5 w-5 text-amber-400" /> Playoffs
+          <InfoHint
+            testId="info-playoffs-card"
+            text="Configure the postseason: how many teams qualify, when playoffs start, how many rounds run, and which seeding method matches them up. Saves cascade into the live bracket and lock playoff lineups when active."
+          />
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           Bracket size, weeks, rounds, format, and seeding method.
@@ -606,6 +615,10 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-lg">
           <Trophy className="h-5 w-5 text-violet-400" /> Consolation Bracket
+          <InfoHint
+            testId="info-consolation-card"
+            text="Optional secondary bracket for teams that miss the playoffs. Useful for awarding a Sacko / consolation trophy and keeping eliminated managers engaged through the final weeks."
+          />
         </CardTitle>
         <p className="text-sm text-muted-foreground">
           For the {maxConsolation} team{maxConsolation !== 1 ? "s" : ""} not in the playoffs.

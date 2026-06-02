@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Trophy, Crown, Award, TrendingUp, TrendingDown, Target, Users, BarChart3, Medal, Gift, ArrowRightLeft, UserPlus, UserMinus, ListChecks, History } from "lucide-react";
+import { Trophy, Crown, Award, TrendingUp, TrendingDown, Target, Users, BarChart3, Medal, Gift, ArrowRightLeft, UserPlus, UserMinus, ListChecks, History, Download } from "lucide-react";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { TrophyRoomView } from "@/lovable/pages/TrophyRoom";
@@ -830,6 +830,73 @@ function fmtDate(iso?: string): string {
   }
 }
 
+// ─── Iter 129: CSV export helper ───────────────────────────────────────
+// Builds a CSV from the currently filtered transactions or trades list and
+// triggers a browser download. Shape is intentionally human-readable so
+// commissioners can paste into Google Sheets / Discord without preprocessing.
+function csvEscape(v: any): string {
+  if (v == null) return "";
+  const s = String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function downloadCSV(filename: string, rows: string[][]) {
+  const text = rows.map((r) => r.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportTransactionsCSV({ isTradeView, tradeStatus, tradeRows, rows, category }: {
+  isTradeView: boolean; tradeStatus: string; tradeRows: any[]; rows: TxRow[]; category: string;
+}) {
+  const stamp = new Date().toISOString().slice(0, 10);
+  if (isTradeView) {
+    const header = [
+      "Status", "From Team", "Assets Sent", "To Team", "Assets Received",
+      "Veto Votes", "Approve Votes", "Total Voters", "Conditional",
+      "Submitted At", "Processed At",
+    ];
+    const body = (tradeRows || []).map((t) => [
+      t.status,
+      t.from_team_name,
+      (t.from_assets || []).join(" | "),
+      t.to_team_name,
+      (t.to_assets || []).join(" | "),
+      t.veto_count ?? 0,
+      t.approve_count ?? 0,
+      t.voters_total ?? 0,
+      t.conditional ? "yes" : "",
+      t.submitted_at || "",
+      t.processed_at || "",
+    ]);
+    downloadCSV(`trades-${tradeStatus}-${stamp}.csv`, [header, ...body]);
+    return;
+  }
+  const header = [
+    "Type", "Team", "Player", "Position", "Description",
+    "Bid Amount", "Winning Team", "Winning Bid", "Created At",
+  ];
+  const body = (rows || []).map((r) => [
+    r.type,
+    r.team_name || "",
+    r.player_name || "",
+    r.player_position || "",
+    r.description || "",
+    r.bid_amount ?? "",
+    r.winning_team_name || "",
+    r.winning_bid ?? "",
+    r.created_at || "",
+  ]);
+  downloadCSV(`transactions-${category}-${stamp}.csv`, [header, ...body]);
+}
+
 function TransactionsTabContent({ leagueId, leagueTeams }: { leagueId?: string; leagueTeams: any[] }) {
   const [rows, setRows] = useState<TxRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -899,7 +966,7 @@ function TransactionsTabContent({ leagueId, leagueTeams }: { leagueId?: string; 
               Every roster move, trade, and lineup change across every team this season.
             </CardDescription>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <span data-testid="transactions-result-count">
               {isTradeView
                 ? (tradeLoading
@@ -907,6 +974,23 @@ function TransactionsTabContent({ leagueId, leagueTeams }: { leagueId?: string; 
                     : `${tradeRows.length} ${tradeStatus === "vetoed" ? "vetoed" : "executed"} trade${tradeRows.length === 1 ? "" : "s"}`)
                 : (loading ? "Loading…" : `${rows.length} transaction${rows.length === 1 ? "" : "s"}`)}
             </span>
+            {/* Iter 129 — CSV export of the current filtered view */}
+            <button
+              type="button"
+              onClick={() => exportTransactionsCSV({
+                isTradeView,
+                tradeStatus,
+                tradeRows,
+                rows,
+                category,
+              })}
+              disabled={isTradeView ? (!tradeRows || tradeRows.length === 0) : (!rows || rows.length === 0)}
+              data-testid="transactions-export-csv"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition"
+            >
+              <Download className="h-3 w-3" />
+              Export CSV
+            </button>
           </div>
         </div>
       </CardHeader>

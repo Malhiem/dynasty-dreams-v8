@@ -415,16 +415,63 @@ async def get_waiver_claims(
         query["league_id"] = league_id
     if status:
         query["status"] = status
+    viewer = None
     if my_claims:
         try:
             user = await _get_user(request)
+            viewer = user
             query["owner_id"] = user["_id"]
         except Exception:
             pass
+    else:
+        # Capture the viewer (if any) so we can apply anonymous masking
+        try:
+            viewer = await _get_user(request)
+        except Exception:
+            viewer = None
 
     claims = await db.waiver_claims.find(query).sort("created_at", -1).to_list(200)
     for c in claims:
         c["_id"] = str(c["_id"])
+
+    # ── Iter 129: backend-side anonymous masking ──
+    # When the league has `waiver.pending_visibility == "all_teams_anonymous"`,
+    # mask team_name + owner_id on every claim EXCEPT:
+    #   - claims owned by the viewer (they always see their own data),
+    #   - the league commissioner / co-commissioners.
+    # Letter labels are stable per (league_id, team_id) so the same team
+    # always appears as e.g. "Team C" across pages / refreshes.
+    if league_id and claims:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)}) or {}
+        tx_cfg = (league.get("transactions_config") or {})
+        waiver_cfg = (tx_cfg.get("waiver") or {})
+        visibility = waiver_cfg.get("pending_visibility") or "own"
+        if visibility == "all_teams_anonymous":
+            commish = league.get("commissioner_id")
+            co_comms = league.get("co_commissioners") or []
+            is_privileged = (
+                viewer is not None
+                and (viewer["_id"] == commish or viewer["_id"] in co_comms)
+            )
+            if not is_privileged:
+                viewer_id = viewer["_id"] if viewer else None
+                # Build a stable team_id → letter map for this league
+                teams = await db.teams.find({"league_id": league_id}).to_list(50)
+                sorted_team_ids = sorted([str(t["_id"]) for t in teams])
+                letter_map: dict[str, str] = {}
+                for idx, tid in enumerate(sorted_team_ids):
+                    letter = chr(65 + (idx % 26))
+                    suffix = "" if idx < 26 else str(idx // 26 + 1)
+                    letter_map[tid] = f"Team {letter}{suffix}"
+                for c in claims:
+                    if c.get("owner_id") == viewer_id:
+                        continue  # owner sees their own claim un-masked
+                    c["team_name_real"] = c.get("team_name")  # debug-only
+                    c["team_name"] = letter_map.get(c.get("team_id"), "Anonymous")
+                    c["owner_id"] = None
+                    # Strip the debug-only mirror before responding
+                    del c["team_name_real"]
+
     return claims
 
 

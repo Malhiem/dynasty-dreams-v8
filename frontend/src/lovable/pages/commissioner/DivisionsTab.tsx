@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Network, Plus, Trash2, Save } from "lucide-react";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import InfoHint from "@/components/ui/info-hint";
 import {
   RegularSeasonScheduleCard,
   PlayoffsCard,
@@ -152,6 +153,10 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
             <Network className="h-5 w-5 text-primary" /> Divisions &amp; Conferences
+            <InfoHint
+              testId="info-divisions-conferences"
+              text="Group teams into divisions and (optionally) conferences. Used for Standings subgroups, Games Back math, intra-/inter-division schedule weighting, and playoff bracket seeding."
+            />
           </CardTitle>
           <p className="text-sm text-muted-foreground">
             Group teams into divisions and conferences. Powers the Standings subgroups, Games Back (GB), and playoff bracket seeding.
@@ -305,7 +310,13 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
           )}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl">
             <div>
-              <Label htmlFor="intra-div" className="text-xs font-semibold">Intra-division games</Label>
+              <Label htmlFor="intra-div" className="text-xs font-semibold">
+                Intra-division games
+                <InfoHint
+                  testId="info-intra-division"
+                  text="How many times each team plays the OTHER teams in its own division across the regular season. Higher = more rivalry games. NHL uses ~4×; fantasy leagues usually 2×."
+                />
+              </Label>
               <Input
                 id="intra-div"
                 type="number"
@@ -321,7 +332,13 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
               </p>
             </div>
             <div>
-              <Label htmlFor="intra-conf" className="text-xs font-semibold">Intra-conference games</Label>
+              <Label htmlFor="intra-conf" className="text-xs font-semibold">
+                Intra-conference games
+                <InfoHint
+                  testId="info-intra-conference"
+                  text="How many times each team plays non-division teams in the same conference. Skipped automatically if your league only has divisions, no conferences."
+                />
+              </Label>
               <Input
                 id="intra-conf"
                 type="number"
@@ -337,7 +354,13 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
               </p>
             </div>
             <div>
-              <Label htmlFor="inter-conf" className="text-xs font-semibold">Inter-conference games</Label>
+              <Label htmlFor="inter-conf" className="text-xs font-semibold">
+                Inter-conference games
+                <InfoHint
+                  testId="info-inter-conference"
+                  text="How many times each team plays teams in the OTHER conference. Set to 0 for a strict East-vs-West split until the playoffs."
+                />
+              </Label>
               <Input
                 id="inter-conf"
                 type="number"

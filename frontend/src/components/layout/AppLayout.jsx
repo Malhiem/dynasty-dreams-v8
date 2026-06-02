@@ -8,6 +8,7 @@ import { useGlobalSocketEvent } from "@/hooks/use-global-socket";
 import { toast } from "sonner";
 import GlobalTradeBuilder from "@/lovable/components/trade/GlobalTradeBuilder";
 import AppPreferencesMenu from "./AppPreferencesMenu";
+import TradeDeadlineRibbon from "@/lovable/components/TradeDeadlineRibbon";
 
 export function AppLayout({ children, onSettingsClick }) {
   const { user } = useAuth();
@@ -66,6 +67,8 @@ export function AppLayout({ children, onSettingsClick }) {
               )}
             </div>
           </header>
+          {/* Iter 129 — Trade Deadline Countdown Ribbon (auto-hides when unset) */}
+          <TradeDeadlineRibbon />
           <main className="flex-1 overflow-auto p-6">
             {children}
           </main>
