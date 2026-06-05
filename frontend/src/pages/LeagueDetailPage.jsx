@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Trophy, Users, Calendar, Gear, ArrowLeft, Plus, Copy, Check } from '@phosphor-icons/react';
 import { useLeagueHomeConfig } from '@/hooks/use-league-home-config';
 import LeagueHomeSettingsModal from '@/components/LeagueHomeSettingsModal';
+import MatchupWatchlistWidget from '@/components/MatchupWatchlistWidget';
 import { SortableSections, SortableSection } from '@/components/SortableSections';
 
 export default function LeagueDetailPage() {
@@ -267,6 +268,13 @@ export default function LeagueDetailPage() {
             stable while visual order follows the user's choice. */}
         <SortableSections ids={widgetOrder} onReorder={reorderWidgets}>
         <div className="flex flex-col">
+
+        {/* Iter 131 — Matchup Watchlist (above the matchups grid) */}
+        {isH2H && id && (
+          <div className="mb-6">
+            <MatchupWatchlistWidget leagueId={id} week={currentWeek} />
+          </div>
+        )}
 
         {/* Matchups + Standings (side-by-side on desktop) */}
         {widgetVis.matchups && isH2H ? (

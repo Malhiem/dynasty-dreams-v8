@@ -118,8 +118,10 @@ def test_consolation_bracket_recommend_link():
     src = PLAYOFFS_CARDS.read_text()
     assert "idealAlignedSize" in src, "idealAlignedSize derivation missing"
     assert "co-teams-recommend" in src, "Recommended-size link testid missing"
-    # Suggestion math: should consider Math.max(8, playoffTeams, 2**weeks/2)
-    assert "Math.max(8" in src, "Recommend size must enforce ≥ 8 floor"
+    # Iter 131: now derives from playoffTeams directly (no 2^weeks math)
+    assert "Math.min(maxConsolation, playoffTeams)" in src, (
+        "Recommend size must match the playoff bracket size"
+    )
 
 
 # ── 5. Matchup Watchlist backend + frontend ────────────────────

@@ -526,15 +526,12 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
   const playoffTeams = Number(league?.playoff_teams ?? 6);
   const maxConsolation = Math.max(0, totalTeams - playoffTeams);
 
-  // Iter 130 — Smarter default when the bracket aligns with the main
-  // playoff schedule. A 4-week bracket can accommodate up to 16 teams
-  // (2^4 = 16). For each playoff week the consolation should host at
-  // least 8 teams when room allows. Else match playoffTeams.
-  const playoffWeeks = Math.max(
-    1,
-    Number(league?.playoff_end_week ?? 22) - Number(league?.playoff_start_week ?? 19) + 1,
-  );
-  const idealAlignedSize = Math.min(maxConsolation, Math.max(8, playoffTeams, 2 ** playoffWeeks / 2));
+  // Iter 131 — Recommend matches the main playoff bracket size, capped by
+  // however many teams are actually outside the playoffs. This mirrors the
+  // user's expectation: "4 matchups in playoffs = 8 teams = consolation
+  // should also be 8 teams" (in a 12-team league: 8 + 4; in a 32-team league:
+  // 16 + 16).
+  const idealAlignedSize = Math.max(2, Math.min(maxConsolation, playoffTeams));
 
   const [consolationTeams, setConsolationTeams] = useState<string>(
     String(
@@ -662,7 +659,7 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
                   onChange={(e) => setConsolationTeams(e.target.value)} data-testid="co-teams" />
                 {consolationAlong && (
                   <p className="text-[10px] text-muted-foreground">
-                    Aligned with a {playoffWeeks}-week playoff. Recommended:{" "}
+                    Aligned with the main playoff bracket. Recommended:{" "}
                     <button
                       type="button"
                       onClick={() => setConsolationTeams(String(idealAlignedSize))}
@@ -671,7 +668,7 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
                     >
                       {idealAlignedSize} team{idealAlignedSize === 1 ? "" : "s"}
                     </button>{" "}
-                    to fill {playoffWeeks} rounds.
+                    (matches the {playoffTeams}-team playoff bracket).
                   </p>
                 )}
               </div>
