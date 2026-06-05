@@ -240,13 +240,19 @@ export default function RostersTab() {
           </div>
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="roster-size-prospects">Prospect Pool Size (0–20)</Label>
+              <Label htmlFor="roster-size-prospects">
+                Prospect Pool Size (0–20)
+                <InfoHint testId="info-prospect-pool" text="Dynasty farm system slots. Players in the prospect pool don't earn fantasy points and are excluded from cap math, but they auto-promote when they hit your league's age/games threshold." />
+              </Label>
               <Input id="roster-size-prospects" type="number" min={0} max={20}
                 value={prospectPool} onChange={(e) => setProspectPool(e.target.value)}
                 placeholder="10" data-testid="rosters-minors-spots-input" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="roster-size-taxi">Taxi Squad Size (0–20)</Label>
+              <Label htmlFor="roster-size-taxi">
+                Taxi Squad Size (0–20)
+                <InfoHint testId="info-taxi-squad" text="Mid-season stash for emerging NHL talent. Unlike prospects, taxi-squad players can be activated mid-week with a single move. Cap hit still applies." />
+              </Label>
               <Input id="roster-size-taxi" type="number" min={0} max={20}
                 value={taxiSquad} onChange={(e) => setTaxiSquad(e.target.value)}
                 placeholder="5" data-testid="rosters-taxi-squad-input" />
@@ -261,6 +267,7 @@ export default function RostersTab() {
           <CardTitle className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5 text-amber-400" />
             Position Limits
+            <InfoHint testId="info-position-limits" text="Caps the number of players each team can roster at each position (C, LW, RW, D, G). Leave blank for no cap. Pair with 'Enforce Position Maximums' below to harden the rule." />
           </CardTitle>
           <CardDescription>Maximum players allowed at each position. Leave blank for no limit.</CardDescription>
         </CardHeader>
@@ -286,7 +293,10 @@ export default function RostersTab() {
           </div>
           <div className="flex items-center justify-between">
             <div>
-              <Label>Enforce Position Maximums</Label>
+              <Label>
+                Enforce Position Maximums
+                <InfoHint testId="info-enforce-position" text="When ON, the system rejects any add/trade/draft that would put a team over a position limit. When OFF, the limits are advisory only — owners get a warning but can still pile up D-men." />
+              </Label>
               <p className="text-sm text-muted-foreground">
                 Block acquisitions (waivers, trades, draft picks) that exceed any position limit.
               </p>
@@ -306,19 +316,26 @@ export default function RostersTab() {
           <CardTitle className="flex items-center gap-2">
             <ListChecks className="h-5 w-5 text-emerald-400" />
             Roster Requirements
+            <InfoHint testId="info-roster-requirements" text="Validity rules checked each scoring period. Lineups that don't meet these are flagged invalid. Used to prevent owners from fielding empty rosters for tanking." />
           </CardTitle>
           <CardDescription>Minimums and validity rules checked by the scoring engine.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="req-min-active">Minimum Active Players (0–40)</Label>
+              <Label htmlFor="req-min-active">
+                Minimum Active Players (0–40)
+                <InfoHint testId="info-min-active" text="Smallest number of starters a team can field each scoring period without being flagged for a forfeit." />
+              </Label>
               <Input id="req-min-active" type="number" min={0} max={40}
                 value={minActivePlayers} onChange={(e) => setMinActivePlayers(e.target.value)}
                 placeholder="15" data-testid="rosters-min-active-input" />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="req-min-games">Minimum Games Played (0–200)</Label>
+              <Label htmlFor="req-min-games">
+                Minimum Games Played (0–200)
+                <InfoHint testId="info-min-games" text="Per-team minimum total games-played by all active players over the scoring period. Stops tanking via 'parked' lineups." />
+              </Label>
               <Input id="req-min-games" type="number" min={0} max={200}
                 value={minGamesPlayed} onChange={(e) => setMinGamesPlayed(e.target.value)}
                 placeholder="50" data-testid="rosters-min-games-input" />
@@ -326,7 +343,10 @@ export default function RostersTab() {
           </div>
           <div className="flex items-center justify-between">
             <div>
-              <Label>Prorate Min/Max by Period</Label>
+              <Label>
+                Prorate Min/Max by Period
+                <InfoHint testId="info-prorate-period" text="When ON, the min-games requirement scales with the scoring period length (daily/weekly/2-week). Off-week or split-week periods auto-adjust so a 3-day window doesn't require a full week's games." />
+              </Label>
               <p className="text-sm text-muted-foreground">
                 Adjust min-games requirements based on scoring period length.
               </p>
@@ -340,7 +360,10 @@ export default function RostersTab() {
           <Separator />
           <div className="flex items-center justify-between">
             <div>
-              <Label>Allow Illegal Rosters</Label>
+              <Label>
+                Allow Illegal Rosters
+                <InfoHint testId="info-allow-illegal" text="If ON, lineups that violate the rules above STILL score — owners just see a warning. If OFF, the scoring engine refuses to score the period until the lineup is legal." />
+              </Label>
               <p className="text-sm text-muted-foreground">
                 Teams can save lineups that violate the rules above (the engine will warn but still score).
               </p>
@@ -360,6 +383,7 @@ export default function RostersTab() {
           <CardTitle className="flex items-center gap-2">
             <ListChecks className="h-5 w-5 text-indigo-400" />
             Prospect Eligibility
+            <InfoHint testId="info-prospect-eligibility" text="Defines who counts as a 'prospect' for league rules. Used by the 'Prevent claims on prospects' waiver toggle. A player is a prospect if BOTH thresholds apply — young AND inexperienced." />
           </CardTitle>
           <CardDescription>
             Defines who counts as a "prospect" for league rules — used by the
@@ -409,6 +433,7 @@ export default function RostersTab() {
           <CardTitle className="flex items-center gap-2">
             <HeartPulse className="h-5 w-5 text-rose-400" />
             IR Eligibility
+            <InfoHint testId="info-ir-eligibility" text="Which official NHL status codes can occupy an IR slot. IR (Injured Reserve), DTD (Day-to-Day), SUSPended, HEALthy scratch. Most leagues only allow IR / DTD." />
           </CardTitle>
           <CardDescription>
             Which player status codes can occupy an IR slot. Toggle each mode on/off.

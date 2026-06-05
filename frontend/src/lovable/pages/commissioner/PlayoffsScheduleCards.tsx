@@ -526,8 +526,23 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
   const playoffTeams = Number(league?.playoff_teams ?? 6);
   const maxConsolation = Math.max(0, totalTeams - playoffTeams);
 
+  // Iter 130 — Smarter default when the bracket aligns with the main
+  // playoff schedule. A 4-week bracket can accommodate up to 16 teams
+  // (2^4 = 16). For each playoff week the consolation should host at
+  // least 8 teams when room allows. Else match playoffTeams.
+  const playoffWeeks = Math.max(
+    1,
+    Number(league?.playoff_end_week ?? 22) - Number(league?.playoff_start_week ?? 19) + 1,
+  );
+  const idealAlignedSize = Math.min(maxConsolation, Math.max(8, playoffTeams, 2 ** playoffWeeks / 2));
+
   const [consolationTeams, setConsolationTeams] = useState<string>(
-    String(league?.consolation_teams ?? Math.min(maxConsolation, 4)),
+    String(
+      league?.consolation_teams ??
+        (league?.consolation_uses_playoff_schedule !== false
+          ? idealAlignedSize
+          : Math.min(maxConsolation, 4)),
+    ),
   );
   const [seedingMethod, setSeedingMethod] = useState<string>(
     league?.consolation_seeding_method || "high_vs_low",
@@ -542,7 +557,12 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
 
   useEffect(() => {
     setEnabled(!!league?.consolation_enabled);
-    setConsolationTeams(String(league?.consolation_teams ?? Math.min(maxConsolation, 4)));
+    setConsolationTeams(String(
+      league?.consolation_teams ??
+        (league?.consolation_uses_playoff_schedule !== false
+          ? idealAlignedSize
+          : Math.min(maxConsolation, 4)),
+    ));
     setSeedingMethod(league?.consolation_seeding_method || "high_vs_low");
     setCustomMatchups(league?.consolation_custom_matchups || []);
     setConsolationAlong(league?.consolation_uses_playoff_schedule !== false);
@@ -640,6 +660,20 @@ export function ConsolationCard({ league, reloadLeague, teams }: any) {
                 <Label className="text-xs">Number of Teams (max {maxConsolation})</Label>
                 <Input type="number" min={2} max={maxConsolation} value={consolationTeams}
                   onChange={(e) => setConsolationTeams(e.target.value)} data-testid="co-teams" />
+                {consolationAlong && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Aligned with a {playoffWeeks}-week playoff. Recommended:{" "}
+                    <button
+                      type="button"
+                      onClick={() => setConsolationTeams(String(idealAlignedSize))}
+                      className="underline-offset-2 hover:underline text-cyan-300"
+                      data-testid="co-teams-recommend"
+                    >
+                      {idealAlignedSize} team{idealAlignedSize === 1 ? "" : "s"}
+                    </button>{" "}
+                    to fill {playoffWeeks} rounds.
+                  </p>
+                )}
               </div>
               <div className="space-y-1 sm:col-span-2">
                 <Label className="text-xs">Seeding Method</Label>

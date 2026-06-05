@@ -12,6 +12,7 @@ import { Activity, Flame, RefreshCw, Radio, Trophy, Loader2 } from 'lucide-react
 import api from '@/lib/api';
 import { useGlobalSocketEvent } from '@/hooks/use-global-socket';
 import { useActiveLeague } from '@/hooks/use-active-league';
+import MatchupWatchlistWidget from '@/components/MatchupWatchlistWidget';
 
 const STATE_BADGE = {
   LIVE: { label: 'LIVE', className: 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse' },
@@ -320,6 +321,8 @@ export default function LiveScoringPage() {
             )}
 
             {/* League-specific fantasy scoring */}
+            {/* Iter 130 — Matchup Watchlist (starred + auto-watch) */}
+            <MatchupWatchlistWidget leagueId={selectedLeagueId} />
             <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
               <h2 className="font-heading text-xl font-bold text-white tracking-wide flex items-center gap-2">
                 <Trophy size={18} className="text-[#00D2FF]" /> FANTASY LEADERBOARD

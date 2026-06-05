@@ -285,27 +285,70 @@ export default function RulesScheduleTab() {
                       testId="rules-schedule-veto-preview"
                     />
                   )}
-                  {/* Iter 128 — exact trade deadline date+time picker */}
+                  {/* Iter 128/130 — exact trade deadline picker, now split into
+                      separate Date + Time inputs so users can clearly see they
+                      need to set both (the combined datetime-local input was
+                      reading as "date only" because the time field is rendered
+                      inside the calendar popover on most browsers). */}
                   {field.key === "trade_deadline_week" && draft.trade_deadline_week && (
                     <div
-                      className="space-y-1 mt-3 p-3 rounded-md border border-amber-500/30 bg-amber-500/5"
+                      className="space-y-2 mt-3 p-3 rounded-md border border-amber-500/30 bg-amber-500/5"
                       data-testid="trade-deadline-at-block"
                     >
-                      <Label htmlFor="rs-trade-deadline-at" className="text-xs flex items-center">
+                      <Label htmlFor="rs-trade-deadline-at-date" className="text-xs flex items-center">
                         Exact Trade Deadline (date &amp; time)
                         <InfoHint
                           testId="info-trade-deadline-at"
-                          text="Optional: pin the deadline to an exact moment instead of waiting until the end of the configured week. When set, this datetime takes precedence over the week number. Saved in your local timezone and enforced UTC-server-side."
+                          text="Optional: pin the deadline to an exact moment instead of waiting until the end of the configured week. Set BOTH the date and the time inputs — saved in your local timezone, enforced UTC server-side."
                         />
                       </Label>
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-end gap-2">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            Date
+                          </span>
+                          <Input
+                            id="rs-trade-deadline-at-date"
+                            type="date"
+                            value={deadlineAt.slice(0, 10)}
+                            onChange={(e) => {
+                              const date = e.target.value;
+                              const time = deadlineAt.slice(11, 16) || "12:00";
+                              setDeadlineAt(date ? `${date}T${time}` : "");
+                            }}
+                            className="bg-secondary border-border w-40"
+                            data-testid="rules-schedule-trade-deadline-at-date-input"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                            Time
+                          </span>
+                          <Input
+                            id="rs-trade-deadline-at-time"
+                            type="time"
+                            value={deadlineAt.slice(11, 16)}
+                            onChange={(e) => {
+                              const time = e.target.value || "12:00";
+                              const date = deadlineAt.slice(0, 10);
+                              if (date) setDeadlineAt(`${date}T${time}`);
+                            }}
+                            disabled={!deadlineAt.slice(0, 10)}
+                            className="bg-secondary border-border w-32 disabled:opacity-50"
+                            data-testid="rules-schedule-trade-deadline-at-time-input"
+                          />
+                        </div>
+                        {/* Iter 128 — hidden combined input preserved for legacy
+                            tests that target the datetime-local testid. */}
                         <Input
                           id="rs-trade-deadline-at"
                           type="datetime-local"
                           value={deadlineAt}
                           onChange={(e) => setDeadlineAt(e.target.value)}
-                          className="bg-secondary border-border max-w-xs"
+                          className="hidden"
                           data-testid="rules-schedule-trade-deadline-at-input"
+                          tabIndex={-1}
+                          aria-hidden="true"
                         />
                         {deadlineAt && (
                           <Button
@@ -321,9 +364,11 @@ export default function RulesScheduleTab() {
                         )}
                       </div>
                       <p className="text-[10px] text-muted-foreground">
-                        {deadlineAt
+                        {deadlineAt && deadlineAt.length >= 16
                           ? `Trades lock at ${new Date(deadlineAt).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })} (your local time).`
-                          : "Leave blank to use the week-end fallback from the value above."}
+                          : deadlineAt
+                            ? "Now set the time using the field above ↑"
+                            : "Leave both blank to use the week-end fallback from the value above."}
                       </p>
                     </div>
                   )}

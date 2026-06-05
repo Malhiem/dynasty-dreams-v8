@@ -527,7 +527,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes, roster as roster_routes, constitution_audit as constitution_audit_routes, live_scoring as live_scoring_routes, scoring as scoring_routes, lineup as lineup_routes, league_invites as league_invites_routes, recommendations as recommendations_routes, sports as sports_routes, admin as admin_routes, transactions_config as transactions_config_routes, cap_floor as cap_floor_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes, roster as roster_routes, constitution_audit as constitution_audit_routes, live_scoring as live_scoring_routes, scoring as scoring_routes, lineup as lineup_routes, league_invites as league_invites_routes, recommendations as recommendations_routes, sports as sports_routes, admin as admin_routes, transactions_config as transactions_config_routes, cap_floor as cap_floor_routes, matchup_stars as matchup_stars_routes
 
 _router_deps = {
     "db": db,
@@ -585,6 +585,7 @@ sports_routes.setup(_router_deps)
 admin_routes.setup(_router_deps)
 transactions_config_routes.setup(_router_deps)
 cap_floor_routes.setup(_router_deps)
+matchup_stars_routes.setup(_router_deps)
 # Late-bind get_team_week_summary (now defined inside routes/live_scoring.py)
 _router_deps["get_team_week_summary"] = live_scoring_routes.get_team_week_summary
 users_routes.setup(_router_deps)
@@ -635,6 +636,7 @@ api_router.include_router(sports_routes.router)
 api_router.include_router(admin_routes.router)
 api_router.include_router(transactions_config_routes.router)
 api_router.include_router(cap_floor_routes.router)
+api_router.include_router(matchup_stars_routes.router)
 
 
 # Admin endpoint /admin/snapshot-ownership → routes/admin.py (iter 115)

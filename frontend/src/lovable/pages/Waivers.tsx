@@ -227,6 +227,11 @@ const Waivers = () => {
   // OTHER owners' claims. Commissioner + the claim's own owner still see real
   // names. We derive a stable label per teamId so the masking is consistent
   // across renders + tabs (same team always shows as the same letter).
+  // Iter 130 — gate FAAB-only UI on the league's waiver system_type.
+  // When auto_priority (or system not configured), suppress FAAB bid + budget
+  // affordances so owners don't see misleading bidding inputs.
+  const isFaabSystem = (txConfig?.waiver?.system_type || "auto_priority") === "faab";
+
   const isCommish = !!(
     league?.commissioner_id && myTeam?.owner_id && league.commissioner_id === myTeam.owner_id
   );
@@ -262,7 +267,9 @@ const Waivers = () => {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold">Waiver Wire</h1>
-            <p className="text-muted-foreground">FAAB bidding and waiver claims</p>
+            <p className="text-muted-foreground">
+              {isFaabSystem ? "FAAB bidding and waiver claims" : "Priority-order waiver claims"}
+            </p>
           </div>
         </div>
 
@@ -289,9 +296,10 @@ const Waivers = () => {
           </div>
         )}
 
-        {/* FAAB Overview */}
+        {/* FAAB Overview — only rendered for FAAB-based leagues */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="bg-card border-border">
+          {isFaabSystem && (
+          <Card className="bg-card border-border" data-testid="waiver-faab-tile">
             <CardContent className="p-6">
               <div className="flex items-center gap-3 mb-3">
                 <div className="h-10 w-10 rounded-lg bg-primary/20 flex items-center justify-center">
@@ -306,6 +314,7 @@ const Waivers = () => {
               <p className="text-xs text-muted-foreground mt-2">${faabSpent} spent of ${faabBudget} budget</p>
             </CardContent>
           </Card>
+          )}
 
           <Card className="bg-card border-border">
             <Collapsible open={waiverOrderOpen} onOpenChange={setWaiverOrderOpen}>
@@ -460,10 +469,12 @@ const Waivers = () => {
                         </div>
                       </div>
                       <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <p className="font-semibold text-primary">${claim.bidAmount}</p>
-                          <p className="text-xs text-muted-foreground">FAAB Bid</p>
-                        </div>
+                        {isFaabSystem ? (
+                          <div className="text-right">
+                            <p className="font-semibold text-primary">${claim.bidAmount}</p>
+                            <p className="text-xs text-muted-foreground">FAAB Bid</p>
+                          </div>
+                        ) : null}
                         <Badge className="bg-accent/20 text-accent border-accent/30">
                           <Clock className="h-3 w-3 mr-1" />
                           {claim.processTime}
@@ -534,7 +545,9 @@ const Waivers = () => {
             <DialogHeader>
               <DialogTitle>Place Waiver Claim</DialogTitle>
               <DialogDescription>
-                Place a FAAB bid for {selectedPlayer?.name}
+                {isFaabSystem
+                  ? `Place a FAAB bid for ${selectedPlayer?.name || "this player"}`
+                  : `Submit a priority-order claim for ${selectedPlayer?.name || "this player"}`}
               </DialogDescription>
             </DialogHeader>
             <div className="py-4 space-y-4">
@@ -548,21 +561,33 @@ const Waivers = () => {
                 </div>
               </div>
 
-              <div>
-                <label className="text-sm text-muted-foreground">FAAB Bid ($)</label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={faabRemaining}
-                  value={bidAmount}
-                  onChange={(e) => setBidAmount(parseFloat(e.target.value) || 0)}
-                  className="mt-2"
-                  data-testid="waiver-bid-amount"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Remaining budget: ${faabRemaining}
-                </p>
-              </div>
+              {isFaabSystem ? (
+                <div>
+                  <label className="text-sm text-muted-foreground">FAAB Bid ($)</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={faabRemaining}
+                    value={bidAmount}
+                    onChange={(e) => setBidAmount(parseFloat(e.target.value) || 0)}
+                    className="mt-2"
+                    data-testid="waiver-bid-amount"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Remaining budget: ${faabRemaining}
+                  </p>
+                </div>
+              ) : (
+                <div
+                  className="rounded-md border border-cyan-500/30 bg-cyan-500/5 p-3"
+                  data-testid="waiver-priority-claim-notice"
+                >
+                  <p className="text-xs text-cyan-200">
+                    Priority-order league: no bid required. Claims are awarded to the
+                    highest-priority team that has space + cap when the waiver clears.
+                  </p>
+                </div>
+              )}
 
               {/* Precheck panel ─ surfaces roster / cap / FAAB blockers */}
               {prechecking && (
