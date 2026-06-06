@@ -185,6 +185,14 @@ export default function MatchupWatchlistWidget({ leagueId, week }) {
           const isStarred = starredIds.has(id);
           const reasons = autoWatch[id] || [];
           const h = h2h[id];
+          // Resolve the streak team name from the matchup's actual team ids
+          const streakTeamName = h && h.streak_team_id
+            ? (String(h.streak_team_id) === String(m.home_team_id)
+                ? m.home_team_name
+                : String(h.streak_team_id) === String(m.away_team_id)
+                  ? m.away_team_name
+                  : null)
+            : null;
           return (
             <div
               key={id}
@@ -247,16 +255,16 @@ export default function MatchupWatchlistWidget({ leagueId, week }) {
                               <div className="space-y-1">
                                 <div className="font-semibold">Head-to-head</div>
                                 <div>
+                                  Lifetime:{" "}
+                                  <span className="font-mono">{h.all_time}</span>
+                                </div>
+                                <div>
                                   Last season:{" "}
                                   <span className="font-mono">{h.last_season}</span>
                                 </div>
-                                <div>
-                                  All-time:{" "}
-                                  <span className="font-mono">{h.all_time}</span>
-                                </div>
-                                {h.streak_wins >= 3 && (
+                                {h.streak_wins >= 1 && streakTeamName && (
                                   <div className="text-rose-300">
-                                    Active streak: {h.streak_wins} straight wins
+                                    🔥 {streakTeamName} has won {h.streak_wins} in a row
                                   </div>
                                 )}
                               </div>

@@ -427,7 +427,9 @@ export function FreeAgencyCard({ cfg, setCfg, leagueTeams }) {
             </label>
             <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border p-3">
               <RadioGroupItem value="auto_priority" data-testid="fa-system-auto" />
-              <span><strong>Automated Priority Order</strong> — used when waivers are disabled</span>
+              <span>
+                <strong>Automated Priority Order</strong> — automated ranking system to determine the priority order for claiming players on waivers. On the days that the claims are processed, players are awarded to the teams that claimed them based on a fixed order, which is based on the priority system of your choice. Upon selecting the player, you will drop to the bottom of the automated order.
+              </span>
             </label>
             <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border p-3">
               <RadioGroupItem value="manual_priority" data-testid="fa-system-manual" />
@@ -478,7 +480,13 @@ export function FreeAgencyCard({ cfg, setCfg, leagueTeams }) {
         {fa.system_type === "manual_priority" && (
           <div className="rounded-md border border-border p-4 space-y-4" data-testid="fa-manual-priority-block">
             <div className="space-y-2">
-              <Label className="text-sm">Duration</Label>
+              <Label className="text-sm flex items-center">
+                Duration
+                <InfoHint
+                  testId="info-manual-priority-duration"
+                  text="One-off: commissioner sets the order ONCE; after the first set of claims is processed, the league reverts to the Automated Priority Order. 1 Month / 3 Months: the manual order stays in effect for that rolling window, then auto-reverts. Full Season: the manual order remains in effect for the entire regular season."
+                />
+              </Label>
               <RadioGroup value={fa.manual_priority_duration} onValueChange={set("manual_priority_duration")} className="grid grid-cols-2 md:grid-cols-4 gap-2">
                 <label className="flex items-center gap-2 cursor-pointer text-sm">
                   <RadioGroupItem value="one_off" data-testid="fa-manual-one-off" /> One-off

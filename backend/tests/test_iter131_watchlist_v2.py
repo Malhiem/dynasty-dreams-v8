@@ -121,9 +121,10 @@ def test_widget_renders_all_reason_icons():
 def test_widget_has_h2h_tooltip():
     src = WIDGET.read_text()
     assert "Head-to-head" in src, "H2H tooltip header missing"
-    assert "Last season" in src and "All-time" in src, "H2H labels missing"
+    assert "Last season" in src and "Lifetime" in src, "H2H labels missing"
     assert "streak_wins" in src, "Streak rendering missing"
     assert "🔥" in src, "Streak badge fire emoji missing"
+    assert "has won" in src and "in a row" in src, "Streak team-name sentence missing"
 
 
 # ── 4. Mounted on League Home ──────────────────────────────────

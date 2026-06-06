@@ -11,6 +11,7 @@ import { Trophy, Users, Calendar, Gear, ArrowLeft, Plus, Copy, Check } from '@ph
 import { useLeagueHomeConfig } from '@/hooks/use-league-home-config';
 import LeagueHomeSettingsModal from '@/components/LeagueHomeSettingsModal';
 import MatchupWatchlistWidget from '@/components/MatchupWatchlistWidget';
+import MatchupStarButton from '@/components/MatchupStarButton';
 import { SortableSections, SortableSection } from '@/components/SortableSections';
 
 export default function LeagueDetailPage() {
@@ -334,6 +335,16 @@ export default function LeagueDetailPage() {
                         className="surface p-4 hover:border-[#00D2FF]/40 transition-colors"
                         data-testid={`league-matchup-card-${m._id}`}
                       >
+                        <div className="flex items-center justify-end mb-1 -mt-1 -mr-1">
+                          <MatchupStarButton
+                            leagueId={id}
+                            matchupId={m._id}
+                            homeTeamId={m.home_team_id}
+                            homeTeamName={m.home_team_name}
+                            awayTeamId={m.away_team_id}
+                            awayTeamName={m.away_team_name}
+                          />
+                        </div>
                         <TeamRow t={home} name={m.home_team_name} rec={homeRec} score={homeScore} won={homeWon} side="home" />
                         <div className="my-2 flex items-center gap-2">
                           <div className="flex-1 h-px bg-white/10" />
