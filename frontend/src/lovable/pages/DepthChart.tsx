@@ -458,6 +458,44 @@ const DepthChart = () => {
     });
   };
 
+  // ── Iter 136 — per-line / per-pair cap impact ────────────────────
+  // Committed salary = sum of assigned starter contracts. Team room =
+  // selected-year cap minus that sum. Each line/pair chip shows its
+  // own committed amount alongside the team-wide remaining room so
+  // managers can see both the unit cost and the overall headroom as
+  // they build the lineup.
+  const lineCapImpact = useMemo(() => {
+    const salaryFor = (slotId: string): number => {
+      const pid = assignedMap[slotId];
+      if (!pid) return 0;
+      const p: any = playerById[pid];
+      return Number(p?.contract?.salary || 0);
+    };
+    const perSlot: Record<string, number> = {};
+    Object.keys(assignedMap).forEach((slotId) => { perSlot[slotId] = salaryFor(slotId); });
+
+    const sumByPrefix = (prefix: string): number =>
+      slotPlan
+        .filter((s) => s.id.startsWith(`${prefix}-`))
+        .reduce((acc, s) => acc + (perSlot[s.id] || 0), 0);
+
+    const lines: Record<string, number> = {};
+    const pairs: Record<string, number> = {};
+    slotPlan.forEach((s) => {
+      const root = s.id.split("-")[0]; // "L1", "D1"
+      if (s.role === "F") lines[root] = sumByPrefix(root);
+      else if (s.role === "D") pairs[root] = sumByPrefix(root);
+    });
+
+    const totalCommitted = slotPlan
+      .filter((s) => s.role === "F" || s.role === "D" || s.role === "G")
+      .reduce((acc, s) => acc + (perSlot[s.id] || 0), 0);
+    const cap = capLimits[yearOffset].cap;
+    const room = cap - totalCommitted;
+
+    return { lines, pairs, totalCommitted, room, cap };
+  }, [assignedMap, playerById, slotPlan, capLimits, yearOffset]);
+
   return (
     <AppLayout>
       <div className="container py-8 space-y-6">
@@ -729,22 +767,41 @@ const DepthChart = () => {
                         ).map((lineId, idx) => (
                           <div
                             key={lineId}
-                            className="flex items-center gap-3"
                             data-testid={`depth-lineup-line-${idx + 1}`}
                           >
-                            <div className="w-16 shrink-0 text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
-                              Line {idx + 1}
+                            <div className="flex items-center gap-3">
+                              <div className="w-16 shrink-0 text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
+                                Line {idx + 1}
+                              </div>
+                              <div className="grid grid-cols-3 gap-2 flex-1">
+                                {slotPlan
+                                  .filter((s) => s.role === "F" && s.id.startsWith(`${lineId}-`))
+                                  .map((slot) => (
+                                    <SlotDrop
+                                      key={slot.id}
+                                      slot={slot}
+                                      player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
+                                    />
+                                  ))}
+                              </div>
                             </div>
-                            <div className="grid grid-cols-3 gap-2 flex-1">
-                              {slotPlan
-                                .filter((s) => s.role === "F" && s.id.startsWith(`${lineId}-`))
-                                .map((slot) => (
-                                  <SlotDrop
-                                    key={slot.id}
-                                    slot={slot}
-                                    player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
-                                  />
-                                ))}
+                            {/* Iter 136 — per-line cap impact chip */}
+                            <div
+                              className="ml-[76px] mt-1 text-[10px] font-mono text-muted-foreground flex flex-wrap gap-x-3"
+                              data-testid={`depth-line-cap-${idx + 1}`}
+                            >
+                              <span>
+                                Line {idx + 1}:{" "}
+                                <span className="text-cyan-300">{fmt(lineCapImpact.lines[lineId] || 0)}</span>
+                                {" "}committed
+                              </span>
+                              <span>
+                                ·{" "}
+                                <span className={lineCapImpact.room >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                                  {fmt(lineCapImpact.room)}
+                                </span>
+                                {" "}room
+                              </span>
                             </div>
                           </div>
                         ))}
@@ -762,25 +819,44 @@ const DepthChart = () => {
                         ).map((pairId, idx) => (
                           <div
                             key={pairId}
-                            className="flex items-center gap-3"
                             data-testid={`depth-lineup-pair-${idx + 1}`}
                           >
-                            <div className="w-16 shrink-0 text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
-                              Pair {idx + 1}
+                            <div className="flex items-center gap-3">
+                              <div className="w-16 shrink-0 text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
+                                Pair {idx + 1}
+                              </div>
+                              {/* Same 3-col grid as Forwards so tile width matches.
+                                  Only 2 of 3 cells render real slots; the 3rd is a spacer. */}
+                              <div className="grid grid-cols-3 gap-2 flex-1">
+                                {slotPlan
+                                  .filter((s) => s.role === "D" && s.id.startsWith(`${pairId}-`))
+                                  .map((slot) => (
+                                    <SlotDrop
+                                      key={slot.id}
+                                      slot={slot}
+                                      player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
+                                    />
+                                  ))}
+                                <div aria-hidden="true" />
+                              </div>
                             </div>
-                            {/* Same 3-col grid as Forwards so tile width matches.
-                                Only 2 of 3 cells render real slots; the 3rd is a spacer. */}
-                            <div className="grid grid-cols-3 gap-2 flex-1">
-                              {slotPlan
-                                .filter((s) => s.role === "D" && s.id.startsWith(`${pairId}-`))
-                                .map((slot) => (
-                                  <SlotDrop
-                                    key={slot.id}
-                                    slot={slot}
-                                    player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
-                                  />
-                                ))}
-                              <div aria-hidden="true" />
+                            {/* Iter 136 — per-pair cap impact chip */}
+                            <div
+                              className="ml-[76px] mt-1 text-[10px] font-mono text-muted-foreground flex flex-wrap gap-x-3"
+                              data-testid={`depth-pair-cap-${idx + 1}`}
+                            >
+                              <span>
+                                Pair {idx + 1}:{" "}
+                                <span className="text-amber-300">{fmt(lineCapImpact.pairs[pairId] || 0)}</span>
+                                {" "}committed
+                              </span>
+                              <span>
+                                ·{" "}
+                                <span className={lineCapImpact.room >= 0 ? "text-emerald-300" : "text-rose-300"}>
+                                  {fmt(lineCapImpact.room)}
+                                </span>
+                                {" "}room
+                              </span>
                             </div>
                           </div>
                         ))}
