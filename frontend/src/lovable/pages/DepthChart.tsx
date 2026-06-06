@@ -22,7 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Save, RotateCcw, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import { Save, RotateCcw, ArrowUpDown, ArrowUp, ArrowDown, Copy } from "lucide-react";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
 import { toast } from "sonner";
@@ -419,6 +419,35 @@ const DepthChart = () => {
     toast.success(`${SEASON_LABEL(capLimits[yearOffset].year)} lineup cleared`);
   };
 
+  // Iter 135 — Clone current-year lineup into the selected future year,
+  // filtering out players whose contracts don't extend into that year so
+  // we never seed an ineligible slot.
+  const copyFromCurrentYear = () => {
+    if (yearOffset === 0) return;
+    const source = lineups.y0 || {};
+    if (Object.keys(source).length === 0) {
+      toast.error("Current year lineup is empty — nothing to copy.");
+      return;
+    }
+    const cloned: Record<string, string> = {};
+    let skipped = 0;
+    Object.entries(source).forEach(([slotId, playerId]) => {
+      const p: any = playerById[playerId as string];
+      if (p && eligibleForYear(p, yearOffset)) {
+        cloned[slotId] = playerId as string;
+      } else {
+        skipped += 1;
+      }
+    });
+    setLineups((prev) => ({ ...prev, [yearKey]: cloned }));
+    const label = SEASON_LABEL(capLimits[yearOffset].year);
+    if (skipped > 0) {
+      toast.success(`Copied to ${label} · ${Object.keys(cloned).length} slots (${skipped} ineligible skipped)`);
+    } else {
+      toast.success(`Copied to ${label} · ${Object.keys(cloned).length} slots`);
+    }
+  };
+
   const handleProjectionChange = (playerId: string, value: string) => {
     const num = Math.max(0, Math.min(1500, parseInt(value, 10) || 0));
     setProjections((prev) => {
@@ -668,9 +697,21 @@ const DepthChart = () => {
                     )}
                   </p>
                 </div>
-                <Button size="sm" variant="outline" onClick={resetLineup} data-testid="depth-lineup-reset">
-                  <RotateCcw className="h-4 w-4 mr-1" /> Clear Lineup
-                </Button>
+                <div className="flex gap-2">
+                  {yearOffset !== 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={copyFromCurrentYear}
+                      data-testid="depth-lineup-copy-current"
+                    >
+                      <Copy className="h-4 w-4 mr-1" /> Copy from current year
+                    </Button>
+                  )}
+                  <Button size="sm" variant="outline" onClick={resetLineup} data-testid="depth-lineup-reset">
+                    <RotateCcw className="h-4 w-4 mr-1" /> Clear Lineup
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
