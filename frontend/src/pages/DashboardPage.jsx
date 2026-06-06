@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import RecommendedForYou from '@/components/RecommendedForYou';
 import MyLeaguesOrderedList from '@/components/MyLeaguesOrderedList';
 import LiveScoringWidget from '@/components/LiveScoringWidget';
-import MatchupWatchlistWidget from '@/components/MatchupWatchlistWidget';
 import { useActiveLeague } from '@/hooks/use-active-league';
 import MyWeekAtAGlance from '@/components/MyWeekAtAGlance';
 import FantasyLevelBadge from '@/components/FantasyLevelBadge';
@@ -116,9 +115,6 @@ export default function DashboardPage() {
 
         {/* Live Scoring widget */}
         <LiveScoringWidget />
-
-        {/* Iter 130 — Matchup Watchlist for active league */}
-        {activeLeague?.id && <MatchupWatchlistWidget leagueId={activeLeague.id} />}
 
         {/* My Leagues Table */}
         <div className="mb-8">

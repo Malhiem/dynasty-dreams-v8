@@ -428,7 +428,7 @@ export function FreeAgencyCard({ cfg, setCfg, leagueTeams }) {
             <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border p-3">
               <RadioGroupItem value="auto_priority" data-testid="fa-system-auto" />
               <span>
-                <strong>Automated Priority Order</strong> — automated ranking system to determine the priority order for claiming players on waivers. On the days that the claims are processed, players are awarded to the teams that claimed them based on a fixed order, which is based on the priority system of your choice. Upon selecting the player, you will drop to the bottom of the automated order.
+                <strong>Automated Priority Order</strong> — An automated system that determines waiver claim priority. When claims process, players are awarded based on a fixed order — once you claim a player, you drop to the bottom of the priority list.
               </span>
             </label>
             <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border p-3">

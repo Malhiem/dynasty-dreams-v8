@@ -665,29 +665,71 @@ const DepthChart = () => {
               </CardHeader>
               <CardContent>
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  {/* Forwards — group into lines of 3 */}
+                  {/* Iter 133 — Forwards as rows-per-line, Defense as rows-per-pair */}
                   <div className="space-y-4">
                     <div>
                       <p className="text-[11px] uppercase tracking-widest text-cyan-300 font-bold mb-2">Forwards</p>
-                      <div className="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-9 xl:grid-cols-12 gap-2">
-                        {slotPlan.filter((s) => s.role === "F").map((slot) => (
-                          <SlotDrop
-                            key={slot.id}
-                            slot={slot}
-                            player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
-                          />
+                      <div className="space-y-2" data-testid="depth-lineup-forwards">
+                        {Array.from(
+                          new Set(
+                            slotPlan
+                              .filter((s) => s.role === "F")
+                              .map((s) => s.id.split("-")[0]) // e.g. "L1", "L2"…
+                          ),
+                        ).map((lineId, idx) => (
+                          <div
+                            key={lineId}
+                            className="flex items-center gap-3"
+                            data-testid={`depth-lineup-line-${idx + 1}`}
+                          >
+                            <div className="w-16 shrink-0 text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
+                              Line {idx + 1}
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 flex-1">
+                              {slotPlan
+                                .filter((s) => s.role === "F" && s.id.startsWith(`${lineId}-`))
+                                .map((slot) => (
+                                  <SlotDrop
+                                    key={slot.id}
+                                    slot={slot}
+                                    player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
+                                  />
+                                ))}
+                            </div>
+                          </div>
                         ))}
                       </div>
                     </div>
                     <div>
                       <p className="text-[11px] uppercase tracking-widest text-amber-300 font-bold mb-2">Defense</p>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-                        {slotPlan.filter((s) => s.role === "D").map((slot) => (
-                          <SlotDrop
-                            key={slot.id}
-                            slot={slot}
-                            player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
-                          />
+                      <div className="space-y-2" data-testid="depth-lineup-defense">
+                        {Array.from(
+                          new Set(
+                            slotPlan
+                              .filter((s) => s.role === "D")
+                              .map((s) => s.id.split("-")[0]) // e.g. "D1", "D2"…
+                          ),
+                        ).map((pairId, idx) => (
+                          <div
+                            key={pairId}
+                            className="flex items-center gap-3"
+                            data-testid={`depth-lineup-pair-${idx + 1}`}
+                          >
+                            <div className="w-16 shrink-0 text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
+                              Pair {idx + 1}
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 flex-1 max-w-md">
+                              {slotPlan
+                                .filter((s) => s.role === "D" && s.id.startsWith(`${pairId}-`))
+                                .map((slot) => (
+                                  <SlotDrop
+                                    key={slot.id}
+                                    slot={slot}
+                                    player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
+                                  />
+                                ))}
+                            </div>
+                          </div>
                         ))}
                       </div>
                     </div>

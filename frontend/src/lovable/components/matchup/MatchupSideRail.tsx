@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Radio, ChevronRight, Clock, TrendingUp, LayoutList, Rows2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
+import MatchupStarButton from "@/components/MatchupStarButton";
 
 /**
  * League Live side-rail. Pulls enriched matchup data from
@@ -53,6 +54,26 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
     });
   };
   const [matchups, setMatchups] = useState([]);
+  // Iter 133 — fetch starred + auto-watch metadata so we can sort + render stars
+  const [stars, setStars] = useState({ starredIds: new Set(), autoWatch: {} });
+
+  useEffect(() => {
+    if (!leagueId) return undefined;
+    let cancelled = false;
+    const load = () => api.get(`/matchup-stars?league_id=${leagueId}`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setStars({
+          starredIds: new Set(data?.starred_ids || []),
+          autoWatch: data?.auto_watch || {},
+        });
+      })
+      .catch(() => {});
+    load();
+    const onChange = () => load();
+    window.addEventListener("matchup-star-changed", onChange);
+    return () => { cancelled = true; window.removeEventListener("matchup-star-changed", onChange); };
+  }, [leagueId]);
 
   useEffect(() => {
     if (!leagueId) return undefined;
@@ -75,6 +96,22 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
     () => matchups.filter((m) => !myMatchupId || m.matchup_id !== myMatchupId),
     [matchups, myMatchupId],
   );
+
+  // Sort: starred first → auto-watched (more reasons first) → rest
+  const sortedMatchups = useMemo(() => {
+    const arr = [...otherMatchups];
+    arr.sort((a, b) => {
+      const aId = String(a.matchup_id);
+      const bId = String(b.matchup_id);
+      const aStar = stars.starredIds.has(aId);
+      const bStar = stars.starredIds.has(bId);
+      if (aStar !== bStar) return aStar ? -1 : 1;
+      const aR = (stars.autoWatch[aId] || []).length;
+      const bR = (stars.autoWatch[bId] || []).length;
+      return bR - aR;
+    });
+    return arr;
+  }, [otherMatchups, stars]);
 
   return (
     <aside className="w-full lg:w-[320px] shrink-0 space-y-3" data-testid="matchup-side-rail">
@@ -119,13 +156,15 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
         </p>
       )}
 
-      {otherMatchups.map((m) => {
+      {sortedMatchups.map((m) => {
         const a = m.away.current_fpts ?? 0;
         const h = m.home.current_fpts ?? 0;
         const probAway = winProb(a, h);
         const probHome = 1 - probAway;
         const totalGamesLeft = (m.away.games_remaining || 0) + (m.home.games_remaining || 0);
         const isViewing = viewingMatchupId === m.matchup_id;
+        const isStarred = stars.starredIds.has(String(m.matchup_id));
+        const reasonCount = (stars.autoWatch[String(m.matchup_id)] || []).length;
 
         const sides = [
           { ...m.away, prob: probAway, side: "away" },
@@ -139,9 +178,25 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
             onClick={() => onSelectMatchup?.(m)}
             className={`p-3 transition-colors space-y-2 ${
               onSelectMatchup ? "cursor-pointer hover:bg-card hover:border-primary/40" : ""
-            } ${isViewing ? "bg-primary/10 border-primary/50 ring-1 ring-primary/30" : "bg-card/80"}`}
+            } ${isViewing ? "bg-primary/10 border-primary/50 ring-1 ring-primary/30" : isStarred ? "bg-amber-500/5 border-amber-500/30" : reasonCount > 0 ? "bg-cyan-500/5 border-cyan-500/20" : "bg-card/80"}`}
             data-viewing={isViewing ? "true" : "false"}
           >
+            {/* Iter 133 — star + H2H info icon */}
+            <div
+              className="flex items-center justify-end -mt-1 -mr-1"
+              onClick={(e) => e.stopPropagation()}
+              data-testid={`matchup-side-rail-star-row-${m.matchup_id}`}
+            >
+              <MatchupStarButton
+                leagueId={leagueId}
+                matchupId={m.matchup_id}
+                homeTeamId={m.home?.team_id}
+                homeTeamName={m.home?.team_name}
+                awayTeamId={m.away?.team_id}
+                awayTeamName={m.away?.team_name}
+                size={14}
+              />
+            </div>
             {sides.map((row, idx) => (
               <div key={row.team_id} className="space-y-1">
                 <div className="flex items-center gap-2">

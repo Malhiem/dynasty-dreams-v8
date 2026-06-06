@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import api, { formatApiError } from '@/lib/api';
@@ -10,7 +10,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Trophy, Users, Calendar, Gear, ArrowLeft, Plus, Copy, Check } from '@phosphor-icons/react';
 import { useLeagueHomeConfig } from '@/hooks/use-league-home-config';
 import LeagueHomeSettingsModal from '@/components/LeagueHomeSettingsModal';
-import MatchupWatchlistWidget from '@/components/MatchupWatchlistWidget';
 import MatchupStarButton from '@/components/MatchupStarButton';
 import { SortableSections, SortableSection } from '@/components/SortableSections';
 
@@ -81,6 +80,43 @@ export default function LeagueDetailPage() {
       .finally(() => { if (!cancelled) setMatchupsLoading(false); });
     return () => { cancelled = true; };
   }, [id, isH2H]);
+
+  // ── Iter 133 — fetch starred + auto-watch state to sort matchups ──
+  const [matchupStars, setMatchupStars] = useState({ starredIds: new Set(), autoWatch: {} });
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    const load = () => api.get(`/matchup-stars?league_id=${id}`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        setMatchupStars({
+          starredIds: new Set(data?.starred_ids || []),
+          autoWatch: data?.auto_watch || {},
+        });
+      })
+      .catch(() => {});
+    load();
+    // Pick up local toggles fired by MatchupStarButton (custom event)
+    const onChange = () => load();
+    window.addEventListener('matchup-star-changed', onChange);
+    return () => { cancelled = true; window.removeEventListener('matchup-star-changed', onChange); };
+  }, [id]);
+
+  // Sort matchups: starred first, then auto-watched (more reasons first), then rest
+  const sortedWeekMatchups = useMemo(() => {
+    const arr = [...weekMatchups];
+    arr.sort((a, b) => {
+      const aId = String(a._id || a.id);
+      const bId = String(b._id || b.id);
+      const aStar = matchupStars.starredIds.has(aId);
+      const bStar = matchupStars.starredIds.has(bId);
+      if (aStar !== bStar) return aStar ? -1 : 1;
+      const aR = (matchupStars.autoWatch[aId] || []).length;
+      const bR = (matchupStars.autoWatch[bId] || []).length;
+      return bR - aR;
+    });
+    return arr;
+  }, [weekMatchups, matchupStars]);
 
   useEffect(() => {
     if (!id) return;
@@ -270,13 +306,6 @@ export default function LeagueDetailPage() {
         <SortableSections ids={widgetOrder} onReorder={reorderWidgets}>
         <div className="flex flex-col">
 
-        {/* Iter 131 — Matchup Watchlist (above the matchups grid) */}
-        {isH2H && id && (
-          <div className="mb-6">
-            <MatchupWatchlistWidget leagueId={id} week={currentWeek} />
-          </div>
-        )}
-
         {/* Matchups + Standings (side-by-side on desktop) */}
         {widgetVis.matchups && isH2H ? (
           <SortableSection id="matchups" className="mb-8" style={{order: widgetOrder.indexOf("matchups")}}>
@@ -299,7 +328,7 @@ export default function LeagueDetailPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {weekMatchups.map(m => {
+                  {sortedWeekMatchups.map(m => {
                     const home = teamById[m.home_team_id] || {};
                     const away = teamById[m.away_team_id] || {};
                     // Record (regular season) or seed (playoffs)

@@ -191,10 +191,10 @@ def test_matchup_stars_invalid_id_400(owner_token):
 
 
 def test_watchlist_widget_present():
-    assert WATCHLIST_WIDGET.exists(), "MatchupWatchlistWidget.jsx must exist"
-    src = WATCHLIST_WIDGET.read_text()
-    assert "matchup-watchlist-widget" in src, "Widget testid missing"
-    assert "REASON_META" in src, "Reason metadata mapping missing"
-    assert "rivalry" in src and "standings_battle" in src and "playoff_implications" in src, (
-        "Widget must render all three reason types"
-    )
+    # Iter 133 — separate widget removed. Matchup star logic is now baked
+    # into the MatchupStarButton + the matchup grids themselves.
+    star_btn = REPO / "frontend/src/components/MatchupStarButton.jsx"
+    assert star_btn.exists(), "MatchupStarButton.jsx must exist"
+    src = star_btn.read_text()
+    assert "matchup-star-" in src, "Star button testid missing"
+    assert "matchup-h2h-info-" in src, "H2H info icon testid missing"

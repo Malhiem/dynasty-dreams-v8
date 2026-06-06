@@ -87,6 +87,8 @@ export default function MatchupStarButton({
       const next = { ...entry, starredIds: nextSet };
       _cache.set(leagueId, next);
       (_listeners.get(leagueId) || new Set()).forEach((cb) => cb(next));
+      // Broadcast so external sorters (e.g., LeagueDetailPage) can re-rank
+      try { window.dispatchEvent(new CustomEvent("matchup-star-changed", { detail: { leagueId, matchupId, starred: !!data?.starred } })); } catch { /* noop */ }
       toast.success(data?.starred ? "Added to watchlist" : "Removed from watchlist");
     } catch {
       toast.error("Failed to update star — try again.");

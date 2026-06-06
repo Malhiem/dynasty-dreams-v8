@@ -34,9 +34,9 @@ def test_manual_priority_duration_info_hint_present():
 # ── 2. Automated Priority Order rephrased ──────────────────────
 def test_automated_priority_order_rephrased():
     src = TX_CARDS.read_text()
-    assert "automated ranking system to determine the priority order" in src, \
+    assert "An automated system that determines waiver claim priority" in src, \
         "New Automated Priority Order copy not found"
-    assert "drop to the bottom" in src, \
+    assert "drop to the bottom of the priority list" in src, \
         "Missing the 'drop to the bottom' clause in the new copy"
 
 
