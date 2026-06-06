@@ -20,6 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Save, RotateCcw, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import { useActiveLeague } from "@/hooks/use-active-league";
@@ -446,22 +447,30 @@ const DepthChart = () => {
             </p>
           </div>
           <div className="flex gap-2">
-            {[0, 1, 2].map((y) => (
-              <Button
-                key={y}
-                size="sm"
-                variant={yearOffset === y ? "default" : "outline"}
-                onClick={() => setYearOffset(y as 0 | 1 | 2)}
-                data-testid={`depth-year-tab-${y}`}
+            <Select
+              value={String(yearOffset)}
+              onValueChange={(v) => setYearOffset(Number(v) as 0 | 1 | 2)}
+            >
+              <SelectTrigger
+                className="w-[260px]"
+                data-testid="depth-year-select"
+                aria-label="Depth chart season"
               >
-                {SEASON_LABEL(capLimits[y].year)}
-                {capLimits[y].tentative && (
-                  <Badge variant="outline" className="ml-2 border-amber-500/40 text-[9px] px-1 py-0">
-                    tentative
-                  </Badge>
-                )}
-              </Button>
-            ))}
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {[0, 1, 2].map((y) => (
+                  <SelectItem
+                    key={y}
+                    value={String(y)}
+                    data-testid={`depth-year-option-${y}`}
+                  >
+                    {SEASON_LABEL(capLimits[y].year)}
+                    {capLimits[y].tentative ? "  · tentative" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -718,7 +727,9 @@ const DepthChart = () => {
                             <div className="w-16 shrink-0 text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
                               Pair {idx + 1}
                             </div>
-                            <div className="grid grid-cols-2 gap-2 flex-1 max-w-md">
+                            {/* Same 3-col grid as Forwards so tile width matches.
+                                Only 2 of 3 cells render real slots; the 3rd is a spacer. */}
+                            <div className="grid grid-cols-3 gap-2 flex-1">
                               {slotPlan
                                 .filter((s) => s.role === "D" && s.id.startsWith(`${pairId}-`))
                                 .map((slot) => (
@@ -728,6 +739,7 @@ const DepthChart = () => {
                                     player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
                                   />
                                 ))}
+                              <div aria-hidden="true" />
                             </div>
                           </div>
                         ))}
@@ -735,14 +747,22 @@ const DepthChart = () => {
                     </div>
                     <div>
                       <p className="text-[11px] uppercase tracking-widest text-emerald-300 font-bold mb-2">Goalies</p>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                        {slotPlan.filter((s) => s.role === "G").map((slot) => (
-                          <SlotDrop
-                            key={slot.id}
-                            slot={slot}
-                            player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
-                          />
-                        ))}
+                      <div className="space-y-2" data-testid="depth-lineup-goalies">
+                        <div className="flex items-center gap-3" data-testid="depth-lineup-goalie-row">
+                          <div className="w-16 shrink-0 text-[11px] uppercase tracking-widest text-muted-foreground font-semibold">
+                            Goalies
+                          </div>
+                          <div className="grid grid-cols-3 gap-2 flex-1">
+                            {slotPlan.filter((s) => s.role === "G").map((slot) => (
+                              <SlotDrop
+                                key={slot.id}
+                                slot={slot}
+                                player={assignedMap[slot.id] ? playerById[assignedMap[slot.id]] : null}
+                              />
+                            ))}
+                            <div aria-hidden="true" />
+                          </div>
+                        </div>
                       </div>
                     </div>
                     {/* Pool (unassigned players) */}

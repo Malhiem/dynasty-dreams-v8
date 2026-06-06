@@ -92,15 +92,16 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
     return () => { cancelled = true; clearInterval(id); };
   }, [leagueId]);
 
-  const otherMatchups = useMemo(
-    () => matchups.filter((m) => !myMatchupId || m.matchup_id !== myMatchupId),
-    [matchups, myMatchupId],
-  );
+  // Iter 134 — keep MY matchup pinned at the very top, then starred,
+  // then auto-watched (most reasons first), then the rest.
+  const otherMatchups = matchups;
 
-  // Sort: starred first → auto-watched (more reasons first) → rest
   const sortedMatchups = useMemo(() => {
     const arr = [...otherMatchups];
     arr.sort((a, b) => {
+      const aMine = myMatchupId && a.matchup_id === myMatchupId;
+      const bMine = myMatchupId && b.matchup_id === myMatchupId;
+      if (aMine !== bMine) return aMine ? -1 : 1;
       const aId = String(a.matchup_id);
       const bId = String(b.matchup_id);
       const aStar = stars.starredIds.has(aId);
@@ -111,7 +112,7 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
       return bR - aR;
     });
     return arr;
-  }, [otherMatchups, stars]);
+  }, [otherMatchups, stars, myMatchupId]);
 
   return (
     <aside className="w-full lg:w-[320px] shrink-0 space-y-3" data-testid="matchup-side-rail">
@@ -150,9 +151,9 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
         </div>
       </div>
 
-      {otherMatchups.length === 0 && (
+      {sortedMatchups.length === 0 && (
         <p className="text-[11px] text-muted-foreground italic" data-testid="matchup-side-rail-empty">
-          No other live matchups this week.
+          No live matchups this week.
         </p>
       )}
 
@@ -163,6 +164,7 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
         const probHome = 1 - probAway;
         const totalGamesLeft = (m.away.games_remaining || 0) + (m.home.games_remaining || 0);
         const isViewing = viewingMatchupId === m.matchup_id;
+        const isMine = myMatchupId && m.matchup_id === myMatchupId;
         const isStarred = stars.starredIds.has(String(m.matchup_id));
         const reasonCount = (stars.autoWatch[String(m.matchup_id)] || []).length;
 
@@ -178,15 +180,26 @@ export function MatchupSideRail({ leagueId, myMatchupId, currentWeek, onSelectMa
             onClick={() => onSelectMatchup?.(m)}
             className={`p-3 transition-colors space-y-2 ${
               onSelectMatchup ? "cursor-pointer hover:bg-card hover:border-primary/40" : ""
-            } ${isViewing ? "bg-primary/10 border-primary/50 ring-1 ring-primary/30" : isStarred ? "bg-amber-500/5 border-amber-500/30" : reasonCount > 0 ? "bg-cyan-500/5 border-cyan-500/20" : "bg-card/80"}`}
+            } ${isViewing ? "bg-primary/10 border-primary/50 ring-1 ring-primary/30" : isMine ? "bg-primary/5 border-primary/40" : isStarred ? "bg-amber-500/5 border-amber-500/30" : reasonCount > 0 ? "bg-cyan-500/5 border-cyan-500/20" : "bg-card/80"}`}
             data-viewing={isViewing ? "true" : "false"}
           >
             {/* Iter 133 — star + H2H info icon */}
             <div
-              className="flex items-center justify-end -mt-1 -mr-1"
+              className="flex items-center justify-between -mt-1 -mr-1"
               onClick={(e) => e.stopPropagation()}
               data-testid={`matchup-side-rail-star-row-${m.matchup_id}`}
             >
+              {isMine ? (
+                <Badge
+                  variant="outline"
+                  className="h-4 text-[9px] px-1.5 border-primary/40 text-primary bg-primary/10"
+                  data-testid={`matchup-side-rail-mine-${m.matchup_id}`}
+                >
+                  MY MATCHUP
+                </Badge>
+              ) : (
+                <span />
+              )}
               <MatchupStarButton
                 leagueId={leagueId}
                 matchupId={m.matchup_id}

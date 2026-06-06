@@ -102,10 +102,14 @@ export default function LeagueDetailPage() {
     return () => { cancelled = true; window.removeEventListener('matchup-star-changed', onChange); };
   }, [id]);
 
-  // Sort matchups: starred first, then auto-watched (more reasons first), then rest
+  // Sort matchups: MY matchup pinned first, then starred, then auto-watched, then rest
   const sortedWeekMatchups = useMemo(() => {
+    const myTeamId = teams.find(t => t.owner_id === user?.id)?.id;
     const arr = [...weekMatchups];
     arr.sort((a, b) => {
+      const aMine = myTeamId && (a.home_team_id === myTeamId || a.away_team_id === myTeamId);
+      const bMine = myTeamId && (b.home_team_id === myTeamId || b.away_team_id === myTeamId);
+      if (aMine !== bMine) return aMine ? -1 : 1;
       const aId = String(a._id || a.id);
       const bId = String(b._id || b.id);
       const aStar = matchupStars.starredIds.has(aId);
@@ -116,7 +120,7 @@ export default function LeagueDetailPage() {
       return bR - aR;
     });
     return arr;
-  }, [weekMatchups, matchupStars]);
+  }, [weekMatchups, matchupStars, teams, user]);
 
   useEffect(() => {
     if (!id) return;
