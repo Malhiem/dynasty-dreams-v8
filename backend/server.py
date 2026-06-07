@@ -218,9 +218,19 @@ async def connect(sid, environ):
 @sio.event
 async def disconnect(sid):
     logger.info(f"Client disconnected: {sid}")
-    # Remove from all rooms and tracking
+    # Remove from all rooms and tracking + broadcast user_left to that room
     if sid in connected_users:
+        info = connected_users[sid]
         del connected_users[sid]
+        room_id = info.get("room_id")
+        user_id = info.get("user_id")
+        if room_id and user_id:
+            still_online = any(
+                v.get("room_id") == room_id and v.get("user_id") == user_id
+                for v in connected_users.values()
+            )
+            if not still_online:
+                await sio.emit('user_left', {"user_id": user_id, "room_id": room_id}, room=room_id)
 
 @sio.event
 async def join_room(sid, data):
@@ -235,6 +245,18 @@ async def join_room(sid, data):
         await sio.enter_room(sid, f"user_{user_id}")
     connected_users[sid] = {"room_id": room_id, "user_id": user_id}
     logger.info(f"Client {sid} joined room {room_id}")
+    # Iter 140 — send the joining client a snapshot of who is already in the room
+    if user_id:
+        existing = {
+            v.get("user_id")
+            for k, v in connected_users.items()
+            if k != sid and v.get("room_id") == room_id and v.get("user_id")
+        }
+        await sio.emit(
+            'presence_state',
+            {"room_id": room_id, "user_ids": list(existing)},
+            to=sid,
+        )
     await sio.emit('user_joined', {"user_id": user_id, "room_id": room_id}, room=room_id)
 
 @sio.event
@@ -243,6 +265,16 @@ async def leave_room(sid, data):
     if room_id:
         await sio.leave_room(sid, room_id)
         logger.info(f"Client {sid} left room {room_id}")
+        # Iter 140 — broadcast user_left for presence tracking
+        info = connected_users.get(sid) or {}
+        user_id = info.get("user_id")
+        if user_id:
+            still_online = any(
+                k != sid and v.get("room_id") == room_id and v.get("user_id") == user_id
+                for k, v in connected_users.items()
+            )
+            if not still_online:
+                await sio.emit('user_left', {"user_id": user_id, "room_id": room_id}, room=room_id)
 
 async def broadcast_to_room(room: str, event: str, message: dict):
     await sio.emit(event, message, room=room)

@@ -108,9 +108,12 @@ export function useSocket(roomId, handlers = {}, userId = null) {
 
 /**
  * Hook for draft room WebSocket events.
+ * Also tracks presence (which user_ids are currently in the draft room).
  */
 export function useDraftSocket(draftId, callbacks = {}) {
-  return useSocket(
+  const [onlineUserIds, setOnlineUserIds] = useState(new Set());
+
+  const socketState = useSocket(
     draftId ? `draft_${draftId}` : null,
     {
       draft_started: callbacks.onDraftStarted,
@@ -119,10 +122,41 @@ export function useDraftSocket(draftId, callbacks = {}) {
       draft_timer_toggle: callbacks.onTimerToggle,
       draft_config_updated: callbacks.onConfigUpdated,
       draft_completed: callbacks.onDraftCompleted,
-      user_joined: callbacks.onUserJoined,
+      // Iter 140 — presence
+      presence_state: (data) => {
+        if (!data) return;
+        setOnlineUserIds(new Set((data.user_ids || []).map(String)));
+      },
+      user_joined: (data) => {
+        if (data?.user_id) {
+          setOnlineUserIds((prev) => {
+            const next = new Set(prev);
+            next.add(String(data.user_id));
+            return next;
+          });
+        }
+        callbacks.onUserJoined?.(data);
+      },
+      user_left: (data) => {
+        if (data?.user_id) {
+          setOnlineUserIds((prev) => {
+            const next = new Set(prev);
+            next.delete(String(data.user_id));
+            return next;
+          });
+        }
+        callbacks.onUserLeft?.(data);
+      },
     },
     callbacks.userId
   );
+
+  // Reset presence on draft change / unmount
+  useEffect(() => {
+    if (!draftId) setOnlineUserIds(new Set());
+  }, [draftId]);
+
+  return { ...socketState, onlineUserIds };
 }
 
 /**

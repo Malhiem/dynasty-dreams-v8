@@ -38,15 +38,17 @@ def test_card_mounted_in_league_admin():
     src = ADMIN.read_text()
     assert 'import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard"' in src, \
         "DraftOrderConfigCard import missing in CommissionerSettings"
-    # Mounted in the draft TabsContent BEFORE the existing draft rules card
+    # Mounted in the draft TabsContent. In Iter 140 the card is embedded
+    # inside the "Create a Draft" card BELOW the Draft Type selector. The
+    # legacy TransactionsDraftRulesCard now lives at the bottom of the
+    # tab — outside the Create a Draft card.
     draft_tab_idx = src.find('TabsContent value="draft"')
     assert draft_tab_idx > 0, "Draft tab block not found"
-    block = src[draft_tab_idx:draft_tab_idx + 1200]
+    # Find the end of the draft TabsContent so we can scope our search
+    next_tab_idx = src.find('TabsContent value="', draft_tab_idx + 1)
+    block = src[draft_tab_idx:next_tab_idx if next_tab_idx > 0 else draft_tab_idx + 8000]
     assert "<DraftOrderConfigCard" in block, "Card not rendered inside Draft tab"
-    # Card appears BEFORE the legacy TransactionsDraftRulesCard
-    card_pos = block.find("<DraftOrderConfigCard")
-    legacy_pos = block.find("<TransactionsDraftRulesCard")
-    assert 0 < card_pos < legacy_pos, "DraftOrderConfigCard must render above TransactionsDraftRulesCard"
+    assert "<TransactionsDraftRulesCard" in block, "Legacy draft rules card missing from Draft tab"
 
 
 # ── 3. Draft Board "Draft Order Results" tab is now read-only ──

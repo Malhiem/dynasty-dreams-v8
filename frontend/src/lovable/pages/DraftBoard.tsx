@@ -17,9 +17,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowRightLeft, Info, ChevronDown, ShoppingCart, CheckCircle2, Clock, AlertTriangle, CalendarDays } from "lucide-react";
+import { ArrowRightLeft, Info, ChevronDown, ShoppingCart, CheckCircle2, Clock, AlertTriangle, CalendarDays, Repeat } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
 
 // League teams with acronyms (alphabetical default order)
 const leagueTeams = [
@@ -516,7 +517,51 @@ export default function DraftBoardPage() {
     return counts;
   }, [yearData, teams]);
 
-  const rounds = Array.from({ length: totalRounds }, (_, i) => i + 1);
+  // Iter 140 — Propose-trade toggle: when ON, every pick cell shows a quick-add button
+  const [tradeMode, setTradeMode] = useState(false);
+  const tradeBuilder = useTradeBuilder();
+  const myTeam = useMemo(() => {
+    if (!user || !liveLeagueTeams?.length) return null;
+    const mine = liveLeagueTeams.find((t: any) => t.owner_id === user.id);
+    if (!mine) return null;
+    return {
+      id: mine.id,
+      name: mine.name,
+      abbr: mine.logo_abbr || mine.name.slice(0, 3).toUpperCase(),
+      owner: user.username || user.email,
+    };
+  }, [user, liveLeagueTeams]);
+
+  const handleAddPickToTrade = (pickInfo: any, teamAbbr: string, round: number) => {
+    if (!league?.id) {
+      toast.error("League context missing");
+      return;
+    }
+    if (!myTeam) {
+      toast.error("Join a team in this league to propose trades");
+      return;
+    }
+    // Open the trade builder if it isn't open yet
+    tradeBuilder.openBuilder({ leagueId: league.id, myTeam });
+    // Resolve owner team object for the partner side
+    const ownerAbbr = pickInfo?.currentOwner || teamAbbr;
+    const ownerTeam = (liveLeagueTeams || []).find(
+      (t: any) => (t.logo_abbr || t.name.slice(0, 3).toUpperCase()) === ownerAbbr,
+    );
+    const pickPayload: any = {
+      id: pickInfo?.pickId || `${selectedYear}-${ownerAbbr}-R${round}`,
+      year: Number(selectedYear),
+      round,
+      ownerTeamId: ownerTeam?.id,
+      ownerTeamName: ownerTeam?.name || ownerAbbr,
+      originalTeamId: (liveLeagueTeams || []).find(
+        (t: any) => (t.logo_abbr || t.name.slice(0, 3).toUpperCase()) === teamAbbr,
+      )?.id,
+      originalTeamName: teamAbbr,
+      label: `${selectedYear} Round ${round} (${teamAbbr})`,
+    };
+    tradeBuilder.addPick(pickPayload);
+  };
 
   return (
     <AppLayout>
@@ -537,18 +582,32 @@ export default function DraftBoardPage() {
                 View pick ownership across the league. Click traded picks for full trade history.
               </p>
             </div>
-            <Select value={selectedYear} onValueChange={setSelectedYear}>
-              <SelectTrigger className="w-[160px] bg-card border-border" data-testid="draft-board-year-select">
-                <SelectValue placeholder="Select Year" />
-              </SelectTrigger>
-              <SelectContent>
-                {availableYears.map((year) => (
-                  <SelectItem key={year} value={year}>
-                    {year} Draft
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center gap-2">
+              {/* Iter 140 — Propose Trade toggle */}
+              <Button
+                size="sm"
+                variant={tradeMode ? "default" : "outline"}
+                onClick={() => setTradeMode(v => !v)}
+                data-testid="draft-board-trade-toggle"
+                aria-pressed={tradeMode}
+                className={tradeMode ? "bg-emerald-500 hover:bg-emerald-600 text-white" : ""}
+              >
+                <Repeat className="h-4 w-4 mr-1" />
+                {tradeMode ? "Trade Mode: ON" : "Propose Trade"}
+              </Button>
+              <Select value={selectedYear} onValueChange={setSelectedYear}>
+                <SelectTrigger className="w-[160px] bg-card border-border" data-testid="draft-board-year-select">
+                  <SelectValue placeholder="Select Year" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableYears.map((year) => (
+                    <SelectItem key={year} value={year}>
+                      {year} Draft
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {/* Iter 138 — Pick-order status banner */}
@@ -690,6 +749,18 @@ export default function DraftBoardPage() {
                                         Available
                                       </Badge>
                                     )}
+                                    {tradeMode && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-5 px-1.5 mt-0.5 text-emerald-300 hover:bg-emerald-500/10"
+                                        onClick={() => handleAddPickToTrade(pick, team.abbr, round)}
+                                        data-testid={`draft-board-pick-trade-${team.abbr}-r${round}`}
+                                        aria-label="Add pick to trade"
+                                      >
+                                        <Repeat className="h-3 w-3" />
+                                      </Button>
+                                    )}
                                     {protectionLabel && (
                                       <Badge
                                         data-testid={`pick-protection-${pick.pickId}`}
@@ -712,6 +783,18 @@ export default function DraftBoardPage() {
                                         <ShoppingCart className="h-2 w-2" />
                                         Available
                                       </Badge>
+                                    )}
+                                    {tradeMode && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-5 px-1.5 mt-0.5 text-emerald-300 hover:bg-emerald-500/10"
+                                        onClick={() => handleAddPickToTrade(pick || { currentOwner: team.abbr }, team.abbr, round)}
+                                        data-testid={`draft-board-pick-trade-${team.abbr}-r${round}`}
+                                        aria-label="Add pick to trade"
+                                      >
+                                        <Repeat className="h-3 w-3" />
+                                      </Button>
                                     )}
                                     {protectionLabel && (
                                       <Badge

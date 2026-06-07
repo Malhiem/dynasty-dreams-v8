@@ -126,8 +126,8 @@ export default function DraftRoomPage() {
     return () => clearInterval(interval);
   }, [draftId, fetchDraft, fetchPlayers]);
 
-  // WebSocket: real-time draft events
-  const { connected: wsConnected } = useDraftSocket(draftId, {
+  // WebSocket: real-time draft events + presence
+  const { connected: wsConnected, onlineUserIds } = useDraftSocket(draftId, {
     userId: user?.id,
     onDraftStarted: () => { fetchDraft(); },
     onDraftPick: (pick) => {
@@ -341,11 +341,34 @@ export default function DraftRoomPage() {
               <div className="min-w-[700px] p-4 pt-0">
                 <div className="grid gap-1 mb-1 sticky top-0 bg-[#141414] z-10 pt-2" style={{ gridTemplateColumns: `48px repeat(${totalTeams}, minmax(72px, 1fr))` }}>
                   <div className="p-1.5 text-[10px] font-semibold text-[#A1A1AA] uppercase">Rd</div>
-                  {teamAbbrs.map(abbr => (
-                    <div key={abbr} className={cn("p-1.5 text-[10px] font-semibold text-center uppercase truncate rounded",
-                      abbr === onTheClockTeam && isActive ? "bg-[#00D2FF]/15 text-[#00D2FF]" : "bg-[#1A1A1A] text-[#A1A1AA]"
-                    )}>{abbr}</div>
-                  ))}
+                  {teamAbbrs.map(abbr => {
+                    const t = teamByAbbr(teams, abbr);
+                    const ownerOnline = !!(t?.owner_id && onlineUserIds?.has(String(t.owner_id)));
+                    const isOnClock = abbr === onTheClockTeam && isActive;
+                    return (
+                      <div
+                        key={abbr}
+                        data-testid={`draft-team-header-${abbr}`}
+                        data-online={ownerOnline ? "true" : "false"}
+                        className={cn(
+                          "p-1.5 text-[10px] font-semibold text-center uppercase truncate rounded border-2",
+                          isOnClock
+                            ? "bg-[#FFD700]/15 text-[#FFD700]"
+                            : "bg-[#1A1A1A] text-[#A1A1AA] border-transparent",
+                          // Iter 140 — green outline overlay when owner is online + in room
+                          ownerOnline ? "border-[#34C759]/80 shadow-[0_0_0_1px_rgba(52,199,89,0.35)]" : "",
+                        )}
+                      >
+                        {ownerOnline && (
+                          <span
+                            className="inline-block h-1.5 w-1.5 rounded-full bg-[#34C759] mr-1 align-middle"
+                            data-testid={`draft-team-online-dot-${abbr}`}
+                          />
+                        )}
+                        {abbr}
+                      </div>
+                    );
+                  })}
                 </div>
                 {allPicks.map((roundPicks, rIdx) => (
                   <div key={rIdx + 1} className="grid gap-1 mb-1" style={{ gridTemplateColumns: `48px repeat(${totalTeams}, minmax(72px, 1fr))` }}>

@@ -1879,15 +1879,9 @@ const CommissionerSettings = () => {
 
           {/* Draft Tab */}
           <TabsContent value="draft" className="space-y-6">
-            <DraftOrderConfigCard
-              leagueId={activeLeague?.id}
-              isCommish={true}
-              data-testid="draft-order-config-card-admin"
-            />
-            <TransactionsDraftRulesCard leagueId={activeLeague?.id} />
             <Card className="bg-card border-border">
               <CardHeader>
-                <CardTitle>Draft Type</CardTitle>
+                <CardTitle>Create a Draft</CardTitle>
                 <CardDescription>Select the type of draft and player eligibility</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1905,6 +1899,12 @@ const CommissionerSettings = () => {
                     </SelectContent>
                   </Select>
                 </div>
+                <Separator />
+                <DraftOrderConfigCard
+                  leagueId={activeLeague?.id}
+                  isCommish={true}
+                  embedded={true}
+                />
                 <Separator />
                 <div className="space-y-3">
                   <Label>Player Criteria</Label>
@@ -2347,6 +2347,8 @@ const CommissionerSettings = () => {
               <Button variant="outline">Reset to Defaults</Button>
               <Button>Save Draft Settings</Button>
             </div>
+
+            <TransactionsDraftRulesCard leagueId={activeLeague?.id} />
           </TabsContent>
 
           {/* Tank Monitor Tab */}
