@@ -233,6 +233,8 @@ export default function DraftBoardPage() {
   const [selectedYear, setSelectedYear] = useState(availableYears[0]);
   const { league, leagueTeams: liveLeagueTeams } = useActiveLeague();
   const [livePicks, setLivePicks] = useState<any[]>([]);
+  // Iter 137 — league's canonical draft order (lottery applied OR reverse standings fallback)
+  const [draftOrder, setDraftOrder] = useState<{ source: string; order: any[] } | null>(null);
 
   useEffect(() => {
     if (!league?.id) return;
@@ -240,18 +242,32 @@ export default function DraftBoardPage() {
     api.get(`/drafts/${league.id}/picks?year=${selectedYear}`).then(({ data }) => {
       if (!cancelled) setLivePicks(data?.picks || []);
     }).catch(() => {});
+    api.get(`/leagues/${league.id}/draft-order?year=${selectedYear}`).then(({ data }) => {
+      if (!cancelled) setDraftOrder({ source: data?.source, order: data?.order || [] });
+    }).catch(() => setDraftOrder(null));
     return () => { cancelled = true; };
   }, [league?.id, selectedYear]);
 
   // Build teams list + per-team abbr mapping from live data when available.
   const teams = useMemo(() => {
-    if (!liveLeagueTeams?.length) return leagueTeams;
-    return liveLeagueTeams.map(t => ({
-      name: t.name,
-      abbr: t.logo_abbr || t.name.slice(0, 3).toUpperCase(),
-      id: t.id,
-    }));
-  }, [liveLeagueTeams]);
+    const base = (() => {
+      if (!liveLeagueTeams?.length) return leagueTeams;
+      return liveLeagueTeams.map(t => ({
+        name: t.name,
+        abbr: t.logo_abbr || t.name.slice(0, 3).toUpperCase(),
+        id: t.id,
+      }));
+    })();
+    // Iter 137 — reorder by the league's canonical draft order when we have it.
+    if (!draftOrder?.order?.length) return base;
+    const seedById: Record<string, number> = {};
+    draftOrder.order.forEach((o: any) => { seedById[String(o.team_id)] = o.seed; });
+    return [...base].sort((a, b) => {
+      const aSeed = seedById[String((a as any).id)] ?? 9999;
+      const bSeed = seedById[String((b as any).id)] ?? 9999;
+      return aSeed - bSeed;
+    });
+  }, [liveLeagueTeams, draftOrder]);
 
   // Map live pick rows -> {originalAbbr: {round: {currentOwner: abbr, tradeHistory:[]}}}
   const teamIdToAbbr = useMemo(() => {
@@ -328,6 +344,20 @@ export default function DraftBoardPage() {
               <p className="text-sm text-muted-foreground">
                 View pick ownership across the league. Click traded picks for full trade history.
               </p>
+              {draftOrder?.source && (
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "mt-2 text-[10px]",
+                    draftOrder.source === "lottery_applied"
+                      ? "border-emerald-500/40 text-emerald-300"
+                      : "border-cyan-500/40 text-cyan-300",
+                  )}
+                  data-testid="draft-board-order-source"
+                >
+                  Order: {draftOrder.source === "lottery_applied" ? "Lottery applied" : "Reverse standings"}
+                </Badge>
+              )}
             </div>
             <Select value={selectedYear} onValueChange={setSelectedYear}>
               <SelectTrigger className="w-[160px] bg-card border-border" data-testid="draft-board-year-select">

@@ -90,6 +90,78 @@ async def get_draft_picks(league_id: str, year: Optional[int] = None):
     return {"league_id": league_id, "year": year, "picks": picks}
 
 
+@router.get("/leagues/{league_id}/draft-order")
+async def get_league_draft_order(league_id: str, year: Optional[int] = None):
+    """Iter 137 — compute the canonical draft order for a given year.
+
+    Resolution rules (first match wins):
+      1. If any round-1 pick for this year has `pick_number` set, use
+         those — that's the locked-in lottery/playoff result.
+      2. Otherwise fall back to reverse standings (worst record first),
+         using the same comparator as the waiver `reverse_standings`
+         priority — so the board mirrors the league's already-chosen
+         "reverse standings" preference for non-lottery teams /
+         pre-lottery view.
+
+    Returns ordered `team_ids` (length = number of teams in the league)
+    plus a `source` flag the UI can use to badge each row.
+    """
+    db = _deps["db"]
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+
+    # 1. Try locked-in pick_number on this year's round-1 picks
+    yr = int(year) if year else None
+    rd1_query: dict = {"league_id": league_id, "round": 1}
+    if yr:
+        rd1_query["year"] = yr
+    round1 = await db.draft_picks.find(rd1_query).to_list(200)
+    with_number = [p for p in round1 if p.get("pick_number") is not None]
+    if with_number and len(with_number) == len(teams):
+        ordered = sorted(with_number, key=lambda p: int(p["pick_number"]))
+        return {
+            "league_id": league_id,
+            "year": yr,
+            "source": "lottery_applied",
+            "order": [
+                {
+                    "team_id": str(p.get("original_team_id")),
+                    "seed": int(p["pick_number"]),
+                    "source": "lottery_applied",
+                }
+                for p in ordered
+            ],
+        }
+
+    # 2. Fall back to reverse standings (worst first). Reuse the same
+    #    comparator the standings endpoint already uses so the board
+    #    matches the league's listed standings exactly.
+    def _key(t: dict):
+        # Lower wins + lower points → earlier pick. Negate so sort asc.
+        pts = float(t.get("points_for") or 0.0)
+        wins = int(t.get("wins") or 0)
+        losses = int(t.get("losses") or 0)
+        # Sort: fewer wins first, then more losses, then fewer PF
+        return (wins, -losses, pts, t.get("name", ""))
+    sorted_teams = sorted(teams, key=_key)
+    return {
+        "league_id": league_id,
+        "year": yr,
+        "source": "reverse_standings",
+        "order": [
+            {"team_id": str(t["_id"]), "seed": i + 1, "source": "reverse_standings"}
+            for i, t in enumerate(sorted_teams)
+        ],
+    }
+
+
+
 
 @router.post("/drafts")
 async def create_draft(input: CreateDraftRequest, request: Request):

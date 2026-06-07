@@ -34,6 +34,32 @@ import {
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 
 const fmt = (n: number) => `$${(n / 1_000_000).toFixed(2)}M`;
+
+// Iter 137 — tiny SVG ring (radius 7) that visualises a 0-1 fraction.
+// Colour shifts: green ≤33%, cyan/amber ≤66%, rose >100%.
+const CapRing = (props: any) => {
+  const pct = props.pct;
+  const color = props.color;
+  const clamped = Math.max(0, Math.min(1, pct));
+  const r = 7;
+  const c = 2 * Math.PI * r;
+  const dash = clamped * c;
+  const stroke = color || (pct > 1 ? "#fb7185" : pct > 0.66 ? "#fbbf24" : pct > 0.33 ? "#22d3ee" : "#34d399");
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" className="shrink-0" aria-hidden="true">
+      <circle cx="9" cy="9" r={r} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="2" />
+      <circle
+        cx="9" cy="9" r={r}
+        fill="none"
+        stroke={stroke}
+        strokeWidth="2"
+        strokeDasharray={`${dash} ${c}`}
+        strokeLinecap="round"
+        transform="rotate(-90 9 9)"
+      />
+    </svg>
+  );
+};
 const SEASON_LABEL = (yr: number) => `${yr}-${String(yr + 1).slice(-2)}`;
 
 // ── NHL slot layout ────────────────────────────────────────────────
@@ -787,13 +813,20 @@ const DepthChart = () => {
                             </div>
                             {/* Iter 136 — per-line cap impact chip */}
                             <div
-                              className="ml-[76px] mt-1 text-[10px] font-mono text-muted-foreground flex flex-wrap gap-x-3"
+                              className="ml-[76px] mt-1 text-[10px] font-mono text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1"
                               data-testid={`depth-line-cap-${idx + 1}`}
                             >
+                              <CapRing pct={(lineCapImpact.lines[lineId] || 0) / Math.max(1, lineCapImpact.cap)} />
                               <span>
                                 Line {idx + 1}:{" "}
                                 <span className="text-cyan-300">{fmt(lineCapImpact.lines[lineId] || 0)}</span>
                                 {" "}committed
+                              </span>
+                              <span data-testid={`depth-line-cap-pct-${idx + 1}`}>
+                                ·{" "}
+                                <span className="text-foreground">
+                                  {Math.round(((lineCapImpact.lines[lineId] || 0) / Math.max(1, lineCapImpact.cap)) * 100)}% of cap
+                                </span>
                               </span>
                               <span>
                                 ·{" "}
@@ -842,13 +875,20 @@ const DepthChart = () => {
                             </div>
                             {/* Iter 136 — per-pair cap impact chip */}
                             <div
-                              className="ml-[76px] mt-1 text-[10px] font-mono text-muted-foreground flex flex-wrap gap-x-3"
+                              className="ml-[76px] mt-1 text-[10px] font-mono text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1"
                               data-testid={`depth-pair-cap-${idx + 1}`}
                             >
+                              <CapRing pct={(lineCapImpact.pairs[pairId] || 0) / Math.max(1, lineCapImpact.cap)} />
                               <span>
                                 Pair {idx + 1}:{" "}
                                 <span className="text-amber-300">{fmt(lineCapImpact.pairs[pairId] || 0)}</span>
                                 {" "}committed
+                              </span>
+                              <span data-testid={`depth-pair-cap-pct-${idx + 1}`}>
+                                ·{" "}
+                                <span className="text-foreground">
+                                  {Math.round(((lineCapImpact.pairs[pairId] || 0) / Math.max(1, lineCapImpact.cap)) * 100)}% of cap
+                                </span>
                               </span>
                               <span>
                                 ·{" "}
