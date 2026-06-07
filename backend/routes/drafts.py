@@ -92,19 +92,10 @@ async def get_draft_picks(league_id: str, year: Optional[int] = None):
 
 @router.get("/leagues/{league_id}/draft-order")
 async def get_league_draft_order(league_id: str, year: Optional[int] = None):
-    """Iter 137 — compute the canonical draft order for a given year.
+    """Iter 137 + 138 — compute the canonical draft order for a given year.
 
-    Resolution rules (first match wins):
-      1. If any round-1 pick for this year has `pick_number` set, use
-         those — that's the locked-in lottery/playoff result.
-      2. Otherwise fall back to reverse standings (worst record first),
-         using the same comparator as the waiver `reverse_standings`
-         priority — so the board mirrors the league's already-chosen
-         "reverse standings" preference for non-lottery teams /
-         pre-lottery view.
-
-    Returns ordered `team_ids` (length = number of teams in the league)
-    plus a `source` flag the UI can use to badge each row.
+    Returns the ordered seeds plus the configured method + schedule so the
+    Draft Board can render a "pick order: set / pending" status banner.
     """
     db = _deps["db"]
     try:
@@ -115,6 +106,18 @@ async def get_league_draft_order(league_id: str, year: Optional[int] = None):
         raise HTTPException(status_code=404, detail="League not found")
 
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
+
+    # Iter 138 — fetch method + scheduled timestamp (per-league or global)
+    method = (league.get("draft_order_method") or "manual_entry").strip()
+    scheduled_at = league.get("draft_order_scheduled_at")
+    schedule_source = "league"
+    if method == "nhl_lottery":
+        sysdoc = await db.system_settings.find_one({"_id": "draft_lottery"})
+        scheduled_at = (sysdoc or {}).get("nhl_lottery_date")
+        schedule_source = "system"
+    # ISO-string the datetime if it's a real datetime object
+    if hasattr(scheduled_at, "isoformat"):
+        scheduled_at = scheduled_at.isoformat()
 
     # 1. Try locked-in pick_number on this year's round-1 picks
     yr = int(year) if year else None
@@ -129,6 +132,10 @@ async def get_league_draft_order(league_id: str, year: Optional[int] = None):
             "league_id": league_id,
             "year": yr,
             "source": "lottery_applied",
+            "is_set": True,
+            "method": method,
+            "scheduled_at": scheduled_at,
+            "schedule_source": schedule_source,
             "order": [
                 {
                     "team_id": str(p.get("original_team_id")),
@@ -139,26 +146,117 @@ async def get_league_draft_order(league_id: str, year: Optional[int] = None):
             ],
         }
 
-    # 2. Fall back to reverse standings (worst first). Reuse the same
-    #    comparator the standings endpoint already uses so the board
-    #    matches the league's listed standings exactly.
+    # 2. Fall back to reverse standings (worst first).
     def _key(t: dict):
-        # Lower wins + lower points → earlier pick. Negate so sort asc.
         pts = float(t.get("points_for") or 0.0)
         wins = int(t.get("wins") or 0)
         losses = int(t.get("losses") or 0)
-        # Sort: fewer wins first, then more losses, then fewer PF
         return (wins, -losses, pts, t.get("name", ""))
     sorted_teams = sorted(teams, key=_key)
     return {
         "league_id": league_id,
         "year": yr,
         "source": "reverse_standings",
+        "is_set": False,
+        "method": method,
+        "scheduled_at": scheduled_at,
+        "schedule_source": schedule_source,
         "order": [
             {"team_id": str(t["_id"]), "seed": i + 1, "source": "reverse_standings"}
             for i, t in enumerate(sorted_teams)
         ],
     }
+
+
+# ──────────────────────────────────────────────────────────────────
+# Iter 138 — draft-order configuration (method + scheduled time)
+# ──────────────────────────────────────────────────────────────────
+
+DRAFT_ORDER_METHODS = {"nhl_lottery", "lottery_generator", "manual_entry"}
+
+
+class DraftOrderConfigRequest(BaseModel):
+    method: Optional[str] = None  # one of DRAFT_ORDER_METHODS
+    scheduled_at: Optional[str] = None  # ISO datetime, "" or null to clear
+
+
+@router.put("/leagues/{league_id}/draft-order/config")
+async def update_league_draft_order_config(
+    league_id: str, payload: DraftOrderConfigRequest, request: Request,
+):
+    """Commissioner-only. Sets the league's draft-order method and the
+    scheduled date (for `lottery_generator` and `manual_entry`). For
+    `nhl_lottery` the date is sourced globally from system settings and
+    cannot be set here.
+    """
+    db = _deps["db"]
+    user = await _get_user(request)
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Only commissioners may set the draft order config")
+
+    update: dict = {}
+    if payload.method is not None:
+        if payload.method not in DRAFT_ORDER_METHODS:
+            raise HTTPException(status_code=400, detail=f"method must be one of {sorted(DRAFT_ORDER_METHODS)}")
+        update["draft_order_method"] = payload.method
+        # If switching to nhl_lottery, clear any per-league date
+        if payload.method == "nhl_lottery":
+            update["draft_order_scheduled_at"] = None
+    if payload.scheduled_at is not None:
+        if payload.scheduled_at == "":
+            update["draft_order_scheduled_at"] = None
+        else:
+            update["draft_order_scheduled_at"] = payload.scheduled_at
+    if not update:
+        return {"ok": True, "league_id": league_id, "changed": False}
+    await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$set": update})
+    return {"ok": True, "league_id": league_id, "changed": True, **update}
+
+
+class SystemNhlLotteryRequest(BaseModel):
+    nhl_lottery_date: Optional[str] = None
+
+
+@router.get("/admin/draft-lottery-date")
+async def get_system_nhl_lottery_date(request: Request):
+    db = _deps["db"]
+    user = await _get_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="System admins only")
+    doc = await db.system_settings.find_one({"_id": "draft_lottery"})
+    date = (doc or {}).get("nhl_lottery_date")
+    if hasattr(date, "isoformat"):
+        date = date.isoformat()
+    return {"nhl_lottery_date": date}
+
+
+@router.put("/admin/draft-lottery-date")
+async def set_system_nhl_lottery_date(payload: SystemNhlLotteryRequest, request: Request):
+    """System-admin only. Sets the global NHL draft-lottery date used by
+    every league configured with `draft_order_method == nhl_lottery`.
+    """
+    db = _deps["db"]
+    user = await _get_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="System admins only")
+    value = (payload.nhl_lottery_date or "").strip() or None
+    await db.system_settings.update_one(
+        {"_id": "draft_lottery"},
+        {"$set": {"nhl_lottery_date": value, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True,
+    )
+    return {"ok": True, "nhl_lottery_date": value}
 
 
 

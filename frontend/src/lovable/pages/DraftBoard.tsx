@@ -2,6 +2,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import { useAuth } from "@/contexts/AuthContext";
 import api from "@/lib/api";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +12,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowRightLeft, Info, ChevronDown, ShoppingCart } from "lucide-react";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ArrowRightLeft, Info, ChevronDown, ShoppingCart, CheckCircle2, Clock, AlertTriangle, CalendarDays } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 // League teams with acronyms (alphabetical default order)
@@ -227,11 +234,301 @@ function TradeHistoryPopover({ pick }: { pick: PickOwnership }) {
   );
 }
 
+// ────────────────────────────────────────────────────────────────
+// Iter 138 — Draft Order Status banner + Results tab
+// ────────────────────────────────────────────────────────────────
+
+const METHOD_META: Record<string, { label: string; description: string }> = {
+  nhl_lottery: {
+    label: "NHL team draft lottery",
+    description: "Pick order will mirror the official NHL Draft Lottery — date set by the system administrator.",
+  },
+  lottery_generator: {
+    label: "Draft Lottery Generator",
+    description: "League will run its own weighted lottery — commissioner schedules the date.",
+  },
+  manual_entry: {
+    label: "Manual Entry",
+    description: "Commissioner enters the draft order manually after the regular season — optional date.",
+  },
+};
+
+function formatScheduled(iso?: string | null): string {
+  if (!iso) return "TBD";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function DraftOrderStatus({ draftOrder, year }: any) {
+  if (!draftOrder) return null;
+  const method = draftOrder.method || "manual_entry";
+  const meta = METHOD_META[method] || METHOD_META.manual_entry;
+  const isSet = !!draftOrder.is_set;
+  const scheduled = formatScheduled(draftOrder.scheduled_at);
+  return (
+    <div
+      className={cn(
+        "rounded-md border p-3 flex flex-wrap items-center gap-3 text-sm",
+        isSet
+          ? "border-emerald-500/40 bg-emerald-500/5"
+          : "border-amber-500/30 bg-amber-500/5",
+      )}
+      data-testid="draft-order-status-banner"
+    >
+      {isSet ? (
+        <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
+      ) : (
+        <Clock className="h-5 w-5 text-amber-400 shrink-0" />
+      )}
+      <div className="flex flex-col">
+        <span className="font-semibold" data-testid="draft-order-status-headline">
+          {year} pick order: {isSet ? "SET" : "Not yet set"}
+        </span>
+        <span className="text-xs text-muted-foreground" data-testid="draft-order-status-method">
+          Format: {meta.label}
+          {!isSet && (
+            <>
+              {" · "}
+              <span data-testid="draft-order-status-scheduled">
+                Scheduled: {scheduled}
+              </span>
+              {draftOrder.schedule_source === "system" && scheduled !== "TBD" && (
+                <span className="ml-1 italic">(set by system admin)</span>
+              )}
+            </>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function DraftOrderResultsTab({ leagueId, isCommish, isSystemAdmin, draftOrder, onSaved, teams }: any) {
+  const [method, setMethod] = useState<string>(draftOrder?.method || "manual_entry");
+  const [scheduledAt, setScheduledAt] = useState<string>(
+    draftOrder?.scheduled_at ? draftOrder.scheduled_at.slice(0, 16) : "",
+  );
+  const [systemDate, setSystemDate] = useState<string>("");
+  const [saving, setSaving] = useState(false);
+
+  // Keep local state in sync when the parent re-fetches
+  useEffect(() => {
+    if (draftOrder?.method) setMethod(draftOrder.method);
+    if (draftOrder?.scheduled_at) setScheduledAt(draftOrder.scheduled_at.slice(0, 16));
+  }, [draftOrder?.method, draftOrder?.scheduled_at]);
+
+  // Load system-wide NHL lottery date when relevant
+  useEffect(() => {
+    if (!isSystemAdmin) return;
+    api.get("/admin/draft-lottery-date").then(({ data }) => {
+      if (data?.nhl_lottery_date) setSystemDate(data.nhl_lottery_date.slice(0, 16));
+    }).catch(() => {});
+  }, [isSystemAdmin]);
+
+  const saveLeagueConfig = async () => {
+    if (!leagueId) return;
+    setSaving(true);
+    try {
+      const body: any = { method };
+      if (method === "lottery_generator" || method === "manual_entry") {
+        body.scheduled_at = scheduledAt ? new Date(scheduledAt).toISOString() : "";
+      }
+      await api.put(`/leagues/${leagueId}/draft-order/config`, body);
+      toast.success("Draft order configuration saved");
+      onSaved?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveSystemDate = async () => {
+    setSaving(true);
+    try {
+      await api.put("/admin/draft-lottery-date", {
+        nhl_lottery_date: systemDate ? new Date(systemDate).toISOString() : "",
+      });
+      toast.success("NHL lottery date saved (applies to all leagues)");
+      onSaved?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const orderOK = !!draftOrder?.is_set;
+  const seedById: Record<string, number> = {};
+  (draftOrder?.order || []).forEach((o: any) => { seedById[String(o.team_id)] = o.seed; });
+  const orderedTeams = [...(teams || [])].sort((a: any, b: any) => {
+    const aSeed = seedById[String(a.id)] ?? 9999;
+    const bSeed = seedById[String(b.id)] ?? 9999;
+    return aSeed - bSeed;
+  });
+
+  return (
+    <div className="space-y-6">
+      {/* Configuration card */}
+      <Card className="border-border gradient-card" data-testid="draft-order-config-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <CalendarDays className="h-4 w-4 text-cyan-300" />
+            Draft Order Configuration
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-sm">Format</Label>
+            <RadioGroup
+              value={method}
+              onValueChange={(v) => isCommish && setMethod(v)}
+              className="space-y-2"
+              data-testid="draft-order-method-radio"
+            >
+              {(["nhl_lottery", "lottery_generator", "manual_entry"] as const).map((m) => {
+                const meta = METHOD_META[m];
+                return (
+                  <label
+                    key={m}
+                    htmlFor={`draft-order-method-${m}`}
+                    className={cn(
+                      "flex items-start gap-2 rounded-md border p-2 cursor-pointer text-sm",
+                      method === m ? "border-primary/50 bg-primary/5" : "border-border",
+                      !isCommish && "opacity-70 cursor-not-allowed",
+                    )}
+                  >
+                    <RadioGroupItem id={`draft-order-method-${m}`} value={m} disabled={!isCommish} className="mt-0.5" />
+                    <div>
+                      <div className="font-medium">{meta.label}</div>
+                      <div className="text-xs text-muted-foreground">{meta.description}</div>
+                    </div>
+                  </label>
+                );
+              })}
+            </RadioGroup>
+          </div>
+
+          {/* Per-method scheduling UI */}
+          {method === "nhl_lottery" && (
+            <div className="rounded-md border border-border p-3 space-y-2" data-testid="draft-order-nhl-block">
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                Scheduled NHL Lottery Date (global)
+              </Label>
+              {isSystemAdmin ? (
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="datetime-local"
+                    value={systemDate}
+                    onChange={(e) => setSystemDate(e.target.value)}
+                    className="max-w-xs"
+                    data-testid="draft-order-system-date-input"
+                  />
+                  <Button size="sm" onClick={saveSystemDate} disabled={saving} data-testid="draft-order-save-system-date">
+                    Save (all leagues)
+                  </Button>
+                </div>
+              ) : (
+                <div className="text-sm font-mono" data-testid="draft-order-nhl-display">
+                  {formatScheduled(draftOrder?.scheduled_at)}
+                  <span className="ml-2 text-xs italic text-muted-foreground">
+                    Date set by the system administrator across all leagues.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {(method === "lottery_generator" || method === "manual_entry") && (
+            <div className="rounded-md border border-border p-3 space-y-2" data-testid="draft-order-league-block">
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                {method === "lottery_generator"
+                  ? "Lottery Run Date"
+                  : "Pick Order Entry Date (optional)"}
+              </Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  onChange={(e) => setScheduledAt(e.target.value)}
+                  disabled={!isCommish}
+                  className="max-w-xs"
+                  data-testid="draft-order-league-date-input"
+                />
+                <span className="text-xs text-muted-foreground">
+                  Leave blank for TBD.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {isCommish && (
+            <div className="flex justify-end">
+              <Button size="sm" onClick={saveLeagueConfig} disabled={saving} data-testid="draft-order-save-config">
+                Save configuration
+              </Button>
+            </div>
+          )}
+          {!isCommish && (
+            <div className="text-xs italic text-muted-foreground">
+              Only commissioners may change the draft order configuration.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Results card — ordered list */}
+      <Card className="border-border gradient-card" data-testid="draft-order-results-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            Draft Order Results
+            {orderOK ? (
+              <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 text-[10px]">
+                Final
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="border-amber-500/40 text-amber-300 text-[10px]">
+                Pre-lottery preview
+              </Badge>
+            )}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="w-[80px] text-xs uppercase tracking-wider text-muted-foreground pl-4">Pick</TableHead>
+                <TableHead className="text-xs uppercase tracking-wider text-muted-foreground">Team</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {orderedTeams.map((t: any, idx: number) => (
+                <TableRow key={t.id || t.abbr} className="border-border/50" data-testid={`draft-order-row-${idx + 1}`}>
+                  <TableCell className="pl-4 font-mono text-sm">#{seedById[String(t.id)] || idx + 1}</TableCell>
+                  <TableCell className="text-sm">{t.name} <span className="text-muted-foreground">({t.abbr})</span></TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 export default function DraftBoardPage() {
   const currentYear = new Date().getFullYear();
   const availableYears = Array.from({ length: maxTradeYears }, (_, i) => String(currentYear + i));
   const [selectedYear, setSelectedYear] = useState(availableYears[0]);
   const { league, leagueTeams: liveLeagueTeams } = useActiveLeague();
+  const { user } = useAuth();
+  const isCommish = !!league && user && (
+    league.commissioner_id === user.id ||
+    (league.co_commissioners || []).includes(user.id) ||
+    user.role === "admin"
+  );
+  const isSystemAdmin = user?.role === "admin";
   const [livePicks, setLivePicks] = useState<any[]>([]);
   // Iter 137 — league's canonical draft order (lottery applied OR reverse standings fallback)
   const [draftOrder, setDraftOrder] = useState<{ source: string; order: any[] } | null>(null);
@@ -243,7 +540,14 @@ export default function DraftBoardPage() {
       if (!cancelled) setLivePicks(data?.picks || []);
     }).catch(() => {});
     api.get(`/leagues/${league.id}/draft-order?year=${selectedYear}`).then(({ data }) => {
-      if (!cancelled) setDraftOrder({ source: data?.source, order: data?.order || [] });
+      if (!cancelled) setDraftOrder({
+        source: data?.source,
+        order: data?.order || [],
+        is_set: data?.is_set,
+        method: data?.method,
+        scheduled_at: data?.scheduled_at,
+        schedule_source: data?.schedule_source,
+      });
     }).catch(() => setDraftOrder(null));
     return () => { cancelled = true; };
   }, [league?.id, selectedYear]);
@@ -344,20 +648,6 @@ export default function DraftBoardPage() {
               <p className="text-sm text-muted-foreground">
                 View pick ownership across the league. Click traded picks for full trade history.
               </p>
-              {draftOrder?.source && (
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "mt-2 text-[10px]",
-                    draftOrder.source === "lottery_applied"
-                      ? "border-emerald-500/40 text-emerald-300"
-                      : "border-cyan-500/40 text-cyan-300",
-                  )}
-                  data-testid="draft-board-order-source"
-                >
-                  Order: {draftOrder.source === "lottery_applied" ? "Lottery applied" : "Reverse standings"}
-                </Badge>
-              )}
             </div>
             <Select value={selectedYear} onValueChange={setSelectedYear}>
               <SelectTrigger className="w-[160px] bg-card border-border" data-testid="draft-board-year-select">
@@ -372,6 +662,18 @@ export default function DraftBoardPage() {
               </SelectContent>
             </Select>
           </div>
+
+          {/* Iter 138 — Pick-order status banner */}
+          <DraftOrderStatus draftOrder={draftOrder} year={selectedYear} />
+
+          {/* Iter 138 — Tabs: Board / Draft Order Results */}
+          <Tabs defaultValue="board" className="w-full">
+            <TabsList data-testid="draft-board-tabs">
+              <TabsTrigger value="board" data-testid="draft-board-tab-board">Pick Ownership</TabsTrigger>
+              <TabsTrigger value="order" data-testid="draft-board-tab-order">Draft Order Results</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="board" className="space-y-6 mt-6">
 
           {/* Summary badges */}
           <div className="flex flex-wrap gap-2">
@@ -561,6 +863,25 @@ export default function DraftBoardPage() {
               <span>Available on trade block</span>
             </div>
           </div>
+            </TabsContent>
+
+            {/* Iter 138 — Draft Order Results tab */}
+            <TabsContent value="order" className="space-y-6 mt-6">
+              <DraftOrderResultsTab
+                leagueId={league?.id}
+                isCommish={isCommish}
+                isSystemAdmin={isSystemAdmin}
+                draftOrder={draftOrder}
+                onSaved={() => {
+                  if (!league?.id) return;
+                  api.get(`/leagues/${league.id}/draft-order?year=${selectedYear}`).then(({ data }) => {
+                    setDraftOrder({ source: data?.source, order: data?.order || [], is_set: data?.is_set, method: data?.method, scheduled_at: data?.scheduled_at, schedule_source: data?.schedule_source });
+                  }).catch(() => {});
+                }}
+                teams={teams}
+              />
+            </TabsContent>
+          </Tabs>
         </div>
       </TooltipProvider>
     </AppLayout>

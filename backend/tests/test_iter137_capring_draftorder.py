@@ -73,7 +73,8 @@ def test_draft_board_wires_order_endpoint():
     assert "/draft-order?year=" in src, "Draft order endpoint not called"
     assert "draftOrder" in src, "Draft order state missing"
     assert "seedById" in src, "Sort by seed missing"
-    assert 'data-testid="draft-board-order-source"' in src, "Order source badge missing"
+    # Iter 138 replaced the standalone source badge with a richer status banner.
+    assert 'data-testid="draft-order-status-banner"' in src, "Status banner missing"
 
 
 # ── Backend — route function exists ────────────────────────────
