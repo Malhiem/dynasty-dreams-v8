@@ -83,15 +83,14 @@ def test_tabs_wrapper_added():
 
 def test_method_meta_strings():
     src = DRAFT.read_text()
+    # The card-level meta lives in DraftOrderConfigCard now; DraftBoard's
+    # read-only summary just references METHOD_META labels.
     assert '"NHL team draft lottery"' in src, "User-spec label missing"
     assert "Draft Lottery Generator" in src
     assert "Manual Entry" in src
-    # Schedule blocks per method
-    assert 'data-testid="draft-order-nhl-block"' in src
-    assert 'data-testid="draft-order-league-block"' in src
-    # Commissioner save + system admin save buttons
-    assert 'data-testid="draft-order-save-config"' in src
-    assert 'data-testid="draft-order-save-system-date"' in src
+    # The read-only summary points commissioners at League Admin
+    assert 'data-testid="draft-order-admin-link"' in src
+    assert 'data-testid="draft-order-summary-card"' in src
     # TBD fallback
     assert '"TBD"' in src
 

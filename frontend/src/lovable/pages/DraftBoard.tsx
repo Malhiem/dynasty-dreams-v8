@@ -304,62 +304,11 @@ function DraftOrderStatus({ draftOrder, year }: any) {
   );
 }
 
-function DraftOrderResultsTab({ leagueId, isCommish, isSystemAdmin, draftOrder, onSaved, teams }: any) {
-  const [method, setMethod] = useState<string>(draftOrder?.method || "manual_entry");
-  const [scheduledAt, setScheduledAt] = useState<string>(
-    draftOrder?.scheduled_at ? draftOrder.scheduled_at.slice(0, 16) : "",
-  );
-  const [systemDate, setSystemDate] = useState<string>("");
-  const [saving, setSaving] = useState(false);
-
-  // Keep local state in sync when the parent re-fetches
-  useEffect(() => {
-    if (draftOrder?.method) setMethod(draftOrder.method);
-    if (draftOrder?.scheduled_at) setScheduledAt(draftOrder.scheduled_at.slice(0, 16));
-  }, [draftOrder?.method, draftOrder?.scheduled_at]);
-
-  // Load system-wide NHL lottery date when relevant
-  useEffect(() => {
-    if (!isSystemAdmin) return;
-    api.get("/admin/draft-lottery-date").then(({ data }) => {
-      if (data?.nhl_lottery_date) setSystemDate(data.nhl_lottery_date.slice(0, 16));
-    }).catch(() => {});
-  }, [isSystemAdmin]);
-
-  const saveLeagueConfig = async () => {
-    if (!leagueId) return;
-    setSaving(true);
-    try {
-      const body: any = { method };
-      if (method === "lottery_generator" || method === "manual_entry") {
-        body.scheduled_at = scheduledAt ? new Date(scheduledAt).toISOString() : "";
-      }
-      await api.put(`/leagues/${leagueId}/draft-order/config`, body);
-      toast.success("Draft order configuration saved");
-      onSaved?.();
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Failed to save");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const saveSystemDate = async () => {
-    setSaving(true);
-    try {
-      await api.put("/admin/draft-lottery-date", {
-        nhl_lottery_date: systemDate ? new Date(systemDate).toISOString() : "",
-      });
-      toast.success("NHL lottery date saved (applies to all leagues)");
-      onSaved?.();
-    } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Failed to save");
-    } finally {
-      setSaving(false);
-    }
-  };
-
+function DraftOrderResultsTab({ leagueId, draftOrder, teams }: any) {
   const orderOK = !!draftOrder?.is_set;
+  const method = draftOrder?.method || "manual_entry";
+  const meta = METHOD_META[method] || METHOD_META.manual_entry;
+  const scheduled = formatScheduled(draftOrder?.scheduled_at);
   const seedById: Record<string, number> = {};
   (draftOrder?.order || []).forEach((o: any) => { seedById[String(o.team_id)] = o.seed; });
   const orderedTeams = [...(teams || [])].sort((a: any, b: any) => {
@@ -370,111 +319,50 @@ function DraftOrderResultsTab({ leagueId, isCommish, isSystemAdmin, draftOrder, 
 
   return (
     <div className="space-y-6">
-      {/* Configuration card */}
-      <Card className="border-border gradient-card" data-testid="draft-order-config-card">
+      {/* Iter 139 — Read-only summary; configuration lives in League Admin */}
+      <Card className="border-border gradient-card" data-testid="draft-order-summary-card">
         <CardHeader className="pb-3">
           <CardTitle className="text-base flex items-center gap-2">
             <CalendarDays className="h-4 w-4 text-cyan-300" />
             Draft Order Configuration
+            <Badge
+              variant="outline"
+              className="ml-1 text-[10px] border-border text-muted-foreground"
+              data-testid="draft-order-summary-method"
+            >
+              {meta.label}
+            </Badge>
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label className="text-sm">Format</Label>
-            <RadioGroup
-              value={method}
-              onValueChange={(v) => isCommish && setMethod(v)}
-              className="space-y-2"
-              data-testid="draft-order-method-radio"
-            >
-              {(["nhl_lottery", "lottery_generator", "manual_entry"] as const).map((m) => {
-                const meta = METHOD_META[m];
-                return (
-                  <label
-                    key={m}
-                    htmlFor={`draft-order-method-${m}`}
-                    className={cn(
-                      "flex items-start gap-2 rounded-md border p-2 cursor-pointer text-sm",
-                      method === m ? "border-primary/50 bg-primary/5" : "border-border",
-                      !isCommish && "opacity-70 cursor-not-allowed",
-                    )}
-                  >
-                    <RadioGroupItem id={`draft-order-method-${m}`} value={m} disabled={!isCommish} className="mt-0.5" />
-                    <div>
-                      <div className="font-medium">{meta.label}</div>
-                      <div className="text-xs text-muted-foreground">{meta.description}</div>
-                    </div>
-                  </label>
-                );
-              })}
-            </RadioGroup>
-          </div>
-
-          {/* Per-method scheduling UI */}
-          {method === "nhl_lottery" && (
-            <div className="rounded-md border border-border p-3 space-y-2" data-testid="draft-order-nhl-block">
-              <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                Scheduled NHL Lottery Date (global)
-              </Label>
-              {isSystemAdmin ? (
-                <div className="flex items-center gap-2">
-                  <Input
-                    type="datetime-local"
-                    value={systemDate}
-                    onChange={(e) => setSystemDate(e.target.value)}
-                    className="max-w-xs"
-                    data-testid="draft-order-system-date-input"
-                  />
-                  <Button size="sm" onClick={saveSystemDate} disabled={saving} data-testid="draft-order-save-system-date">
-                    Save (all leagues)
-                  </Button>
-                </div>
+        <CardContent className="space-y-3 text-sm">
+          <div className="text-xs text-muted-foreground">{meta.description}</div>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <div data-testid="draft-order-summary-status">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider mr-2">Status</span>
+              {orderOK ? (
+                <Badge variant="outline" className="border-emerald-500/40 text-emerald-300">SET</Badge>
               ) : (
-                <div className="text-sm font-mono" data-testid="draft-order-nhl-display">
-                  {formatScheduled(draftOrder?.scheduled_at)}
-                  <span className="ml-2 text-xs italic text-muted-foreground">
-                    Date set by the system administrator across all leagues.
-                  </span>
-                </div>
+                <Badge variant="outline" className="border-amber-500/40 text-amber-300">Not yet set</Badge>
               )}
             </div>
-          )}
-
-          {(method === "lottery_generator" || method === "manual_entry") && (
-            <div className="rounded-md border border-border p-3 space-y-2" data-testid="draft-order-league-block">
-              <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                {method === "lottery_generator"
-                  ? "Lottery Run Date"
-                  : "Pick Order Entry Date (optional)"}
-              </Label>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="datetime-local"
-                  value={scheduledAt}
-                  onChange={(e) => setScheduledAt(e.target.value)}
-                  disabled={!isCommish}
-                  className="max-w-xs"
-                  data-testid="draft-order-league-date-input"
-                />
-                <span className="text-xs text-muted-foreground">
-                  Leave blank for TBD.
-                </span>
-              </div>
+            <div data-testid="draft-order-summary-scheduled">
+              <span className="text-muted-foreground text-xs uppercase tracking-wider mr-2">Scheduled</span>
+              <span className="font-mono">{scheduled}</span>
+              {draftOrder?.schedule_source === "system" && scheduled !== "TBD" && (
+                <span className="ml-1 text-xs italic text-muted-foreground">(set by system admin)</span>
+              )}
             </div>
-          )}
-
-          {isCommish && (
-            <div className="flex justify-end">
-              <Button size="sm" onClick={saveLeagueConfig} disabled={saving} data-testid="draft-order-save-config">
-                Save configuration
-              </Button>
-            </div>
-          )}
-          {!isCommish && (
-            <div className="text-xs italic text-muted-foreground">
-              Only commissioners may change the draft order configuration.
-            </div>
-          )}
+          </div>
+          <div className="rounded-md bg-muted/30 border border-border p-2 text-xs text-muted-foreground" data-testid="draft-order-admin-hint">
+            Format + schedule are configured by the commissioner in{" "}
+            <a
+              href="/commissioner/settings"
+              className="text-cyan-300 hover:underline"
+              data-testid="draft-order-admin-link"
+            >
+              League Administration → Draft
+            </a>.
+          </div>
         </CardContent>
       </Card>
 
@@ -865,19 +753,11 @@ export default function DraftBoardPage() {
           </div>
             </TabsContent>
 
-            {/* Iter 138 — Draft Order Results tab */}
+            {/* Iter 138/139 — Draft Order Results tab (READ-ONLY; config in League Admin) */}
             <TabsContent value="order" className="space-y-6 mt-6">
               <DraftOrderResultsTab
                 leagueId={league?.id}
-                isCommish={isCommish}
-                isSystemAdmin={isSystemAdmin}
                 draftOrder={draftOrder}
-                onSaved={() => {
-                  if (!league?.id) return;
-                  api.get(`/leagues/${league.id}/draft-order?year=${selectedYear}`).then(({ data }) => {
-                    setDraftOrder({ source: data?.source, order: data?.order || [], is_set: data?.is_set, method: data?.method, scheduled_at: data?.scheduled_at, schedule_source: data?.schedule_source });
-                  }).catch(() => {});
-                }}
                 teams={teams}
               />
             </TabsContent>

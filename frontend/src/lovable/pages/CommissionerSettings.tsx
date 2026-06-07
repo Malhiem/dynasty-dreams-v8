@@ -29,6 +29,7 @@ import {
 import RostersTab from "@/lovable/pages/commissioner/RostersTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
 import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/pages/commissioner/TransactionsConfigCards";
+import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard";
 import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
 import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
@@ -1878,6 +1879,11 @@ const CommissionerSettings = () => {
 
           {/* Draft Tab */}
           <TabsContent value="draft" className="space-y-6">
+            <DraftOrderConfigCard
+              leagueId={activeLeague?.id}
+              isCommish={true}
+              data-testid="draft-order-config-card-admin"
+            />
             <TransactionsDraftRulesCard leagueId={activeLeague?.id} />
             <Card className="bg-card border-border">
               <CardHeader>
