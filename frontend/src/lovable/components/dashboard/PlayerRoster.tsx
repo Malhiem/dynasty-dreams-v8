@@ -2749,14 +2749,8 @@ const MegaphoneButton = ({
 );
 
 // Iter 144 — Shield button: toggles a player's keeper/expansion protection.
-const ShieldButton = ({
-  player, active, draftType, onToggle,
-}: {
-  player: Player;
-  active?: boolean;
-  draftType: "keeper" | "expansion" | null;
-  onToggle: (p: Player) => void;
-}) => {
+const ShieldButton = (props: any) => {
+  const { player, active, draftType, onToggle } = props;
   const label = draftType === "keeper" ? "keeper" : "protection list";
   return (
     <TooltipProvider>

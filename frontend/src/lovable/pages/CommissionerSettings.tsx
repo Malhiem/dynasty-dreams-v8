@@ -789,8 +789,20 @@ const CommissionerSettings = () => {
   const isH2H = scoringFormat.startsWith("h2h");
   // Iter 141 — controlled draft type so we can conditionally render the Keeper settings card
   const [draftType, setDraftType] = useState<string>("startup");
-  // Iter 143 — first-time draft gating + persistence
+  // Iter 143 — first-time draft gating + persistence (effects defined below `activeLeague`)
   const [firstDraftCompleted, setFirstDraftCompleted] = useState<boolean>(false);
+  const [customInjuries, setCustomInjuries] = useState<{ type: string; timeline: string; irEligible: boolean }[]>([]);
+  const [newInjuryType, setNewInjuryType] = useState("Upper Body");
+  const [newInjuryTimeline, setNewInjuryTimeline] = useState("Day-to-Day");
+  const [scoringSettings, setScoringSettings] = useState<Record<string, { enabled: boolean; points: number }>>(
+    Object.fromEntries(scoringCategories.map(cat => [cat.id, { enabled: cat.defaultPoints !== 0, points: cat.defaultPoints }]))
+  );
+  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(generateMockAuditLog());
+  const [auditFilterCategory, setAuditFilterCategory] = useState<string>("all");
+  const { league: activeLeague, leagueTeams, reloadLeague } = useActiveLeague();
+
+  // Iter 143 — first-time draft gating + persistence (moved here so it
+  // can reference `activeLeague` after its declaration)
   useEffect(() => {
     if (!activeLeague?.id) return;
     let cancelled = false;
@@ -813,15 +825,6 @@ const CommissionerSettings = () => {
         .catch((e) => toast.error(e?.response?.data?.detail || "Failed to save draft type"));
     }
   };
-  const [customInjuries, setCustomInjuries] = useState<{ type: string; timeline: string; irEligible: boolean }[]>([]);
-  const [newInjuryType, setNewInjuryType] = useState("Upper Body");
-  const [newInjuryTimeline, setNewInjuryTimeline] = useState("Day-to-Day");
-  const [scoringSettings, setScoringSettings] = useState<Record<string, { enabled: boolean; points: number }>>(
-    Object.fromEntries(scoringCategories.map(cat => [cat.id, { enabled: cat.defaultPoints !== 0, points: cat.defaultPoints }]))
-  );
-  const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(generateMockAuditLog());
-  const [auditFilterCategory, setAuditFilterCategory] = useState<string>("all");
-  const { league: activeLeague, leagueTeams, reloadLeague } = useActiveLeague();
 
   // ─── Setup Wizard (first-time) ─────────────────────────────────
   const [wizardOpen, setWizardOpen] = useState(false);

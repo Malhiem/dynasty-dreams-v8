@@ -41,8 +41,13 @@ import {
   Send,
   Info,
   Users,
+  Repeat,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import { toast } from "sonner";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -364,6 +369,45 @@ export default function DraftRoom() {
 
   const onTheClockTeam = getTeamForPick(draftConfig.currentPick);
   const onTheClockTeamFull = leagueTeams.find((t) => t.abbr === onTheClockTeam);
+
+  // Iter 147 — Propose-trade mode (mirrors Draft Board)
+  const [tradeMode, setTradeMode] = useState(false);
+  const tradeBuilder = useTradeBuilder();
+  const { user } = useAuth();
+  const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();
+  const myTeam = useMemo(() => {
+    if (!user || !liveTeams?.length) return null;
+    const mine = liveTeams.find((t: any) => t.owner_id === user.id);
+    if (!mine) return null;
+    return {
+      id: mine.id,
+      name: mine.name,
+      abbr: mine.logo_abbr || (mine.name || "").slice(0, 3).toUpperCase(),
+      owner: user.username || user.email,
+    };
+  }, [user, liveTeams]);
+
+  const handleAddDraftPickToTrade = (ownerAbbr: string, round: number, overall: number, player: any) => {
+    if (!myTeam) { toast.error("Join a team in this league to propose trades"); return; }
+    if (!activeLeagueCtx?.id) { toast.error("League context missing"); return; }
+    tradeBuilder.openBuilder({ leagueId: activeLeagueCtx.id, myTeam });
+    const ownerTeam = (liveTeams || []).find(
+      (t: any) => (t.logo_abbr || (t.name || "").slice(0, 3).toUpperCase()) === ownerAbbr,
+    );
+    const year = new Date().getFullYear();
+    tradeBuilder.addPick({
+      id: `draft-room-pick-${overall}`,
+      year,
+      round,
+      ownerTeamId: ownerTeam?.id,
+      ownerTeamName: ownerTeam?.name || ownerAbbr,
+      originalTeamId: ownerTeam?.id,
+      originalTeamName: ownerAbbr,
+      label: player?.name
+        ? `${year} R${round} · #${overall} (${ownerAbbr} — ${player.name})`
+        : `${year} R${round} · #${overall} (${ownerAbbr})`,
+    });
+  };
   const currentRound = Math.ceil(draftConfig.currentPick / totalTeams);
   const currentPickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
 
@@ -395,10 +439,11 @@ export default function DraftRoom() {
                 </p>
               </div>
 
-              {/* Draft Criteria Dropdown */}
+              {/* Iter 147 — Draft Criteria is now READ-ONLY. The value is set in
+                  League Administration → Drafts and just displayed here. */}
               <Popover>
                 <PopoverTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1.5">
+                  <Button variant="outline" size="sm" className="gap-1.5" data-testid="draft-room-criteria-trigger">
                     <Info className="h-3.5 w-3.5" />
                     Draft Criteria: {currentCriteria?.label}
                   </Button>
@@ -406,24 +451,39 @@ export default function DraftRoom() {
                 <PopoverContent className="w-80 bg-popover border-border z-50" align="start">
                   <div className="space-y-3">
                     <h4 className="font-semibold text-sm text-foreground">Eligible Player Criteria</h4>
-                    <Select value={selectedCriteria} onValueChange={setSelectedCriteria}>
-                      <SelectTrigger className="h-8 text-sm">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-popover border-border z-50">
-                        {draftCriteria.map((c) => (
-                          <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <div
+                      className="rounded-md border border-border px-3 py-2 text-sm bg-secondary/40"
+                      data-testid="draft-room-criteria-display"
+                    >
+                      <span className="font-medium">{currentCriteria?.label}</span>
+                    </div>
                     <div className="bg-secondary/50 rounded-md p-3">
                       <p className="text-xs text-muted-foreground leading-relaxed">
                         {currentCriteria?.description}
                       </p>
                     </div>
+                    <p
+                      className="text-[11px] italic text-muted-foreground"
+                      data-testid="draft-room-criteria-readonly-note"
+                    >
+                      Configured in League Administration → Drafts.
+                    </p>
                   </div>
                 </PopoverContent>
               </Popover>
+
+              {/* Iter 147 — Propose Trade toggle (mirrors Draft Board) */}
+              <Button
+                size="sm"
+                variant={tradeMode ? "default" : "outline"}
+                onClick={() => setTradeMode((v) => !v)}
+                data-testid="draft-room-trade-toggle"
+                aria-pressed={tradeMode}
+                className={tradeMode ? "bg-emerald-500 hover:bg-emerald-600 text-white gap-1.5" : "gap-1.5"}
+              >
+                <Repeat className="h-3.5 w-3.5" />
+                {tradeMode ? "Trade Mode: ON" : "Propose Trade"}
+              </Button>
             </div>
 
             {/* Draft Timer Card */}
@@ -573,7 +633,7 @@ export default function DraftRoom() {
                             <div
                               key={`${round}-${teamAbbr}`}
                               className={cn(
-                                "p-1.5 rounded border text-center min-h-[52px] flex flex-col items-center justify-center gap-0.5 transition-all",
+                                "p-1.5 rounded border text-center min-h-[52px] flex flex-col items-center justify-center gap-0.5 transition-all relative",
                                 isCurrentPick
                                   ? "bg-primary/10 border-primary/50 ring-1 ring-primary/30"
                                   : pick?.player
@@ -593,6 +653,21 @@ export default function DraftRoom() {
                                 </>
                               ) : (
                                 <span className="text-[10px] text-muted-foreground/40">—</span>
+                              )}
+                              {/* Iter 147 — Per-pick trade button (visible only in trade mode) */}
+                              {tradeMode && pick && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleAddDraftPickToTrade(pick.team, round, pick.overall, pick.player);
+                                  }}
+                                  data-testid={`draft-room-pick-trade-${pick.team}-${pick.overall}`}
+                                  aria-label="Add pick to trade"
+                                  className="absolute top-0.5 right-0.5 h-4 w-4 inline-flex items-center justify-center rounded-sm bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/30"
+                                >
+                                  <Repeat className="h-2.5 w-2.5" />
+                                </button>
                               )}
                             </div>
                           );
