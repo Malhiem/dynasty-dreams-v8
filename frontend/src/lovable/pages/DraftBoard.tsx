@@ -626,6 +626,8 @@ export default function DraftBoardPage() {
     };
   }, [user, liveLeagueTeams]);
 
+  const rounds = Array.from({ length: totalRounds }, (_, i) => i + 1);
+
   const handleAddPickToTrade = (pickInfo: any, teamAbbr: string, round: number) => {
     if (!league?.id) {
       toast.error("League context missing");
