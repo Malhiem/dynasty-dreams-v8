@@ -269,11 +269,11 @@ export function AppSidebar() {
           <SidebarMenuItem>
             <SidebarMenuButton 
               asChild 
-              isActive={isActive("/league-manager")}
+              isActive={isActive("/commissioner/settings")}
               tooltip="League Administration"
             >
               <NavLink 
-                to="/league-manager" 
+                to="/commissioner/settings" 
                 className="flex items-center gap-3 px-3 py-2 rounded-lg transition-colors hover:bg-secondary"
                 activeClassName="bg-primary/10 text-primary"
               >
