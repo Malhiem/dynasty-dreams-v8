@@ -31,6 +31,7 @@ import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
 import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/pages/commissioner/TransactionsConfigCards";
 import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard";
 import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard";
+import ExpansionDraftSettingsCard from "@/lovable/pages/commissioner/ExpansionDraftSettingsCard";
 import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
 import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
@@ -1914,6 +1915,13 @@ const CommissionerSettings = () => {
                   <>
                     <Separator />
                     <KeeperSettingsCard leagueId={activeLeague?.id} isCommish={true} />
+                  </>
+                )}
+                {/* Iter 142 — Expansion settings appear only for expansion drafts */}
+                {draftType === "expansion" && (
+                  <>
+                    <Separator />
+                    <ExpansionDraftSettingsCard leagueId={activeLeague?.id} isCommish={true} />
                   </>
                 )}
                 <Separator />

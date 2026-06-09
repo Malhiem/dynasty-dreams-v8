@@ -292,6 +292,89 @@ async def update_keeper_config(league_id: str, payload: KeeperConfigRequest, req
     return {"ok": True, "league_id": league_id, "config": cfg}
 
 
+# ──────────────────────────────────────────────────────────────────
+# Iter 142 — Expansion draft configuration (per-league)
+# ──────────────────────────────────────────────────────────────────
+
+EXPANSION_LIST_VISIBILITY = {"public", "secret"}
+EXPANSION_COMP_APPLIES = {"every", "threshold"}
+EXPANSION_THRESHOLD_TYPES = {"salary_cap", "aav", "fppg"}
+EXPANSION_PICK_ORDER_METHODS = {"automatic", "manual"}
+EXPANSION_PICK_ORDER_STYLES = {"snake", "linear"}
+EXPANSION_PICK_PLACEMENTS = {"top", "bottom", "random", "lottery_odds"}
+
+
+class ExpansionConfigRequest(BaseModel):
+    config: dict
+
+
+@router.get("/leagues/{league_id}/expansion-config")
+async def get_expansion_config(league_id: str):
+    db = _deps["db"]
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    return {"league_id": league_id, "config": league.get("expansion_config") or {}}
+
+
+@router.put("/leagues/{league_id}/expansion-config")
+async def update_expansion_config(league_id: str, payload: ExpansionConfigRequest, request: Request):
+    db = _deps["db"]
+    user = await _get_user(request)
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Only commissioners may set expansion config")
+
+    cfg = payload.config or {}
+    # Enum validation
+    prot = cfg.get("protection") or {}
+    if prot.get("list_visibility") and prot["list_visibility"] not in EXPANSION_LIST_VISIBILITY:
+        raise HTTPException(status_code=400, detail="protection.list_visibility must be public|secret")
+    comp = cfg.get("compensation_pick") or {}
+    if comp.get("applies_to") and comp["applies_to"] not in EXPANSION_COMP_APPLIES:
+        raise HTTPException(status_code=400, detail="compensation_pick.applies_to must be every|threshold")
+    if comp.get("threshold_type") and comp["threshold_type"] not in EXPANSION_THRESHOLD_TYPES:
+        raise HTTPException(status_code=400, detail="compensation_pick.threshold_type must be salary_cap|aav|fppg")
+    order = cfg.get("pick_order") or {}
+    if order.get("method") and order["method"] not in EXPANSION_PICK_ORDER_METHODS:
+        raise HTTPException(status_code=400, detail="pick_order.method must be automatic|manual")
+    if order.get("style") and order["style"] not in EXPANSION_PICK_ORDER_STYLES:
+        raise HTTPException(status_code=400, detail="pick_order.style must be snake|linear")
+    # Bounds
+    if prot.get("max_taken_per_roster") is not None and not (0 <= prot["max_taken_per_roster"] <= 5):
+        raise HTTPException(status_code=400, detail="protection.max_taken_per_roster must be 0-5")
+    # Extra picks
+    picks = cfg.get("expansion_picks") or []
+    for i, p in enumerate(picks):
+        if p.get("placement") and p["placement"] not in EXPANSION_PICK_PLACEMENTS:
+            raise HTTPException(status_code=400, detail=f"expansion_picks[{i}].placement invalid")
+        if p.get("round") is not None and p["round"] < 1:
+            raise HTTPException(status_code=400, detail=f"expansion_picks[{i}].round must be ≥ 1")
+        if p.get("placement") == "lottery_odds":
+            odds = p.get("lottery_odds") or []
+            if not isinstance(odds, list) or not odds:
+                raise HTTPException(status_code=400, detail=f"expansion_picks[{i}].lottery_odds required")
+
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {"expansion_config": cfg}},
+    )
+    return {"ok": True, "league_id": league_id, "config": cfg}
+
+
 @router.get("/admin/draft-lottery-date")
 async def get_system_nhl_lottery_date(request: Request):
     db = _deps["db"]
