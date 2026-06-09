@@ -8,11 +8,13 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
-import { LayoutGrid, Star, Search, Clock, Play, Pause, Timer, AlertCircle, X, ListOrdered, MessageSquare, Send, Info, Users } from "lucide-react";
+import { LayoutGrid, Star, Search, Clock, Play, Pause, Timer, AlertCircle, X, ListOrdered, MessageSquare, Send, Info, Users, Repeat } from "lucide-react";
 import { cn } from "@/lib/utils";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useParams } from "react-router-dom";
+import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
+import { toast } from "sonner";
 import { useDraftSocket } from "@/hooks/use-socket";
 import TeamLogo from "@/lovable/components/TeamLogo";
 
@@ -212,6 +214,49 @@ export default function DraftRoomPage() {
   const currentRound = totalTeams ? Math.ceil(currentPick / totalTeams) : 1;
   const currentPickInRound = totalTeams ? ((currentPick - 1) % totalTeams) + 1 : 1;
 
+  // Iter 146 — Propose-trade mode (mirrors Draft Board)
+  const [tradeMode, setTradeMode] = useState(false);
+  const tradeBuilder = useTradeBuilder();
+  const myTeam = useMemo(() => {
+    if (!user || !teams?.length) return null;
+    const mine = teams.find((t) => t.owner_id === user.id);
+    if (!mine) return null;
+    return {
+      id: mine.id,
+      name: mine.name,
+      abbr: mine.logo_abbr || (mine.name || "").slice(0, 3).toUpperCase(),
+      owner: user.username || user.email,
+    };
+  }, [user, teams]);
+
+  const handleAddDraftPickToTrade = (ownerAbbr, round, overall, player) => {
+    if (!myTeam) {
+      toast.error("Join a team in this league to propose trades");
+      return;
+    }
+    if (!draft?.league_id) {
+      toast.error("League context missing");
+      return;
+    }
+    tradeBuilder.openBuilder({ leagueId: draft.league_id, myTeam });
+    const ownerTeam = teams.find(
+      (t) => (t.logo_abbr || (t.name || "").slice(0, 3).toUpperCase()) === ownerAbbr,
+    );
+    const year = draft?.year || draft?.season || new Date().getFullYear();
+    tradeBuilder.addPick({
+      id: `draft-${draftId}-${overall}`,
+      year,
+      round,
+      ownerTeamId: ownerTeam?.id,
+      ownerTeamName: ownerTeam?.name || ownerAbbr,
+      originalTeamId: ownerTeam?.id,
+      originalTeamName: ownerAbbr,
+      label: player?.name
+        ? `${year} R${round} · #${overall} (${ownerAbbr} — ${player.name})`
+        : `${year} R${round} · #${overall} (${ownerAbbr})`,
+    });
+  };
+
   const filteredPlayers = players.filter(p => !p.drafted);
   const shortlistedPlayers = players.filter(p => shortlist.has(p.id) && !p.drafted);
   const queuedPlayers = queue.map(id => players.find(p => p.id === id)).filter(Boolean);
@@ -266,6 +311,20 @@ export default function DraftRoomPage() {
               Draft Room
             </h1>
             <p className="text-sm text-[#A1A1AA]">{draft.league_name || "League"} — {draft.draft_type} Draft</p>
+            <div className="mt-2">
+              {/* Iter 146 — Propose Trade toggle (mirrors Draft Board) */}
+              <Button
+                size="sm"
+                variant={tradeMode ? "default" : "outline"}
+                onClick={() => setTradeMode((v) => !v)}
+                data-testid="draft-room-trade-toggle"
+                aria-pressed={tradeMode}
+                className={tradeMode ? "bg-emerald-500 hover:bg-emerald-600 text-white" : "border-white/10 text-white"}
+              >
+                <Repeat className="h-4 w-4 mr-1" />
+                {tradeMode ? "Trade Mode: ON" : "Propose Trade"}
+              </Button>
+            </div>
           </div>
 
           {/* Timer Card */}
@@ -376,7 +435,7 @@ export default function DraftRoomPage() {
                     {roundPicks.map(pick => {
                       const isCurrent = pick.overall === currentPick && isActive;
                       return (
-                        <div key={`${rIdx}-${pick.team}`} className={cn("p-1.5 rounded border text-center min-h-[52px] flex flex-col items-center justify-center gap-0.5 transition-all",
+                        <div key={`${rIdx}-${pick.team}`} className={cn("p-1.5 rounded border text-center min-h-[52px] flex flex-col items-center justify-center gap-0.5 transition-all relative",
                           isCurrent ? "bg-[#00D2FF]/10 border-[#00D2FF]/50 ring-1 ring-[#00D2FF]/30"
                           : pick.player ? "bg-[#1A1A1A]/60 border-white/10" : "bg-[#0A0A0A]/50 border-white/5"
                         )}>
@@ -392,6 +451,18 @@ export default function DraftRoomPage() {
                             </>
                           ) : (
                             <span className="text-[10px] text-[#52525B]">—</span>
+                          )}
+                          {/* Iter 146 — Per-pick trade button (visible only in trade mode) */}
+                          {tradeMode && (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); handleAddDraftPickToTrade(pick.team, rIdx + 1, pick.overall, pick.player); }}
+                              data-testid={`draft-room-pick-trade-${pick.team}-${pick.overall}`}
+                              aria-label="Add pick to trade"
+                              className="absolute top-0.5 right-0.5 h-4 w-4 inline-flex items-center justify-center rounded-sm bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/30"
+                            >
+                              <Repeat className="h-2.5 w-2.5" />
+                            </button>
                           )}
                         </div>
                       );
