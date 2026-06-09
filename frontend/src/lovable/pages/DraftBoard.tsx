@@ -318,6 +318,22 @@ function DraftOrderResultsTab({ leagueId, draftOrder, teams }: any) {
     return aSeed - bSeed;
   });
 
+  // Iter 143 — Expansion draft: show unprotected → protected players per team
+  const [expansionBoard, setExpansionBoard] = useState<any[]>([]);
+  const [showExpansion, setShowExpansion] = useState(false);
+  useEffect(() => {
+    if (!leagueId) return;
+    api.get(`/leagues/${leagueId}/expansion-draft-board`)
+      .then(({ data }) => {
+        const rows = data?.teams || [];
+        // Only show the listing when at least one team has players (else this is not an expansion league)
+        const anyPlayers = rows.some((r: any) => (r.unprotected?.length || 0) + (r.protected?.length || 0) > 0);
+        setExpansionBoard(rows);
+        setShowExpansion(anyPlayers);
+      })
+      .catch(() => setShowExpansion(false));
+  }, [leagueId]);
+
   return (
     <div className="space-y-6">
       {/* Iter 139 — Read-only summary; configuration lives in League Admin */}
@@ -402,6 +418,84 @@ function DraftOrderResultsTab({ leagueId, draftOrder, teams }: any) {
           </Table>
         </CardContent>
       </Card>
+      {/* Iter 143 — Expansion draft: unprotected → protected listing */}
+      {showExpansion && (
+        <Card className="border-border gradient-card" data-testid="expansion-board-card">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Expansion Draft Board · Available Players</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-xs text-muted-foreground">
+              Each team's unprotected players are listed first (available to be selected),
+              followed by their protected list.
+            </p>
+            <div className="space-y-3" data-testid="expansion-board-teams">
+              {expansionBoard.map((row: any) => (
+                <div
+                  key={row.team_id}
+                  className="rounded-md border border-border p-3 space-y-2"
+                  data-testid={`expansion-board-team-${row.team_abbr}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-sm">{row.team_name} <span className="text-muted-foreground">({row.team_abbr})</span></div>
+                    {row.submitted ? (
+                      <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-300">
+                        List submitted
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-300">
+                        No list yet
+                      </Badge>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-emerald-300 font-semibold mb-1">
+                      Unprotected ({row.unprotected?.length || 0})
+                    </div>
+                    {(row.unprotected || []).length === 0 ? (
+                      <div className="text-xs italic text-muted-foreground">— no unprotected players —</div>
+                    ) : (
+                      <ul className="grid sm:grid-cols-2 gap-1 text-xs" data-testid={`expansion-unprotected-${row.team_abbr}`}>
+                        {row.unprotected.map((p: any) => (
+                          <li key={p.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-emerald-500/5">
+                            <span>{p.name} <span className="text-muted-foreground">({p.position})</span></span>
+                            {p.salary != null && (
+                              <span className="font-mono text-muted-foreground">
+                                ${(Number(p.salary) / 1_000_000).toFixed(2)}M
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-amber-300 font-semibold mb-1 mt-2">
+                      Protected ({row.protected?.length || 0})
+                    </div>
+                    {(row.protected || []).length === 0 ? (
+                      <div className="text-xs italic text-muted-foreground">— none —</div>
+                    ) : (
+                      <ul className="grid sm:grid-cols-2 gap-1 text-xs" data-testid={`expansion-protected-${row.team_abbr}`}>
+                        {row.protected.map((p: any) => (
+                          <li key={p.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-amber-500/5 text-muted-foreground">
+                            <span>{p.name} <span>({p.position})</span></span>
+                            {p.salary != null && (
+                              <span className="font-mono">
+                                ${(Number(p.salary) / 1_000_000).toFixed(2)}M
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

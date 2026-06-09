@@ -34,7 +34,7 @@ def test_admin_renames_to_create_a_draft():
     src = ADMIN.read_text()
     draft_tab_idx = src.find('TabsContent value="draft"')
     assert draft_tab_idx > 0
-    block = src[draft_tab_idx:draft_tab_idx + 2000]
+    block = src[draft_tab_idx:draft_tab_idx + 8000]
     assert "<CardTitle>Create a Draft</CardTitle>" in block, "Title must be 'Create a Draft'"
     # DraftOrderConfigCard is inside the Create a Draft card AFTER the Draft Type select
     type_pos = block.find("First-Time Team Draft")  # inside the Select

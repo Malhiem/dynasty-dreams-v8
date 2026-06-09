@@ -788,6 +788,30 @@ const CommissionerSettings = () => {
   const isH2H = scoringFormat.startsWith("h2h");
   // Iter 141 — controlled draft type so we can conditionally render the Keeper settings card
   const [draftType, setDraftType] = useState<string>("startup");
+  // Iter 143 — first-time draft gating + persistence
+  const [firstDraftCompleted, setFirstDraftCompleted] = useState<boolean>(false);
+  useEffect(() => {
+    if (!activeLeague?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/leagues/${activeLeague.id}`);
+        if (cancelled) return;
+        if (data?.first_draft_completed) setFirstDraftCompleted(true);
+        if (data?.next_draft_type) setDraftType(data.next_draft_type);
+        else if (!data?.first_draft_completed) setDraftType("startup");
+        else setDraftType("redraft");
+      } catch {/* noop */}
+    })();
+    return () => { cancelled = true; };
+  }, [activeLeague?.id]);
+  const persistDraftType = (v: string) => {
+    setDraftType(v);
+    if (activeLeague?.id) {
+      api.put(`/leagues/${activeLeague.id}/next-draft-type`, { draft_type: v })
+        .catch((e) => toast.error(e?.response?.data?.detail || "Failed to save draft type"));
+    }
+  };
   const [customInjuries, setCustomInjuries] = useState<{ type: string; timeline: string; irEligible: boolean }[]>([]);
   const [newInjuryType, setNewInjuryType] = useState("Upper Body");
   const [newInjuryTimeline, setNewInjuryTimeline] = useState("Day-to-Day");
@@ -1891,18 +1915,39 @@ const CommissionerSettings = () => {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label>Draft Type</Label>
-                  <Select value={draftType} onValueChange={setDraftType}>
+                  <Select value={draftType} onValueChange={persistDraftType}>
                     <SelectTrigger className="bg-secondary border-border" data-testid="draft-type-trigger">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="startup">First-Time Team Draft</SelectItem>
+                      <SelectItem
+                        value="startup"
+                        disabled={firstDraftCompleted}
+                        data-testid="draft-type-startup"
+                      >
+                        First-Time Team Draft
+                        {firstDraftCompleted && (
+                          <span className="ml-2 text-[10px] italic text-muted-foreground">
+                            — already occurred
+                          </span>
+                        )}
+                      </SelectItem>
+                      <SelectItem value="redraft" data-testid="draft-type-redraft">Redraft</SelectItem>
                       <SelectItem value="entry">NHL Entry Draft</SelectItem>
                       <SelectItem value="supplemental">Supplemental Draft</SelectItem>
                       <SelectItem value="expansion">Expansion Draft</SelectItem>
                       <SelectItem value="keeper" data-testid="draft-type-keeper">Keeper Draft</SelectItem>
                     </SelectContent>
                   </Select>
+                  {firstDraftCompleted && (
+                    <p
+                      className="text-[11px] italic text-muted-foreground"
+                      data-testid="draft-type-startup-disabled-note"
+                    >
+                      The First-Time Team Draft has already been completed for this league.
+                      Use <strong>Redraft</strong> to run a full draft with the same settings.
+                    </p>
+                  )}
                 </div>
                 <Separator />
                 <DraftOrderConfigCard

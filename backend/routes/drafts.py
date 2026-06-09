@@ -375,6 +375,219 @@ async def update_expansion_config(league_id: str, payload: ExpansionConfigReques
     return {"ok": True, "league_id": league_id, "config": cfg}
 
 
+# ──────────────────────────────────────────────────────────────────
+# Iter 143 — Protection list status (keeper + expansion)
+# + First-draft completion + Redraft toggling
+# ──────────────────────────────────────────────────────────────────
+
+
+@router.get("/leagues/{league_id}/protection-list/status")
+async def get_protection_list_status(league_id: str, request: Request):
+    """Returns whether the active user has a protection-list deadline
+    coming up. Used by the global Protection List ribbon.
+    """
+    db = _deps["db"]
+    user = await _get_user(request)
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        return {"applicable": False}
+
+    # Resolve the user's team in this league (if any)
+    my_team = await db.teams.find_one({"league_id": league_id, "owner_id": user.get("_id")})
+    my_team_id = str(my_team["_id"]) if my_team else None
+
+    scheduled = league.get("draft_order_scheduled_at")
+    if hasattr(scheduled, "isoformat"):
+        scheduled = scheduled.isoformat()
+
+    # Keeper: declaration deadline = draft_date - declaration_deadline_days
+    keeper_cfg = league.get("keeper_config") or {}
+    expansion_cfg = league.get("expansion_config") or {}
+
+    # Pick the active draft type for this league. The Draft Type Select
+    # on League Admin persists via league.next_draft_type (added in Iter
+    # 143). Fallback to inferring from configs if absent.
+    draft_type = league.get("next_draft_type")
+    if not draft_type:
+        if expansion_cfg.get("enabled"):
+            draft_type = "expansion"
+        elif keeper_cfg.get("enabled"):
+            draft_type = "keeper"
+
+    deadline_at = None
+    if draft_type == "keeper" and scheduled:
+        try:
+            from datetime import datetime as _dt, timedelta as _td
+            d = _dt.fromisoformat(str(scheduled).replace("Z", "+00:00"))
+            days = int(keeper_cfg.get("declaration_deadline_days") or 0)
+            if days > 0:
+                deadline_at = (d - _td(days=days)).isoformat()
+        except Exception:
+            deadline_at = None
+    elif draft_type == "expansion" and scheduled:
+        prot = expansion_cfg.get("protection") or {}
+        if (prot.get("list_visibility") == "public") and prot.get("reveal_days_before"):
+            try:
+                from datetime import datetime as _dt, timedelta as _td
+                d = _dt.fromisoformat(str(scheduled).replace("Z", "+00:00"))
+                days = int(prot.get("reveal_days_before") or 0)
+                deadline_at = (d - _td(days=days)).isoformat()
+            except Exception:
+                deadline_at = None
+        else:
+            # Secret lists: deadline is the draft itself
+            deadline_at = scheduled
+
+    submitted = False
+    if my_team_id and draft_type:
+        existing = await db.protection_lists.find_one({
+            "league_id": league_id,
+            "team_id": my_team_id,
+            "draft_type": draft_type,
+        })
+        submitted = bool(existing)
+
+    applicable = bool(draft_type in {"keeper", "expansion"} and my_team_id and deadline_at)
+    return {
+        "applicable": applicable,
+        "draft_type": draft_type,
+        "deadline_at": deadline_at,
+        "submitted": submitted,
+        "my_team_id": my_team_id,
+    }
+
+
+class NextDraftTypeRequest(BaseModel):
+    draft_type: Optional[str] = None
+
+
+VALID_NEXT_DRAFT_TYPES = {
+    "startup", "entry", "supplemental", "expansion", "keeper", "redraft",
+}
+
+
+@router.put("/leagues/{league_id}/next-draft-type")
+async def set_next_draft_type(league_id: str, payload: NextDraftTypeRequest, request: Request):
+    """Iter 143 — Persist the league's selected draft format so the
+    Protection List ribbon + Draft Board read from a single source. The
+    "startup" (first-time) type may only be chosen once per league: once
+    `first_draft_completed` is true, the API rejects further startup
+    selections with 400.
+    """
+    db = _deps["db"]
+    user = await _get_user(request)
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Only commissioners may set the draft type")
+    dt = (payload.draft_type or "").strip()
+    if dt and dt not in VALID_NEXT_DRAFT_TYPES:
+        raise HTTPException(status_code=400, detail=f"draft_type must be one of {sorted(VALID_NEXT_DRAFT_TYPES)}")
+    if dt == "startup" and league.get("first_draft_completed"):
+        raise HTTPException(status_code=400, detail="First-time draft has already been completed; choose Redraft instead.")
+    await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$set": {"next_draft_type": dt or None}})
+    return {"ok": True, "league_id": league_id, "next_draft_type": dt or None}
+
+
+class FirstDraftFlagRequest(BaseModel):
+    completed: bool
+
+
+@router.put("/leagues/{league_id}/first-draft-completed")
+async def set_first_draft_completed(league_id: str, payload: FirstDraftFlagRequest, request: Request):
+    db = _deps["db"]
+    user = await _get_user(request)
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Only commissioners may mark first-draft completed")
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {"first_draft_completed": bool(payload.completed)}},
+    )
+    return {"ok": True, "first_draft_completed": bool(payload.completed)}
+
+
+# ──────────────────────────────────────────────────────────────────
+# Iter 143 — Expansion Draft Board: unprotected → protected listing
+# ──────────────────────────────────────────────────────────────────
+
+
+@router.get("/leagues/{league_id}/expansion-draft-board")
+async def get_expansion_draft_board(league_id: str):
+    """For expansion drafts, return every team's players partitioned
+    into `unprotected` (drafted FIRST) and `protected` (shown after).
+    Protection lists are stored in `protection_lists` keyed by
+    (league_id, team_id, draft_type="expansion"). Teams without a
+    submitted protection list show all players as `unprotected`.
+    """
+    db = _deps["db"]
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+    rows = []
+    for t in teams:
+        tid = str(t["_id"])
+        proto = await db.protection_lists.find_one({
+            "league_id": league_id,
+            "team_id": tid,
+            "draft_type": "expansion",
+        })
+        protected_ids = set((proto or {}).get("protected_player_ids", []) or [])
+        players = await db.players.find(
+            {"league_id": league_id, "team_id": tid},
+        ).to_list(500)
+        unprotected = []
+        protected_list = []
+        for p in players:
+            pid = str(p["_id"])
+            payload = {
+                "id": pid,
+                "name": p.get("name"),
+                "position": p.get("position"),
+                "salary": p.get("contract", {}).get("salary") if p.get("contract") else None,
+            }
+            if pid in protected_ids:
+                protected_list.append(payload)
+            else:
+                unprotected.append(payload)
+        rows.append({
+            "team_id": tid,
+            "team_name": t.get("name"),
+            "team_abbr": t.get("logo_abbr") or (t.get("name", "")[:3] or "TM").upper(),
+            "submitted": bool(proto),
+            "unprotected": unprotected,
+            "protected": protected_list,
+        })
+    return {"league_id": league_id, "teams": rows}
+
+
+
 @router.get("/admin/draft-lottery-date")
 async def get_system_nhl_lottery_date(request: Request):
     db = _deps["db"]

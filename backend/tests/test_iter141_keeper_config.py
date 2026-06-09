@@ -101,7 +101,8 @@ def test_admin_keeper_card_gated_on_draft_type():
     assert "<KeeperSettingsCard" in block, "Card must render inside the gate"
     # Draft Type is now controlled (no defaultValue, uses value/onValueChange)
     assert "value={draftType}" in block
-    assert "setDraftType" in block
+    # setDraftType OR persistDraftType (Iter 143 wraps the setter for persistence)
+    assert ("setDraftType" in block) or ("persistDraftType" in block)
 
 
 # ── 3. Backend exposes GET + PUT keeper-config ─────────────────
