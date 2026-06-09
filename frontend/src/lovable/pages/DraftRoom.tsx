@@ -205,7 +205,6 @@ function formatPickTimer(seconds: number) {
 
 export default function DraftRoom() {
   const totalTeams = leagueTeams.length;
-  const myTeam = "FRST";
 
   const [draftConfig, setDraftConfig] = useState<DraftConfig>({
     scheduledTime: new Date(Date.now() + 2 * 60 * 60 * 1000),
@@ -606,7 +605,7 @@ export default function DraftRoom() {
                           "p-1.5 text-[10px] font-semibold text-center text-muted-foreground uppercase truncate rounded",
                           abbr === onTheClockTeam && draftConfig.draftStarted
                             ? "bg-primary/15 text-primary"
-                            : abbr === myTeam
+                            : abbr === myTeam?.abbr
                             ? "bg-accent/10 text-accent"
                             : "bg-secondary/50"
                         )}

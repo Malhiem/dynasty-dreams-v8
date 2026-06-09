@@ -1,0 +1,32 @@
+{
+  "summary": "Iter 147 UI regression validation — all three acceptance criteria PASS on https://dynasty-preview.preview.emergentagent.com after admin login (admin@dynastydreams.com / Admin123!).\n\n1) Draft Room (/draft-room): 'Propose Trade' button is visible in the header next to the Draft Criteria popover. data-testid='draft-room-trade-toggle' exists (count=1). Initial state: text='Propose Trade', aria-pressed='false', no emerald class. After click: text='Trade Mode: ON', aria-pressed='true', class includes 'bg-emerald-500 hover:bg-emerald-600 text-white'. Toggle works as specified.\n\n2) Draft Room → Draft Criteria popover: data-testid='draft-room-criteria-trigger' exists. Opening it reveals data-testid='draft-room-criteria-display' rendered as a plain <DIV> (NOT a <select>/[role=combobox] — confirmed select_inside count=0) showing the current label 'NHL Entry Draft'. data-testid='draft-room-criteria-readonly-note' is visible with the exact copy 'Configured in League Administration → Drafts.' Read-only behavior confirmed.\n\n3) Commissioner Settings (/commissioner/settings — sidebar 'League Administration' NavLink href verified as '/commissioner/settings' on the live build, not '/league-manager' as in source): page renders successfully. h1 is present, 12 tabs render (League Setup, Player Pool, Rosters, League Structure, Transactions, Salary Cap & Contracts, Scoring, Draft, Tank Monitor, Roster Monitor, League Administration, Audit Log) and Setup Wizard dialog auto-opens for the seed league. ZERO console or page errors matching /activeLeague|lexical declaration|before initialization/. Lexical-declaration regression is fixed.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Commissioner Settings initial load", "issue": "Many concurrent calls to /api/leagues/my-leagues and active-league endpoints trigger 429 (rate limit) bursts on first paint of /commissioner/settings (and again when navigating from /dashboard via the sidebar). Page still renders correctly but logs show 'my_leagues failed AxiosError' / 'active league load AxiosError' multiple times. Worth de-duping or caching the league list call.", "affected_selectors": ["sidebar 'League Administration' NavLink", "AppLayout active-league bootstrap"]}
+    ],
+    "design_issues": [
+      {"screen": "Commissioner Settings dialog (Setup Wizard / League Setup Wizard)", "issues": ["React DOM warning: '<button> cannot contain a nested <button>' fires inside DialogContent → Setup Wizard. Hydration warning, not a runtime failure, but should be cleaned up (likely a Tooltip rendered with a Button trigger inside another Button). Stack points at @radix-ui DialogContent/FocusScope."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Optional cleanup) Resolve nested <button> warning inside the League Setup Wizard dialog content on /commissioner/settings.",
+    "(Optional perf) De-duplicate /api/leagues/my-leagues and active-league polling so rapid sidebar→page navigation doesn't trigger a burst of 429s.",
+    "(Minor source drift) /app/frontend/src/lovable/components/layout/AppSidebar.tsx line 276 has NavLink to='/league-manager' but live build hrefs to '/commissioner/settings'. Either the build is newer or the source needs to be updated to match — recommend updating the source to to='/commissioner/settings' to avoid future regressions when /league-manager really 404s (verified that /league-manager hits the 404 page)."
+  ],
+  "critical_code_review_comments": [
+    "DraftRoom.tsx (lines 372-485) — myTeam useMemo cleanly resolves from useActiveLeague(); Propose Trade button placement and emerald styling match Draft Board parity. Draft Criteria popover correctly renders display-only div with readonly note. Implementation matches spec.",
+    "CommissionerSettings.tsx — activeLeague is destructured at line 802 BEFORE any useEffect that references it (line 806+, 831+). Temporal-dead-zone risk eliminated; the previous 'Cannot access activeLeague before initialization' bug is no longer reproducible across direct nav, sidebar click, and tab interactions.",
+    "AppSidebar.tsx line 276 still has hard-coded to='/league-manager' which 404s — production build appears to be ahead of this source file. Worth syncing to avoid surprise regressions if someone rebuilds from current source."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only per request)", "frontend": "100% (3/3 acceptance criteria pass)"},
+  "test_credentials": "Admin: admin@dynastydreams.com / Admin123! — verified working via UI login (form submit + Enter key).",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 147 three-fix validation complete. All three acceptance criteria verified on the live preview URL. Two minor non-blocking issues remain (nested-button hydration warning in Setup Wizard, 429 burst on commissioner page load, and AppSidebar source has stale '/league-manager' href while build ships '/commissioner/settings'). Login flow tip: page.press(\"input[type='password']\", 'Enter') reliably submits the form and AuthContext picks up the cookie+token; avoid using fetch loops which trigger 429s.",
+  "rca of the issue": "The original lexical-declaration bug was caused by useEffect hooks referencing activeLeague being declared before the useActiveLeague() destructure line. Main agent moved useActiveLeague() to line 802 and placed all dependent effects after it (lines 806-851). Verified at runtime: zero TDZ errors across direct nav, sidebar click, and tab clicks. The DraftRoom 'Propose Trade' visibility regression was due to a duplicate 'const myTeam = \"FRST\"' shadowing the proper memoized myTeam object — main agent removed the duplicate, allowing the toggle and trade flow to behave correctly. Webpack compiles cleanly and the read-only Draft Criteria popover renders the expected DIV+note pattern."
+}
