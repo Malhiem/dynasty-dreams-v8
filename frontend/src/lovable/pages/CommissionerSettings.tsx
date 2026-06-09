@@ -32,6 +32,7 @@ import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/p
 import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard";
 import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard";
 import ExpansionDraftSettingsCard from "@/lovable/pages/commissioner/ExpansionDraftSettingsCard";
+import CommissionerProtectionOverridePanel from "@/lovable/pages/commissioner/CommissionerProtectionOverridePanel";
 import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
 import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
@@ -1967,6 +1968,15 @@ const CommissionerSettings = () => {
                   <>
                     <Separator />
                     <ExpansionDraftSettingsCard leagueId={activeLeague?.id} isCommish={true} />
+                    <Separator />
+                    <CommissionerProtectionOverridePanel leagueId={activeLeague?.id} draftType="expansion" />
+                  </>
+                )}
+                {/* Iter 144 — Commissioner override for keeper drafts too */}
+                {draftType === "keeper" && (
+                  <>
+                    <Separator />
+                    <CommissionerProtectionOverridePanel leagueId={activeLeague?.id} draftType="keeper" />
                   </>
                 )}
                 <Separator />

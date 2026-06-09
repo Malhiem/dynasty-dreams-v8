@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
-import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings, Megaphone } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings, Megaphone, Shield } from "lucide-react";
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -589,6 +589,11 @@ interface PlayerRosterProps {
   onDropPlayer?: (player: any) => void;
   onAddToTradeBlock?: (player: any) => void;
   tradeBlockPlayerIds?: string[];
+  /** Iter 144 — protection list integration */
+  onToggleProtection?: (player: any) => void;
+  protectedPlayerIds?: string[];
+  protectionEnabled?: boolean;
+  protectionDraftType?: "keeper" | "expansion" | null;
   isTradeBuilderOpen?: boolean;
   currentTeamContext?: string;
   teamId?: string;
@@ -701,6 +706,11 @@ const PlayerRoster = ({
   onDropPlayer,
   onAddToTradeBlock,
   tradeBlockPlayerIds = [],
+  // Iter 144 — protection list props
+  onToggleProtection,
+  protectedPlayerIds = [],
+  protectionEnabled = false,
+  protectionDraftType = null,
   isTradeBuilderOpen = false,
   currentTeamContext = "mine",
   teamId = "frostbite",
@@ -1631,6 +1641,10 @@ const PlayerRoster = ({
             onDrop={onDropPlayer}
             onMegaphone={onAddToTradeBlock}
             tradeBlockPlayerIds={tradeBlockPlayerIds}
+            onToggleProtection={onToggleProtection}
+            protectedPlayerIds={protectedPlayerIds}
+            protectionEnabled={protectionEnabled}
+            protectionDraftType={protectionDraftType}
             ownershipMap={ownershipMap}
             newsMap={newsMap}
             onPlayerClick={handleOpenCard}
@@ -1728,6 +1742,10 @@ const StatsTable = ({
   onDrop,
   onMegaphone,
   tradeBlockPlayerIds = [],
+  onToggleProtection,
+  protectedPlayerIds = [],
+  protectionEnabled = false,
+  protectionDraftType = null,
   ownershipMap = {},
   newsMap = {},
   onPlayerClick,
@@ -1752,6 +1770,10 @@ const StatsTable = ({
   onDrop?: (p: Player) => void;
   onMegaphone?: (p: Player) => void;
   tradeBlockPlayerIds?: string[];
+  onToggleProtection?: (p: Player) => void;
+  protectedPlayerIds?: string[];
+  protectionEnabled?: boolean;
+  protectionDraftType?: "keeper" | "expansion" | null;
   ownershipMap?: Record<string, any>;
   newsMap?: Record<string, any>;
   onPlayerClick: (p: Player) => void;
@@ -1832,7 +1854,7 @@ const StatsTable = ({
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (player) {
                       return (
-                        <PlayerRow key={player.id} player={player} index={slotIdx} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility} warnings={lineupWarnings[String(player.id)]}>
+                        <PlayerRow key={player.id} player={player} index={slotIdx} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} onToggleProtection={onToggleProtection} isProtected={protectedPlayerIds.includes(String(player.id))} protectionEnabled={protectionEnabled} protectionDraftType={protectionDraftType} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility} warnings={lineupWarnings[String(player.id)]}>
                           {showFpts && <td className="p-2 text-right font-bold text-primary" data-testid={`row-fpts-${player.id}`}>{getPlayerPoints(player)}</td>}
                           {showFpts && <td className="p-2 text-right text-muted-foreground tabular-nums" data-testid={`row-fpg-${player.id}`}>{fpgOf(player)}</td>}
                           {displayCategories.map(cat => (
@@ -1868,7 +1890,7 @@ const StatsTable = ({
                 ) : (
                   <>
                     {sectionPlayers.map((player, index) => (
-                      <PlayerRow key={player.id} player={player} index={index} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility} warnings={lineupWarnings[String(player.id)]}>
+                      <PlayerRow key={player.id} player={player} index={index} onTrade={onTrade} onDrop={onDrop} onMegaphone={onMegaphone} isOnTradeBlock={tradeBlockPlayerIds.includes(String(player.id))} onToggleProtection={onToggleProtection} isProtected={protectedPlayerIds.includes(String(player.id))} protectionEnabled={protectionEnabled} protectionDraftType={protectionDraftType} newsInfo={newsMap[String(player.id)]} onPlayerClick={onPlayerClick} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={onToggleHighlight} showPositionEligibility={showPositionEligibility} warnings={lineupWarnings[String(player.id)]}>
                         {showFpts && <td className="p-2 text-right font-bold text-primary" data-testid={`row-fpts-${player.id}`}>{getPlayerPoints(player)}</td>}
                         {showFpts && <td className="p-2 text-right text-muted-foreground tabular-nums" data-testid={`row-fpg-${player.id}`}>{fpgOf(player)}</td>}
                         {displayCategories.map(cat => (
@@ -2554,6 +2576,10 @@ const PlayerRow = ({
   onDrop,
   onMegaphone,
   isOnTradeBlock = false,
+  onToggleProtection,
+  isProtected = false,
+  protectionEnabled = false,
+  protectionDraftType = null,
   newsInfo,
   onPlayerClick,
   children,
@@ -2571,6 +2597,10 @@ const PlayerRow = ({
   onDrop?: (p: Player) => void;
   onMegaphone?: (p: Player) => void;
   isOnTradeBlock?: boolean;
+  onToggleProtection?: (p: Player) => void;
+  isProtected?: boolean;
+  protectionEnabled?: boolean;
+  protectionDraftType?: "keeper" | "expansion" | null;
   newsInfo?: any;
   onPlayerClick: (p: Player) => void;
   children: React.ReactNode;
@@ -2639,6 +2669,14 @@ const PlayerRow = ({
           <TradeButton player={player} onTrade={onTrade} />
           {canEdit && onMegaphone && (
             <MegaphoneButton player={player} active={isOnTradeBlock} onMegaphone={onMegaphone} />
+          )}
+          {canEdit && protectionEnabled && onToggleProtection && (
+            <ShieldButton
+              player={player}
+              active={isProtected}
+              draftType={protectionDraftType}
+              onToggle={onToggleProtection}
+            />
           )}
           {canEdit && <DropButton player={player} onDrop={onDrop || onTrade} />}
           {commissionerMode && (
@@ -2709,6 +2747,47 @@ const MegaphoneButton = ({
     </Tooltip>
   </TooltipProvider>
 );
+
+// Iter 144 — Shield button: toggles a player's keeper/expansion protection.
+const ShieldButton = ({
+  player, active, draftType, onToggle,
+}: {
+  player: Player;
+  active?: boolean;
+  draftType: "keeper" | "expansion" | null;
+  onToggle: (p: Player) => void;
+}) => {
+  const label = draftType === "keeper" ? "keeper" : "protection list";
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`h-7 w-7 transition-colors ${
+              active
+                ? "text-emerald-300 bg-emerald-400/15 hover:bg-emerald-400/25 ring-1 ring-emerald-400/40"
+                : "text-muted-foreground hover:text-emerald-300 hover:bg-emerald-400/10"
+            }`}
+            onClick={() => onToggle(player)}
+            data-testid={`roster-protect-btn-${player.id}`}
+            aria-label={active ? `Remove from ${label}` : `Add to ${label}`}
+          >
+            <Shield className="h-3.5 w-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>
+            {active
+              ? `On ${label} — click to remove`
+              : `Add to ${label}`}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+};
 
 const DropButton = ({ player, onDrop }: { player: Player; onDrop: (p: Player) => void }) => (
   <TooltipProvider>

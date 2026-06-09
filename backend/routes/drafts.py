@@ -530,8 +530,174 @@ async def set_first_draft_completed(league_id: str, payload: FirstDraftFlagReque
 
 
 # ──────────────────────────────────────────────────────────────────
-# Iter 143 — Expansion Draft Board: unprotected → protected listing
+# Iter 144 — Protection list per-team toggle + commissioner override
 # ──────────────────────────────────────────────────────────────────
+
+
+class ProtectionToggleRequest(BaseModel):
+    player_id: str
+    draft_type: Optional[str] = None  # "keeper" | "expansion"
+
+
+@router.get("/leagues/{league_id}/protection-list/{team_id}")
+async def get_team_protection_list(
+    league_id: str, team_id: str, draft_type: Optional[str] = None,
+):
+    db = _deps["db"]
+    dt = draft_type or "expansion"
+    doc = await db.protection_lists.find_one({
+        "league_id": league_id, "team_id": team_id, "draft_type": dt,
+    })
+    return {
+        "league_id": league_id,
+        "team_id": team_id,
+        "draft_type": dt,
+        "submitted": bool(doc),
+        "protected_player_ids": (doc or {}).get("protected_player_ids", []) or [],
+    }
+
+
+def _resolve_draft_type(league: dict) -> str:
+    """Default to whatever the league has selected; fall back to expansion."""
+    nxt = (league.get("next_draft_type") or "").strip()
+    if nxt in {"keeper", "expansion"}:
+        return nxt
+    if (league.get("expansion_config") or {}).get("enabled"):
+        return "expansion"
+    if (league.get("keeper_config") or {}).get("enabled"):
+        return "keeper"
+    return "expansion"
+
+
+@router.post("/leagues/{league_id}/protection-list/{team_id}/toggle")
+async def toggle_protection_player(
+    league_id: str, team_id: str, payload: ProtectionToggleRequest, request: Request,
+):
+    db = _deps["db"]
+    user = await _get_user(request)
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+        team = await db.teams.find_one({"_id": ObjectId(team_id)})
+    except Exception:
+        league = team = None
+    if not league or not team:
+        raise HTTPException(status_code=404, detail="League or team not found")
+    # Owner or commissioner
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if team.get("owner_id") != user["_id"] and not is_commish:
+        raise HTTPException(status_code=403, detail="Only the team owner or a commissioner may edit this list")
+    dt = (payload.draft_type or _resolve_draft_type(league))
+    if dt not in {"keeper", "expansion"}:
+        raise HTTPException(status_code=400, detail="draft_type must be keeper|expansion")
+    doc = await db.protection_lists.find_one({
+        "league_id": league_id, "team_id": team_id, "draft_type": dt,
+    }) or {
+        "league_id": league_id, "team_id": team_id, "draft_type": dt,
+        "protected_player_ids": [],
+    }
+    ids = list(doc.get("protected_player_ids") or [])
+    pid = str(payload.player_id)
+    if pid in ids:
+        ids.remove(pid)
+        action = "removed"
+    else:
+        ids.append(pid)
+        action = "added"
+    # Enforce protection cap if expansion
+    if dt == "expansion":
+        max_p = (((league.get("expansion_config") or {}).get("protection") or {}).get("max_protected"))
+        if max_p is not None and len(ids) > int(max_p):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot protect more than {max_p} players for this expansion draft.",
+            )
+    if dt == "keeper":
+        max_k = (league.get("keeper_config") or {}).get("num_keepers")
+        if max_k is not None and len(ids) > int(max_k):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot keep more than {max_k} players.",
+            )
+    await db.protection_lists.update_one(
+        {"league_id": league_id, "team_id": team_id, "draft_type": dt},
+        {"$set": {
+            "league_id": league_id, "team_id": team_id, "draft_type": dt,
+            "protected_player_ids": ids,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_by": str(user["_id"]),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "action": action, "protected_player_ids": ids, "count": len(ids)}
+
+
+class AutoProtectRequest(BaseModel):
+    team_id: str
+    draft_type: Optional[str] = None
+    metric: Optional[str] = "salary"  # "salary" | "fppg"
+
+
+@router.post("/leagues/{league_id}/protection-list/auto-protect")
+async def commissioner_auto_protect(
+    league_id: str, payload: AutoProtectRequest, request: Request,
+):
+    """Iter 144 — Commissioner override: auto-protect the top-N players
+    on an inactive team's roster by `metric` (salary or fppg), where N
+    is `expansion.protection.max_protected` (or `keeper.num_keepers`).
+    Marks the protection list as submitted on the team's behalf.
+    """
+    db = _deps["db"]
+    user = await _get_user(request)
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+        team = await db.teams.find_one({"_id": ObjectId(payload.team_id)})
+    except Exception:
+        league = team = None
+    if not league or not team:
+        raise HTTPException(status_code=404, detail="League or team not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Only commissioners may auto-protect")
+    dt = (payload.draft_type or _resolve_draft_type(league))
+    if dt == "expansion":
+        max_n = int(((league.get("expansion_config") or {}).get("protection") or {}).get("max_protected") or 0)
+    else:
+        max_n = int((league.get("keeper_config") or {}).get("num_keepers") or 0)
+    if max_n <= 0:
+        raise HTTPException(status_code=400, detail="No protection slots configured for this draft type")
+
+    players = await db.players.find({"league_id": league_id, "team_id": payload.team_id}).to_list(500)
+    metric = (payload.metric or "salary").lower()
+    def _score(p):
+        if metric == "fppg":
+            return float(p.get("stats", {}).get("fppg") or 0.0)
+        return float((p.get("contract") or {}).get("salary") or 0.0)
+    sorted_players = sorted(players, key=_score, reverse=True)
+    top_ids = [str(p["_id"]) for p in sorted_players[:max_n]]
+
+    await db.protection_lists.update_one(
+        {"league_id": league_id, "team_id": payload.team_id, "draft_type": dt},
+        {"$set": {
+            "league_id": league_id, "team_id": payload.team_id, "draft_type": dt,
+            "protected_player_ids": top_ids,
+            "auto_protected_by": str(user["_id"]),
+            "auto_protected_metric": metric,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "draft_type": dt, "protected_player_ids": top_ids, "count": len(top_ids), "metric": metric}
+
+
+
 
 
 @router.get("/leagues/{league_id}/expansion-draft-board")

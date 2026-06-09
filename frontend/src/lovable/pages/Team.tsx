@@ -220,17 +220,23 @@ const Team = () => {
   // bullhorn icon on each row).
   const [tradeBlockPlayerIds, setTradeBlockPlayerIds] = useState<string[]>([]);
   const [tradeBlockReloadKey, setTradeBlockReloadKey] = useState(0);
+  // Iter 144 — protection list state for keeper/expansion drafts
+  const [protectedPlayerIds, setProtectedPlayerIds] = useState<string[]>([]);
+  const [protectionDraftType, setProtectionDraftType] = useState<"keeper" | "expansion" | null>(null);
   /** Bumped after drops/trade-block changes so PlayerRoster re-fetches. */
   const [rosterReloadKey, setRosterReloadKey] = useState(0);
 
   useEffect(() => {
-    if (!selectedTeamId) { setRosterPlayers([]); setTeamRecord(null); setTradeBlockPlayerIds([]); return; }
+    if (!selectedTeamId) { setRosterPlayers([]); setTeamRecord(null); setTradeBlockPlayerIds([]); setProtectedPlayerIds([]); setProtectionDraftType(null); return; }
     let cancelled = false;
     Promise.all([
       api.get(`/roster/${selectedTeamId}`).catch(() => ({ data: { players: [] } })),
       api.get(`/teams/${selectedTeamId}`).catch(() => ({ data: null })),
       api.get(`/trade-block`, { params: { team_id: selectedTeamId } }).catch(() => ({ data: { items: [] } })),
-    ]).then(([rosterRes, teamRes, tbRes]) => {
+      league?.id
+        ? api.get(`/leagues/${league.id}/protection-list/status`).catch(() => ({ data: null }))
+        : Promise.resolve({ data: null }),
+    ]).then(([rosterRes, teamRes, tbRes, statusRes]: any) => {
       if (cancelled) return;
       const players = (rosterRes.data?.players || []).map((p: any) => ({
         id: p.player_id || p.id,
@@ -244,9 +250,45 @@ const Team = () => {
       setTradeBlockPlayerIds(
         tbItems.filter((i: any) => i.player_id).map((i: any) => String(i.player_id))
       );
+      // Protection state — only relevant when a keeper/expansion draft is configured
+      const status = statusRes?.data;
+      const dt = status?.draft_type;
+      if ((dt === "keeper" || dt === "expansion") && league?.id) {
+        setProtectionDraftType(dt);
+        api.get(`/leagues/${league.id}/protection-list/${selectedTeamId}`, { params: { draft_type: dt } })
+          .then(({ data }) => {
+            if (!cancelled) setProtectedPlayerIds((data?.protected_player_ids || []).map(String));
+          })
+          .catch(() => { if (!cancelled) setProtectedPlayerIds([]); });
+      } else {
+        setProtectionDraftType(null);
+        setProtectedPlayerIds([]);
+      }
     });
     return () => { cancelled = true; };
-  }, [selectedTeamId, tradeBlockReloadKey, rosterReloadKey]);
+  }, [selectedTeamId, tradeBlockReloadKey, rosterReloadKey, league?.id]);
+
+  // Iter 144 — toggle a player's protection
+  const handleToggleProtection = useCallback(async (player: any) => {
+    if (!selectedTeamId || !league?.id || !protectionDraftType) return;
+    const pid = String(player.id || player.player_id);
+    try {
+      const { data } = await api.post(
+        `/leagues/${league.id}/protection-list/${selectedTeamId}/toggle`,
+        { player_id: pid, draft_type: protectionDraftType },
+      );
+      setProtectedPlayerIds((data?.protected_player_ids || []).map(String));
+      const action = data?.action;
+      const label = protectionDraftType === "keeper" ? "keeper list" : "protection list";
+      if (action === "added") {
+        toast.success(`${player.name} added to ${label}`);
+      } else if (action === "removed") {
+        toast.success(`${player.name} removed from ${label}`);
+      }
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to update protection list");
+    }
+  }, [selectedTeamId, league?.id, protectionDraftType]);
 
   // No real pending trades yet — keep empty so banner hides
   const pendingTrades: any[] = [];
@@ -810,6 +852,10 @@ const Team = () => {
               onDropPlayer={handleDropPlayer}
               onAddToTradeBlock={handleAddToTradeBlock}
               tradeBlockPlayerIds={tradeBlockPlayerIds}
+              onToggleProtection={handleToggleProtection}
+              protectedPlayerIds={protectedPlayerIds}
+              protectionEnabled={!!protectionDraftType}
+              protectionDraftType={protectionDraftType}
               isTradeBuilderOpen={tradeBuilder.open}
               currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
               refreshKey={rosterReloadKey}
