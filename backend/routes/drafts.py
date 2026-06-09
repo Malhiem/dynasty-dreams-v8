@@ -228,6 +228,70 @@ class SystemNhlLotteryRequest(BaseModel):
     nhl_lottery_date: Optional[str] = None
 
 
+# ──────────────────────────────────────────────────────────────────
+# Iter 141 — Keeper draft configuration (per-league)
+# ──────────────────────────────────────────────────────────────────
+
+KEEPER_COST_METHODS = {"previous_round_drafted", "fixed_round_penalty", "salary_cap", "none"}
+
+
+class KeeperConfigRequest(BaseModel):
+    config: dict
+
+
+@router.get("/leagues/{league_id}/keeper-config")
+async def get_keeper_config(league_id: str):
+    db = _deps["db"]
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    return {"league_id": league_id, "config": league.get("keeper_config") or {}}
+
+
+@router.put("/leagues/{league_id}/keeper-config")
+async def update_keeper_config(league_id: str, payload: KeeperConfigRequest, request: Request):
+    db = _deps["db"]
+    user = await _get_user(request)
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        league = None
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Only commissioners may set keeper config")
+    cfg = payload.config or {}
+    # Validate enum + bounds
+    method = cfg.get("cost_method")
+    if method is not None and method not in KEEPER_COST_METHODS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"cost_method must be one of {sorted(KEEPER_COST_METHODS)}",
+        )
+    for k in ("num_keepers", "max_seasons", "declaration_deadline_days", "round_offset",
+              "rookie_late_round", "waiver_default_round"):
+        if k in cfg and cfg[k] is not None and not isinstance(cfg[k], (int, float)):
+            raise HTTPException(status_code=400, detail=f"{k} must be numeric")
+        if k in cfg and cfg[k] is not None and cfg[k] < 0:
+            raise HTTPException(status_code=400, detail=f"{k} must be ≥ 0")
+    for k in ("allow_rookie_exception", "waiver_pickups_keepable", "enabled"):
+        if k in cfg and cfg[k] is not None and not isinstance(cfg[k], bool):
+            raise HTTPException(status_code=400, detail=f"{k} must be boolean")
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {"keeper_config": cfg}},
+    )
+    return {"ok": True, "league_id": league_id, "config": cfg}
+
+
 @router.get("/admin/draft-lottery-date")
 async def get_system_nhl_lottery_date(request: Request):
     db = _deps["db"]

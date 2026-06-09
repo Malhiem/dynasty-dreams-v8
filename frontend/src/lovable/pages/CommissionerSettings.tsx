@@ -30,6 +30,7 @@ import RostersTab from "@/lovable/pages/commissioner/RostersTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
 import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/pages/commissioner/TransactionsConfigCards";
 import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard";
+import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard";
 import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
 import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
 import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
@@ -784,6 +785,8 @@ const CommissionerSettings = () => {
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
   const [scoringFormat, setScoringFormat] = useState("h2h-points");
   const isH2H = scoringFormat.startsWith("h2h");
+  // Iter 141 — controlled draft type so we can conditionally render the Keeper settings card
+  const [draftType, setDraftType] = useState<string>("startup");
   const [customInjuries, setCustomInjuries] = useState<{ type: string; timeline: string; irEligible: boolean }[]>([]);
   const [newInjuryType, setNewInjuryType] = useState("Upper Body");
   const [newInjuryTimeline, setNewInjuryTimeline] = useState("Day-to-Day");
@@ -1887,8 +1890,8 @@ const CommissionerSettings = () => {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label>Draft Type</Label>
-                  <Select defaultValue="startup">
-                    <SelectTrigger className="bg-secondary border-border">
+                  <Select value={draftType} onValueChange={setDraftType}>
+                    <SelectTrigger className="bg-secondary border-border" data-testid="draft-type-trigger">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1896,6 +1899,7 @@ const CommissionerSettings = () => {
                       <SelectItem value="entry">NHL Entry Draft</SelectItem>
                       <SelectItem value="supplemental">Supplemental Draft</SelectItem>
                       <SelectItem value="expansion">Expansion Draft</SelectItem>
+                      <SelectItem value="keeper" data-testid="draft-type-keeper">Keeper Draft</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1905,6 +1909,13 @@ const CommissionerSettings = () => {
                   isCommish={true}
                   embedded={true}
                 />
+                {/* Iter 141 — Keeper settings appear only for keeper drafts */}
+                {draftType === "keeper" && (
+                  <>
+                    <Separator />
+                    <KeeperSettingsCard leagueId={activeLeague?.id} isCommish={true} />
+                  </>
+                )}
                 <Separator />
                 <div className="space-y-3">
                   <Label>Player Criteria</Label>
