@@ -34,6 +34,12 @@ class TradeBlockItemCreate(BaseModel):
     league_id: Optional[str] = None
     team_id: Optional[str] = None
     note: Optional[str] = None
+    # Iter 149 — Draft Room "available for draft only" quick-add.
+    # When True the item is visible on the Draft Room trading-block overlay
+    # but is auto-removed when the draft ends. The standard /trade-block
+    # listing on /trade-block page still surfaces them so a manager who
+    # marks a pick available for draft can also receive offers there.
+    draft_only: bool = False
 
 
 class TradeBlockItemRemove(BaseModel):

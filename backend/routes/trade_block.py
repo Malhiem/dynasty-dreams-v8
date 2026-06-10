@@ -64,6 +64,7 @@ async def add_to_trade_block(input: TradeBlockItemCreate, request: Request):
         "team_id": resolved_team_id,
         "note": (input.note or "").strip(),
         "created_at": datetime.now(timezone.utc),
+        "draft_only": bool(input.draft_only),
     }
 
     if resolved_team_id:

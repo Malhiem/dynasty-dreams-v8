@@ -12,6 +12,9 @@ import os
 import time
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel
+from typing import Optional
+from bson import ObjectId
 
 from metrics import snapshot as _metrics_snapshot
 
@@ -142,3 +145,132 @@ def _task_alive(task) -> bool:
 def _now_iso() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
+
+
+# ─── Iter 149 — Trade fixture seed helper ────────────────────────────
+# Used by QA / testing-agent runs to exercise the Draft Room "Trades" tab
+# (vote + force-approve + force-veto) without manually proposing trades
+# through the UI. Creates ONE pending + ONE vetoed + ONE processed trade
+# for the given league using the first two teams + a sampled player on
+# each side. Site-admin only.
+
+class SeedPendingTradeInput(BaseModel):
+    league_id: str
+    proposer_team_id: Optional[str] = None
+    target_team_id: Optional[str] = None
+    proposer_player_id: Optional[str] = None
+    target_player_id: Optional[str] = None
+    # If true, also seed a `vetoed` and an `executed` (processed) trade so
+    # the Draft Room chat can display all three terminal stamps at once.
+    seed_terminal_fixtures: bool = True
+
+
+@router.post("/admin/seed/pending-trade")
+async def admin_seed_pending_trade(body: SeedPendingTradeInput, request: Request):
+    """Create demo trade fixtures so the Draft Room ✓/✗ vote UI is
+    exercisable end-to-end. Returns the created trade IDs grouped by status.
+
+    The seed is idempotent-ish: it does NOT dedupe existing trades, so
+    each call adds a fresh batch. Wipe via direct Mongo if regression
+    state needs to be clean.
+    """
+    from datetime import datetime, timezone
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+    db = _db()
+
+    league = await db.leagues.find_one({"_id": ObjectId(body.league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    teams = await db.teams.find({"league_id": body.league_id}).to_list(50)
+    if len(teams) < 2:
+        raise HTTPException(status_code=400, detail="League needs at least 2 teams to seed a trade")
+
+    def _team(team_id):
+        if not team_id:
+            return None
+        for t in teams:
+            if str(t["_id"]) == str(team_id):
+                return t
+        return None
+
+    proposer = _team(body.proposer_team_id) or teams[0]
+    target = _team(body.target_team_id) or next((t for t in teams if str(t["_id"]) != str(proposer["_id"])), None)
+    if not target:
+        raise HTTPException(status_code=400, detail="Could not resolve target team")
+
+    async def _pick_player(team_doc, override_id):
+        if override_id:
+            p = await db.players.find_one({"_id": ObjectId(override_id)})
+            if p:
+                return p
+        # Fall back to any roster player owned by the team
+        roster = await db.rosters.find_one({"team_id": str(team_doc["_id"])})
+        pids = (roster or {}).get("players") or []
+        for pid in pids:
+            try:
+                p = await db.players.find_one({"_id": ObjectId(pid)})
+            except Exception:
+                p = await db.players.find_one({"_id": pid})
+            if p:
+                return p
+        # Last resort — any player in the league's pool
+        return await db.players.find_one({})
+
+    proposer_player = await _pick_player(proposer, body.proposer_player_id)
+    target_player = await _pick_player(target, body.target_player_id)
+    if not proposer_player or not target_player:
+        raise HTTPException(status_code=400, detail="Could not resolve seed players")
+
+    def _asset(player):
+        return {
+            "asset_type": "player",
+            "player_id": str(player["_id"]),
+            "player_name": player.get("name") or "Player",
+            "position": player.get("position") or player.get("primary_position"),
+            "nhl_team": player.get("nhl_team"),
+            "salary_retained_pct": 0,
+        }
+
+    def _trade_doc(status: str, processed: bool = False):
+        now = datetime.now(timezone.utc).isoformat()
+        doc = {
+            "league_id": body.league_id,
+            "proposer_id": proposer.get("owner_id"),
+            "proposer_team_id": str(proposer["_id"]),
+            "proposer_team_name": proposer.get("name") or "Proposer",
+            "target_owner_id": target.get("owner_id"),
+            "target_team_id": str(target["_id"]),
+            "target_team_name": target.get("name") or "Target",
+            "proposer_assets": [_asset(proposer_player)],
+            "target_assets": [_asset(target_player)],
+            "status": status,
+            "submitted_at": now,
+            "votes": {"approve": 0, "veto": 0, "choices": {}, "voters": []},
+            "_seed": "iter149_draftchat",
+        }
+        if processed:
+            doc["processed_at"] = now
+            doc["responded_at"] = now
+        return doc
+
+    created = {}
+    pending_doc = _trade_doc("pending")
+    pending_res = await db.trades.insert_one(pending_doc)
+    created["pending"] = str(pending_res.inserted_id)
+
+    if body.seed_terminal_fixtures:
+        vetoed_res = await db.trades.insert_one(_trade_doc("vetoed", processed=True))
+        executed_res = await db.trades.insert_one(_trade_doc("executed", processed=True))
+        created["vetoed"] = str(vetoed_res.inserted_id)
+        created["executed"] = str(executed_res.inserted_id)
+
+    return {
+        "league_id": body.league_id,
+        "proposer_team": proposer.get("name"),
+        "target_team": target.get("name"),
+        "trades": created,
+    }
+

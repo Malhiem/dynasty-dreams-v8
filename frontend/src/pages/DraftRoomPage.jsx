@@ -322,7 +322,7 @@ export default function DraftRoomPage() {
                 className={tradeMode ? "bg-emerald-500 hover:bg-emerald-600 text-white" : "border-white/10 text-white"}
               >
                 <Repeat className="h-4 w-4 mr-1" />
-                {tradeMode ? "Trade Mode: ON" : "Propose Trade"}
+                {tradeMode ? "Trade Mode: On" : "Trade Mode: Off"}
               </Button>
             </div>
           </div>

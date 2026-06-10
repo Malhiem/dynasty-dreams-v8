@@ -16,8 +16,8 @@ def test_draft_room_trade_toggle_present():
     src = DRAFT_ROOM.read_text()
     # Toggle button + label states
     assert 'data-testid="draft-room-trade-toggle"' in src
-    assert "Trade Mode: ON" in src
-    assert '"Propose Trade"' in src
+    assert "Trade Mode: On" in src
+    assert "Trade Mode: Off" in src
     # Trade-mode state + handler
     assert "const [tradeMode" in src
     assert "handleAddDraftPickToTrade" in src

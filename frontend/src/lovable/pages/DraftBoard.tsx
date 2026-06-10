@@ -689,7 +689,7 @@ export default function DraftBoardPage() {
                 className={tradeMode ? "bg-emerald-500 hover:bg-emerald-600 text-white" : ""}
               >
                 <Repeat className="h-4 w-4 mr-1" />
-                {tradeMode ? "Trade Mode: ON" : "Propose Trade"}
+                {tradeMode ? "Trade Mode: On" : "Trade Mode: Off"}
               </Button>
               <Select value={selectedYear} onValueChange={setSelectedYear}>
                 <SelectTrigger className="w-[160px] bg-card border-border" data-testid="draft-board-year-select">

@@ -94,5 +94,6 @@ def test_draft_board_trade_toggle_and_buttons():
     # Per-pick buttons rendered conditionally on tradeMode
     assert "draft-board-pick-trade-${team.abbr}-r${round}" in src, \
         "Per-pick trade button testid missing"
-    # Toggle uses emerald visual when ON
-    assert "Trade Mode: ON" in src, "On-state label missing"
+    # Toggle uses emerald visual when ON (Iter 149 rename: "Trade Mode: On" / "Trade Mode: Off")
+    assert "Trade Mode: On" in src, "On-state label missing"
+    assert "Trade Mode: Off" in src, "Off-state label missing"

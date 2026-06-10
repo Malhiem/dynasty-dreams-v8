@@ -42,6 +42,7 @@ import {
   Info,
   Users,
   Repeat,
+  Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
@@ -372,6 +373,9 @@ export default function DraftRoom() {
 
   // Iter 147 — Propose-trade mode (mirrors Draft Board)
   const [tradeMode, setTradeMode] = useState(false);
+  // Iter 149 — Trading Block overlay mode
+  const [tradeBlockMode, setTradeBlockMode] = useState(false);
+  const [tradeBlockItems, setTradeBlockItems] = useState<any[]>([]);
   const tradeBuilder = useTradeBuilder();
   const { user } = useAuth();
   const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();
@@ -386,6 +390,70 @@ export default function DraftRoom() {
       owner: user.username || user.email,
     };
   }, [user, liveTeams]);
+
+  // Iter 149 — Fetch league trade-block listings so the overlay can paint
+  // megaphone icons on player tiles + pick tiles that are publicly available.
+  // Re-fetches every 20s while the overlay is on.
+  useEffect(() => {
+    if (!activeLeagueCtx?.id) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const api = (await import("@/lib/api")).default;
+        const { data } = await api.get(`/trade-block?league_id=${activeLeagueCtx.id}`);
+        if (!cancelled) setTradeBlockItems(Array.isArray(data) ? data : []);
+      } catch { /* noop */ }
+    };
+    load();
+    if (!tradeBlockMode) return; // poll only while overlay is on
+    const id = setInterval(load, 20_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [activeLeagueCtx?.id, tradeBlockMode]);
+
+  const tradeBlockPlayerIds = useMemo(
+    () => new Set((tradeBlockItems || []).filter((x) => x.item_type === "player" && x.player_id).map((x) => String(x.player_id))),
+    [tradeBlockItems],
+  );
+  const tradeBlockPickIds = useMemo(
+    () => new Set((tradeBlockItems || []).filter((x) => x.item_type === "pick" && x.pick_id).map((x) => String(x.pick_id))),
+    [tradeBlockItems],
+  );
+  // Composite "round-team" key for picks not yet assigned a `pick_id`
+  // (mock data uses overall#); lets us light up the overlay on placeholder picks.
+  const tradeBlockOverallKeys = useMemo(
+    () => new Set(
+      (tradeBlockItems || [])
+        .filter((x) => x.item_type === "pick")
+        .map((x) => `${x.team_id || ""}|R${x.pick_round || ""}`)
+    ),
+    [tradeBlockItems],
+  );
+
+  const markAvailableForDraft = useCallback(
+    async (kind: "player" | "pick", payload: any) => {
+      if (!activeLeagueCtx?.id || !myTeam?.id) {
+        toast.error("Join a team in this league to mark items available");
+        return;
+      }
+      try {
+        const api = (await import("@/lib/api")).default;
+        const body: any = {
+          item_type: kind,
+          league_id: activeLeagueCtx.id,
+          team_id: myTeam.id,
+          draft_only: true,
+        };
+        if (kind === "player") body.player_id = payload.id;
+        else { body.pick_year = payload.year; body.pick_round = String(payload.round); }
+        const { data } = await api.post("/trade-block", body);
+        toast.success(`Marked ${payload.name || `R${payload.round}`} available for draft`);
+        setTradeBlockItems((prev) => [...prev, data]);
+      } catch (e: any) {
+        toast.error(e?.response?.data?.detail || "Could not mark available");
+      }
+    },
+    [activeLeagueCtx?.id, myTeam],
+  );
 
   const handleAddDraftPickToTrade = (ownerAbbr: string, round: number, overall: number, player: any) => {
     if (!myTeam) { toast.error("Join a team in this league to propose trades"); return; }
@@ -482,7 +550,31 @@ export default function DraftRoom() {
                 className={tradeMode ? "bg-emerald-500 hover:bg-emerald-600 text-white gap-1.5" : "gap-1.5"}
               >
                 <Repeat className="h-3.5 w-3.5" />
-                {tradeMode ? "Trade Mode: ON" : "Propose Trade"}
+                {tradeMode ? "Trade Mode: On" : "Trade Mode: Off"}
+              </Button>
+
+              {/* Iter 149 — Trading Block overlay toggle */}
+              <Button
+                size="sm"
+                variant={tradeBlockMode ? "default" : "outline"}
+                onClick={() => setTradeBlockMode((v) => !v)}
+                data-testid="draft-room-trade-block-toggle"
+                aria-pressed={tradeBlockMode}
+                className={tradeBlockMode ? "bg-amber-500 hover:bg-amber-600 text-white gap-1.5" : "gap-1.5"}
+              >
+                <Megaphone className="h-3.5 w-3.5" />
+                {tradeBlockMode ? "Trading Block: On" : "Trading Block: Off"}
+                {tradeBlockItems.length > 0 && (
+                  <span
+                    className={cn(
+                      "ml-0.5 inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full text-[9px] font-bold",
+                      tradeBlockMode ? "bg-white/20 text-white" : "bg-amber-500/20 text-amber-300",
+                    )}
+                    data-testid="draft-room-trade-block-count"
+                  >
+                    {tradeBlockItems.length}
+                  </span>
+                )}
               </Button>
             </div>
 
@@ -629,6 +721,14 @@ export default function DraftRoom() {
                         {teamAbbrs.map((teamAbbr) => {
                           const pick = roundPicks.find((p) => p.team === teamAbbr);
                           const isCurrentPick = pick?.overall === draftConfig.currentPick && draftConfig.draftStarted;
+                          // Iter 149 — Trade block overlay highlight
+                          const ownerTeam = (liveTeams || []).find(
+                            (t: any) => (t.logo_abbr || (t.name || "").slice(0, 3).toUpperCase()) === teamAbbr,
+                          );
+                          const isPlayerOnBlock = pick?.player && tradeBlockPlayerIds.has(String(pick.player.id));
+                          const isPickOnBlock = ownerTeam?.id && tradeBlockOverallKeys.has(`${ownerTeam.id}|R${round}`);
+                          const onBlock = tradeBlockMode && (isPlayerOnBlock || isPickOnBlock);
+                          const isMyTile = ownerTeam?.id && ownerTeam.id === myTeam?.id;
                           return (
                             <div
                               key={`${round}-${teamAbbr}`}
@@ -638,8 +738,10 @@ export default function DraftRoom() {
                                   ? "bg-primary/10 border-primary/50 ring-1 ring-primary/30"
                                   : pick?.player
                                   ? "bg-secondary/60 border-border"
-                                  : "bg-card/50 border-border/50"
+                                  : "bg-card/50 border-border/50",
+                                onBlock && "ring-1 ring-amber-400/60 border-amber-400/40",
                               )}
+                              data-testid={onBlock ? `draft-room-block-tile-${teamAbbr}-${pick?.overall ?? "x"}` : undefined}
                             >
                               <span className="text-[9px] text-muted-foreground">#{pick?.overall}</span>
                               {pick?.player ? (
@@ -653,6 +755,46 @@ export default function DraftRoom() {
                                 </>
                               ) : (
                                 <span className="text-[10px] text-muted-foreground/40">—</span>
+                              )}
+                              {/* Iter 149 — Megaphone icon overlay when the player or pick is on trade block */}
+                              {onBlock && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span
+                                      className="absolute top-0.5 left-0.5 inline-flex items-center justify-center h-4 w-4 rounded-sm bg-amber-500/25 text-amber-300"
+                                      data-testid={`draft-room-block-icon-${teamAbbr}-${pick?.overall ?? "x"}`}
+                                    >
+                                      <Megaphone className="h-2.5 w-2.5" />
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    {isPlayerOnBlock ? "Player available — on trade block" : "Upcoming pick available — on trade block"}
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                              {/* Iter 149 — "Mark available for draft" quick-add (my own tiles only, when overlay on) */}
+                              {tradeBlockMode && !onBlock && isMyTile && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (pick?.player) {
+                                          markAvailableForDraft("player", { id: pick.player.id, name: pick.player.name });
+                                        } else {
+                                          markAvailableForDraft("pick", { year: new Date().getFullYear(), round, name: `R${round}` });
+                                        }
+                                      }}
+                                      data-testid={`draft-room-block-add-${teamAbbr}-${pick?.overall ?? "x"}`}
+                                      aria-label="Mark available for draft"
+                                      className="absolute top-0.5 left-0.5 h-4 w-4 inline-flex items-center justify-center rounded-sm bg-amber-500/10 text-amber-300/70 hover:bg-amber-500/25"
+                                    >
+                                      <Megaphone className="h-2.5 w-2.5" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>Mark available for draft</TooltipContent>
+                                </Tooltip>
                               )}
                               {/* Iter 147 — Per-pick trade button (visible only in trade mode) */}
                               {tradeMode && pick && (
@@ -772,10 +914,16 @@ export default function DraftRoom() {
 
                   <ScrollArea className="h-[400px]">
                     <div className="space-y-1">
-                      {filteredPlayers.map((player) => (
+                      {filteredPlayers.map((player) => {
+                        const isOnBlock = tradeBlockMode && tradeBlockPlayerIds.has(String(player.id));
+                        return (
                         <div
                           key={player.id}
-                          className="flex items-center gap-2 p-2 rounded-md hover:bg-secondary/40 transition-colors group"
+                          className={cn(
+                            "flex items-center gap-2 p-2 rounded-md hover:bg-secondary/40 transition-colors group",
+                            isOnBlock && "ring-1 ring-amber-400/40 bg-amber-500/5",
+                          )}
+                          data-testid={isOnBlock ? `draft-room-eligible-block-${player.id}` : undefined}
                         >
                           <span className="text-[10px] font-mono text-muted-foreground w-5 text-right shrink-0">
                             {player.ranking}
@@ -783,6 +931,16 @@ export default function DraftRoom() {
                           <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border shrink-0", positionColors[player.position])}>
                             {player.position}
                           </Badge>
+                          {isOnBlock && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-amber-500/25 text-amber-300 shrink-0">
+                                  <Megaphone className="h-2.5 w-2.5" />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>On trade block</TooltipContent>
+                            </Tooltip>
+                          )}
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-foreground truncate">{player.name}</p>
                             <p className="text-[10px] text-muted-foreground">
@@ -822,7 +980,8 @@ export default function DraftRoom() {
                             <TooltipContent>{queue.includes(player.id) ? "Remove from queue" : "Add to queue"}</TooltipContent>
                           </Tooltip>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </ScrollArea>
                 </TabsContent>
