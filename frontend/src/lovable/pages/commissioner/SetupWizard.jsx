@@ -1022,14 +1022,14 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
               data-testid="wizard-setup-later-btn"
               title="Save and finish later">
               Set Up Later
-              <HelpTooltip text={HELP.setUpLater} testId="help-set-up-later" />
             </Button>
+            <HelpTooltip text={HELP.setUpLater} testId="help-set-up-later" />
             <Button variant="ghost" size="sm" onClick={() => setSkipConfirmOpen(true)} disabled={busy}
               className="text-muted-foreground hover:text-foreground"
               data-testid="wizard-skip-btn" title="Skip setup wizard">
               <SkipForward className="h-4 w-4 mr-1" /> Skip
-              <HelpTooltip text={HELP.skip} testId="help-skip" />
             </Button>
+            <HelpTooltip text={HELP.skip} testId="help-skip" />
           </div>
           <div className="text-xs text-muted-foreground">Step {stepIdx + 1} of {STEPS.length}</div>
           {!isLast ? (

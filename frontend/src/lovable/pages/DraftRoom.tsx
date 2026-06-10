@@ -48,6 +48,7 @@ import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { toast } from "sonner";
+import DraftChatPanel from "@/lovable/pages/draftroom/DraftChatPanel";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -865,59 +866,18 @@ export default function DraftRoom() {
 
             {/* RIGHT: Chat + My Roster */}
             <div className="lg:col-span-5 space-y-4">
-              {/* Draft Chat */}
-              <Card className="border-border">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <MessageSquare className="h-4 w-4 text-primary" />
-                    Draft Chat
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-2 space-y-2">
-                  <ScrollArea className="h-[200px]">
-                    <div className="space-y-2 p-1">
-                      {chatMessages.map((msg) => (
-                        <div
-                          key={msg.id}
-                          className={cn(
-                            "text-xs rounded-md p-2",
-                            msg.type === "pick"
-                              ? "bg-primary/10 border border-primary/20"
-                              : msg.sender === "Team Frostbite"
-                              ? "bg-accent/10 border border-accent/20"
-                              : "bg-secondary/40"
-                          )}
-                        >
-                          <div className="flex items-center justify-between mb-0.5">
-                            <span className={cn(
-                              "font-semibold text-[11px]",
-                              msg.type === "pick" ? "text-primary" : "text-foreground"
-                            )}>
-                              {msg.sender}
-                            </span>
-                            <span className="text-[9px] text-muted-foreground">
-                              {msg.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                            </span>
-                          </div>
-                          <p className="text-muted-foreground">{msg.text}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </ScrollArea>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Type a message..."
-                      className="h-8 text-sm bg-secondary/50 flex-1"
-                      value={chatInput}
-                      onChange={(e) => setChatInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleSendChat()}
-                    />
-                    <Button variant="default" size="icon" className="h-8 w-8 shrink-0" onClick={handleSendChat}>
-                      <Send className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+              {/* Draft Chat (Iter 148: tabs split — All / Chat / Trades) */}
+              <DraftChatPanel
+                chatMessages={chatMessages}
+                chatInput={chatInput}
+                setChatInput={setChatInput}
+                onSendChat={handleSendChat}
+                mySender={myTeam?.name || "Team Frostbite"}
+                leagueId={activeLeagueCtx?.id}
+                myUserId={user?.id}
+                isCommissioner={!!(activeLeagueCtx?.is_commissioner || activeLeagueCtx?.commissioner_id === user?.id)}
+                league={activeLeagueCtx}
+              />
 
               {/* My Roster */}
               <Card className="border-border">
