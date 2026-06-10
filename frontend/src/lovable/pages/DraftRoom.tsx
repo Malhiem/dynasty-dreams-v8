@@ -383,6 +383,50 @@ export default function DraftRoom() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   // Iter 153 — Window-within-window expanded player card (PlayerCardModal)
   const [expandedPlayer, setExpandedPlayer] = useState<any>(null);
+  // Iter 154 — When the expanded player has a Mongo ObjectId, fetch the real
+  // record (NHL stats, contract, schedule) and merge over the lean fallback.
+  useEffect(() => {
+    if (!expandedPlayer?.id) return;
+    // ObjectIds are 24 hex chars; mock IDs (e1, e2 …) don't match.
+    if (!/^[0-9a-fA-F]{24}$/.test(String(expandedPlayer.id))) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const apiClient = (await import("@/lib/api")).default;
+        const params = activeLeagueCtx?.id ? { league_id: activeLeagueCtx.id } : undefined;
+        const { data } = await apiClient.get(`/players/${expandedPlayer.id}`, { params });
+        if (cancelled || !data) return;
+        // Merge real fields onto the existing object — preserves headshot
+        // initials + adapted categoryBreakdown / statsByPeriod from the
+        // mock so the modal renders even on partial data.
+        setExpandedPlayer((prev: any) => ({
+          ...prev,
+          ...data,
+          id: prev.id, // keep the original id so the modal's expand-link href stays valid
+          // Refresh the structured maps with real numbers when available
+          categoryBreakdown: {
+            G:   data.goals ?? prev.categoryBreakdown?.G ?? 0,
+            A:   data.assists ?? prev.categoryBreakdown?.A ?? 0,
+            PTS: data.points ?? prev.categoryBreakdown?.PTS ?? 0,
+            PPP: data.power_play_points ?? prev.categoryBreakdown?.PPP ?? 0,
+            SOG: data.shots ?? prev.categoryBreakdown?.SOG ?? 0,
+            HIT: data.hits ?? prev.categoryBreakdown?.HIT ?? 0,
+            BLK: data.blocks ?? prev.categoryBreakdown?.BLK ?? 0,
+            PIM: data.penalty_minutes ?? prev.categoryBreakdown?.PIM ?? 0,
+          },
+          statsByPeriod: {
+            ...(prev.statsByPeriod || {}),
+            season: data.fantasy_points ?? data.points ?? prev.statsByPeriod?.season ?? 0,
+          },
+          points: data.fantasy_points ?? data.points ?? prev.points ?? 0,
+        }));
+      } catch {
+        /* silent — modal already has the fallback shape */
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedPlayer?.id, activeLeagueCtx?.id]);
   const tradeBuilder = useTradeBuilder();
   const { user } = useAuth();
   const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();

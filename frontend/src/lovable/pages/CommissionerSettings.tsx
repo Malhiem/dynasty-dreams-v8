@@ -28,6 +28,7 @@ import {
 
 import RostersTab from "@/lovable/pages/commissioner/RostersTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
+import AuditLogTab from "@/lovable/pages/commissioner/tabs/AuditLogTab";
 import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/pages/commissioner/TransactionsConfigCards";
 import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard";
 import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard";
@@ -2465,122 +2466,11 @@ const CommissionerSettings = () => {
 
           {/* Audit Log Tab */}
           <TabsContent value="audit-log" className="space-y-6">
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <ScrollText className="h-5 w-5 text-primary" />
-                  Audit Log
-                </CardTitle>
-                <CardDescription>
-                  Complete history of all commissioner and system actions. All changes are timestamped and categorized.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <Label className="text-sm whitespace-nowrap">Filter by</Label>
-                  <Select value={auditFilterCategory} onValueChange={setAuditFilterCategory}>
-                    <SelectTrigger className="w-[180px] h-9 bg-secondary border-border">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Categories</SelectItem>
-                      <SelectItem value="Roster">Roster</SelectItem>
-                      <SelectItem value="League Settings">League Settings</SelectItem>
-                      <SelectItem value="Scoring">Scoring</SelectItem>
-                      <SelectItem value="Draft">Draft</SelectItem>
-                      <SelectItem value="Trade">Trade</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <span className="text-xs text-muted-foreground ml-auto">
-                    {auditLog.filter(e => auditFilterCategory === "all" || e.category === auditFilterCategory).length} entries
-                  </span>
-                </div>
-
-                <ScrollArea className="w-full">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-border">
-                        <TableHead className="text-muted-foreground w-[180px]">Timestamp</TableHead>
-                        <TableHead className="text-muted-foreground w-[110px]">Category</TableHead>
-                        <TableHead className="text-muted-foreground w-[130px]">Team</TableHead>
-                        <TableHead className="text-muted-foreground">Description</TableHead>
-                        <TableHead className="text-muted-foreground w-[150px]">Performed By</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {auditLog
-                        .filter(entry => auditFilterCategory === "all" || entry.category === auditFilterCategory)
-                        .map((entry) => {
-                          const actionIcon = {
-                            "auto-fix": <Wrench className="h-3.5 w-3.5 text-primary" />,
-                            "roster-move": <ArrowRightLeft className="h-3.5 w-3.5 text-blue-400" />,
-                            "player-drop": <X className="h-3.5 w-3.5 text-destructive" />,
-                            "player-add": <Plus className="h-3.5 w-3.5 text-green-400" />,
-                            "setting-change": <Sliders className="h-3.5 w-3.5 text-yellow-400" />,
-                            "trade-override": <ArrowRightLeft className="h-3.5 w-3.5 text-orange-400" />,
-                            "scoring-update": <Target className="h-3.5 w-3.5 text-purple-400" />,
-                            "draft-change": <FileText className="h-3.5 w-3.5 text-cyan-400" />,
-                          }[entry.action];
-
-                          const categoryColor = {
-                            "Roster": "bg-blue-500/20 text-blue-400 border-blue-500/30",
-                            "League Settings": "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-                            "Scoring": "bg-purple-500/20 text-purple-400 border-purple-500/30",
-                            "Draft": "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
-                            "Trade": "bg-orange-500/20 text-orange-400 border-orange-500/30",
-                          }[entry.category];
-
-                          const formatTimestamp = (date: Date) => {
-                            const now = new Date();
-                            const diffMs = now.getTime() - date.getTime();
-                            const diffMins = Math.floor(diffMs / 60000);
-                            const diffHours = Math.floor(diffMs / 3600000);
-                            const diffDays = Math.floor(diffMs / 86400000);
-
-                            if (diffMins < 1) return "Just now";
-                            if (diffMins < 60) return `${diffMins}m ago`;
-                            if (diffHours < 24) return `${diffHours}h ago`;
-                            if (diffDays < 7) return `${diffDays}d ago`;
-                            return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-                          };
-
-                          return (
-                            <TableRow key={entry.id} className="border-border">
-                              <TableCell className="text-xs text-muted-foreground">
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span className="cursor-help">{formatTimestamp(entry.timestamp)}</span>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    <p className="text-xs">{entry.timestamp.toLocaleString()}</p>
-                                  </TooltipContent>
-                                </Tooltip>
-                              </TableCell>
-                              <TableCell>
-                                <Badge variant="outline" className={`text-[10px] ${categoryColor}`}>
-                                  {entry.category}
-                                </Badge>
-                              </TableCell>
-                              <TableCell className="text-sm">
-                                {entry.team || <span className="text-muted-foreground/50">—</span>}
-                              </TableCell>
-                              <TableCell className="text-sm">
-                                <span className="inline-flex items-center gap-1.5">
-                                  {actionIcon}
-                                  {entry.description}
-                                </span>
-                              </TableCell>
-                              <TableCell className="text-xs text-muted-foreground">
-                                {entry.performedBy}
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                    </TableBody>
-                  </Table>
-                </ScrollArea>
-              </CardContent>
-            </Card>
+            <AuditLogTab
+              auditLog={auditLog}
+              auditFilterCategory={auditFilterCategory}
+              setAuditFilterCategory={setAuditFilterCategory}
+            />
           </TabsContent>
 
           {/* League Administration Tab */}
