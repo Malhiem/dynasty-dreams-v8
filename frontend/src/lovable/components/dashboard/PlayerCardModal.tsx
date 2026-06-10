@@ -33,6 +33,7 @@ import {
   TrendingDown,
   Minus,
   Repeat,
+  ExternalLink,
 } from "lucide-react";
 import {
   BarChart,
@@ -337,7 +338,23 @@ const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", 
                 {player.team}
               </div>
               <div className="flex-1">
-                <DialogTitle className="text-xl font-bold">{player.name}</DialogTitle>
+                <div className="flex items-center gap-2">
+                  <DialogTitle className="text-xl font-bold">{player.name}</DialogTitle>
+                  {/* Iter 153 — expand-to-full-page link (opens in a new tab) */}
+                  {(player as any).id && (
+                    <a
+                      href={`/players/${(player as any).id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] text-primary hover:text-primary/80 hover:underline"
+                      data-testid="player-card-expand-link"
+                      title="Open full player page in a new tab"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      Open full page
+                    </a>
+                  )}
+                </div>
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                   <Badge variant="outline" className="text-xs">
                     {player.position}

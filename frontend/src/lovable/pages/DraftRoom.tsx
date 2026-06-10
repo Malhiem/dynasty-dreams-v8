@@ -52,6 +52,7 @@ import { toast } from "sonner";
 import DraftChatPanel from "@/lovable/pages/draftroom/DraftChatPanel";
 import TruncatedRosterPanel from "@/lovable/pages/draftroom/TruncatedRosterPanel";
 import SelectedPlayerCard from "@/lovable/pages/draftroom/SelectedPlayerCard";
+import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -380,6 +381,8 @@ export default function DraftRoom() {
   const [tradeBlockItems, setTradeBlockItems] = useState<any[]>([]);
   // Iter 152 — Selected player for the inline card above the Draft Board
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+  // Iter 153 — Window-within-window expanded player card (PlayerCardModal)
+  const [expandedPlayer, setExpandedPlayer] = useState<any>(null);
   const tradeBuilder = useTradeBuilder();
   const { user } = useAuth();
   const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();
@@ -532,7 +535,8 @@ export default function DraftRoom() {
         <div className="space-y-4">
           {/* ── Header row ─────────────────────────────────────────────── */}
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
-            <div className="flex items-start gap-4 flex-wrap">
+            <div className="flex-1 min-w-0 flex flex-col gap-3">
+              <div className="flex items-start gap-4 flex-wrap">
               <div>
                 <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
                   <LayoutGrid className="h-6 w-6 text-primary" />
@@ -612,6 +616,29 @@ export default function DraftRoom() {
                   </span>
                 )}
               </Button>
+            </div>
+
+            {/* Iter 153 — SelectedPlayerCard sits *inside* the left flex item so
+                it ends where the draft clock begins (not under it) and can grow
+                taller to fill the open space. */}
+            <SelectedPlayerCard
+              player={
+                selectedPlayerId
+                  ? players.find((p) => String(p.id) === String(selectedPlayerId)) || null
+                  : null
+              }
+              isOnTheClock={draftConfig.draftStarted}
+              isQueued={!!selectedPlayerId && queue.includes(Number(selectedPlayerId))}
+              isShortlisted={!!selectedPlayerId && shortlist.has(Number(selectedPlayerId))}
+              onDraftPlayer={(p) => {
+                toast.success(`Draft ${p.name} — locked for current pick`);
+                setSelectedPlayerId(null);
+              }}
+              onToggleQueue={(id) => toggleQueue(Number(id))}
+              onToggleShortlist={(id) => toggleShortlist(Number(id))}
+              onClose={() => setSelectedPlayerId(null)}
+              onExpand={(p) => setExpandedPlayer(p)}
+            />
             </div>
 
             {/* Draft Timer Card */}
@@ -713,25 +740,6 @@ export default function DraftRoom() {
               </CardContent>
             </Card>
           </div>
-
-          {/* ── Iter 152 — Selected Player Card (above Draft Board) ──────────────── */}
-          <SelectedPlayerCard
-            player={
-              selectedPlayerId
-                ? players.find((p) => String(p.id) === String(selectedPlayerId)) || null
-                : null
-            }
-            isOnTheClock={draftConfig.draftStarted}
-            isQueued={!!selectedPlayerId && queue.includes(Number(selectedPlayerId))}
-            isShortlisted={!!selectedPlayerId && shortlist.has(Number(selectedPlayerId))}
-            onDraftPlayer={(p) => {
-              toast.success(`Draft ${p.name} — locked for current pick`);
-              setSelectedPlayerId(null);
-            }}
-            onToggleQueue={(id) => toggleQueue(Number(id))}
-            onToggleShortlist={(id) => toggleShortlist(Number(id))}
-            onClose={() => setSelectedPlayerId(null)}
-          />
 
           {/* ── Draft Board (full width, top) ──────────────────────────── */}
           <Card className="border-border">
@@ -1162,6 +1170,38 @@ export default function DraftRoom() {
             </div>
           </div>
         </div>
+
+        {/* Iter 153 — Expanded Player Card (window-within-window via PlayerCardModal) */}
+        {expandedPlayer && (
+          <PlayerCardModal
+            open={!!expandedPlayer}
+            onOpenChange={(o) => !o && setExpandedPlayer(null)}
+            player={{
+              id: expandedPlayer.id,
+              name: expandedPlayer.name,
+              team: expandedPlayer.team || expandedPlayer.nhl_team || expandedPlayer.league || "—",
+              position: expandedPlayer.position,
+              age: expandedPlayer.age ?? 19,
+              points: expandedPlayer.pts || 0,
+              contract: { type: "Rookie", salary: 0, yearsRemaining: 0 },
+              schedule: [],
+              categoryBreakdown: {
+                G:  expandedPlayer.g || 0,
+                A:  expandedPlayer.a || 0,
+                PTS: expandedPlayer.pts || 0,
+                PPP: 0,
+                SOG: expandedPlayer.shots || 0,
+                HIT: 0,
+                BLK: 0,
+                PIM: expandedPlayer.pim || 0,
+              },
+              statsByPeriod: {
+                "1d": 0, "7d": 0, "14d": 0, "30d": 0,
+                "60d": 0, "100d": 0, season: expandedPlayer.pts || 0,
+              },
+            } as any}
+          />
+        )}
       </TooltipProvider>
     </AppLayout>
   );
