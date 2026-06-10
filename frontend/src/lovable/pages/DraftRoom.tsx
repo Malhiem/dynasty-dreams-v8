@@ -1063,10 +1063,12 @@ export default function DraftRoom() {
                 capEnabled={!!activeLeagueCtx?.cap_enabled}
                 onPickPlayerForTrade={(team, player) => {
                   if (!team || !player) return;
-                  if (!tradeBuilder.isOpen) tradeBuilder.openBuilder();
-                  tradeBuilder.addPlayer({
-                    playerId: player.id,
-                    playerName: player.name,
+                  if (!tradeBuilder.isOpen) {
+                    tradeBuilder.openBuilder({ leagueId: activeLeagueCtx?.id, myTeam });
+                  }
+                  tradeBuilder.addAsset({
+                    id: String(player.id),
+                    name: player.name,
                     position: player.position,
                     ownerTeamId: team.id,
                     ownerTeamName: team.name,
