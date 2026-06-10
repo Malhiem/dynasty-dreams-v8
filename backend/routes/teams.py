@@ -800,28 +800,38 @@ async def get_team_roster_truncated(
 ):
     """Returns a compact roster for the Draft Room truncated roster panel.
 
-    Each entry: {id, name, position, fantasy_points, fp_per_game, cap_hit}.
-    The `stat_filter` query param (season / regular / playoffs / l30 / l7)
-    selects which stat bucket to surface. Falls back gracefully when a
-    league does not track playoff stats (returns 0 for that bucket).
+    Sources roster from `team.roster` (the same field the canonical
+    `/api/roster/{team_id}` endpoint reads — keeps the Draft Room panel
+    in lock-step with the Rosters page). Falls back to `team.player_ids`
+    and finally to the `db.rosters` collection so older leagues still work.
+
+    Each entry: {id, name, position, fantasy_points, fp_per_game, cap_hit,
+                 games_played}. The `stat_filter` query param
+    (season / regular / playoffs / l30 / l7) selects which stat bucket to
+    surface; falls back gracefully to flat fields.
     """
     db = _deps["db"]
     _safe_object_id = _deps["_safe_object_id"]
+    calculate_fantasy_points = _deps.get("calculate_fantasy_points")
 
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
-    roster = await db.rosters.find_one({"team_id": team_id})
-    player_ids = (roster or {}).get("players") or []
+    # 1) Canonical: team.roster (list[str ids]) — matches /api/roster/{team_id}
+    player_ids = list(team.get("roster") or [])
+    # 2) Legacy: team.player_ids
     if not player_ids:
-        # Fallback: some seed leagues store roster as team.player_ids
-        player_ids = team.get("player_ids") or []
+        player_ids = list(team.get("player_ids") or [])
+    # 3) Fallback: rosters collection (seed scripts may write here)
+    if not player_ids:
+        roster_doc = await db.rosters.find_one({"team_id": team_id})
+        player_ids = list((roster_doc or {}).get("players") or [])
 
     if not player_ids:
         return {"team_id": team_id, "stat_filter": stat_filter, "players": []}
 
-    # Fetch players. ObjectId-friendly so seed + live mix work.
+    # Fetch players in batch — accept ObjectId or string ids interchangeably.
     obj_ids = []
     str_ids = []
     for pid in player_ids:
@@ -829,33 +839,38 @@ async def get_team_roster_truncated(
             obj_ids.append(ObjectId(str(pid)))
         except Exception:
             str_ids.append(str(pid))
-    query = {"$or": []}
+    or_clauses = []
     if obj_ids:
-        query["$or"].append({"_id": {"$in": obj_ids}})
+        or_clauses.append({"_id": {"$in": obj_ids}})
     if str_ids:
-        query["$or"].append({"_id": {"$in": str_ids}})
-    if not query["$or"]:
+        or_clauses.append({"_id": {"$in": str_ids}})
+    if not or_clauses:
         return {"team_id": team_id, "stat_filter": stat_filter, "players": []}
+    players_docs = await db.players.find({"$or": or_clauses}).to_list(200)
 
-    players_docs = await db.players.find(query).to_list(200)
+    # Pull league scoring config so fantasy_points matches the Rosters page exactly
+    config = await db.scoring_configs.find_one({"league_id": team.get("league_id")})
 
-    def _stat(p: dict, key: str, default: float = 0) -> float:
+    def _stat_from_bucket(p: dict, key: str, default: float = 0) -> float:
         if not isinstance(p, dict):
             return default
         stats = p.get("stats") or {}
         bucket = stats.get(stat_filter) if isinstance(stats, dict) else None
         if isinstance(bucket, dict) and key in bucket:
             return float(bucket.get(key) or default)
-        # Fall back to flat field
         return float(p.get(key) or default)
-
-    def _gp(p: dict) -> int:
-        return int(_stat(p, "games_played") or _stat(p, "gp") or 0)
 
     out = []
     for p in players_docs:
-        fp = _stat(p, "fantasy_points")
-        gp = _gp(p)
+        # Prefer canonical scoring-config-aware FP (matches Rosters page) when available
+        if calculate_fantasy_points:
+            try:
+                fp = float(calculate_fantasy_points(p, config) or 0)
+            except Exception:
+                fp = float(_stat_from_bucket(p, "fantasy_points"))
+        else:
+            fp = float(_stat_from_bucket(p, "fantasy_points"))
+        gp = int(_stat_from_bucket(p, "games_played") or p.get("games_played") or p.get("gp") or 0)
         fp_pg = (fp / gp) if gp > 0 else 0
         out.append({
             "id": str(p.get("_id")),
@@ -865,8 +880,8 @@ async def get_team_roster_truncated(
             "fp_per_game": round(fp_pg, 2) if fp_pg else 0,
             "cap_hit": p.get("cap_hit") or p.get("salary") or 0,
             "games_played": gp,
+            "nhl_team": p.get("team") or p.get("nhl_team") or "",
         })
 
-    # Sort by FP desc by default
     out.sort(key=lambda x: x.get("fantasy_points") or 0, reverse=True)
     return {"team_id": team_id, "stat_filter": stat_filter, "players": out}

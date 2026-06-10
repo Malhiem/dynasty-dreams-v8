@@ -773,14 +773,20 @@ export default function DraftRoom() {
                                   </TooltipContent>
                                 </Tooltip>
                               )}
-                              {/* Iter 149 — "Mark available for draft" quick-add (my own tiles only, when overlay on) */}
-                              {tradeBlockMode && !onBlock && isMyTile && (
+                              {/* Iter 149/150 — "Mark available for draft" quick-add — visible on EVERY tile when overlay is on
+                                  (matches the Trade Mode pattern). The click handler is a no-op when the tile is on another
+                                  team's column — markAvailableForDraft validates ownership and shows a friendly toast if blocked. */}
+                              {tradeBlockMode && !onBlock && (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <button
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
+                                        if (!isMyTile) {
+                                          toast.error("You can only mark your own picks available");
+                                          return;
+                                        }
                                         if (pick?.player) {
                                           markAvailableForDraft("player", { id: pick.player.id, name: pick.player.name });
                                         } else {
@@ -789,12 +795,19 @@ export default function DraftRoom() {
                                       }}
                                       data-testid={`draft-room-block-add-${teamAbbr}-${pick?.overall ?? "x"}`}
                                       aria-label="Mark available for draft"
-                                      className="absolute top-0.5 left-0.5 h-4 w-4 inline-flex items-center justify-center rounded-sm bg-amber-500/10 text-amber-300/70 hover:bg-amber-500/25"
+                                      className={cn(
+                                        "absolute top-0.5 left-0.5 h-4 w-4 inline-flex items-center justify-center rounded-sm",
+                                        isMyTile
+                                          ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/35"
+                                          : "bg-amber-500/5 text-amber-300/40 hover:bg-amber-500/15 hover:text-amber-300/70",
+                                      )}
                                     >
                                       <Megaphone className="h-2.5 w-2.5" />
                                     </button>
                                   </TooltipTrigger>
-                                  <TooltipContent>Mark available for draft</TooltipContent>
+                                  <TooltipContent>
+                                    {isMyTile ? "Mark available for draft" : `Owned by ${ownerTeam?.name || teamAbbr}`}
+                                  </TooltipContent>
                                 </Tooltip>
                               )}
                               {/* Iter 147 — Per-pick trade button (visible only in trade mode) */}

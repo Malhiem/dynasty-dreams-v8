@@ -68,6 +68,33 @@ def test_roster_truncated_endpoint_registered():
     assert "/api/teams/{team_id}/roster-truncated" in paths
 
 
+def test_roster_truncated_reads_canonical_team_roster_field():
+    """Iter 150 bug-fix — endpoint must read from `team.roster` (same as
+    /api/roster/{team_id}) instead of the secondary `db.rosters` collection
+    so the Draft Room panel stays in lock-step with the Rosters page."""
+    src = (BACKEND / "routes/teams.py").read_text(encoding="utf-8")
+    # 1) Reads canonical team.roster first
+    assert 'team.get("roster")' in src
+    # 2) Falls back to legacy team.player_ids
+    assert 'team.get("player_ids")' in src
+    # 3) Uses the league scoring_configs for fantasy_points (matches Rosters page)
+    assert "scoring_configs" in src
+    # 4) Optional db.rosters fallback for older seed data
+    assert "db.rosters" in src
+
+
+def test_trade_block_add_icons_render_on_every_pick_tile():
+    """Iter 150 bug-fix — the Mark-Available megaphone button must render on
+    EVERY pick tile when Trading Block is on (mirrors Trade Mode pattern).
+    Previously gated by `isMyTile` so users only saw 0 icons when the mock
+    abbrs didn't match their real team's logo_abbr."""
+    src = _read("lovable/pages/DraftRoom.tsx")
+    # The render gate no longer includes `isMyTile`
+    assert "tradeBlockMode && !onBlock && isMyTile" not in src
+    # Click handler still validates ownership
+    assert "You can only mark your own picks available" in src
+
+
 def test_draft_board_uses_megaphone_for_on_block_picks():
     src = _read("lovable/pages/DraftBoard.tsx")
     # Old ShoppingCart in the "Available" badge is replaced with Megaphone
