@@ -29,6 +29,9 @@ import {
 import RostersTab from "@/lovable/pages/commissioner/RostersTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
 import AuditLogTab from "@/lovable/pages/commissioner/tabs/AuditLogTab";
+import PlayerPoolTab from "@/lovable/pages/commissioner/tabs/PlayerPoolTab";
+import ScoringTab from "@/lovable/pages/commissioner/tabs/ScoringTab";
+import { TankMonitorTab, RosterMonitorTab } from "@/lovable/pages/commissioner/tabs/MonitorTabs";
 import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/pages/commissioner/TransactionsConfigCards";
 import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard";
 import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard";
@@ -1627,98 +1630,13 @@ const CommissionerSettings = () => {
 
           {/* Player Pool Tab */}
           <TabsContent value="player-pool" className="space-y-6">
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>Player Inclusion</CardTitle>
-                <CardDescription>Select which players are available in your league</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Include Entire NHL</Label>
-                    <p className="text-sm text-muted-foreground">All NHL players are available</p>
-                  </div>
-                  <Switch defaultChecked />
-                </div>
-                <Separator />
-                <div className="space-y-3">
-                  <Label>Or Limit by Team</Label>
-                  <div className="grid gap-2 md:grid-cols-4">
-                    {nhlTeams.map(team => (
-                      <div key={team} className="flex items-center space-x-2">
-                        <Checkbox 
-                          id={team} 
-                          checked={selectedTeams.includes(team)}
-                          onCheckedChange={() => toggleTeam(team)}
-                        />
-                        <label htmlFor={team} className="text-sm cursor-pointer">{team}</label>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <Separator />
-                <div className="space-y-3">
-                  <Label>Limit by Conference</Label>
-                  <div className="flex gap-4">
-                    <div className="flex items-center space-x-2">
-                      <Checkbox id="eastern" defaultChecked />
-                      <label htmlFor="eastern" className="text-sm cursor-pointer">Eastern Conference</label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <Checkbox id="western" defaultChecked />
-                      <label htmlFor="western" className="text-sm cursor-pointer">Western Conference</label>
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>Pool Settings</CardTitle>
-                <CardDescription>Additional player pool configurations</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Lock Player Pool</Label>
-                    <p className="text-sm text-muted-foreground">Prevent changes to the player pool during season</p>
-                  </div>
-                  <Switch />
-                </div>
-                <Separator />
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Include Minor League Players</Label>
-                    <p className="text-sm text-muted-foreground">AHL and other minor league players available</p>
-                  </div>
-                  <Switch defaultChecked />
-                </div>
-                <Separator />
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Include Unsigned/Drafted Players</Label>
-                    <p className="text-sm text-muted-foreground">Players not on an NHL roster (drafted, European, etc.)</p>
-                  </div>
-                  <Switch />
-                </div>
-                <Separator />
-                <div className="space-y-2">
-                  <Label>Duplicate Players for Selection</Label>
-                  <p className="text-sm text-muted-foreground">Allow the same player to be owned by multiple teams</p>
-                  <Select value={duplicatePlayers} onValueChange={setDuplicatePlayers}>
-                    <SelectTrigger className="bg-secondary border-border w-full sm:w-[280px]">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="not-used">Not Used</SelectItem>
-                      <SelectItem value="entire-league">Entire League</SelectItem>
-                      <SelectItem value="across-divisions">Across Different Divisions</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </CardContent>
-            </Card>
+            <PlayerPoolTab
+              nhlTeams={nhlTeams}
+              selectedTeams={selectedTeams}
+              toggleTeam={toggleTeam}
+              duplicatePlayers={duplicatePlayers}
+              setDuplicatePlayers={setDuplicatePlayers}
+            />
           </TabsContent>
 
           {/* Rosters Tab */}
@@ -1757,157 +1675,13 @@ const CommissionerSettings = () => {
 
           {/* Scoring Tab */}
           <TabsContent value="scoring" className="space-y-6">
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>Skater Scoring Categories</CardTitle>
-                <CardDescription>Enable categories and set point values for skaters</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[500px] pr-4">
-                  <div className="space-y-3">
-                    {skaterCategories.map((cat) => (
-                      <div 
-                        key={cat.id} 
-                        className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
-                          scoringSettings[cat.id]?.enabled 
-                            ? "bg-primary/5 border-primary/30" 
-                            : "bg-secondary/30 border-border"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 flex-1">
-                          <Checkbox 
-                            id={cat.id}
-                            checked={scoringSettings[cat.id]?.enabled}
-                            onCheckedChange={() => toggleScoringCategory(cat.id)}
-                          />
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <label 
-                                htmlFor={cat.id} 
-                                className="font-medium cursor-pointer"
-                              >
-                                {cat.name}
-                              </label>
-                              <Badge variant="outline" className="bg-secondary/50 text-xs">
-                                {cat.abbr}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-muted-foreground">{cat.description}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Label className="text-xs text-muted-foreground">Points:</Label>
-                          <Input 
-                            type="number" 
-                            step="0.1"
-                            value={scoringSettings[cat.id]?.points ?? 0}
-                            onChange={(e) => updateScoringPoints(cat.id, parseFloat(e.target.value) || 0)}
-                            className="w-20 h-8 bg-secondary border-border text-center"
-                            disabled={!scoringSettings[cat.id]?.enabled}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>Goalie Scoring Categories</CardTitle>
-                <CardDescription>Enable categories and set point values for goalies</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ScrollArea className="h-[350px] pr-4">
-                  <div className="space-y-3">
-                    {goalieCategories.map((cat) => (
-                      <div 
-                        key={cat.id} 
-                        className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
-                          scoringSettings[cat.id]?.enabled 
-                            ? "bg-accent/5 border-accent/30" 
-                            : "bg-secondary/30 border-border"
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 flex-1">
-                          <Checkbox 
-                            id={`goalie-${cat.id}`}
-                            checked={scoringSettings[cat.id]?.enabled}
-                            onCheckedChange={() => toggleScoringCategory(cat.id)}
-                          />
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <label 
-                                htmlFor={`goalie-${cat.id}`} 
-                                className="font-medium cursor-pointer"
-                              >
-                                {cat.name}
-                              </label>
-                              <Badge variant="outline" className="bg-secondary/50 text-xs">
-                                {cat.abbr}
-                              </Badge>
-                            </div>
-                            <p className="text-xs text-muted-foreground">{cat.description}</p>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Label className="text-xs text-muted-foreground">Points:</Label>
-                          <Input 
-                            type="number" 
-                            step="0.1"
-                            value={scoringSettings[cat.id]?.points ?? 0}
-                            onChange={(e) => updateScoringPoints(cat.id, parseFloat(e.target.value) || 0)}
-                            className="w-20 h-8 bg-secondary border-border text-center"
-                            disabled={!scoringSettings[cat.id]?.enabled}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>Scoring Summary</CardTitle>
-                <CardDescription>Overview of enabled scoring categories</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div>
-                    <Label className="text-sm font-medium">Enabled Skater Categories</Label>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {skaterCategories
-                        .filter(cat => scoringSettings[cat.id]?.enabled)
-                        .map(cat => (
-                          <Badge key={cat.id} variant="secondary" className="text-xs">
-                            {cat.abbr}: {scoringSettings[cat.id]?.points > 0 ? "+" : ""}{scoringSettings[cat.id]?.points}
-                          </Badge>
-                        ))}
-                    </div>
-                  </div>
-                  <div>
-                    <Label className="text-sm font-medium">Enabled Goalie Categories</Label>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {goalieCategories
-                        .filter(cat => scoringSettings[cat.id]?.enabled)
-                        .map(cat => (
-                          <Badge key={cat.id} variant="secondary" className="text-xs">
-                            {cat.abbr}: {scoringSettings[cat.id]?.points > 0 ? "+" : ""}{scoringSettings[cat.id]?.points}
-                          </Badge>
-                        ))}
-                    </div>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <div className="flex justify-end gap-3">
-              <Button variant="outline">Reset to Defaults</Button>
-              <Button>Save Settings</Button>
-            </div>
+            <ScoringTab
+              skaterCategories={skaterCategories}
+              goalieCategories={goalieCategories}
+              scoringSettings={scoringSettings}
+              toggleScoringCategory={toggleScoringCategory}
+              updateScoringPoints={updateScoringPoints}
+            />
           </TabsContent>
 
           {/* Draft Tab */}
@@ -2431,37 +2205,11 @@ const CommissionerSettings = () => {
 
           {/* Tank Monitor Tab */}
           <TabsContent value="tanking" className="space-y-6">
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <AlertTriangle className="h-5 w-5 text-yellow-500" />
-                  Tanking Analysis
-                </CardTitle>
-                <CardDescription>
-                  Compare team scoring across roster sections. A high total/starting ratio may indicate a team is benching strong players to lose intentionally.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <TankMonitorTable />
-              </CardContent>
-            </Card>
+            <TankMonitorTab TankMonitorTable={TankMonitorTable} />
           </TabsContent>
           {/* Roster Monitor Tab */}
           <TabsContent value="roster-monitor" className="space-y-6">
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <ClipboardCheck className="h-5 w-5 text-primary" />
-                  Roster Monitor
-                </CardTitle>
-                <CardDescription>
-                  Review all teams for roster compliance. Red flags indicate teams over the roster limit. Yellow flags indicate eligibility concerns or inactive starters.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <RosterMonitorTable onAuditLog={addAuditEntry} />
-              </CardContent>
-            </Card>
+            <RosterMonitorTab RosterMonitorTable={RosterMonitorTable} onAuditLog={addAuditEntry} />
           </TabsContent>
 
           {/* Audit Log Tab */}
