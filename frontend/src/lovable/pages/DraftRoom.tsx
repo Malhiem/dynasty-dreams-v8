@@ -456,6 +456,38 @@ export default function DraftRoom() {
     [activeLeagueCtx?.id, myTeam],
   );
 
+  // Iter 151 — Toggle a player on/off the LOGGED-IN user's team trade block.
+  // Called from the TruncatedRosterPanel when the user clicks the megaphone
+  // beside the propose-trade icon on one of their own players.
+  const toggleMyTeamTradeBlock = useCallback(
+    async (player: any) => {
+      if (!activeLeagueCtx?.id || !myTeam?.id || !player?.id) return;
+      const existing = (tradeBlockItems || []).find(
+        (x) => x.item_type === "player" && x.team_id === myTeam.id && String(x.player_id) === String(player.id),
+      );
+      const api = (await import("@/lib/api")).default;
+      try {
+        if (existing) {
+          await api.delete(`/trade-block/${existing._id || existing.id}`);
+          setTradeBlockItems((prev) => prev.filter((x) => (x._id || x.id) !== (existing._id || existing.id)));
+          toast.success(`Removed ${player.name} from your trade block`);
+        } else {
+          const { data } = await api.post("/trade-block", {
+            item_type: "player",
+            league_id: activeLeagueCtx.id,
+            team_id: myTeam.id,
+            player_id: String(player.id),
+          });
+          setTradeBlockItems((prev) => [...prev, data]);
+          toast.success(`Added ${player.name} to your trade block`);
+        }
+      } catch (e: any) {
+        toast.error(e?.response?.data?.detail || "Trade block update failed");
+      }
+    },
+    [activeLeagueCtx?.id, myTeam, tradeBlockItems],
+  );
+
   const handleAddDraftPickToTrade = (ownerAbbr: string, round: number, overall: number, player: any) => {
     if (!myTeam) { toast.error("Join a team in this league to propose trades"); return; }
     if (!activeLeagueCtx?.id) { toast.error("League context missing"); return; }
@@ -728,7 +760,10 @@ export default function DraftRoom() {
                           );
                           const isPlayerOnBlock = pick?.player && tradeBlockPlayerIds.has(String(pick.player.id));
                           const isPickOnBlock = ownerTeam?.id && tradeBlockOverallKeys.has(`${ownerTeam.id}|R${round}`);
-                          const onBlock = tradeBlockMode && (isPlayerOnBlock || isPickOnBlock);
+                          // Iter 151 — on-block megaphone overlays are ALWAYS visible
+                          // (no longer gated by tradeBlockMode). The toggle only controls
+                          // the interactive "Mark available" quick-add buttons below.
+                          const onBlock = isPlayerOnBlock || isPickOnBlock;
                           const isMyTile = ownerTeam?.id && ownerTeam.id === myTeam?.id;
                           return (
                             <div
@@ -889,7 +924,8 @@ export default function DraftRoom() {
                   <ScrollArea className="h-[400px]">
                     <div className="space-y-1">
                       {filteredPlayers.map((player) => {
-                        const isOnBlock = tradeBlockMode && tradeBlockPlayerIds.has(String(player.id));
+                        // Iter 151 — on-block visibility no longer requires the toggle
+                        const isOnBlock = tradeBlockPlayerIds.has(String(player.id));
                         const isQueued = queue.includes(player.id);
                         const isShortlisted = shortlist.has(player.id);
                         return (
@@ -1074,6 +1110,7 @@ export default function DraftRoom() {
                 }))}
                 tradeBlockItems={tradeBlockItems}
                 capEnabled={!!activeLeagueCtx?.cap_enabled}
+                onToggleTradeBlock={toggleMyTeamTradeBlock}
                 onPickPlayerForTrade={(team, player) => {
                   if (!team || !player) return;
                   if (!tradeBuilder.isOpen) {

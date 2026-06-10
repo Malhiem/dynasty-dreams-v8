@@ -861,27 +861,76 @@ async def get_team_roster_truncated(
         return float(p.get(key) or default)
 
     out = []
+    # Helper — pull a stat for the requested bucket with sensible flat fallbacks
+    def _bucket_stat(p: dict, key: str) -> float:
+        if not isinstance(p, dict):
+            return 0
+        stats = p.get("stats") or {}
+        b = stats.get(stat_filter) if isinstance(stats, dict) else None
+        if isinstance(b, dict) and key in b:
+            try:
+                return float(b.get(key) or 0)
+            except (TypeError, ValueError):
+                return 0
+        try:
+            return float(p.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    SKATER_KEYS = [
+        "goals", "assists", "points", "plus_minus", "penalty_minutes",
+        "power_play_goals", "power_play_points", "short_handed_goals",
+        "short_handed_points", "game_winning_goals", "shots",
+    ]
+    GOALIE_KEYS = [
+        "wins", "losses", "overtime_losses", "saves", "goals_against",
+        "shots_against", "shutouts", "save_pct", "goals_against_avg",
+    ]
+
     for p in players_docs:
-        # Prefer canonical scoring-config-aware FP (matches Rosters page) when available
+        pos = (p.get("position") or p.get("primary_position") or "").split(",")[0].strip() or "—"
+        is_goalie = pos == "G"
         if calculate_fantasy_points:
             try:
                 fp = float(calculate_fantasy_points(p, config) or 0)
             except Exception:
-                fp = float(_stat_from_bucket(p, "fantasy_points"))
+                fp = float(_bucket_stat(p, "fantasy_points"))
         else:
-            fp = float(_stat_from_bucket(p, "fantasy_points"))
-        gp = int(_stat_from_bucket(p, "games_played") or p.get("games_played") or p.get("gp") or 0)
+            fp = float(_bucket_stat(p, "fantasy_points"))
+        gp = int(_bucket_stat(p, "games_played"))
         fp_pg = (fp / gp) if gp > 0 else 0
+
+        cats = {}
+        for k in (GOALIE_KEYS if is_goalie else SKATER_KEYS):
+            cats[k] = _bucket_stat(p, k)
+
         out.append({
             "id": str(p.get("_id")),
             "name": p.get("name") or p.get("full_name") or "—",
-            "position": (p.get("position") or p.get("primary_position") or "").split(",")[0].strip() or "—",
+            "position": pos,
             "fantasy_points": round(fp, 1) if fp else 0,
             "fp_per_game": round(fp_pg, 2) if fp_pg else 0,
             "cap_hit": p.get("cap_hit") or p.get("salary") or 0,
             "games_played": gp,
             "nhl_team": p.get("team") or p.get("nhl_team") or "",
+            "stats": cats,
         })
 
+    # Default-sort by fantasy_points desc (frontend may re-sort by column).
     out.sort(key=lambda x: x.get("fantasy_points") or 0, reverse=True)
-    return {"team_id": team_id, "stat_filter": stat_filter, "players": out}
+
+    # Categories the league actually scores — frontend uses these to choose
+    # which columns to render in Regular Season / Playoffs / etc. views.
+    skater_cfg = (config or {}).get("skater_scoring") or {}
+    goalie_cfg = (config or {}).get("goalie_scoring") or {}
+    skater_categories = list(skater_cfg.keys()) if isinstance(skater_cfg, dict) else []
+    goalie_categories = list(goalie_cfg.keys()) if isinstance(goalie_cfg, dict) else []
+    return {
+        "team_id": team_id,
+        "stat_filter": stat_filter,
+        "players": out,
+        "scoring": {
+            "skater": skater_categories,
+            "goalie": goalie_categories,
+        },
+    }
