@@ -29,6 +29,7 @@ import {
 import RostersTab from "@/lovable/pages/commissioner/RostersTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
 import AuditLogTab from "@/lovable/pages/commissioner/tabs/AuditLogTab";
+import LeagueSetupTab from "@/lovable/pages/commissioner/tabs/LeagueSetupTab";
 import PlayerPoolTab from "@/lovable/pages/commissioner/tabs/PlayerPoolTab";
 import ScoringTab from "@/lovable/pages/commissioner/tabs/ScoringTab";
 import { TankMonitorTab, RosterMonitorTab } from "@/lovable/pages/commissioner/tabs/MonitorTabs";
@@ -1258,374 +1259,33 @@ const CommissionerSettings = () => {
 
           {/* League Setup Tab */}
           <TabsContent value="league-setup" className="space-y-6">
-            {/* ─── Privacy Toggle ────────────────────────────── */}
-            <Card className="bg-card border-border" data-testid="league-privacy-card">
-              <CardHeader>
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      {isPrivate ? "🔒 Private League" : "🌐 Public League"}
-                    </CardTitle>
-                    <CardDescription className="mt-1">
-                      {isPrivate
-                        ? "Hidden from League Search — owners can only join via invite link/code."
-                        : "Listed in League Search — any account can browse and self-join while spots remain."}
-                    </CardDescription>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground">Public</span>
-                    <Switch
-                      checked={isPrivate}
-                      onCheckedChange={togglePrivacy}
-                      disabled={privacyLoading || !activeLeague?.id}
-                      data-testid="league-privacy-toggle"
-                    />
-                    <span className="text-xs text-muted-foreground">Private</span>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0 pb-4 flex items-center justify-between gap-3 border-t border-border/50">
-                <div className="text-xs text-muted-foreground">
-                  <strong className="text-foreground">Stats out of sync?</strong> Recompute every team's wins / losses / PF / PA from completed matchups.
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={recalcStats}
-                  disabled={recalcing || !activeLeague?.id}
-                  data-testid="league-recalc-stats"
-                >
-                  {recalcing ? "Recalculating…" : "Recalculate Stats"}
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>Scoring System</CardTitle>
-                <CardDescription>Choose how teams earn points and compete</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-3">
-                  <Label>Scoring Format</Label>
-                  <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                    {[
-                      { value: "rotisserie", label: "Rotisserie", desc: "Team scores based on their rank compared to all other fantasy teams in selected scoring categories" },
-                      { value: "points", label: "Points-Based", desc: "Team scores points based on scoring criteria for selected scoring categories" },
-                      { value: "h2h-points", label: "Head-to-Head Points", desc: "Teams compete against one opponent per matchup and score points based on scoring criteria for selected scoring categories" },
-                      { value: "h2h-categories", label: "Head-to-Head Most Categories", desc: "Teams compete against one opponent per matchup based on selected scoring categories and will win/lose/tie based on the outcome of the scoring period against the opponent" },
-                      { value: "h2h-each", label: "Head-to-Head Each Category", desc: "Teams compete against one opponent per matchup based on selected scoring categories and will win/lose/tie in each category per scoring period" },
-                    ].map((option) => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        onClick={() => setScoringFormat(option.value)}
-                        className={`relative flex flex-col gap-1.5 rounded-lg border p-4 text-left transition-all hover:border-primary/50 ${
-                          scoringFormat === option.value
-                            ? "border-primary bg-primary/10 ring-1 ring-primary/30"
-                            : "border-border bg-secondary/50 hover:bg-secondary"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <div className={`h-3 w-3 rounded-full border-2 flex items-center justify-center ${
-                            scoringFormat === option.value ? "border-primary" : "border-muted-foreground/40"
-                          }`}>
-                            {scoringFormat === option.value && (
-                              <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                            )}
-                          </div>
-                          <span className="font-medium text-sm">{option.label}</span>
-                        </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed pl-5">{option.desc}</p>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <Separator />
-
-                <div className="space-y-2 max-w-xs">
-                  <Label>Scoring Period</Label>
-                  <Select defaultValue="weekly">
-                    <SelectTrigger className="bg-secondary border-border">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="biweekly">Bi-Weekly</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>League Logo</CardTitle>
-                <CardDescription>Upload a custom logo for your league (max 2MB, image files only)</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center gap-4">
-                  <div className="h-20 w-20 rounded-lg border-2 border-dashed border-border flex items-center justify-center bg-secondary/50 overflow-hidden shrink-0">
-                    {leagueLogo ? (
-                      <img src={leagueLogo} alt="League logo" className="h-full w-full object-contain" />
-                    ) : (
-                      <ImageIcon className="h-8 w-8 text-muted-foreground/40" />
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <input
-                      ref={logoInputRef}
-                      type="file"
-                      accept="image/*"
-                      onChange={handleLogoUpload}
-                      className="hidden"
-                    />
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => logoInputRef.current?.click()}
-                        className="gap-1.5"
-                      >
-                        <Upload className="h-3.5 w-3.5" />
-                        Browse
-                      </Button>
-                      {leagueLogo && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => { setLeagueLogo(null); setLeagueLogoName(null); }}
-                          className="text-destructive hover:text-destructive"
-                        >
-                          Remove
-                        </Button>
-                      )}
-                    </div>
-                    {leagueLogoName && (
-                      <p className="text-xs text-muted-foreground">{leagueLogoName}</p>
-                    )}
-                    <p className="text-xs text-muted-foreground">PNG, JPG, or SVG. Maximum file size: 2MB.</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>League Structure</CardTitle>
-                <CardDescription>Configure divisions, conferences, and playoffs</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-4 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label>Number of Teams</Label>
-                    <Select defaultValue="12">
-                      <SelectTrigger className="bg-secondary border-border">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {[6, 8, 10, 12, 14, 16, 18, 20].map(n => (
-                          <SelectItem key={n} value={n.toString()}>{n} Teams</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Number of Divisions</Label>
-                    <Select defaultValue="2">
-                      <SelectTrigger className="bg-secondary border-border">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="0">No Divisions</SelectItem>
-                        <SelectItem value="2">2 Divisions</SelectItem>
-                        <SelectItem value="4">4 Divisions</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Playoff Teams</Label>
-                    <Select defaultValue="6">
-                      <SelectTrigger className="bg-secondary border-border">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {[4, 6, 8, 10, 12].map(n => (
-                          <SelectItem key={n} value={n.toString()}>{n} Teams</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card border-border">
-              <CardHeader>
-                <CardTitle>Salary Cap Settings</CardTitle>
-                <CardDescription>Enable and configure salary cap rules</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Enable Salary Cap</Label>
-                    <p className="text-sm text-muted-foreground">Teams must stay under the cap</p>
-                  </div>
-                  <Switch defaultChecked />
-                </div>
-                <Separator />
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Cap Calculation Method</Label>
-                    <Select defaultValue="cap-hit">
-                      <SelectTrigger className="bg-secondary border-border">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="cap-hit">NHL Cap Hit</SelectItem>
-                        <SelectItem value="aav">Average Annual Value (AAV)</SelectItem>
-                        <SelectItem value="real-salary">Real Salary</SelectItem>
-                        <SelectItem value="custom">Custom League Settings</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Salary Cap Amount</Label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                      <Input 
-                        type="number" 
-                        defaultValue="88000000" 
-                        className="pl-7 bg-secondary border-border" 
-                      />
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Cap Floor</Label>
-                    <p className="text-sm text-muted-foreground">Minimum spending requirement</p>
-                  </div>
-                  <Switch />
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Salary Retention card removed — now lives in the Transactions tab. */}
-
-            {/* ─── Iter 103: Roster Lock & Lineup Lock (moved from Transactions) ─── */}
-            {activeLeague?.id && (
-              <>
-                <RosterLockCard league={activeLeague} reloadLeague={reloadLeague} />
-                {/* Iter 105: Emergency Roster Changes + Goalie Scoring moved here
-                    from League Structure per user request — keeps all roster-related
-                    rules grouped together in League Setup. */}
-                <EmergencyRosterChangesCard league={activeLeague} reloadLeague={reloadLeague} />
-                <GoalieScoringCard league={activeLeague} reloadLeague={reloadLeague} />
-              </>
-            )}
-
-            {/* ─── Iter 104: Modernized "Roster Lock Rules" — supplementary
-                style settings the new wired card doesn't cover. The cadence /
-                lock day / lineup lock minutes UI lives in <RosterLockCard>
-                above (single source of truth, persisted via PUT /leagues). */}
-            <Card className={`bg-card border-border ${!isH2H ? "opacity-50 pointer-events-none" : ""}`} data-testid="legacy-roster-lock-rules-card">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <Sliders className="h-5 w-5 text-primary" />
-                  Lock Style Preset
-                </CardTitle>
-                <CardDescription>
-                  Choose a high-level lock style. The detailed cadence + lock day + lineup lock time
-                  are configured in the <span className="text-foreground font-medium">Roster Lock &amp; Lineup Lock</span> card above.
-                </CardDescription>
-                {!isH2H && (
-                  <Badge variant="outline" className="bg-muted/90 backdrop-blur-sm text-muted-foreground border-border text-xs px-3 py-1.5 mt-2 self-start">
-                    Head-to-Head format required
-                  </Badge>
-                )}
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-                  {[
-                    { value: "daily", label: "Daily Lock", desc: "Adjust lineups every day." },
-                    { value: "weekly", label: "Weekly Lock", desc: "One lock at period start." },
-                    { value: "semi-weekly", label: "Semi-Weekly Lock", desc: "Mid-period adjustment window." },
-                    { value: "first-game", label: "First Game of Matchup", desc: "Each player locks on their own first game." },
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      onClick={() => setRosterLockType(option.value)}
-                      className={`relative flex flex-col gap-1.5 rounded-lg border p-3 text-left transition-all hover:border-primary/50 ${
-                        rosterLockType === option.value
-                          ? "border-primary bg-primary/10 ring-1 ring-primary/30"
-                          : "border-border bg-secondary/40 hover:bg-secondary"
-                      }`}
-                      data-testid={`lock-style-${option.value}`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className={`h-3 w-3 rounded-full border-2 flex items-center justify-center ${
-                          rosterLockType === option.value ? "border-primary" : "border-muted-foreground/40"
-                        }`}>
-                          {rosterLockType === option.value && (
-                            <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                          )}
-                        </div>
-                        <span className="font-medium text-sm">{option.label}</span>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground leading-snug pl-5">{option.desc}</p>
-                    </button>
-                  ))}
-                </div>
-
-                {(rosterLockType === "weekly" || rosterLockType === "semi-weekly") && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
-                    <div className="space-y-1">
-                      <Label className="text-xs">Scoring Period Start Day</Label>
-                      <Select value={scoringPeriodStartDay} onValueChange={setScoringPeriodStartDay}>
-                        <SelectTrigger className="bg-secondary border-border">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-popover border-border z-50">
-                          {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((day) => (
-                            <SelectItem key={day} value={day}>
-                              {day.charAt(0).toUpperCase() + day.slice(1)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    {rosterLockType === "semi-weekly" && (
-                      <div className="space-y-1">
-                        <Label className="text-xs">Mid-Period Adjustment Day</Label>
-                        <Select value={semiWeeklySplitDay} onValueChange={setSemiWeeklySplitDay}>
-                          <SelectTrigger className="bg-secondary border-border">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="bg-popover border-border z-50">
-                            {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-                              .filter((d) => d !== scoringPeriodStartDay)
-                              .map((day) => (
-                                <SelectItem key={day} value={day}>
-                                  {day.charAt(0).toUpperCase() + day.slice(1)}
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <p className="text-[11px] text-muted-foreground italic">
-                  Emergency Roster Changes and Goalie Scoring rules now live under{" "}
-                  <span className="font-medium text-foreground">League Structure</span>.
-                </p>
-              </CardContent>
-            </Card>
+            <LeagueSetupTab
+              isPrivate={isPrivate}
+              togglePrivacy={togglePrivacy}
+              privacyLoading={privacyLoading}
+              activeLeague={activeLeague}
+              recalcStats={recalcStats}
+              recalcing={recalcing}
+              scoringFormat={scoringFormat}
+              setScoringFormat={setScoringFormat}
+              leagueLogo={leagueLogo}
+              leagueLogoName={leagueLogoName}
+              logoInputRef={logoInputRef}
+              handleLogoUpload={handleLogoUpload}
+              setLeagueLogo={setLeagueLogo}
+              setLeagueLogoName={setLeagueLogoName}
+              RosterLockCard={RosterLockCard}
+              EmergencyRosterChangesCard={EmergencyRosterChangesCard}
+              GoalieScoringCard={GoalieScoringCard}
+              reloadLeague={reloadLeague}
+              isH2H={isH2H}
+              rosterLockType={rosterLockType}
+              setRosterLockType={setRosterLockType}
+              scoringPeriodStartDay={scoringPeriodStartDay}
+              setScoringPeriodStartDay={setScoringPeriodStartDay}
+              semiWeeklySplitDay={semiWeeklySplitDay}
+              setSemiWeeklySplitDay={setSemiWeeklySplitDay}
+            />
           </TabsContent>
 
           {/* Player Pool Tab */}
