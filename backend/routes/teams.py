@@ -890,19 +890,24 @@ async def get_team_roster_truncated(
     for p in players_docs:
         pos = (p.get("position") or p.get("primary_position") or "").split(",")[0].strip() or "—"
         is_goalie = pos == "G"
+        # Compute the per-bucket categories first so FP recomputes from the same numbers
+        cats = {}
+        for k in (GOALIE_KEYS if is_goalie else SKATER_KEYS):
+            cats[k] = _bucket_stat(p, k)
+        # Bucketed games_played (preferred), with sensible fallbacks
+        b = (p.get("stats") or {}).get(stat_filter) if isinstance(p.get("stats"), dict) else None
+        gp = int((b or {}).get("games_played") or p.get("games_played") or p.get("gp") or 0)
+        # Merge bucket categories + games_played into a player-shaped dict so the
+        # canonical FP helper computes the right number for the selected bucket.
+        bucket_player = {**p, **cats, "games_played": gp}
         if calculate_fantasy_points:
             try:
-                fp = float(calculate_fantasy_points(p, config) or 0)
+                fp = float(calculate_fantasy_points(bucket_player, config) or 0)
             except Exception:
                 fp = float(_bucket_stat(p, "fantasy_points"))
         else:
             fp = float(_bucket_stat(p, "fantasy_points"))
-        gp = int(_bucket_stat(p, "games_played"))
         fp_pg = (fp / gp) if gp > 0 else 0
-
-        cats = {}
-        for k in (GOALIE_KEYS if is_goalie else SKATER_KEYS):
-            cats[k] = _bucket_stat(p, k)
 
         out.append({
             "id": str(p.get("_id")),
