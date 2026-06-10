@@ -31,6 +31,7 @@ import {
   ShieldX,
   Clock,
   Sparkles,
+  Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import api from "@/lib/api";
@@ -346,6 +347,16 @@ export default function DraftChatPanel({
     );
   }, [trades]);
 
+  // Iter 152 — Selections feed: filter chat events where type === "pick"
+  const selectionsOnly = useMemo(() => {
+    const items = (chatMessages || []).filter((m) => m.type === "pick");
+    return items.sort(
+      (a, b) =>
+        (a.timestamp instanceof Date ? a.timestamp.getTime() : new Date(a.timestamp).getTime()) -
+        (b.timestamp instanceof Date ? b.timestamp.getTime() : new Date(b.timestamp).getTime()),
+    );
+  }, [chatMessages]);
+
   return (
     <Card className="border-border" data-testid="draft-chat-panel">
       <CardHeader className="pb-2">
@@ -356,7 +367,7 @@ export default function DraftChatPanel({
       </CardHeader>
       <CardContent className="p-2 space-y-2">
         <Tabs value={tab} onValueChange={setTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3 h-8" data-testid="draft-chat-tabs">
+          <TabsList className="grid w-full grid-cols-4 h-8" data-testid="draft-chat-tabs">
             <TabsTrigger value="all" className="text-[11px]" data-testid="draft-chat-tab-all">
               <Sparkles className="h-3 w-3 mr-1" />
               All
@@ -364,6 +375,15 @@ export default function DraftChatPanel({
             <TabsTrigger value="chat" className="text-[11px]" data-testid="draft-chat-tab-chat">
               <MessageSquare className="h-3 w-3 mr-1" />
               Chat
+            </TabsTrigger>
+            <TabsTrigger value="selections" className="text-[11px]" data-testid="draft-chat-tab-selections">
+              <Trophy className="h-3 w-3 mr-1" />
+              Picks
+              {selectionsOnly.length > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full bg-primary/30 text-primary text-[9px] font-bold">
+                  {selectionsOnly.length}
+                </span>
+              )}
             </TabsTrigger>
             <TabsTrigger value="trades" className="text-[11px]" data-testid="draft-chat-tab-trades">
               <Repeat className="h-3 w-3 mr-1" />
@@ -413,6 +433,24 @@ export default function DraftChatPanel({
             </ScrollArea>
           </TabsContent>
 
+          {/* Iter 152 — Picks/Selections feed (live as each pick is made) */}
+          <TabsContent value="selections" className="m-0">
+            <ScrollArea className="h-[260px]">
+              <div className="space-y-2 p-1" data-testid="draft-chat-feed-selections">
+                {selectionsOnly.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic text-center py-6 flex flex-col items-center gap-1">
+                    <Trophy className="h-4 w-4" />
+                    No picks made yet
+                  </p>
+                ) : (
+                  selectionsOnly.map((m) => (
+                    <ChatBubble key={m.id} msg={m} mySender={mySender} />
+                  ))
+                )}
+              </div>
+            </ScrollArea>
+          </TabsContent>
+
           <TabsContent value="trades" className="m-0">
             <ScrollArea className="h-[260px]">
               <div className="space-y-2 p-1" data-testid="draft-chat-feed-trades">
@@ -438,7 +476,7 @@ export default function DraftChatPanel({
           </TabsContent>
         </Tabs>
 
-        {tab !== "trades" && (
+        {tab !== "trades" && tab !== "selections" && (
           <div className="flex gap-2">
             <Input
               placeholder="Type a message..."

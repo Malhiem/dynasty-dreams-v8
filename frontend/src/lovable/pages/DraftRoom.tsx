@@ -51,6 +51,7 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 import { toast } from "sonner";
 import DraftChatPanel from "@/lovable/pages/draftroom/DraftChatPanel";
 import TruncatedRosterPanel from "@/lovable/pages/draftroom/TruncatedRosterPanel";
+import SelectedPlayerCard from "@/lovable/pages/draftroom/SelectedPlayerCard";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -377,6 +378,8 @@ export default function DraftRoom() {
   // Iter 149 — Trading Block overlay mode
   const [tradeBlockMode, setTradeBlockMode] = useState(false);
   const [tradeBlockItems, setTradeBlockItems] = useState<any[]>([]);
+  // Iter 152 — Selected player for the inline card above the Draft Board
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const tradeBuilder = useTradeBuilder();
   const { user } = useAuth();
   const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();
@@ -711,6 +714,25 @@ export default function DraftRoom() {
             </Card>
           </div>
 
+          {/* ── Iter 152 — Selected Player Card (above Draft Board) ──────────────── */}
+          <SelectedPlayerCard
+            player={
+              selectedPlayerId
+                ? players.find((p) => String(p.id) === String(selectedPlayerId)) || null
+                : null
+            }
+            isOnTheClock={draftConfig.draftStarted}
+            isQueued={!!selectedPlayerId && queue.includes(Number(selectedPlayerId))}
+            isShortlisted={!!selectedPlayerId && shortlist.has(Number(selectedPlayerId))}
+            onDraftPlayer={(p) => {
+              toast.success(`Draft ${p.name} — locked for current pick`);
+              setSelectedPlayerId(null);
+            }}
+            onToggleQueue={(id) => toggleQueue(Number(id))}
+            onToggleShortlist={(id) => toggleShortlist(Number(id))}
+            onClose={() => setSelectedPlayerId(null)}
+          />
+
           {/* ── Draft Board (full width, top) ──────────────────────────── */}
           <Card className="border-border">
             <CardHeader className="pb-2">
@@ -755,9 +777,13 @@ export default function DraftRoom() {
                           const pick = roundPicks.find((p) => p.team === teamAbbr);
                           const isCurrentPick = pick?.overall === draftConfig.currentPick && draftConfig.draftStarted;
                           // Iter 149 — Trade block overlay highlight
-                          const ownerTeam = (liveTeams || []).find(
-                            (t: any) => (t.logo_abbr || (t.name || "").slice(0, 3).toUpperCase()) === teamAbbr,
-                          );
+                          // Match by EITHER the team's stored abbr OR a 3-char slice of its name
+                          // (mock draft uses abbrs like ICE which match the name fallback "Ice Breakers".slice(0,3) = "ICE")
+                          const ownerTeam = (liveTeams || []).find((t: any) => {
+                            const nameAbbr = (t.name || "").replace(/\s/g, "").slice(0, 3).toUpperCase();
+                            const fullName = (t.name || "").split(" ").map((w: string) => w[0]).join("").toUpperCase();
+                            return t.logo_abbr === teamAbbr || nameAbbr === teamAbbr || fullName === teamAbbr;
+                          });
                           const isPlayerOnBlock = pick?.player && tradeBlockPlayerIds.has(String(pick.player.id));
                           const isPickOnBlock = ownerTeam?.id && tradeBlockOverallKeys.has(`${ownerTeam.id}|R${round}`);
                           // Iter 151 — on-block megaphone overlays are ALWAYS visible
@@ -808,20 +834,16 @@ export default function DraftRoom() {
                                   </TooltipContent>
                                 </Tooltip>
                               )}
-                              {/* Iter 149/150 — "Mark available for draft" quick-add — visible on EVERY tile when overlay is on
-                                  (matches the Trade Mode pattern). The click handler is a no-op when the tile is on another
-                                  team's column — markAvailableForDraft validates ownership and shows a friendly toast if blocked. */}
-                              {tradeBlockMode && !onBlock && (
+                              {/* Iter 149/150/152 — "Mark available for draft" quick-add.
+                                  Iter 152: only own-team tiles render the add button. Other teams'
+                                  on-block items remain visible at all times via the `onBlock` icon above. */}
+                              {tradeBlockMode && !onBlock && isMyTile && (
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <button
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        if (!isMyTile) {
-                                          toast.error("You can only mark your own picks available");
-                                          return;
-                                        }
                                         if (pick?.player) {
                                           markAvailableForDraft("player", { id: pick.player.id, name: pick.player.name });
                                         } else {
@@ -830,19 +852,12 @@ export default function DraftRoom() {
                                       }}
                                       data-testid={`draft-room-block-add-${teamAbbr}-${pick?.overall ?? "x"}`}
                                       aria-label="Mark available for draft"
-                                      className={cn(
-                                        "absolute top-0.5 left-0.5 h-4 w-4 inline-flex items-center justify-center rounded-sm",
-                                        isMyTile
-                                          ? "bg-amber-500/20 text-amber-300 hover:bg-amber-500/35"
-                                          : "bg-amber-500/5 text-amber-300/40 hover:bg-amber-500/15 hover:text-amber-300/70",
-                                      )}
+                                      className="absolute top-0.5 left-0.5 h-4 w-4 inline-flex items-center justify-center rounded-sm bg-amber-500/20 text-amber-300 hover:bg-amber-500/35"
                                     >
                                       <Megaphone className="h-2.5 w-2.5" />
                                     </button>
                                   </TooltipTrigger>
-                                  <TooltipContent>
-                                    {isMyTile ? "Mark available for draft" : `Owned by ${ownerTeam?.name || teamAbbr}`}
-                                  </TooltipContent>
+                                  <TooltipContent>Mark available for draft</TooltipContent>
                                 </Tooltip>
                               )}
                               {/* Iter 147 — Per-pick trade button (visible only in trade mode) */}
@@ -932,10 +947,12 @@ export default function DraftRoom() {
                         <div
                           key={player.id}
                           className={cn(
-                            "flex items-center gap-2 p-2 rounded-md hover:bg-secondary/40 transition-colors group",
+                            "flex items-center gap-2 p-2 rounded-md hover:bg-secondary/40 transition-colors group cursor-pointer",
                             isOnBlock && "ring-1 ring-amber-400/40 bg-amber-500/5",
+                            String(selectedPlayerId) === String(player.id) && "bg-primary/10 ring-1 ring-primary/40",
                           )}
-                          data-testid={isOnBlock ? `draft-room-eligible-block-${player.id}` : undefined}
+                          onClick={() => setSelectedPlayerId(String(player.id))}
+                          data-testid={isOnBlock ? `draft-room-eligible-block-${player.id}` : `draft-room-eligible-row-${player.id}`}
                         >
                           <span className="text-[10px] font-mono text-muted-foreground w-5 text-right shrink-0">
                             {player.ranking}
@@ -991,7 +1008,7 @@ export default function DraftRoom() {
                                   "h-7 w-7 shrink-0 transition-colors",
                                   shortlist.has(player.id) ? "text-accent" : "text-muted-foreground/30 hover:text-accent"
                                 )}
-                                onClick={() => toggleShortlist(player.id)}
+                                onClick={(e) => { e.stopPropagation(); toggleShortlist(player.id); }}
                               >
                                 <Star className={cn("h-3.5 w-3.5", shortlist.has(player.id) && "fill-current")} />
                               </Button>
@@ -1007,7 +1024,7 @@ export default function DraftRoom() {
                                   "h-7 w-7 shrink-0 transition-colors",
                                   queue.includes(player.id) ? "text-primary" : "text-muted-foreground/30 hover:text-primary"
                                 )}
-                                onClick={() => toggleQueue(player.id)}
+                                onClick={(e) => { e.stopPropagation(); toggleQueue(player.id); }}
                               >
                                 <ListOrdered className={cn("h-3.5 w-3.5")} />
                               </Button>

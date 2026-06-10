@@ -83,16 +83,16 @@ def test_roster_truncated_reads_canonical_team_roster_field():
     assert "db.rosters" in src
 
 
-def test_trade_block_add_icons_render_on_every_pick_tile():
-    """Iter 150 bug-fix — the Mark-Available megaphone button must render on
-    EVERY pick tile when Trading Block is on (mirrors Trade Mode pattern).
-    Previously gated by `isMyTile` so users only saw 0 icons when the mock
-    abbrs didn't match their real team's logo_abbr."""
+def test_trade_block_add_icons_only_on_own_team_picks():
+    """Iter 152 supersedes Iter 150: per user request, the "Mark Available"
+    quick-add button now renders ONLY on the logged-in user's own team
+    picks (not on every tile). Other teams' on-block items remain visible
+    via the static megaphone overlay regardless of the toggle."""
     src = _read("lovable/pages/DraftRoom.tsx")
-    # The render gate no longer includes `isMyTile`
-    assert "tradeBlockMode && !onBlock && isMyTile" not in src
-    # Click handler still validates ownership
-    assert "You can only mark your own picks available" in src
+    # Iter-152 gate restored: only own-team tiles get the add button
+    assert "tradeBlockMode && !onBlock && isMyTile" in src
+    # The intermediate Iter-150 ungated form is gone
+    assert "You can only mark your own picks available" not in src
 
 
 def test_draft_board_uses_megaphone_for_on_block_picks():
