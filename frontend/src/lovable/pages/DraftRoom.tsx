@@ -50,6 +50,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { toast } from "sonner";
 import DraftChatPanel from "@/lovable/pages/draftroom/DraftChatPanel";
+import TruncatedRosterPanel from "@/lovable/pages/draftroom/TruncatedRosterPanel";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -828,58 +829,18 @@ export default function DraftRoom() {
             </CardContent>
           </Card>
 
-          {/* ── Bottom section: Queue | Player Search | Chat + Roster ── */}
+          {/* ── Bottom section: (LEFT) Player Search tabs · (CENTER) Truncated Roster · (RIGHT) Draft Chat ── */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* LEFT: Private Queue */}
-            <div className="lg:col-span-2">
-              <Card className="border-border h-full">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <ListOrdered className="h-4 w-4 text-primary" />
-                    My Queue
-                  </CardTitle>
-                  <p className="text-[10px] text-muted-foreground">Private — only you can see this</p>
-                </CardHeader>
-                <CardContent className="p-2">
-                  <ScrollArea className="h-[400px]">
-                    {queuedPlayers.length === 0 ? (
-                      <div className="text-center py-8 space-y-2">
-                        <ListOrdered className="h-6 w-6 text-muted-foreground/20 mx-auto" />
-                        <p className="text-xs text-muted-foreground">Queue is empty</p>
-                        <p className="text-[10px] text-muted-foreground/60">Use the + icon in player search</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-1">
-                        {queuedPlayers.map((player, idx) => (
-                          <div key={player.id} className="flex items-center gap-1.5 p-1.5 rounded-md bg-secondary/30 group">
-                            <span className="text-[10px] font-mono text-muted-foreground w-4 text-right shrink-0">{idx + 1}.</span>
-                            <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border shrink-0", positionColors[player.position])}>
-                              {player.position}
-                            </Badge>
-                            <span className="text-xs font-medium text-foreground truncate flex-1">{player.name}</span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-5 w-5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive shrink-0"
-                              onClick={() => removeFromQueue(player.id)}
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </ScrollArea>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* CENTER: Player Search + Shortlist */}
-            <div className="lg:col-span-5">
+            {/* LEFT: Player Search (Iter 150 — Eligible | My Queue | Shortlist) */}
+            <div className="lg:col-span-4">
               <Tabs defaultValue="eligible" className="w-full">
-                <TabsList className="w-full grid grid-cols-2">
-                  <TabsTrigger value="eligible">Eligible Players</TabsTrigger>
-                  <TabsTrigger value="shortlist">
+                <TabsList className="w-full grid grid-cols-3">
+                  <TabsTrigger value="eligible" data-testid="draft-room-tab-eligible">Eligible</TabsTrigger>
+                  <TabsTrigger value="queue" data-testid="draft-room-tab-queue">
+                    <ListOrdered className="h-3.5 w-3.5 mr-1" />
+                    Queue ({queue.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="shortlist" data-testid="draft-room-tab-shortlist">
                     <Star className="h-3.5 w-3.5 mr-1" />
                     Shortlist ({shortlistedPlayers.length})
                   </TabsTrigger>
@@ -916,6 +877,8 @@ export default function DraftRoom() {
                     <div className="space-y-1">
                       {filteredPlayers.map((player) => {
                         const isOnBlock = tradeBlockMode && tradeBlockPlayerIds.has(String(player.id));
+                        const isQueued = queue.includes(player.id);
+                        const isShortlisted = shortlist.has(player.id);
                         return (
                         <div
                           key={player.id}
@@ -931,6 +894,29 @@ export default function DraftRoom() {
                           <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border shrink-0", positionColors[player.position])}>
                             {player.position}
                           </Badge>
+                          {/* Iter 150 — Status icons (shortlisted / queued) right beside the position chip */}
+                          {isShortlisted && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-amber-500/20 text-amber-300 shrink-0"
+                                      data-testid={`draft-room-status-shortlisted-${player.id}`}>
+                                  <Star className="h-2.5 w-2.5 fill-current" />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>Shortlisted</TooltipContent>
+                            </Tooltip>
+                          )}
+                          {isQueued && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-primary/20 text-primary shrink-0"
+                                      data-testid={`draft-room-status-queued-${player.id}`}>
+                                  <ListOrdered className="h-2.5 w-2.5" />
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>In queue (#{queue.indexOf(player.id) + 1})</TooltipContent>
+                            </Tooltip>
+                          )}
                           {isOnBlock && (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -986,6 +972,47 @@ export default function DraftRoom() {
                   </ScrollArea>
                 </TabsContent>
 
+                {/* Iter 150 — Queue moved into a tab (was the col-2 LEFT card) */}
+                <TabsContent value="queue" className="mt-3">
+                  <p className="text-[10px] text-muted-foreground px-1 pb-2">
+                    Private — only you can see this
+                  </p>
+                  <ScrollArea className="h-[420px]" data-testid="draft-room-queue-list">
+                    {queuedPlayers.length === 0 ? (
+                      <div className="text-center py-12 space-y-2">
+                        <ListOrdered className="h-8 w-8 text-muted-foreground/20 mx-auto" />
+                        <p className="text-sm text-muted-foreground">Queue is empty</p>
+                        <p className="text-xs text-muted-foreground/60">Use the queue icon in eligible players</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {queuedPlayers.map((player, idx) => (
+                          <div key={player.id}
+                               className="flex items-center gap-2 p-2 rounded-md bg-secondary/30 group"
+                               data-testid={`draft-room-queue-row-${player.id}`}>
+                            <span className="text-[10px] font-mono text-muted-foreground w-5 text-right shrink-0">{idx + 1}.</span>
+                            <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border shrink-0", positionColors[player.position])}>
+                              {player.position}
+                            </Badge>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-foreground truncate">{player.name}</p>
+                              <p className="text-[10px] text-muted-foreground">#{player.ranking} · {player.league}</p>
+                            </div>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"
+                              onClick={() => removeFromQueue(player.id)}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </ScrollArea>
+                </TabsContent>
+
                 <TabsContent value="shortlist" className="mt-3">
                   <ScrollArea className="h-[450px]">
                     {shortlistedPlayers.length === 0 ? (
@@ -1023,9 +1050,35 @@ export default function DraftRoom() {
               </Tabs>
             </div>
 
-            {/* RIGHT: Chat + My Roster */}
-            <div className="lg:col-span-5 space-y-4">
-              {/* Draft Chat (Iter 148: tabs split — All / Chat / Trades) */}
+            {/* CENTER: Truncated Roster (Iter 150) */}
+            <div className="lg:col-span-4">
+              <TruncatedRosterPanel
+                leagueId={activeLeagueCtx?.id}
+                myTeamId={myTeam?.id}
+                teams={(liveTeams || []).map((t: any) => ({
+                  id: t.id,
+                  name: t.name,
+                }))}
+                tradeBlockItems={tradeBlockItems}
+                capEnabled={!!activeLeagueCtx?.cap_enabled}
+                onPickPlayerForTrade={(team, player) => {
+                  if (!team || !player) return;
+                  if (!tradeBuilder.isOpen) tradeBuilder.openBuilder();
+                  tradeBuilder.addPlayer({
+                    playerId: player.id,
+                    playerName: player.name,
+                    position: player.position,
+                    ownerTeamId: team.id,
+                    ownerTeamName: team.name,
+                    capHit: player.cap_hit,
+                  });
+                  toast.success(`Added ${player.name} to trade — ${team.name}`);
+                }}
+              />
+            </div>
+
+            {/* RIGHT: Chat */}
+            <div className="lg:col-span-4">
               <DraftChatPanel
                 chatMessages={chatMessages}
                 chatInput={chatInput}
@@ -1037,31 +1090,6 @@ export default function DraftRoom() {
                 isCommissioner={!!(activeLeagueCtx?.is_commissioner || activeLeagueCtx?.commissioner_id === user?.id)}
                 league={activeLeagueCtx}
               />
-
-              {/* My Roster */}
-              <Card className="border-border">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm flex items-center gap-2">
-                    <Users className="h-4 w-4 text-accent" />
-                    My Roster — Team Frostbite
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-2">
-                  <ScrollArea className="h-[180px]">
-                    <div className="space-y-1">
-                      {myRoster.map((player, idx) => (
-                        <div key={idx} className="flex items-center gap-2 p-1.5 rounded-md bg-secondary/20">
-                          <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border shrink-0", positionColors[player.position])}>
-                            {player.position}
-                          </Badge>
-                          <span className="text-xs font-medium text-foreground truncate flex-1">{player.name}</span>
-                          <span className="text-[10px] text-muted-foreground tabular-nums">{player.pts}P</span>
-                        </div>
-                      ))}
-                    </div>
-                  </ScrollArea>
-                </CardContent>
-              </Card>
             </div>
           </div>
         </div>

@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowRightLeft, Info, ChevronDown, ShoppingCart, CheckCircle2, Clock, AlertTriangle, CalendarDays, Repeat } from "lucide-react";
+import { ArrowRightLeft, Info, ChevronDown, ShoppingCart, CheckCircle2, Clock, AlertTriangle, CalendarDays, Repeat, Megaphone } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
@@ -840,8 +840,9 @@ export default function DraftBoardPage() {
                                       traded
                                     </span>
                                     {isOnTradeBlock && (
-                                      <Badge variant="outline" className="text-[9px] px-1 h-3.5 bg-amber-500/10 border-amber-500/30 text-amber-400 gap-0.5 mt-0.5">
-                                        <ShoppingCart className="h-2 w-2" />
+                                      <Badge variant="outline" className="text-[9px] px-1 h-3.5 bg-amber-500/10 border-amber-500/30 text-amber-400 gap-0.5 mt-0.5"
+                                             data-testid={`draft-board-block-icon-traded-${team.abbr}-r${round}`}>
+                                        <Megaphone className="h-2 w-2" />
                                         Available
                                       </Badge>
                                     )}
@@ -875,8 +876,9 @@ export default function DraftBoardPage() {
                                   <div className="flex flex-col items-center gap-0.5">
                                     <span className="text-xs text-muted-foreground">{team.abbr}</span>
                                     {isOnTradeBlock && (
-                                      <Badge variant="outline" className="text-[9px] px-1 h-3.5 bg-amber-500/10 border-amber-500/30 text-amber-400 gap-0.5 mt-0.5">
-                                        <ShoppingCart className="h-2 w-2" />
+                                      <Badge variant="outline" className="text-[9px] px-1 h-3.5 bg-amber-500/10 border-amber-500/30 text-amber-400 gap-0.5 mt-0.5"
+                                             data-testid={`draft-board-block-icon-${team.abbr}-r${round}`}>
+                                        <Megaphone className="h-2 w-2" />
                                         Available
                                       </Badge>
                                     )}

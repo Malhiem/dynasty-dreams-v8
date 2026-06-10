@@ -788,3 +788,85 @@ async def get_depth_lineup(team_id: str, request: Request):
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     return {"team_id": team_id, "lineups": team.get("depth_lineup") or {}}
+
+
+
+# ─── Iter 150 — Truncated roster for Draft Room side panel ──────────────
+@router.get("/teams/{team_id}/roster-truncated")
+async def get_team_roster_truncated(
+    team_id: str,
+    request: Request,
+    stat_filter: str = "season",
+):
+    """Returns a compact roster for the Draft Room truncated roster panel.
+
+    Each entry: {id, name, position, fantasy_points, fp_per_game, cap_hit}.
+    The `stat_filter` query param (season / regular / playoffs / l30 / l7)
+    selects which stat bucket to surface. Falls back gracefully when a
+    league does not track playoff stats (returns 0 for that bucket).
+    """
+    db = _deps["db"]
+    _safe_object_id = _deps["_safe_object_id"]
+
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    roster = await db.rosters.find_one({"team_id": team_id})
+    player_ids = (roster or {}).get("players") or []
+    if not player_ids:
+        # Fallback: some seed leagues store roster as team.player_ids
+        player_ids = team.get("player_ids") or []
+
+    if not player_ids:
+        return {"team_id": team_id, "stat_filter": stat_filter, "players": []}
+
+    # Fetch players. ObjectId-friendly so seed + live mix work.
+    obj_ids = []
+    str_ids = []
+    for pid in player_ids:
+        try:
+            obj_ids.append(ObjectId(str(pid)))
+        except Exception:
+            str_ids.append(str(pid))
+    query = {"$or": []}
+    if obj_ids:
+        query["$or"].append({"_id": {"$in": obj_ids}})
+    if str_ids:
+        query["$or"].append({"_id": {"$in": str_ids}})
+    if not query["$or"]:
+        return {"team_id": team_id, "stat_filter": stat_filter, "players": []}
+
+    players_docs = await db.players.find(query).to_list(200)
+
+    def _stat(p: dict, key: str, default: float = 0) -> float:
+        if not isinstance(p, dict):
+            return default
+        stats = p.get("stats") or {}
+        bucket = stats.get(stat_filter) if isinstance(stats, dict) else None
+        if isinstance(bucket, dict) and key in bucket:
+            return float(bucket.get(key) or default)
+        # Fall back to flat field
+        return float(p.get(key) or default)
+
+    def _gp(p: dict) -> int:
+        return int(_stat(p, "games_played") or _stat(p, "gp") or 0)
+
+    out = []
+    for p in players_docs:
+        fp = _stat(p, "fantasy_points")
+        gp = _gp(p)
+        fp_pg = (fp / gp) if gp > 0 else 0
+        out.append({
+            "id": str(p.get("_id")),
+            "name": p.get("name") or p.get("full_name") or "—",
+            "position": (p.get("position") or p.get("primary_position") or "").split(",")[0].strip() or "—",
+            "fantasy_points": round(fp, 1) if fp else 0,
+            "fp_per_game": round(fp_pg, 2) if fp_pg else 0,
+            "cap_hit": p.get("cap_hit") or p.get("salary") or 0,
+            "games_played": gp,
+        })
+
+    # Sort by FP desc by default
+    out.sort(key=lambda x: x.get("fantasy_points") or 0, reverse=True)
+    return {"team_id": team_id, "stat_filter": stat_filter, "players": out}
