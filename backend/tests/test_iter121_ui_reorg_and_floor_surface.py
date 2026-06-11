@@ -66,10 +66,11 @@ def test_salary_cap_contracts_tab_exists():
     src = open("/app/frontend/src/lovable/pages/CommissionerSettings.tsx").read()
     assert 'tab-salary-cap-contracts' in src
     assert 'salary-cap-contracts-tab' in src
-    # The three cards are now imported + rendered in the new tab
-    assert "SalaryCapCard" in src
-    assert "SalaryRetentionCard" in src
-    assert "ContractBuyoutsCard" in src
+    # Iter 158 — three cards now live inside SalaryCapContractsTab.tsx
+    tab_src = open("/app/frontend/src/lovable/pages/commissioner/tabs/SalaryCapContractsTab.tsx").read()
+    assert "SalaryCapCard" in tab_src
+    assert "SalaryRetentionCard" in tab_src
+    assert "ContractBuyoutsCard" in tab_src
 
 
 def test_prospect_eligibility_card_present_on_rosters_tab():

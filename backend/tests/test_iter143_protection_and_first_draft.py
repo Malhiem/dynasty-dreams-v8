@@ -93,14 +93,15 @@ def test_protection_list_status_endpoint_live(owner_token, owner_league):
 
 # ── 3. Admin Select: First-Time disabled when completed + Redraft option ──
 def test_admin_gates_startup_and_offers_redraft():
-    src = ADMIN.read_text()
-    assert 'data-testid="draft-type-startup"' in src
-    assert "disabled={firstDraftCompleted}" in src
-    assert 'data-testid="draft-type-redraft"' in src
-    assert ">Redraft<" in src
+    admin_src = ADMIN.read_text()
+    draft_tab = (REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx").read_text()
+    assert 'data-testid="draft-type-startup"' in draft_tab
+    assert "disabled={firstDraftCompleted}" in draft_tab
+    assert 'data-testid="draft-type-redraft"' in draft_tab
+    assert ">Redraft<" in draft_tab
     # Persistence
-    assert "persistDraftType" in src
-    assert "/next-draft-type" in src
+    assert "persistDraftType" in admin_src
+    assert "/next-draft-type" in admin_src
 
 
 # ── 4. Backend next-draft-type endpoint rejects startup after completion ──

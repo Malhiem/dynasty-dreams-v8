@@ -145,10 +145,10 @@ def test_commish_override_panel_exists():
     assert 'data-testid="commish-protection-metric"' in src
     assert "commish-protection-auto-${t.id}" in src
     assert "/protection-list/auto-protect" in src
-    # Mounted in League Admin → Draft tab for both keeper + expansion
-    admin = REPO / "frontend/src/lovable/pages/CommissionerSettings.tsx"
-    admin_src = admin.read_text()
-    assert "import CommissionerProtectionOverridePanel" in admin_src
-    assert "<CommissionerProtectionOverridePanel" in admin_src
-    assert 'draftType="expansion"' in admin_src
-    assert 'draftType="keeper"' in admin_src
+    # Mounted in League Admin → Draft tab (now extracted to DraftTab.tsx) for both keeper + expansion
+    draft_tab = REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx"
+    draft_tab_src = draft_tab.read_text()
+    assert "import CommissionerProtectionOverridePanel" in draft_tab_src
+    assert "<CommissionerProtectionOverridePanel" in draft_tab_src
+    assert 'draftType="expansion"' in draft_tab_src
+    assert 'draftType="keeper"' in draft_tab_src

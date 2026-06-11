@@ -22,13 +22,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
 } from "@/components/ui/table";
-import { ChevronDown, ChevronRight, Trophy, Calendar, Users, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Trophy, Calendar, Users, Plus, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/pages/commissioner/TransactionsConfigCards";
 import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard";
 import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard";
 import ExpansionDraftSettingsCard from "@/lovable/pages/commissioner/ExpansionDraftSettingsCard";
 import CommissionerProtectionOverridePanel from "@/lovable/pages/commissioner/CommissionerProtectionOverridePanel";
+import { toast } from "sonner";
 
 export interface DraftTabContext {
   // State
@@ -57,7 +58,7 @@ export interface DraftTabContext {
   persistDraftType: (v: string) => void;
   completedDraftResults: any[];
   playerCriteriaOptions: any[];
-  teams: any[];
+  scheduledDrafts: any[];
 }
 
 interface DraftTabProps {
@@ -72,7 +73,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
     draftClockEnd, setDraftClockEnd, selectedPlayerCriteria, setSelectedPlayerCriteria,
     createDraftPickTrading, setCreateDraftPickTrading,
     expandedDraft, setExpandedDraft, expandedDraftResults, setExpandedDraftResults,
-    activeLeague, persistDraftType, completedDraftResults, playerCriteriaOptions, teams,
+    activeLeague, persistDraftType, completedDraftResults, playerCriteriaOptions, scheduledDrafts,
   } = ctx;
   return (
     <div className="space-y-6" data-testid="commissioner-draft-tab">

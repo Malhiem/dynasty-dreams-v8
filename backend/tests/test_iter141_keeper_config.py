@@ -89,20 +89,20 @@ def test_keeper_card_fields_and_info():
 
 # ── 2. League Admin gates the card on draft_type === "keeper" ──
 def test_admin_keeper_card_gated_on_draft_type():
-    src = ADMIN.read_text()
-    assert 'import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard"' in src
+    admin_src = ADMIN.read_text()
+    draft_tab_src = (REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx").read_text()
+    # Parent still mounts DraftTab and Keeper option lives in the extracted file
+    assert 'import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard"' in draft_tab_src
     # Keeper Draft option in the Select
-    assert 'data-testid="draft-type-keeper"' in src, "Keeper Draft option missing in Draft Type Select"
-    assert ">Keeper Draft<" in src, "Keeper Draft label missing"
+    assert 'data-testid="draft-type-keeper"' in draft_tab_src, "Keeper Draft option missing in Draft Type Select"
+    assert ">Keeper Draft<" in draft_tab_src, "Keeper Draft label missing"
     # Card mounted under conditional
-    draft_tab_idx = src.find('TabsContent value="draft"')
-    block = src[draft_tab_idx:draft_tab_idx + 4000]
-    assert 'draftType === "keeper"' in block, "Render gate missing on draftType"
-    assert "<KeeperSettingsCard" in block, "Card must render inside the gate"
+    assert 'draftType === "keeper"' in draft_tab_src, "Render gate missing on draftType"
+    assert "<KeeperSettingsCard" in draft_tab_src, "Card must render inside the gate"
     # Draft Type is now controlled (no defaultValue, uses value/onValueChange)
-    assert "value={draftType}" in block
+    assert "value={draftType}" in draft_tab_src
     # setDraftType OR persistDraftType (Iter 143 wraps the setter for persistence)
-    assert ("setDraftType" in block) or ("persistDraftType" in block)
+    assert ("setDraftType" in admin_src) or ("persistDraftType" in admin_src)
 
 
 # ── 3. Backend exposes GET + PUT keeper-config ─────────────────

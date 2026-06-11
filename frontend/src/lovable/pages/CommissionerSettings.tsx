@@ -18,9 +18,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { toast } from "sonner";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
-import TeamsTab from "@/lovable/components/admin/TeamsTab";
 import DivisionsTab from "@/lovable/pages/commissioner/DivisionsTab";
-import RulesScheduleTab, { RosterLockCard, SalaryCapCard, SalaryRetentionCard, ContractBuyoutsCard } from "@/lovable/pages/commissioner/RulesScheduleTab";
+import RulesScheduleTab, { RosterLockCard } from "@/lovable/pages/commissioner/RulesScheduleTab";
 import {
   EmergencyRosterChangesCard,
   GoalieScoringCard,
@@ -34,14 +33,10 @@ import DraftTab from "@/lovable/pages/commissioner/tabs/DraftTab";
 import PlayerPoolTab from "@/lovable/pages/commissioner/tabs/PlayerPoolTab";
 import ScoringTab from "@/lovable/pages/commissioner/tabs/ScoringTab";
 import { TankMonitorTab, RosterMonitorTab } from "@/lovable/pages/commissioner/tabs/MonitorTabs";
-import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/pages/commissioner/TransactionsConfigCards";
-import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard";
-import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard";
-import ExpansionDraftSettingsCard from "@/lovable/pages/commissioner/ExpansionDraftSettingsCard";
-import CommissionerProtectionOverridePanel from "@/lovable/pages/commissioner/CommissionerProtectionOverridePanel";
+import SalaryCapContractsTab from "@/lovable/pages/commissioner/tabs/SalaryCapContractsTab";
+import LeagueAdminTab from "@/lovable/pages/commissioner/tabs/LeagueAdminTab";
+import TransactionsConfigCards from "@/lovable/pages/commissioner/TransactionsConfigCards";
 import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
-import SchedulesTab from "@/lovable/components/admin/SchedulesTab";
-import { SeasonAwardsTab } from "@/lovable/components/admin/SeasonAwardsTab";
 
 const nhlTeams = [
   "Anaheim Ducks", "Arizona Coyotes", "Boston Bruins", "Buffalo Sabres", "Calgary Flames",
@@ -1319,19 +1314,7 @@ const CommissionerSettings = () => {
 
           {/* Iter 121 — Salary Cap & Contracts Tab */}
           <TabsContent value="salary-cap-contracts" className="space-y-6" data-testid="salary-cap-contracts-tab">
-            {activeLeague?.id ? (
-              <>
-                <SalaryCapCard league={activeLeague} reloadLeague={reloadLeague} />
-                <SalaryRetentionCard league={activeLeague} reloadLeague={reloadLeague} />
-                <ContractBuyoutsCard league={activeLeague} reloadLeague={reloadLeague} />
-              </>
-            ) : (
-              <Card className="bg-card border-border">
-                <CardContent className="py-6 text-sm text-muted-foreground italic">
-                  Select a league to edit salary cap & contract settings.
-                </CardContent>
-              </Card>
-            )}
+            <SalaryCapContractsTab activeLeague={activeLeague} reloadLeague={reloadLeague} />
           </TabsContent>
 
           {/* Scoring Tab */}
@@ -1359,7 +1342,7 @@ const CommissionerSettings = () => {
                 expandedDraft, setExpandedDraft,
                 expandedDraftResults, setExpandedDraftResults,
                 activeLeague, persistDraftType, completedDraftResults,
-                playerCriteriaOptions, teams,
+                playerCriteriaOptions, scheduledDrafts,
               }}
             />
           </TabsContent>
@@ -1384,41 +1367,11 @@ const CommissionerSettings = () => {
 
           {/* League Administration Tab */}
           <TabsContent value="admin" className="space-y-6">
-            <Tabs value={adminSubTab} onValueChange={setAdminSubTab}>
-              <TabsList className="bg-secondary border border-border">
-                <TabsTrigger value="teams" className="data-[state=active]:bg-primary/20">
-                  <Users className="h-4 w-4 mr-2" />
-                  Teams
-                </TabsTrigger>
-                <TabsTrigger value="schedules" className="data-[state=active]:bg-primary/20">
-                  <Calendar className="h-4 w-4 mr-2" />
-                  Schedules
-                </TabsTrigger>
-                <TabsTrigger value="season-awards" className="data-[state=active]:bg-primary/20" data-testid="admin-tab-season-awards">
-                  <Trophy className="h-4 w-4 mr-2" />
-                  Season Awards
-                </TabsTrigger>
-              </TabsList>
-              <TabsContent value="teams">
-                <TeamsTab />
-              </TabsContent>
-              <TabsContent value="schedules">
-                {!isH2H ? (
-                  <Card className="bg-card border-border opacity-50">
-                    <CardContent className="py-12 text-center space-y-2">
-                      <Calendar className="h-8 w-8 text-muted-foreground mx-auto" />
-                      <p className="text-sm font-medium text-muted-foreground">Matchup scheduling is only available for Head-to-Head formats</p>
-                      <p className="text-xs text-muted-foreground">Switch to a Head-to-Head scoring format in League Setup to configure schedules</p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <SchedulesTab />
-                )}
-              </TabsContent>
-              <TabsContent value="season-awards">
-                <SeasonAwardsTab />
-              </TabsContent>
-            </Tabs>
+            <LeagueAdminTab
+              adminSubTab={adminSubTab}
+              setAdminSubTab={setAdminSubTab}
+              isH2H={isH2H}
+            />
           </TabsContent>
         </Tabs>
       </div>

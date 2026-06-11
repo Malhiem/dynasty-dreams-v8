@@ -92,12 +92,10 @@ def test_card_has_all_fields():
 
 
 def test_admin_gates_expansion_card():
-    src = ADMIN.read_text()
-    assert 'import ExpansionDraftSettingsCard from "@/lovable/pages/commissioner/ExpansionDraftSettingsCard"' in src
-    draft_tab_idx = src.find('TabsContent value="draft"')
-    block = src[draft_tab_idx:draft_tab_idx + 5000]
-    assert 'draftType === "expansion"' in block, "Render gate missing"
-    assert "<ExpansionDraftSettingsCard" in block, "Card not mounted"
+    draft_tab = (REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx").read_text()
+    assert 'import ExpansionDraftSettingsCard from "@/lovable/pages/commissioner/ExpansionDraftSettingsCard"' in draft_tab
+    assert 'draftType === "expansion"' in draft_tab, "Render gate missing"
+    assert "<ExpansionDraftSettingsCard" in draft_tab, "Card not mounted"
 
 
 def test_backend_routes_exist():

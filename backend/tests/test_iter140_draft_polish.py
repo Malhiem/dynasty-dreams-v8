@@ -22,6 +22,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 ADMIN = REPO / "frontend/src/lovable/pages/CommissionerSettings.tsx"
+DRAFT_TAB = REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx"
 CARD = REPO / "frontend/src/lovable/pages/commissioner/DraftOrderConfigCard.tsx"
 SERVER = REPO / "backend/server.py"
 SOCKET = REPO / "frontend/src/hooks/use-socket.js"
@@ -31,10 +32,7 @@ DRAFT_BOARD = REPO / "frontend/src/lovable/pages/DraftBoard.tsx"
 
 # ── 1. League Admin → Draft tab now renders "Create a Draft" ───
 def test_admin_renames_to_create_a_draft():
-    src = ADMIN.read_text()
-    draft_tab_idx = src.find('TabsContent value="draft"')
-    assert draft_tab_idx > 0
-    block = src[draft_tab_idx:draft_tab_idx + 8000]
+    block = DRAFT_TAB.read_text()
     assert "<CardTitle>Create a Draft</CardTitle>" in block, "Title must be 'Create a Draft'"
     # DraftOrderConfigCard is inside the Create a Draft card AFTER the Draft Type select
     type_pos = block.find("First-Time Team Draft")  # inside the Select

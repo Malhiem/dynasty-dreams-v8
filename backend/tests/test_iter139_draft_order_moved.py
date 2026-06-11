@@ -35,20 +35,13 @@ def test_draft_order_config_card_exists():
 
 # ── 2. Mounted in League Administration → Draft tab ────────────
 def test_card_mounted_in_league_admin():
-    src = ADMIN.read_text()
-    assert 'import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard"' in src, \
-        "DraftOrderConfigCard import missing in CommissionerSettings"
-    # Mounted in the draft TabsContent. In Iter 140 the card is embedded
-    # inside the "Create a Draft" card BELOW the Draft Type selector. The
-    # legacy TransactionsDraftRulesCard now lives at the bottom of the
-    # tab — outside the Create a Draft card.
-    draft_tab_idx = src.find('TabsContent value="draft"')
-    assert draft_tab_idx > 0, "Draft tab block not found"
-    # Find the end of the draft TabsContent so we can scope our search
-    next_tab_idx = src.find('TabsContent value="', draft_tab_idx + 1)
-    block = src[draft_tab_idx:next_tab_idx if next_tab_idx > 0 else draft_tab_idx + 8000]
-    assert "<DraftOrderConfigCard" in block, "Card not rendered inside Draft tab"
-    assert "<TransactionsDraftRulesCard" in block, "Legacy draft rules card missing from Draft tab"
+    # Iter 157 — Draft tab body extracted to DraftTab.tsx
+    draft_tab = REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx"
+    draft_src = draft_tab.read_text()
+    assert 'import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard"' in draft_src, \
+        "DraftOrderConfigCard import missing in DraftTab"
+    assert "<DraftOrderConfigCard" in draft_src, "Card not rendered inside Draft tab"
+    assert "<TransactionsDraftRulesCard" in draft_src, "Legacy draft rules card missing from Draft tab"
 
 
 # ── 3. Draft Board "Draft Order Results" tab is now read-only ──
