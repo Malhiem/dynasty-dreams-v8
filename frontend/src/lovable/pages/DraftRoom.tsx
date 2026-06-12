@@ -43,6 +43,7 @@ import {
   Users,
   Repeat,
   Megaphone,
+  ArrowRightLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
@@ -53,6 +54,8 @@ import DraftChatPanel from "@/lovable/pages/draftroom/DraftChatPanel";
 import TruncatedRosterPanel from "@/lovable/pages/draftroom/TruncatedRosterPanel";
 import SelectedPlayerCard from "@/lovable/pages/draftroom/SelectedPlayerCard";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
+import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
+import api from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -388,12 +391,45 @@ export default function DraftRoom() {
   // can quickly see which picks each team controls. Multi-select via
   // toggle. Empty set = "show all" (default).
   const [selectedOwnerAbbrs, setSelectedOwnerAbbrs] = useState<Set<string>>(new Set());
+  // Iter 165 — Live draft picks (with trade_history) for provenance overlays.
+  // Keyed by `${round}|${original_team_id}` so the Draft Board's column-by-
+  // original-slot rendering can look up provenance per tile.
+  const [livePicksByOrigKey, setLivePicksByOrigKey] = useState<Record<string, any>>({});
   // Iter 161 — pull the league context BEFORE any effect that references
   // it. The expanded-player fetch hook below uses activeLeagueCtx in its
   // dep array, so it MUST be declared first (TDZ error otherwise).
   const tradeBuilder = useTradeBuilder();
   const { user } = useAuth();
   const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();
+  // Iter 165 — Fetch real draft picks (with trade_history) for the active
+  // league + current draft year so provenance tooltips can populate.
+  useEffect(() => {
+    if (!activeLeagueCtx?.id) { setLivePicksByOrigKey({}); return; }
+    const year = new Date().getFullYear();
+    api.get(`/drafts/${activeLeagueCtx.id}/picks?year=${year}`)
+      .then((res) => {
+        const picks = (res.data?.picks || []) as any[];
+        const map: Record<string, any> = {};
+        // Compute all the abbr fallbacks the Draft Board's column header
+        // matcher uses, so picks resolve even when `ownerTeam` doesn't.
+        const computeAbbrs = (name: string): string[] => {
+          if (!name) return [];
+          const nameAbbr = name.replace(/\s/g, "").slice(0, 3).toUpperCase();
+          const fullName = name.split(" ").map((w) => w[0] || "").join("").toUpperCase();
+          return [nameAbbr, fullName];
+        };
+        for (const p of picks) {
+          // Primary key — original_team_id
+          map[`${p.round}|${p.original_team_id}`] = p;
+          // Secondary keys — every column-abbr derivation we might see
+          for (const ab of computeAbbrs(p.original_team_name || "")) {
+            map[`${p.round}|abbr:${ab}`] = p;
+          }
+        }
+        setLivePicksByOrigKey(map);
+      })
+      .catch(() => setLivePicksByOrigKey({}));
+  }, [activeLeagueCtx?.id]);
   // Iter 154 — When the expanded player has a Mongo ObjectId, fetch the real
   // record (NHL stats, contract, schedule) and merge over the lean fallback.
   useEffect(() => {
@@ -905,6 +941,16 @@ export default function DraftRoom() {
                           const ownerFilterActive = selectedOwnerAbbrs.size > 0;
                           const isOwnedBySelected = ownerFilterActive && selectedOwnerAbbrs.has(teamAbbr);
                           const isDimmedByFilter = ownerFilterActive && !isOwnedBySelected;
+                          // Iter 165 — pick provenance. Look up via
+                          // ownerTeam.id first (when resolved) and
+                          // fall back to the column abbr (so traded
+                          // picks light up even on columns where the
+                          // ownerTeam lookup didn't resolve).
+                          const livePick =
+                            (ownerTeam?.id ? livePicksByOrigKey[`${round}|${ownerTeam.id}`] : null)
+                            || livePicksByOrigKey[`${round}|abbr:${teamAbbr}`];
+                          const tradeHistory = (livePick?.trade_history || []) as any[];
+                          const isTradedPick = tradeHistory.length > 0;
                           return (
                             <div
                               key={`${round}-${teamAbbr}`}
@@ -947,6 +993,22 @@ export default function DraftRoom() {
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     {isPlayerOnBlock ? "Player available — on trade block" : "Upcoming pick available — on trade block"}
+                                  </TooltipContent>
+                                </Tooltip>
+                              )}
+                              {/* Iter 165 — Traded-pick provenance chip */}
+                              {isTradedPick && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span
+                                      className="absolute top-0.5 right-0.5 inline-flex items-center justify-center h-4 w-4 rounded-sm bg-sky-500/25 text-sky-300 cursor-help"
+                                      data-testid={`draft-board-pick-traded-${teamAbbr}-${round}`}
+                                    >
+                                      <ArrowRightLeft className="h-2.5 w-2.5" />
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-sm">
+                                    <PickProvenance tradeHistory={tradeHistory} />
                                   </TooltipContent>
                                 </Tooltip>
                               )}
