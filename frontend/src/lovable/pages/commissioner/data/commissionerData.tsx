@@ -7,7 +7,7 @@
  * Extracting them shrinks CommissionerSettings.tsx by ~640 lines without
  * changing any behavior — every consumer still imports the same identifiers.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
@@ -16,6 +16,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Flag, Wrench } from "lucide-react";
+import api from "@/lib/api";
 
 // ── Static lists ─────────────────────────────────────────────────
 export const nhlTeams = [
@@ -172,21 +173,44 @@ export const aggregateWeeks = (fromWeek: number, toWeek: number): TeamTankData[]
   });
 };
 
-export const TankMonitorTable = () => {
+export const TankMonitorTable = ({ leagueId }: { leagueId?: string }) => {
   const [fromWeek, setFromWeek] = useState(1);
   const [toWeek, setToWeek] = useState(TOTAL_WEEKS);
+  const [liveTeams, setLiveTeams] = useState<TeamTankData[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const data = fromWeek === toWeek ? (weeklyTankData[fromWeek] || []) : aggregateWeeks(fromWeek, toWeek);
+  useEffect(() => {
+    if (!leagueId) { setLiveTeams(null); return; }
+    setLoading(true);
+    setLoadError(null);
+    api.get(`/leagues/${leagueId}/tank-monitor`)
+      .then((res) => {
+        const teams = (res.data?.teams || []) as TeamTankData[];
+        setLiveTeams(teams);
+      })
+      .catch((err) => {
+        setLoadError(err?.response?.data?.detail || "Failed to load live tank data");
+        setLiveTeams(null);
+      })
+      .finally(() => setLoading(false));
+  }, [leagueId]);
+
+  const isLive = !!leagueId && liveTeams !== null;
+  // When live, ignore week range — current snapshot only. Keep mock week-range behavior when no league selected.
+  const data = isLive
+    ? (liveTeams as TeamTankData[])
+    : (fromWeek === toWeek ? (weeklyTankData[fromWeek] || []) : aggregateWeeks(fromWeek, toWeek));
 
   const calcRatio = (d: TeamTankData) => ((d.startingPts + d.benchPts + d.irPts + d.minorsPts) / d.startingPts * 100);
   const calcBenchPct = (d: TeamTankData) => (d.benchPts / d.startingPts * 100);
   const calcIrPct = (d: TeamTankData) => (d.irPts / d.startingPts * 100);
   const calcMinorsPct = (d: TeamTankData) => (d.minorsPts / d.startingPts * 100);
 
-  const avgStarting = data.reduce((s, d) => s + d.startingPts, 0) / data.length;
-  const avgBench = data.reduce((s, d) => s + d.benchPts, 0) / data.length;
-  const avgIr = data.reduce((s, d) => s + d.irPts, 0) / data.length;
-  const avgMinors = data.reduce((s, d) => s + d.minorsPts, 0) / data.length;
+  const avgStarting = data.length ? data.reduce((s, d) => s + d.startingPts, 0) / data.length : 0;
+  const avgBench = data.length ? data.reduce((s, d) => s + d.benchPts, 0) / data.length : 0;
+  const avgIr = data.length ? data.reduce((s, d) => s + d.irPts, 0) / data.length : 0;
+  const avgMinors = data.length ? data.reduce((s, d) => s + d.minorsPts, 0) / data.length : 0;
   const avgRow: TeamTankData = { team: "League Average", startingPts: avgStarting, benchPts: avgBench, irPts: avgIr, minorsPts: avgMinors };
 
   const sorted = [...data].sort((a, b) => calcRatio(b) - calcRatio(a));
@@ -206,8 +230,24 @@ export const TankMonitorTable = () => {
   const weekOptions = Array.from({ length: TOTAL_WEEKS }, (_, i) => i + 1);
 
   return (
-    <div className="space-y-4">
-      {/* Week range filters */}
+    <div className="space-y-4" data-testid="tank-monitor-table">
+      {/* Live status banner */}
+      {leagueId && (
+        <div className="flex items-center gap-2 text-xs" data-testid="tank-monitor-mode">
+          {loading && <Badge variant="outline" className="text-xs animate-pulse">Loading live league data…</Badge>}
+          {!loading && isLive && (
+            <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-xs" data-testid="tank-monitor-live-badge">
+              Live · {liveTeams?.length ?? 0} teams
+            </Badge>
+          )}
+          {!loading && loadError && (
+            <Badge variant="destructive" className="text-xs" data-testid="tank-monitor-error">{loadError}</Badge>
+          )}
+        </div>
+      )}
+
+      {/* Week range filters — hidden in live mode (live data is current snapshot only) */}
+      {!isLive && (
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <Label className="text-sm whitespace-nowrap">From Week</Label>
@@ -240,6 +280,7 @@ export const TankMonitorTable = () => {
           {fromWeek === toWeek ? `Week ${fromWeek}` : `Weeks ${fromWeek}–${toWeek} (${toWeek - fromWeek + 1} weeks)`}
         </Badge>
       </div>
+      )}
 
       <ScrollArea className="w-full">
         <Table>
@@ -522,9 +563,46 @@ export const evaluateAutoFix = (
   return { canFix: true, fixCount: moveToBenchCount };
 };
 
-export const RosterMonitorTable = ({ onAuditLog }: { onAuditLog?: (entry: Omit<AuditLogEntry, "id" | "timestamp">) => void }) => {
+interface LiveRosterTeam {
+  team_id: string;
+  team: string;
+  counts: { starting: number; bench: number; ir: number; minors: number };
+  violations: { type: string; message: string }[];
+  players: { id: string; name: string; position: string; slot: string; is_goalie: boolean; irEligible: boolean; fantasyPoints: number }[];
+}
+
+export const RosterMonitorTable = ({ onAuditLog, leagueId }: { onAuditLog?: (entry: Omit<AuditLogEntry, "id" | "timestamp">) => void; leagueId?: string }) => {
   const [reviewWeek, setReviewWeek] = useState<number>(0); // 0 = current/live
   const [fixedTeams, setFixedTeams] = useState<Set<string>>(new Set());
+  const [liveTeams, setLiveTeams] = useState<LiveRosterTeam[] | null>(null);
+  const [liveLimits, setLiveLimits] = useState<typeof ROSTER_LIMITS | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!leagueId) { setLiveTeams(null); setLiveLimits(null); return; }
+    setLoading(true);
+    setLoadError(null);
+    api.get(`/leagues/${leagueId}/roster-monitor`)
+      .then((res) => {
+        setLiveTeams((res.data?.teams || []) as LiveRosterTeam[]);
+        const l = res.data?.limits || {};
+        setLiveLimits({
+          starting: (l.starting_skaters || 0) + (l.starting_goalies || 0),
+          bench: l.bench || ROSTER_LIMITS.bench,
+          ir: l.ir || ROSTER_LIMITS.ir,
+          minors: l.minors || ROSTER_LIMITS.minors,
+        });
+      })
+      .catch((err) => {
+        setLoadError(err?.response?.data?.detail || "Failed to load live roster data");
+        setLiveTeams(null); setLiveLimits(null);
+      })
+      .finally(() => setLoading(false));
+  }, [leagueId]);
+
+  const isLive = !!leagueId && liveTeams !== null;
+  const limits = isLive ? (liveLimits as typeof ROSTER_LIMITS) : ROSTER_LIMITS;
   const weekOptions = Array.from({ length: TOTAL_WEEKS }, (_, i) => i + 1);
 
   const isCurrentView = reviewWeek === 0;
@@ -548,7 +626,23 @@ export const RosterMonitorTable = ({ onAuditLog }: { onAuditLog?: (entry: Omit<A
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="roster-monitor-table">
+      {/* Live status banner */}
+      {leagueId && (
+        <div className="flex items-center gap-2 text-xs" data-testid="roster-monitor-mode">
+          {loading && <Badge variant="outline" className="text-xs animate-pulse">Loading live league data…</Badge>}
+          {!loading && isLive && (
+            <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-xs" data-testid="roster-monitor-live-badge">
+              Live · {liveTeams?.length ?? 0} teams
+            </Badge>
+          )}
+          {!loading && loadError && (
+            <Badge variant="destructive" className="text-xs" data-testid="roster-monitor-error">{loadError}</Badge>
+          )}
+        </div>
+      )}
+
+      {!isLive && (
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <Label className="text-sm whitespace-nowrap">Review Week</Label>
@@ -568,9 +662,10 @@ export const RosterMonitorTable = ({ onAuditLog }: { onAuditLog?: (entry: Omit<A
           {isCurrentView ? "Live Roster View" : `Week ${reviewWeek} Snapshot`}
         </Badge>
       </div>
+      )}
 
       <div className="flex items-center gap-4 text-xs text-muted-foreground pb-2 border-b border-border">
-        <span>Limits: Starting {ROSTER_LIMITS.starting} | Bench {ROSTER_LIMITS.bench} | IR {ROSTER_LIMITS.ir} | Minors {ROSTER_LIMITS.minors}</span>
+        <span>Limits: Starting {limits.starting} | Bench {limits.bench} | IR {limits.ir} | Minors {limits.minors}</span>
       </div>
 
       <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -584,20 +679,26 @@ export const RosterMonitorTable = ({ onAuditLog }: { onAuditLog?: (entry: Omit<A
           <TableHeader>
             <TableRow className="border-border">
               <TableHead className="text-muted-foreground">Team</TableHead>
-              <TableHead className="text-center text-muted-foreground">Starting ({ROSTER_LIMITS.starting})</TableHead>
-              <TableHead className="text-center text-muted-foreground">Bench ({ROSTER_LIMITS.bench})</TableHead>
-              <TableHead className="text-center text-muted-foreground">IR ({ROSTER_LIMITS.ir})</TableHead>
-              <TableHead className="text-center text-muted-foreground">Minors ({ROSTER_LIMITS.minors})</TableHead>
+              <TableHead className="text-center text-muted-foreground">Starting ({limits.starting})</TableHead>
+              <TableHead className="text-center text-muted-foreground">Bench ({limits.bench})</TableHead>
+              <TableHead className="text-center text-muted-foreground">IR ({limits.ir})</TableHead>
+              <TableHead className="text-center text-muted-foreground">Minors ({limits.minors})</TableHead>
               <TableHead className="text-center text-muted-foreground">Status</TableHead>
               <TableHead className="text-center text-muted-foreground">Auto-Fix</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {(isCurrentView ? rosterMonitorData : rosterMonitorData).map((teamData) => {
+            {((isLive ? (liveTeams || []).map((lt) => ({
+              team: lt.team,
+              players: (lt.players || []).map((p) => ({
+                name: p.name, position: p.position, slot: p.slot as any,
+                irEligible: !!p.irEligible, minorsEligible: true, playedLastWeek: true,
+              })),
+            } as TeamRoster)) : rosterMonitorData)).map((teamData) => {
               let startCount: number, benchCount: number, irCount: number, minorsCount: number;
               let irIneligible = false, minorsIneligible = false, startingInactive = false;
 
-              if (isCurrentView) {
+              if (isLive || isCurrentView) {
                 startCount = teamData.players.filter(p => p.slot === "starting").length;
                 benchCount = teamData.players.filter(p => p.slot === "bench").length;
                 irCount = teamData.players.filter(p => p.slot === "ir").length;
@@ -616,10 +717,10 @@ export const RosterMonitorTable = ({ onAuditLog }: { onAuditLog?: (entry: Omit<A
                 startingInactive = snap?.flags.includes("starting-inactive") ?? false;
               }
 
-              const startOver = startCount > ROSTER_LIMITS.starting;
-              const benchOver = benchCount > ROSTER_LIMITS.bench;
-              const irOver = irCount > ROSTER_LIMITS.ir;
-              const minorsOver = minorsCount > ROSTER_LIMITS.minors;
+              const startOver = startCount > limits.starting;
+              const benchOver = benchCount > limits.bench;
+              const irOver = irCount > limits.ir;
+              const minorsOver = minorsCount > limits.minors;
               const hasRedFlag = startOver || benchOver || irOver || minorsOver;
               const hasYellowFlag = irIneligible || minorsIneligible || startingInactive;
               const isFixed = fixedTeams.has(teamData.team);
@@ -645,26 +746,26 @@ export const RosterMonitorTable = ({ onAuditLog }: { onAuditLog?: (entry: Omit<A
                 <TableRow key={teamData.team} className="border-border">
                   <TableCell className="font-medium">{teamData.team}</TableCell>
                   <TableCell className="text-center">
-                    <span className={`tabular-nums ${startOver && !isFixed ? "text-destructive font-bold" : ""}`}>{isFixed ? ROSTER_LIMITS.starting : startCount}</span>
-                    {!isFixed && startOver && <FlagIcon red tooltip={`Over limit: ${startCount}/${ROSTER_LIMITS.starting}`} />}
+                    <span className={`tabular-nums ${startOver && !isFixed ? "text-destructive font-bold" : ""}`}>{isFixed ? limits.starting : startCount}</span>
+                    {!isFixed && startOver && <FlagIcon red tooltip={`Over limit: ${startCount}/${limits.starting}`} />}
                     {!isFixed && startingInactive && <FlagIcon yellow tooltip="Player(s) in starting lineup did not play last week" />}
                   </TableCell>
                   <TableCell className="text-center">
                     <span className={`tabular-nums ${benchOver && !isFixed ? "text-destructive font-bold" : ""}`}>{isFixed ? benchCount + autoFixResult.fixCount : benchCount}</span>
-                    {!isFixed && benchOver && <FlagIcon red tooltip={`Over limit: ${benchCount}/${ROSTER_LIMITS.bench}`} />}
+                    {!isFixed && benchOver && <FlagIcon red tooltip={`Over limit: ${benchCount}/${limits.bench}`} />}
                   </TableCell>
                   <TableCell className="text-center">
                     <span className={`tabular-nums ${irOver && !isFixed ? "text-destructive font-bold" : ""}`}>
                       {isFixed ? irCount - teamData.players.filter(p => p.slot === "ir" && !p.irEligible).length : irCount}
                     </span>
-                    {!isFixed && irOver && <FlagIcon red tooltip={`Over limit: ${irCount}/${ROSTER_LIMITS.ir}`} />}
+                    {!isFixed && irOver && <FlagIcon red tooltip={`Over limit: ${irCount}/${limits.ir}`} />}
                     {!isFixed && irIneligible && <FlagIcon yellow tooltip="Player(s) no longer meet IR eligibility criteria" />}
                   </TableCell>
                   <TableCell className="text-center">
                     <span className={`tabular-nums ${minorsOver && !isFixed ? "text-destructive font-bold" : ""}`}>
                       {isFixed ? minorsCount - teamData.players.filter(p => p.slot === "minors" && !p.minorsEligible).length : minorsCount}
                     </span>
-                    {!isFixed && minorsOver && <FlagIcon red tooltip={`Over limit: ${minorsCount}/${ROSTER_LIMITS.minors}`} />}
+                    {!isFixed && minorsOver && <FlagIcon red tooltip={`Over limit: ${minorsCount}/${limits.minors}`} />}
                     {!isFixed && minorsIneligible && <FlagIcon yellow tooltip="Player(s) no longer meet minors eligibility criteria" />}
                   </TableCell>
                   <TableCell className="text-center">

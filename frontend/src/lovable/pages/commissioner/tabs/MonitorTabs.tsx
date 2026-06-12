@@ -11,8 +11,9 @@ import { AlertTriangle, ClipboardCheck } from "lucide-react";
 
 interface TankMonitorTabProps {
   TankMonitorTable: React.ComponentType<any>;
+  leagueId?: string;
 }
-export function TankMonitorTab({ TankMonitorTable }: TankMonitorTabProps) {
+export function TankMonitorTab({ TankMonitorTable, leagueId }: TankMonitorTabProps) {
   return (
     <Card className="bg-card border-border" data-testid="commissioner-tank-monitor-tab">
       <CardHeader>
@@ -25,7 +26,7 @@ export function TankMonitorTab({ TankMonitorTable }: TankMonitorTabProps) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <TankMonitorTable />
+        <TankMonitorTable leagueId={leagueId} />
       </CardContent>
     </Card>
   );
@@ -34,8 +35,9 @@ export function TankMonitorTab({ TankMonitorTable }: TankMonitorTabProps) {
 interface RosterMonitorTabProps {
   RosterMonitorTable: React.ComponentType<any>;
   onAuditLog: (entry: any) => void;
+  leagueId?: string;
 }
-export function RosterMonitorTab({ RosterMonitorTable, onAuditLog }: RosterMonitorTabProps) {
+export function RosterMonitorTab({ RosterMonitorTable, onAuditLog, leagueId }: RosterMonitorTabProps) {
   return (
     <Card className="bg-card border-border" data-testid="commissioner-roster-monitor-tab">
       <CardHeader>
@@ -48,7 +50,7 @@ export function RosterMonitorTab({ RosterMonitorTable, onAuditLog }: RosterMonit
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <RosterMonitorTable onAuditLog={onAuditLog} />
+        <RosterMonitorTable onAuditLog={onAuditLog} leagueId={leagueId} />
       </CardContent>
     </Card>
   );

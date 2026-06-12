@@ -605,11 +605,11 @@ const CommissionerSettings = () => {
 
           {/* Tank Monitor Tab */}
           <TabsContent value="tanking" className="space-y-6">
-            <TankMonitorTab TankMonitorTable={TankMonitorTable} />
+            <TankMonitorTab TankMonitorTable={TankMonitorTable} leagueId={activeLeague?.id} />
           </TabsContent>
           {/* Roster Monitor Tab */}
           <TabsContent value="roster-monitor" className="space-y-6">
-            <RosterMonitorTab RosterMonitorTable={RosterMonitorTable} onAuditLog={addAuditEntry} />
+            <RosterMonitorTab RosterMonitorTable={RosterMonitorTable} onAuditLog={addAuditEntry} leagueId={activeLeague?.id} />
           </TabsContent>
 
           {/* Audit Log Tab */}
