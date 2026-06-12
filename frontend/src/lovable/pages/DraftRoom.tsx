@@ -944,10 +944,13 @@ export default function DraftRoom() {
                           // selected teams' picks pop. Empty selection
                           // = "show all" (no dimming).
                           const ownerFilterActive = selectedOwnerAbbrs.size > 0;
-                          // Iter 165 — pick provenance lookup
+                          // Iter 165 — pick provenance lookup. Strict
+                          // ID match preferred (avoids the abbr-collision
+                          // false positive bug); abbr fallback only when
+                          // ownerTeam.id genuinely doesn't resolve.
                           const livePick =
                             (ownerTeam?.id ? livePicksByOrigKey[`${round}|${ownerTeam.id}`] : null)
-                            || livePicksByOrigKey[`${round}|abbr:${teamAbbr}`];
+                            || (!ownerTeam?.id ? livePicksByOrigKey[`${round}|abbr:${teamAbbr}`] : null);
                           const tradeHistory = (livePick?.trade_history || []) as any[];
                           const isTradedPick = tradeHistory.length > 0;
                           // Iter 166 — filter resolves against the CURRENT
@@ -960,6 +963,13 @@ export default function DraftRoom() {
                             : [teamAbbr];
                           const isOwnedBySelected = ownerFilterActive && currentOwnerAbbrs.some((a: string) => selectedOwnerAbbrs.has(a));
                           const isDimmedByFilter = ownerFilterActive && !isOwnedBySelected;
+                          // Iter 167 — conditional-pick asterisk. Backend
+                          // surfaces `pending_protections` per pick (set
+                          // when a trade contains an unresolved upgrade
+                          // clause). Mark the tile with an `*` and a
+                          // tooltip; the original team can't re-trade.
+                          const conditionalProtections = (livePick?.pending_protections || []) as any[];
+                          const isConditional = conditionalProtections.length > 0;
                           return (
                             <div
                               key={`${round}-${teamAbbr}`}
@@ -976,7 +986,29 @@ export default function DraftRoom() {
                               )}
                               data-testid={onBlock ? `draft-room-block-tile-${teamAbbr}-${pick?.overall ?? "x"}` : undefined}
                             >
-                              <span className="text-[9px] text-muted-foreground">#{pick?.overall}</span>
+                              <span className="text-[9px] text-muted-foreground">
+                                #{pick?.overall}
+                                {isConditional && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span
+                                        className="ml-0.5 text-amber-400 font-bold cursor-help"
+                                        data-testid={`draft-board-pick-conditional-${teamAbbr}-${round}`}
+                                      >*</span>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-sm">
+                                      <div className="space-y-1 text-xs">
+                                        <p className="font-semibold">Conditional protection — locked from re-trade</p>
+                                        {conditionalProtections.map((c: any, idx: number) => (
+                                          <p key={idx} className="text-muted-foreground">
+                                            {c.description || `${c.subject_type} ${c.metric} ${c.operator} ${c.threshold}`}
+                                          </p>
+                                        ))}
+                                      </div>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                )}
+                              </span>
                               {pick?.player ? (
                                 <>
                                   <span className="text-[10px] font-medium text-foreground truncate w-full leading-tight">

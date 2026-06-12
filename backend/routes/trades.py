@@ -122,6 +122,48 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
             ),
         )
 
+    # ── Iter 167 — Conditional-pick lock ─────────────────────────
+    # A pick that's still inside an unresolved conditional clause
+    # (`pending_protections` non-empty) cannot be re-traded. Block on
+    # both sides of the proposal so the original team can't bypass by
+    # proposing the pick back to themselves.
+    pick_ids_in_play = [
+        a.pick_id for a in (input.assets_offered + input.assets_requested) if a.pick_id
+    ]
+    if pick_ids_in_play:
+        from bson import ObjectId as _OID
+        try:
+            obj_ids = [_OID(pid) for pid in pick_ids_in_play]
+        except Exception:
+            obj_ids = []
+        if obj_ids:
+            locked = await db.trades.find({
+                "league_id": input.league_id,
+                "status": "executed",
+                "pick_upgrades": {"$elemMatch": {
+                    "pick_id": {"$in": [str(o) for o in obj_ids]},
+                    "applied_at": None,
+                    "failed_at": None,
+                }},
+            }).to_list(50)
+            locked_pick_ids: set = set()
+            for t in locked:
+                for u in (t.get("pick_upgrades") or []):
+                    if u.get("applied_at") or u.get("failed_at"):
+                        continue
+                    pid = u.get("pick_id")
+                    if pid and pid in pick_ids_in_play:
+                        locked_pick_ids.add(pid)
+            if locked_pick_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "One or more picks are locked by a pending conditional "
+                        "clause and cannot be re-traded until the condition "
+                        "resolves: " + ", ".join(sorted(locked_pick_ids))
+                    ),
+                )
+
     proposer_team = await db.teams.find_one({"league_id": input.league_id, "owner_id": user["_id"]})
     if not proposer_team:
         raise HTTPException(status_code=403, detail="You don't have a team in this league")
