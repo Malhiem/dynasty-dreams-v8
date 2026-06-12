@@ -383,6 +383,12 @@ export default function DraftRoom() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   // Iter 153 — Window-within-window expanded player card (PlayerCardModal)
   const [expandedPlayer, setExpandedPlayer] = useState<any>(null);
+  // Iter 161 — pull the league context BEFORE any effect that references
+  // it. The expanded-player fetch hook below uses activeLeagueCtx in its
+  // dep array, so it MUST be declared first (TDZ error otherwise).
+  const tradeBuilder = useTradeBuilder();
+  const { user } = useAuth();
+  const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();
   // Iter 154 — When the expanded player has a Mongo ObjectId, fetch the real
   // record (NHL stats, contract, schedule) and merge over the lean fallback.
   useEffect(() => {
@@ -427,9 +433,6 @@ export default function DraftRoom() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedPlayer?.id, activeLeagueCtx?.id]);
-  const tradeBuilder = useTradeBuilder();
-  const { user } = useAuth();
-  const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();
   const myTeam = useMemo(() => {
     if (!user || !liveTeams?.length) return null;
     const mine = liveTeams.find((t: any) => t.owner_id === user.id);

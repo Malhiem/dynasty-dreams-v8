@@ -177,27 +177,49 @@ export const TankMonitorTable = ({ leagueId }: { leagueId?: string }) => {
   const [fromWeek, setFromWeek] = useState(1);
   const [toWeek, setToWeek] = useState(TOTAL_WEEKS);
   const [liveTeams, setLiveTeams] = useState<TeamTankData[] | null>(null);
+  const [liveMode, setLiveMode] = useState<"live" | "weekly_aggregate" | null>(null);
+  const [liveWeeksAvailable, setLiveWeeksAvailable] = useState<number>(0);
   const [loading, setLoading] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [useWeekRange, setUseWeekRange] = useState(false);
 
-  useEffect(() => {
-    if (!leagueId) { setLiveTeams(null); return; }
+  const fetchLive = (range: boolean) => {
+    if (!leagueId) { setLiveTeams(null); setLiveMode(null); return; }
     setLoading(true);
     setLoadError(null);
-    api.get(`/leagues/${leagueId}/tank-monitor`)
+    const url = range
+      ? `/leagues/${leagueId}/tank-monitor?from_week=${fromWeek}&to_week=${toWeek}`
+      : `/leagues/${leagueId}/tank-monitor`;
+    api.get(url)
       .then((res) => {
-        const teams = (res.data?.teams || []) as TeamTankData[];
-        setLiveTeams(teams);
+        setLiveTeams((res.data?.teams || []) as TeamTankData[]);
+        setLiveMode(res.data?.mode || "live");
+        setLiveWeeksAvailable(res.data?.weeks_available || 0);
       })
       .catch((err) => {
         setLoadError(err?.response?.data?.detail || "Failed to load live tank data");
-        setLiveTeams(null);
+        setLiveTeams(null); setLiveMode(null);
       })
       .finally(() => setLoading(false));
-  }, [leagueId]);
+  };
+
+  useEffect(() => { fetchLive(useWeekRange); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [leagueId, useWeekRange, fromWeek, toWeek]);
+
+  const triggerBackfill = async () => {
+    if (!leagueId) return;
+    setBackfilling(true);
+    try {
+      await api.post(`/leagues/${leagueId}/tank-monitor/backfill?weeks=${TOTAL_WEEKS}`);
+      fetchLive(useWeekRange);
+    } catch (err: any) {
+      setLoadError(err?.response?.data?.detail || "Backfill failed");
+    } finally {
+      setBackfilling(false);
+    }
+  };
 
   const isLive = !!leagueId && liveTeams !== null;
-  // When live, ignore week range — current snapshot only. Keep mock week-range behavior when no league selected.
   const data = isLive
     ? (liveTeams as TeamTankData[])
     : (fromWeek === toWeek ? (weeklyTankData[fromWeek] || []) : aggregateWeeks(fromWeek, toWeek));
@@ -233,21 +255,47 @@ export const TankMonitorTable = ({ leagueId }: { leagueId?: string }) => {
     <div className="space-y-4" data-testid="tank-monitor-table">
       {/* Live status banner */}
       {leagueId && (
-        <div className="flex items-center gap-2 text-xs" data-testid="tank-monitor-mode">
+        <div className="flex items-center gap-2 text-xs flex-wrap" data-testid="tank-monitor-mode">
           {loading && <Badge variant="outline" className="text-xs animate-pulse">Loading live league data…</Badge>}
           {!loading && isLive && (
             <Badge className="bg-emerald-500/15 text-emerald-400 border-emerald-500/30 text-xs" data-testid="tank-monitor-live-badge">
-              Live · {liveTeams?.length ?? 0} teams
+              {liveMode === "weekly_aggregate"
+                ? `Weekly aggregate · ${liveWeeksAvailable} week${liveWeeksAvailable === 1 ? "" : "s"} · ${liveTeams?.length ?? 0} teams`
+                : `Live · ${liveTeams?.length ?? 0} teams`}
             </Badge>
           )}
           {!loading && loadError && (
             <Badge variant="destructive" className="text-xs" data-testid="tank-monitor-error">{loadError}</Badge>
           )}
+          {/* Week-range toggle and (optional) backfill action */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="ml-auto text-xs h-7"
+            onClick={() => setUseWeekRange((v) => !v)}
+            data-testid="tank-monitor-toggle-week-range"
+          >
+            {useWeekRange ? "Show current snapshot" : "Show week range"}
+          </Button>
+          {useWeekRange && liveMode === "weekly_aggregate" && liveWeeksAvailable === 0 && (
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              disabled={backfilling}
+              className="text-xs h-7"
+              onClick={triggerBackfill}
+              data-testid="tank-monitor-backfill-button"
+            >
+              {backfilling ? "Backfilling…" : `Backfill ${TOTAL_WEEKS} weeks`}
+            </Button>
+          )}
         </div>
       )}
 
-      {/* Week range filters — hidden in live mode (live data is current snapshot only) */}
-      {!isLive && (
+      {/* Week range filters — visible in mock mode AND in live mode when week-range is enabled */}
+      {(!isLive || useWeekRange) && (
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2">
           <Label className="text-sm whitespace-nowrap">From Week</Label>

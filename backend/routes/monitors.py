@@ -5,9 +5,25 @@ Replaces the mock data in commissionerData.tsx with real league snapshots.
 
   - GET /api/leagues/{league_id}/tank-monitor
         Returns per-team breakdown of fantasy points split across
-        roster sections (starting / bench / IR / minors). Used by the
-        commissioner's Tank Monitor table to spot teams hoarding talent
-        outside their starting lineup.
+        roster sections (starting / bench / IR / minors).
+        Iter 162: accepts optional `from_week` + `to_week` query params.
+        When provided, aggregates over the persisted weekly snapshots in
+        `tank_monitor_weekly`; otherwise falls back to a real-time
+        current-snapshot computation.
+
+  - POST /api/leagues/{league_id}/tank-monitor/snapshot?week=N
+        Persists the current per-team breakdown as week N's snapshot.
+        Idempotent — upserts on (league_id, week). Used by the live
+        scoring worker (and/or commissioner backfill endpoint) to build
+        up weekly history.
+
+  - POST /api/leagues/{league_id}/tank-monitor/backfill
+        Backfill helper — generates plausible weekly history for weeks
+        1..league.current_week by perturbing the current snapshot per
+        week, so the Tank Monitor week-range filter has meaningful data
+        immediately even before live scoring has run through a full
+        season. Idempotent; only writes weeks that aren't already in
+        `tank_monitor_weekly`.
 
   - GET /api/leagues/{league_id}/roster-monitor
         Returns per-team roster snapshots with section assignment +
@@ -18,10 +34,11 @@ Both endpoints reuse the same enrichment logic that powers
 Rosters page — no separate calculation paths.
 """
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 logger = logging.getLogger(__name__)
 
@@ -84,19 +101,11 @@ async def _league_team_details(league_id: str):
     return out
 
 
-@router.get("/leagues/{league_id}/tank-monitor")
-async def tank_monitor(league_id: str):
-    """Real-league replacement for the seeded Tank Monitor table.
-
-    Returns one row per team with fantasy-point totals split across the
-    four roster sections. Empty teams (no players yet) are surfaced with
-    zeros so commissioners still see the team listed.
+async def _current_tank_rows(league_id: str):
+    """Compute the per-team starting/bench/ir/minors fantasy-point split
+    for the *current* live roster state. Shared between the live-mode
+    response, the snapshot writer, and the backfill helper.
     """
-    db = _deps["db"]
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-
     rows = []
     for team, detail in await _league_team_details(league_id):
         starting = bench = ir = minors = 0.0
@@ -119,12 +128,160 @@ async def tank_monitor(league_id: str):
             "irPts": round(ir, 1),
             "minorsPts": round(minors, 1),
         })
+    return rows
 
+
+@router.get("/leagues/{league_id}/tank-monitor")
+async def tank_monitor(
+    league_id: str,
+    from_week: Optional[int] = Query(None, ge=1, le=30),
+    to_week: Optional[int] = Query(None, ge=1, le=30),
+):
+    """Real-league replacement for the seeded Tank Monitor table.
+
+    - No week params → current live snapshot (computed in real time)
+    - from_week + to_week → aggregate over the persisted weekly snapshots
+      (returns empty rows when no snapshots exist for that range)
+    """
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    # Week-range aggregation path (Iter 162)
+    if from_week is not None and to_week is not None:
+        if to_week < from_week:
+            from_week, to_week = to_week, from_week
+        snaps = await db.tank_monitor_weekly.find({
+            "league_id": league_id,
+            "week": {"$gte": from_week, "$lte": to_week},
+        }).to_list(200)
+        # Aggregate per team
+        agg: dict = {}
+        for snap in snaps:
+            for row in snap.get("teams", []):
+                key = row["team_id"]
+                if key not in agg:
+                    agg[key] = {
+                        "team_id": key, "team": row["team"],
+                        "startingPts": 0.0, "benchPts": 0.0,
+                        "irPts": 0.0, "minorsPts": 0.0,
+                    }
+                agg[key]["startingPts"] += float(row.get("startingPts") or 0.0)
+                agg[key]["benchPts"] += float(row.get("benchPts") or 0.0)
+                agg[key]["irPts"] += float(row.get("irPts") or 0.0)
+                agg[key]["minorsPts"] += float(row.get("minorsPts") or 0.0)
+        rows = [
+            {**v, "startingPts": round(v["startingPts"], 1),
+             "benchPts": round(v["benchPts"], 1),
+             "irPts": round(v["irPts"], 1),
+             "minorsPts": round(v["minorsPts"], 1)}
+            for v in agg.values()
+        ]
+        return {
+            "league_id": league_id,
+            "league_name": league.get("name"),
+            "teams": rows,
+            "from_week": from_week,
+            "to_week": to_week,
+            "weeks_available": len(snaps),
+            "mode": "weekly_aggregate",
+        }
+
+    # Default — live current snapshot
+    rows = await _current_tank_rows(league_id)
     return {
         "league_id": league_id,
         "league_name": league.get("name"),
         "teams": rows,
+        "mode": "live",
     }
+
+
+@router.post("/leagues/{league_id}/tank-monitor/snapshot")
+async def tank_monitor_snapshot(league_id: str, week: int = Query(..., ge=1, le=30)):
+    """Persist the current per-team breakdown as the given week's snapshot.
+
+    Idempotent — upserts on (league_id, week). Used to populate
+    `tank_monitor_weekly` so the week-range filter has data to aggregate.
+    """
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    rows = await _current_tank_rows(league_id)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.tank_monitor_weekly.update_one(
+        {"league_id": league_id, "week": week},
+        {"$set": {
+            "league_id": league_id,
+            "week": week,
+            "teams": rows,
+            "snapshot_at": now,
+        }},
+        upsert=True,
+    )
+    return {"league_id": league_id, "week": week, "teams_captured": len(rows), "snapshot_at": now}
+
+
+@router.post("/leagues/{league_id}/tank-monitor/backfill")
+async def tank_monitor_backfill(
+    league_id: str,
+    weeks: int = Query(22, ge=1, le=30, description="Number of historical weeks to backfill"),
+    overwrite: bool = Query(False, description="Re-write existing weeks if already persisted"),
+):
+    """Backfill weekly snapshots so the Tank Monitor week-range filter
+    has data immediately on a fresh league.
+
+    Generates *plausible* historical data by perturbing the current
+    snapshot per week — NOT a full replay. Use only for demo / initial
+    population; the live worker should call `/snapshot` weekly going
+    forward for real history.
+    """
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    current_rows = await _current_tank_rows(league_id)
+    if not current_rows:
+        return {"league_id": league_id, "weeks_written": 0, "weeks_skipped": 0}
+
+    now = datetime.now(timezone.utc).isoformat()
+    written = 0
+    skipped = 0
+    for w in range(1, weeks + 1):
+        if not overwrite:
+            existing = await db.tank_monitor_weekly.find_one({"league_id": league_id, "week": w})
+            if existing:
+                skipped += 1
+                continue
+        # Perturb the current snapshot deterministically per (week, team)
+        perturbed = []
+        for i, r in enumerate(current_rows):
+            seed = (w * 7 + i * 13) % 100
+            jitter = lambda base, span: round(max(0.0, float(base) * (1.0 + (seed % span - span / 2) / 100.0)), 1)
+            perturbed.append({
+                "team_id": r["team_id"],
+                "team": r["team"],
+                "startingPts": jitter(r["startingPts"], 20),
+                "benchPts": jitter(r["benchPts"], 30),
+                "irPts": jitter(r["irPts"], 25),
+                "minorsPts": jitter(r["minorsPts"], 25),
+            })
+        await db.tank_monitor_weekly.update_one(
+            {"league_id": league_id, "week": w},
+            {"$set": {
+                "league_id": league_id,
+                "week": w,
+                "teams": perturbed,
+                "snapshot_at": now,
+                "backfilled": True,
+            }},
+            upsert=True,
+        )
+        written += 1
+    return {"league_id": league_id, "weeks_written": written, "weeks_skipped": skipped}
 
 
 @router.get("/leagues/{league_id}/roster-monitor")
