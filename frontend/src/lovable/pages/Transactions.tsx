@@ -94,15 +94,23 @@ const MOCK_TRADES: PendingTrade[] = [
   },
 ];
 
-const statusConfig = {
+const statusConfig: Record<string, { label: string; icon: any; variant: "outline" | "destructive"; className: string }> = {
   pending: { label: "Pending Review", icon: Clock, variant: "outline" as const, className: "border-amber-500/50 text-amber-400" },
   accepted: { label: "Accepted", icon: CheckCircle2, variant: "outline" as const, className: "border-emerald-500/50 text-emerald-400" },
   vetoed: { label: "Vetoed", icon: XCircle, variant: "destructive" as const, className: "" },
   processed: { label: "Processed", icon: CheckCircle2, variant: "outline" as const, className: "border-muted-foreground/50 text-muted-foreground" },
+  // Iter 168 — backend canonical statuses returned by /api/leagues/{id}/trades
+  executed: { label: "Executed", icon: CheckCircle2, variant: "outline" as const, className: "border-emerald-500/50 text-emerald-400" },
+  voting: { label: "Voting", icon: Clock, variant: "outline" as const, className: "border-amber-500/50 text-amber-400" },
+  conditional: { label: "Conditional", icon: GitBranch, variant: "outline" as const, className: "border-sky-500/50 text-sky-400" },
+  withdrawn: { label: "Withdrawn", icon: MinusCircle, variant: "outline" as const, className: "border-muted-foreground/50 text-muted-foreground" },
+  rejected: { label: "Rejected", icon: XCircle, variant: "destructive" as const, className: "" },
 };
 
 function TradeCard({ trade }: { trade: PendingTrade }) {
-  const status = statusConfig[trade.status];
+  // Iter 168 — fall back to "pending" config when backend returns an
+  // unknown status so unknown statuses don't crash the page.
+  const status = statusConfig[trade.status] || statusConfig.pending;
   const StatusIcon = status.icon;
 
   return (

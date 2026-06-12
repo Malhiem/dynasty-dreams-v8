@@ -531,6 +531,40 @@ async def get_pending_trades(league_id: str):
     return {"league_id": league_id, "pending_trades": trades, "count": len(trades)}
 
 
+# Iter 168 — All trades feed (powers the Transactions page).
+@router.get("/leagues/{league_id}/trades")
+async def get_league_trades(
+    league_id: str,
+    status: Optional[str] = None,
+    limit: int = 200,
+):
+    """Return every trade in the league for the Transactions page.
+
+    Supports a comma-separated `status` filter (e.g. ?status=executed,vetoed).
+    Default is no filter — returns the full history so the Transactions
+    page can present All / Pending / Executed / Vetoed / Withdrawn tabs.
+    Most recent first.
+    """
+    db = _db()
+    query: dict = {"league_id": league_id}
+    if status:
+        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        if statuses:
+            query["status"] = {"$in": statuses}
+    trades = (
+        await db.trades.find(query)
+        .sort([("executed_at", -1), ("submitted_at", -1)])
+        .to_list(int(max(1, min(limit, 500))))
+    )
+    for t in trades:
+        t["_id"] = str(t["_id"])
+    return {
+        "league_id": league_id,
+        "count": len(trades),
+        "trades": trades,
+    }
+
+
 @router.post("/trades/{trade_id}/accept")
 async def accept_trade(trade_id: str, request: Request):
     db = _db()

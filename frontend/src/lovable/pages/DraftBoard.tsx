@@ -667,7 +667,7 @@ export default function DraftBoardPage() {
             title="Draft Board"
             kpiLabel="Teams drafting"
             kpiValue={liveLeagueTeams?.length || 0}
-            primaryHref="/drafts"
+            primaryHref="/draft-room"
             primaryLabel="Open Draft Room"
           />
           {/* Header */}
