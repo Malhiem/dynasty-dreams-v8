@@ -90,6 +90,27 @@ async def get_draft_picks(league_id: str, year: Optional[int] = None):
     return {"league_id": league_id, "year": year, "picks": picks}
 
 
+# Iter 166 — Per-team draft picks (currently owned). Powers the
+# Roster page's Draft Picks section + the team's pick provenance chips.
+@router.get("/teams/{team_id}/draft-picks")
+async def get_team_draft_picks(team_id: str, year: Optional[int] = None):
+    """Return every pick currently owned by this team.
+
+    A pick is considered "currently owned" when its `current_team_id`
+    matches the requested team_id — regardless of who held the slot
+    originally. Each pick carries its full `trade_history` so the
+    front-end can render the provenance chain.
+    """
+    db = _deps["db"]
+    query = {"current_team_id": team_id}
+    if year:
+        query["year"] = int(year)
+    picks = await db.draft_picks.find(query).sort([("year", 1), ("round", 1)]).to_list(1000)
+    for p in picks:
+        p["_id"] = str(p["_id"])
+    return {"team_id": team_id, "year": year, "picks": picks}
+
+
 @router.get("/leagues/{league_id}/draft-order")
 async def get_league_draft_order(league_id: str, year: Optional[int] = None):
     """Iter 137 + 138 — compute the canonical draft order for a given year.

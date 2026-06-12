@@ -419,11 +419,16 @@ export default function DraftRoom() {
           return [nameAbbr, fullName];
         };
         for (const p of picks) {
+          // Iter 166 — annotate each pick with its CURRENT owner's
+          // abbr list so the filter can highlight traded picks under
+          // the new owner.
+          const currentAbbrs = computeAbbrs(p.current_team_name || p.original_team_name || "");
+          const entry = { ...p, _currentOwnerAbbrs: currentAbbrs };
           // Primary key — original_team_id
-          map[`${p.round}|${p.original_team_id}`] = p;
+          map[`${p.round}|${p.original_team_id}`] = entry;
           // Secondary keys — every column-abbr derivation we might see
           for (const ab of computeAbbrs(p.original_team_name || "")) {
-            map[`${p.round}|abbr:${ab}`] = p;
+            map[`${p.round}|abbr:${ab}`] = entry;
           }
         }
         setLivePicksByOrigKey(map);
@@ -939,18 +944,22 @@ export default function DraftRoom() {
                           // selected teams' picks pop. Empty selection
                           // = "show all" (no dimming).
                           const ownerFilterActive = selectedOwnerAbbrs.size > 0;
-                          const isOwnedBySelected = ownerFilterActive && selectedOwnerAbbrs.has(teamAbbr);
-                          const isDimmedByFilter = ownerFilterActive && !isOwnedBySelected;
-                          // Iter 165 — pick provenance. Look up via
-                          // ownerTeam.id first (when resolved) and
-                          // fall back to the column abbr (so traded
-                          // picks light up even on columns where the
-                          // ownerTeam lookup didn't resolve).
+                          // Iter 165 — pick provenance lookup
                           const livePick =
                             (ownerTeam?.id ? livePicksByOrigKey[`${round}|${ownerTeam.id}`] : null)
                             || livePicksByOrigKey[`${round}|abbr:${teamAbbr}`];
                           const tradeHistory = (livePick?.trade_history || []) as any[];
                           const isTradedPick = tradeHistory.length > 0;
+                          // Iter 166 — filter resolves against the CURRENT
+                          // owner, not the original column. For traded
+                          // picks the live pick payload carries the new
+                          // owner's abbr list; for untraded picks the
+                          // column header IS the current owner.
+                          const currentOwnerAbbrs: string[] = livePick?._currentOwnerAbbrs?.length
+                            ? livePick._currentOwnerAbbrs
+                            : [teamAbbr];
+                          const isOwnedBySelected = ownerFilterActive && currentOwnerAbbrs.some((a: string) => selectedOwnerAbbrs.has(a));
+                          const isDimmedByFilter = ownerFilterActive && !isOwnedBySelected;
                           return (
                             <div
                               key={`${round}-${teamAbbr}`}

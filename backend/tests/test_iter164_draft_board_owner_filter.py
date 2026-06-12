@@ -36,9 +36,10 @@ def test_draft_board_owner_chip_row_renders_per_team():
 
 def test_tile_dim_and_highlight_classes_applied():
     src = DR.read_text()
-    # Pull a region around the tile className
-    assert "isOwnedBySelected = ownerFilterActive && selectedOwnerAbbrs.has(teamAbbr)" in src
+    # Iter 166 — filter now resolves via _currentOwnerAbbrs (current owner),
+    # not the column header abbr. Test the new logic.
+    assert "currentOwnerAbbrs.some((a: string) => selectedOwnerAbbrs.has(a))" in src
     assert "isDimmedByFilter = ownerFilterActive && !isOwnedBySelected" in src
-    # Visual classes
+    # Visual classes still applied
     assert 'isOwnedBySelected && "ring-2 ring-primary/70 border-primary/50"' in src
     assert 'isDimmedByFilter && "opacity-30"' in src
