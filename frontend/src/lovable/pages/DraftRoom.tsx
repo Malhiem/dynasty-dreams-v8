@@ -383,6 +383,11 @@ export default function DraftRoom() {
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   // Iter 153 — Window-within-window expanded player card (PlayerCardModal)
   const [expandedPlayer, setExpandedPlayer] = useState<any>(null);
+  // Iter 164 — Draft Board team-ownership filter chips. When ≥1 team is
+  // selected, tiles owned by un-selected teams dim out so commissioners
+  // can quickly see which picks each team controls. Multi-select via
+  // toggle. Empty set = "show all" (default).
+  const [selectedOwnerAbbrs, setSelectedOwnerAbbrs] = useState<Set<string>>(new Set());
   // Iter 161 — pull the league context BEFORE any effect that references
   // it. The expanded-player fetch hook below uses activeLeagueCtx in its
   // dep array, so it MUST be declared first (TDZ error otherwise).
@@ -790,8 +795,52 @@ export default function DraftRoom() {
 
           {/* ── Draft Board (full width, top) ──────────────────────────── */}
           <Card className="border-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Draft Board</CardTitle>
+            <CardHeader className="pb-2 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <CardTitle className="text-base">Draft Board</CardTitle>
+                <div className="flex items-center gap-1 flex-wrap" data-testid="draft-board-owner-filter">
+                  <span className="text-[10px] uppercase text-muted-foreground tracking-wider mr-1">
+                    {selectedOwnerAbbrs.size === 0 ? "Filter by owner" : `Showing ${selectedOwnerAbbrs.size} team${selectedOwnerAbbrs.size === 1 ? "" : "s"}`}
+                  </span>
+                  {teamAbbrs.map((abbr) => {
+                    const isOn = selectedOwnerAbbrs.has(abbr);
+                    return (
+                      <button
+                        key={abbr}
+                        type="button"
+                        onClick={() => {
+                          setSelectedOwnerAbbrs((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(abbr)) next.delete(abbr);
+                            else next.add(abbr);
+                            return next;
+                          });
+                        }}
+                        className={cn(
+                          "px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border transition-colors",
+                          isOn
+                            ? "bg-primary/25 border-primary/60 text-primary"
+                            : "bg-secondary/30 border-border/40 text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                        )}
+                        data-testid={`draft-board-owner-chip-${abbr}`}
+                        aria-pressed={isOn}
+                      >
+                        {abbr}
+                      </button>
+                    );
+                  })}
+                  {selectedOwnerAbbrs.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedOwnerAbbrs(new Set())}
+                      className="px-1.5 py-0.5 rounded text-[10px] uppercase text-muted-foreground hover:text-foreground border border-transparent"
+                      data-testid="draft-board-owner-clear"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               <ScrollArea className="w-full">
@@ -846,6 +895,16 @@ export default function DraftRoom() {
                           // the interactive "Mark available" quick-add buttons below.
                           const onBlock = isPlayerOnBlock || isPickOnBlock;
                           const isMyTile = ownerTeam?.id && ownerTeam.id === myTeam?.id;
+                          // Iter 164 — owner-filter highlight/dim.
+                          // The column abbr is the team that currently
+                          // displays in this column header. When the
+                          // commissioner toggles 1+ owner chips, tiles
+                          // owned by un-selected teams dim out so the
+                          // selected teams' picks pop. Empty selection
+                          // = "show all" (no dimming).
+                          const ownerFilterActive = selectedOwnerAbbrs.size > 0;
+                          const isOwnedBySelected = ownerFilterActive && selectedOwnerAbbrs.has(teamAbbr);
+                          const isDimmedByFilter = ownerFilterActive && !isOwnedBySelected;
                           return (
                             <div
                               key={`${round}-${teamAbbr}`}
@@ -857,6 +916,8 @@ export default function DraftRoom() {
                                   ? "bg-secondary/60 border-border"
                                   : "bg-card/50 border-border/50",
                                 onBlock && "ring-1 ring-amber-400/60 border-amber-400/40",
+                                isOwnedBySelected && "ring-2 ring-primary/70 border-primary/50",
+                                isDimmedByFilter && "opacity-30",
                               )}
                               data-testid={onBlock ? `draft-room-block-tile-${teamAbbr}-${pick?.overall ?? "x"}` : undefined}
                             >
