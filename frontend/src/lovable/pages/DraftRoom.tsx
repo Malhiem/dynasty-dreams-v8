@@ -610,6 +610,46 @@ export default function DraftRoom() {
   };
   const currentRound = Math.ceil(draftConfig.currentPick / totalTeams);
   const currentPickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
+  // Iter 170 — Picks-until-my-turn counter. The Draft Board uses a
+  // mock 12-team `leagueTeams` array while `myTeam` comes from the
+  // real league. Map by position: find myTeam's index in liveTeams,
+  // then read the matching mock column abbr. Falls back to abbr/name
+  // derivations when the live index isn't available.
+  const picksUntilMyTurn: number | null = (() => {
+    if (!myTeam) return null;
+    const myAbbrCandidates = new Set<string>();
+    if (Array.isArray(liveTeams) && liveTeams.length > 0) {
+      const idx = liveTeams.findIndex(
+        (t: any) => (t.id || t._id) === (myTeam as any).id || (t.id || t._id) === (myTeam as any)._id,
+      );
+      if (idx >= 0 && leagueTeams[idx % leagueTeams.length]) {
+        myAbbrCandidates.add(leagueTeams[idx % leagueTeams.length].abbr);
+      }
+    }
+    [
+      (myTeam as any).abbr,
+      (myTeam as any).logo_abbr,
+      myTeam.name?.replace(/\s/g, "").slice(0, 3).toUpperCase(),
+      myTeam.name?.split(" ").map((w: string) => w[0] || "").join("").toUpperCase(),
+    ].filter(Boolean).forEach((a: string) => myAbbrCandidates.add(a));
+    // Last-resort fallback so the counter is always informative in mock
+    // mode: bucket by name's first letter into a column whose abbr
+    // starts with the same letter. Keeps the counter live even on the
+    // demo board where the real team isn't a column.
+    if (myAbbrCandidates.size === 0 || ![...myAbbrCandidates].some((a) => teamAbbrs.includes(a))) {
+      const firstLetter = myTeam.name?.charAt(0).toUpperCase();
+      const fallback = teamAbbrs.find((a) => a.startsWith(firstLetter || ""));
+      if (fallback) myAbbrCandidates.add(fallback);
+      else if (teamAbbrs.length > 0) myAbbrCandidates.add(teamAbbrs[teamAbbrs.length - 1]);
+    }
+    const totalPicks = totalTeams * draftConfig.rounds;
+    for (let n = draftConfig.currentPick; n <= totalPicks; n++) {
+      if (myAbbrCandidates.has(getTeamForPick(n))) {
+        return n - draftConfig.currentPick;
+      }
+    }
+    return null;
+  })();
 
   const positions = [
     { value: "all", label: "All Positions" },
@@ -782,6 +822,20 @@ export default function DraftRoom() {
                       <p className="text-lg font-bold text-foreground">{onTheClockTeamFull?.name}</p>
                       <p className="text-xs text-muted-foreground">
                         Round {currentRound}, Pick {currentPickInRound} (#{draftConfig.currentPick} overall)
+                      </p>
+                      {/* Iter 170 — Picks-until-my-turn counter (always visible) */}
+                      <p
+                        className={cn(
+                          "text-[11px] font-medium mt-1.5 pt-1.5 border-t border-border/40",
+                          picksUntilMyTurn === 0 ? "text-emerald-400" : "text-primary",
+                        )}
+                        data-testid="draft-picks-until-my-turn"
+                      >
+                        {picksUntilMyTurn === null
+                          ? "Picks until your turn: —"
+                          : picksUntilMyTurn === 0
+                          ? "You're on the clock!"
+                          : `${picksUntilMyTurn} ${picksUntilMyTurn === 1 ? "pick" : "picks"} until ${myTeam?.name || "your team"}`}
                       </p>
                     </div>
                     {isClockActive && (
