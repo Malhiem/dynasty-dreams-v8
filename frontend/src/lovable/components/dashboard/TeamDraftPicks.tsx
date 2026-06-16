@@ -120,6 +120,7 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
               : null,
             originalTeamFull: traded ? p.original_team_name : null,
             _liveKey: key,
+            _isConditional: (p.pending_protections || []).length > 0,
           } as any;
         });
         setLivePicks(hydrated);
@@ -202,6 +203,31 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                     <span className={`font-semibold ${pick.round === 1 ? "text-accent" : "text-foreground"}`}>
                       Rd {pick.round}
                     </span>
+                    {/* Iter 169 — conditional-pick asterisk on the Roster page */}
+                    {(pick as any)._isConditional && (() => {
+                      const live = (pick as any)._liveKey ? liveRawByKey[(pick as any)._liveKey] : null;
+                      const protections = (live?.pending_protections || []) as any[];
+                      return (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span
+                              className="text-amber-400 font-bold cursor-help ml-0.5"
+                              data-testid={`roster-pick-conditional-${pick.year}-${pick.round}`}
+                            >*</span>
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-sm">
+                            <div className="space-y-1 text-xs">
+                              <p className="font-semibold">Conditional protection — locked from re-trade</p>
+                              {protections.map((c: any, idx: number) => (
+                                <p key={idx} className="text-muted-foreground">
+                                  {c.description || `${c.subject_type} ${c.metric} ${c.operator} ${c.threshold}`}
+                                </p>
+                              ))}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    })()}
                     {pick.originalTeam && (
                       <ArrowRightLeft className="h-3 w-3 text-sky-400 ml-0.5" data-testid={`roster-pick-traded-${pick.year}-${pick.round}`} />
                     )}

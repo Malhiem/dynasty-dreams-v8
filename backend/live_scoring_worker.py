@@ -326,6 +326,62 @@ async def run_once(db, sio=None):
     return summary
 
 
+async def _take_weekly_tank_snapshots(db) -> int:
+    """Iter 169 — Hook the live scoring worker to take weekly tank
+    snapshots. For each active league we check the most recent
+    `tank_monitor_weekly` snapshot; if ≥ 7 days have passed (or none
+    exists), we compute the current per-team breakdown and upsert it.
+
+    Returns the number of leagues for which a fresh snapshot was
+    written this tick.
+    """
+    from datetime import datetime, timezone, timedelta
+    from routes.monitors import _current_tank_rows
+    snapshots_written = 0
+    now = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+    leagues = await db.leagues.find({}).to_list(500)
+    for league in leagues:
+        lid = str(league["_id"])
+        # Find latest snapshot week for this league
+        latest = await db.tank_monitor_weekly.find_one(
+            {"league_id": lid}, sort=[("week", -1)]
+        )
+        if latest:
+            try:
+                last_at = datetime.fromisoformat(latest.get("snapshot_at", "").replace("Z", "+00:00"))
+                if last_at.tzinfo is None:
+                    last_at = last_at.replace(tzinfo=timezone.utc)
+                if last_at > week_ago:
+                    continue  # snapshotted within the last 7 days
+                next_week = (latest.get("week", 0) or 0) + 1
+            except Exception:
+                next_week = (latest.get("week", 0) or 0) + 1
+        else:
+            next_week = 1
+        # Build the snapshot
+        try:
+            rows = await _current_tank_rows(lid)
+        except Exception:
+            continue
+        if not rows:
+            continue
+        await db.tank_monitor_weekly.update_one(
+            {"league_id": lid, "week": next_week},
+            {"$set": {
+                "league_id": lid,
+                "week": next_week,
+                "teams": rows,
+                "snapshot_at": now.isoformat(),
+                "auto_captured": True,
+            }},
+            upsert=True,
+        )
+        snapshots_written += 1
+        logger.info("Tank snapshot written: league=%s week=%s teams=%s", lid, next_week, len(rows))
+    return snapshots_written
+
+
 async def live_scoring_loop(db, sio=None, interval_sec: int = POLL_INTERVAL_SEC):
     logger.info("Live scoring worker started (interval=%ss)", interval_sec)
     while True:
@@ -338,6 +394,16 @@ async def live_scoring_loop(db, sio=None, interval_sec: int = POLL_INTERVAL_SEC)
                 summary.get("players_updated", 0),
                 summary.get("team_totals_updated", 0),
             )
+            # Iter 169 — opportunistic weekly tank-monitor snapshot.
+            # Runs every poll tick but only writes when ≥ 7 days have
+            # passed for a given league, so it's cheap during normal
+            # operation and self-heals if the worker was paused.
+            try:
+                written = await _take_weekly_tank_snapshots(db)
+                if written:
+                    logger.info("Wrote %s tank-monitor weekly snapshots", written)
+            except Exception as e:
+                logger.exception("Weekly tank snapshot failed: %s", e)
         except asyncio.CancelledError:
             logger.info("Live scoring worker cancelled")
             raise
