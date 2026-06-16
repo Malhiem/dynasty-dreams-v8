@@ -103,9 +103,9 @@ interface ChatMessage {
   timestamp: Date;
 }
 
-// ─── League teams ────────────────────────────────────────────────────────────
+// ─── League teams (mock fallback — used only when no league is active) ──────
 
-const leagueTeams = [
+const mockLeagueTeams = [
   { name: "Arctic Wolves", abbr: "ARC" },
   { name: "Blizzard Kings", abbr: "BLZ" },
   { name: "Frozen Fury", abbr: "FRZ" },
@@ -119,8 +119,6 @@ const leagueTeams = [
   { name: "Winter Storm", abbr: "WST" },
   { name: "Zero Below", abbr: "ZRO" },
 ].sort((a, b) => a.name.localeCompare(b.name));
-
-const teamAbbrs = leagueTeams.map((t) => t.abbr);
 
 // ─── Position colors ─────────────────────────────────────────────────────────
 
@@ -212,7 +210,35 @@ function formatPickTimer(seconds: number) {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function DraftRoom() {
-  const totalTeams = leagueTeams.length;
+  // Iter 170b — League context hooks lifted to the top so the
+  // derived `boardTeams` / `boardTeamAbbrs` / `totalTeams` can
+  // depend on liveTeams + so the existing useEffects that consume
+  // activeLeagueCtx still satisfy Rules of Hooks ordering.
+  const tradeBuilder = useTradeBuilder();
+  const { user } = useAuth();
+  const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();
+
+  // Iter 170b — Real-league wiring for the Draft Board. When the
+  // active league has teams loaded, use those for column headers,
+  // snake-draft order, and the "picks until your turn" counter.
+  // Falls back to the mock 12-team roster ONLY when the user isn't
+  // attached to a league yet (e.g. Storybook / standalone demo).
+  const boardTeams = useMemo<Array<{ id?: string; name: string; abbr: string }>>(() => {
+    if (Array.isArray(liveTeams) && liveTeams.length > 0) {
+      return liveTeams.map((t: any) => ({
+        id: t.id || t._id,
+        name: t.name,
+        abbr:
+          t.logo_abbr ||
+          (t.name || "").split(" ").map((w: string) => w[0] || "").join("").toUpperCase().slice(0, 4) ||
+          (t.name || "").slice(0, 3).toUpperCase(),
+      }));
+    }
+    return mockLeagueTeams as Array<{ id?: string; name: string; abbr: string }>;
+  }, [liveTeams]);
+
+  const boardTeamAbbrs = useMemo(() => boardTeams.map((t) => t.abbr), [boardTeams]);
+  const totalTeams = boardTeams.length;
 
   const [draftConfig, setDraftConfig] = useState<DraftConfig>({
     scheduledTime: new Date(Date.now() + 2 * 60 * 60 * 1000),
@@ -283,10 +309,10 @@ export default function DraftRoom() {
 
   const getDraftOrder = useCallback(
     (round: number): string[] => {
-      if (draftConfig.snakeDraft && round % 2 === 0) return [...teamAbbrs].reverse();
-      return teamAbbrs;
+      if (draftConfig.snakeDraft && round % 2 === 0) return [...boardTeamAbbrs].reverse();
+      return boardTeamAbbrs;
     },
-    [draftConfig.snakeDraft]
+    [draftConfig.snakeDraft, boardTeamAbbrs]
   );
 
   const getTeamForPick = useCallback(
@@ -384,7 +410,7 @@ export default function DraftRoom() {
       return;
     }
     const teamAbbr = getTeamForPick(draftConfig.currentPick);
-    const teamFull = leagueTeams.find((t) => t.abbr === teamAbbr);
+    const teamFull = boardTeams.find((t) => t.abbr === teamAbbr);
     const nextPlayer = players.find((p) => !p.drafted);
     if (!nextPlayer) {
       toast.warning("No eligible players left to draft.");
@@ -425,7 +451,7 @@ export default function DraftRoom() {
   // ─── Derived values ────────────────────────────────────────────────────────
 
   const onTheClockTeam = getTeamForPick(draftConfig.currentPick);
-  const onTheClockTeamFull = leagueTeams.find((t) => t.abbr === onTheClockTeam);
+  const onTheClockTeamFull = boardTeams.find((t) => t.abbr === onTheClockTeam);
 
   // Iter 147 — Propose-trade mode (mirrors Draft Board)
   const [tradeMode, setTradeMode] = useState(false);
@@ -448,9 +474,7 @@ export default function DraftRoom() {
   // Iter 161 — pull the league context BEFORE any effect that references
   // it. The expanded-player fetch hook below uses activeLeagueCtx in its
   // dep array, so it MUST be declared first (TDZ error otherwise).
-  const tradeBuilder = useTradeBuilder();
-  const { user } = useAuth();
-  const { league: activeLeagueCtx, leagueTeams: liveTeams } = useActiveLeague();
+  // (Iter 170b — hooks moved to component top; see header.)
   // Iter 165 — Fetch real draft picks (with trade_history) for the active
   // league + current draft year so provenance tooltips can populate.
   useEffect(() => {
@@ -660,42 +684,37 @@ export default function DraftRoom() {
   };
   const currentRound = Math.ceil(draftConfig.currentPick / totalTeams);
   const currentPickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
-  // Iter 170 — Picks-until-my-turn counter. The Draft Board uses a
-  // mock 12-team `leagueTeams` array while `myTeam` comes from the
-  // real league. Strategy:
-  //   1. If liveTeams.length matches the mock column count exactly, map
-  //      myTeam's index in liveTeams → that column's abbr (deterministic).
-  //   2. Otherwise, try direct abbr matches against the mock columns.
-  //   3. Final fallback: bucket by myTeam.name's first letter into the
-  //      first mock column whose abbr starts with the same letter so the
-  //      counter stays informative on the demo board.
+  // Iter 170b — Picks-until-my-turn counter. With real-league wiring
+  // (Iter 170b), `boardTeams` carries the real team `id`s when the
+  // user is attached to a league, so we can match `myTeam.id` directly
+  // against the board team for each pick. The legacy abbr/index
+  // fallback only kicks in when the board is running on mock data
+  // (no liveTeams) — used by Storybook / standalone demo.
   const picksUntilMyTurn: number | null = useMemo(() => {
     if (!myTeam) return null;
+    // Fast path: real-league mode — match by team id.
+    const myBoardEntry = boardTeams.find((t) => t.id && t.id === (myTeam as any).id);
     const myAbbrCandidates = new Set<string>();
-    // (1) deterministic index mapping when array sizes line up
-    if (Array.isArray(liveTeams) && liveTeams.length === leagueTeams.length) {
-      const idx = liveTeams.findIndex(
-        (t: any) => (t.id || t._id) === (myTeam as any).id,
-      );
-      if (idx >= 0) myAbbrCandidates.add(leagueTeams[idx].abbr);
-    }
-    // (2) explicit abbr/initials matches against the mock columns
-    [
-      (myTeam as any).abbr,
-      (myTeam as any).logo_abbr,
-      myTeam.name?.replace(/\s/g, "").slice(0, 3).toUpperCase(),
-      myTeam.name?.split(" ").map((w: string) => w[0] || "").join("").toUpperCase(),
-    ]
-      .filter(Boolean)
-      .forEach((a: string) => {
-        if (teamAbbrs.includes(a)) myAbbrCandidates.add(a);
-      });
-    // (3) first-letter fallback so the demo always has a column to land on
-    if (myAbbrCandidates.size === 0) {
-      const firstLetter = myTeam.name?.charAt(0).toUpperCase();
-      const fallback = teamAbbrs.find((a) => a.startsWith(firstLetter || ""));
-      if (fallback) myAbbrCandidates.add(fallback);
-      else if (teamAbbrs.length > 0) myAbbrCandidates.add(teamAbbrs[teamAbbrs.length - 1]);
+    if (myBoardEntry) {
+      myAbbrCandidates.add(myBoardEntry.abbr);
+    } else {
+      // Mock-data fallback path
+      [
+        (myTeam as any).abbr,
+        (myTeam as any).logo_abbr,
+        myTeam.name?.replace(/\s/g, "").slice(0, 3).toUpperCase(),
+        myTeam.name?.split(" ").map((w: string) => w[0] || "").join("").toUpperCase(),
+      ]
+        .filter(Boolean)
+        .forEach((a: string) => {
+          if (boardTeamAbbrs.includes(a)) myAbbrCandidates.add(a);
+        });
+      if (myAbbrCandidates.size === 0) {
+        const firstLetter = myTeam.name?.charAt(0).toUpperCase();
+        const fallback = boardTeamAbbrs.find((a) => a.startsWith(firstLetter || ""));
+        if (fallback) myAbbrCandidates.add(fallback);
+        else if (boardTeamAbbrs.length > 0) myAbbrCandidates.add(boardTeamAbbrs[boardTeamAbbrs.length - 1]);
+      }
     }
     const totalPicks = totalTeams * draftConfig.totalRounds;
     for (let n = draftConfig.currentPick; n <= totalPicks; n++) {
@@ -704,7 +723,7 @@ export default function DraftRoom() {
       }
     }
     return null;
-  }, [myTeam, liveTeams, draftConfig.currentPick, draftConfig.totalRounds, totalTeams, getTeamForPick]);
+  }, [myTeam, boardTeams, boardTeamAbbrs, draftConfig.currentPick, draftConfig.totalRounds, totalTeams, getTeamForPick]);
 
   const positions = [
     { value: "all", label: "All Positions" },
@@ -964,7 +983,7 @@ export default function DraftRoom() {
                   <span className="text-[10px] uppercase text-muted-foreground tracking-wider mr-1">
                     {selectedOwnerAbbrs.size === 0 ? "Filter by owner" : `Showing ${selectedOwnerAbbrs.size} team${selectedOwnerAbbrs.size === 1 ? "" : "s"}`}
                   </span>
-                  {teamAbbrs.map((abbr) => {
+                  {boardTeamAbbrs.map((abbr) => {
                     const isOn = selectedOwnerAbbrs.has(abbr);
                     return (
                       <button
@@ -1012,7 +1031,7 @@ export default function DraftRoom() {
                     style={{ gridTemplateColumns: `48px repeat(${totalTeams}, minmax(72px, 1fr))` }}
                   >
                     <div className="p-1.5 text-[10px] font-semibold text-muted-foreground uppercase">Rd</div>
-                    {teamAbbrs.map((abbr) => (
+                    {boardTeamAbbrs.map((abbr) => (
                       <div
                         key={abbr}
                         className={cn(
@@ -1039,13 +1058,14 @@ export default function DraftRoom() {
                         <div className="p-1.5 flex items-center justify-center text-[10px] font-bold text-muted-foreground bg-secondary/30 rounded">
                           {round}
                         </div>
-                        {teamAbbrs.map((teamAbbr) => {
+                        {boardTeamAbbrs.map((teamAbbr) => {
                           const pick = roundPicks.find((p) => p.team === teamAbbr);
                           const isCurrentPick = pick?.overall === draftConfig.currentPick && draftConfig.draftStarted;
-                          // Iter 149 — Trade block overlay highlight
-                          // Match by EITHER the team's stored abbr OR a 3-char slice of its name
-                          // (mock draft uses abbrs like ICE which match the name fallback "Ice Breakers".slice(0,3) = "ICE")
+                          // Iter 170b — prefer the exact board-team entry
+                          // (carries real id when liveTeams is present).
+                          const boardEntry = boardTeams.find((t) => t.abbr === teamAbbr);
                           const ownerTeam = (liveTeams || []).find((t: any) => {
+                            if (boardEntry?.id && (t.id || t._id) === boardEntry.id) return true;
                             const nameAbbr = (t.name || "").replace(/\s/g, "").slice(0, 3).toUpperCase();
                             const fullName = (t.name || "").split(" ").map((w: string) => w[0]).join("").toUpperCase();
                             return t.logo_abbr === teamAbbr || nameAbbr === teamAbbr || fullName === teamAbbr;

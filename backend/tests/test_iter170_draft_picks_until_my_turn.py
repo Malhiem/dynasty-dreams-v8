@@ -29,12 +29,12 @@ def test_picks_until_my_turn_uses_total_rounds_not_rounds():
 
 
 def test_picks_until_my_turn_only_index_maps_when_lengths_match():
+    """Iter 170b superseded: the heuristic length-match index mapping
+    has been replaced with a direct `boardTeams.find(t => t.id === myTeam.id)`
+    lookup (live-league wiring). This test now locks the new approach."""
     src = _source()
     block = src.split("picksUntilMyTurn")[1].split("}, [")[0]
-    # The deterministic index mapping must require both arrays to be
-    # the same length so we never modulo a real team into the wrong
-    # mock column.
-    assert "liveTeams.length === leagueTeams.length" in block
+    assert "boardTeams.find((t) => t.id && t.id === (myTeam as any).id)" in block
 
 
 def test_picks_until_my_turn_is_memoized():

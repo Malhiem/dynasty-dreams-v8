@@ -19,6 +19,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Image as ImageIcon, Upload, Sliders } from "lucide-react";
+import RosterLimitsCard from "../RosterLimitsCard";
 
 interface LeagueSetupTabProps {
   // Privacy + stats
@@ -302,6 +303,11 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
           <p.RosterLockCard league={p.activeLeague} reloadLeague={p.reloadLeague} />
           <p.EmergencyRosterChangesCard league={p.activeLeague} reloadLeague={p.reloadLeague} />
           <p.GoalieScoringCard league={p.activeLeague} reloadLeague={p.reloadLeague} />
+          {/* Iter 170c — Roster section limits */}
+          <RosterLimitsCard
+            leagueId={p.activeLeague.id}
+            isCommissioner={p.activeLeague.is_commissioner !== false}
+          />
         </>
       )}
 

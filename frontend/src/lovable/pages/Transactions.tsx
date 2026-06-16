@@ -9,7 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ArrowRightLeft, ThumbsUp, ThumbsDown, Clock, CheckCircle2, XCircle, AlertTriangle, Activity, GitBranch, Zap, MinusCircle, Bell, BellOff } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ArrowRightLeft, ThumbsUp, ThumbsDown, Clock, CheckCircle2, XCircle, AlertTriangle, Activity, GitBranch, Zap, MinusCircle, Bell, BellOff, Filter, X } from "lucide-react";
 import { toast } from "sonner";
 import TeamLink from "@/lovable/components/TeamLink";
 
@@ -584,6 +586,12 @@ const Transactions = () => {
   // Per-trade vote payload: { [tradeId]: { yourVote, threshold, votes } }
   const [voteState, setVoteState] = useState<Record<string, any>>({});
   const [reloadTick, setReloadTick] = useState(0);
+  // Iter 170c — filter state. Multi-select team chips + date-range.
+  // Both filters apply to the All / Pending / Accepted tabs (Conditional
+  // and Activity tabs are independent).
+  const [selectedTeamIds, setSelectedTeamIds] = useState<Set<string>>(new Set());
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
   // Conditional / pick-protection trades — populated only when the user
   // opens the Conditional tab (avoids extra work on first paint).
   const [conditionalTrades, setConditionalTrades] = useState<any[] | null>(null);
@@ -699,62 +707,92 @@ const Transactions = () => {
   // EITHER side). Cleans up the historic "ghost trade" rows that appeared
   // when proposals were accidentally submitted blank.
   const teamName = (tid: string) => (leagueTeams || []).find(t => t.id === tid)?.name || tid;
-  const allTrades: PendingTrade[] = useMemo(() => {
-    const mapped = (trades || []).map((t: any) => {
+  // Keep the raw proposer/target team ids alongside the mapped TradeCard
+  // shape so the team-chip filter can match by stable id (not display name).
+  const mappedWithIds = useMemo(() => {
+    return (trades || []).map((t: any) => {
       const tradeId = t._id || t.id;
-      // Backend canonical fields: assets_offered / assets_requested + proposer/target ids
       const fromAssets = t.assets_offered || t.from_assets || t.team_a_assets || [];
       const toAssets = t.assets_requested || t.to_assets || t.team_b_assets || [];
+      const proposerId = t.proposer_team_id || t.from_team_id || t.team_a_id;
+      const targetId = t.target_team_id || t.to_team_id || t.team_b_id;
+      const createdAt = t.created_at || t.executed_at || t.submitted_at || "";
       return {
-        id: tradeId,
-        teamA: teamName(t.proposer_team_id || t.from_team_id || t.team_a_id),
-        teamB: teamName(t.target_team_id || t.to_team_id || t.team_b_id),
-        assetsFromA: fromAssets.map((a: any) => ({
-          name: a.player_name || a.name || (a.asset_type === "pick" ? `${a.pick_year || ""} ${a.pick_round || ""} Pick` : "Unknown"),
-          position: a.position || "—",
-          age: a.age || 0,
-          capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
-          goals: a.goals || 0,
-          assists: a.assists || 0,
-          points: a.points || 0,
-          fantasyPts: a.fantasy_points || 0,
-          type: (a.asset_type === "pick" || a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
-        })),
-        assetsFromB: toAssets.map((a: any) => ({
-          name: a.player_name || a.name || (a.asset_type === "pick" ? `${a.pick_year || ""} ${a.pick_round || ""} Pick` : "Unknown"),
-          position: a.position || "—",
-          age: a.age || 0,
-          capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
-          goals: a.goals || 0,
-          assists: a.assists || 0,
-          points: a.points || 0,
-          fantasyPts: a.fantasy_points || 0,
-          type: (a.asset_type === "pick" || a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
-        })),
-        status: (t.status || "pending") as any,
-        submittedAt: (t.created_at || "").slice(0, 16).replace("T", " "),
-        processesAt: (t.expires_at || t.processes_at || "").slice(0, 16).replace("T", " "),
-        votes: {
-          approve: voteState[tradeId]?.votes?.approve ?? (t.votes?.approve || 0),
-          veto: voteState[tradeId]?.votes?.veto ?? (t.votes?.veto || 0),
-          total: leagueTeamsCount,
-        },
-        yourVote: voteState[tradeId]?.your_vote || null,
-        vetoThreshold: voteState[tradeId]?.veto_threshold?.teams_required ?? 0,
-        onVote: (vote: "approve" | "veto") => castVote(tradeId, vote),
+        _proposerId: proposerId,
+        _targetId: targetId,
+        _createdAt: createdAt,
+        card: {
+          id: tradeId,
+          teamA: teamName(proposerId),
+          teamB: teamName(targetId),
+          assetsFromA: fromAssets.map((a: any) => ({
+            name: a.player_name || a.name || (a.asset_type === "pick" ? `${a.pick_year || ""} ${a.pick_round || ""} Pick` : "Unknown"),
+            position: a.position || "—",
+            age: a.age || 0,
+            capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
+            goals: a.goals || 0,
+            assists: a.assists || 0,
+            points: a.points || 0,
+            fantasyPts: a.fantasy_points || 0,
+            type: (a.asset_type === "pick" || a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
+          })),
+          assetsFromB: toAssets.map((a: any) => ({
+            name: a.player_name || a.name || (a.asset_type === "pick" ? `${a.pick_year || ""} ${a.pick_round || ""} Pick` : "Unknown"),
+            position: a.position || "—",
+            age: a.age || 0,
+            capHit: a.salary ? `$${(a.salary / 1000000).toFixed(1)}M` : "—",
+            goals: a.goals || 0,
+            assists: a.assists || 0,
+            points: a.points || 0,
+            fantasyPts: a.fantasy_points || 0,
+            type: (a.asset_type === "pick" || a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
+          })),
+          status: (t.status || "pending") as any,
+          submittedAt: (createdAt || "").slice(0, 16).replace("T", " "),
+          processesAt: (t.expires_at || t.processes_at || "").slice(0, 16).replace("T", " "),
+          votes: {
+            approve: voteState[tradeId]?.votes?.approve ?? (t.votes?.approve || 0),
+            veto: voteState[tradeId]?.votes?.veto ?? (t.votes?.veto || 0),
+            total: leagueTeamsCount,
+          },
+          yourVote: voteState[tradeId]?.your_vote || null,
+          vetoThreshold: voteState[tradeId]?.veto_threshold?.teams_required ?? 0,
+          onVote: (vote: "approve" | "veto") => castVote(tradeId, vote),
+        } as PendingTrade,
       };
     });
-    // Drop empty trades — neither side has any asset (corrupted seeds /
-    // legacy bug). A real trade must move at least one player or pick.
-    const nonEmpty = mapped.filter(
-      (t) => (t.assetsFromA?.length || 0) > 0 || (t.assetsFromB?.length || 0) > 0,
-    );
-    // Drop ghost trades — neither team resolved to a real name.
-    const hasTeams = nonEmpty.filter(
-      (t) => t.teamA && t.teamB && t.teamA !== t.teamB,
-    );
-    return hasTeams;
   }, [trades, leagueTeams, leagueTeamsCount, voteState]);
+
+  const allTrades: PendingTrade[] = useMemo(() => {
+    // Drop empty trades — neither side has any asset (corrupted seeds /
+    // legacy bug). Then drop ghost trades — neither team resolved to a
+    // real name.
+    let rows = mappedWithIds.filter(
+      ({ card }) =>
+        ((card.assetsFromA?.length || 0) > 0 || (card.assetsFromB?.length || 0) > 0) &&
+        card.teamA && card.teamB && card.teamA !== card.teamB,
+    );
+    // Iter 170c — team chip filter (match either side of the trade).
+    if (selectedTeamIds.size > 0) {
+      rows = rows.filter(
+        ({ _proposerId, _targetId }) =>
+          (_proposerId && selectedTeamIds.has(_proposerId)) ||
+          (_targetId && selectedTeamIds.has(_targetId)),
+      );
+    }
+    // Iter 170c — date range filter (inclusive, on yyyy-mm-dd prefix of
+    // created_at). Empty bound = no constraint on that side.
+    if (dateFrom || dateTo) {
+      rows = rows.filter(({ _createdAt }) => {
+        const day = (_createdAt || "").slice(0, 10);
+        if (!day) return false;
+        if (dateFrom && day < dateFrom) return false;
+        if (dateTo && day > dateTo) return false;
+        return true;
+      });
+    }
+    return rows.map(({ card }) => card);
+  }, [mappedWithIds, selectedTeamIds, dateFrom, dateTo]);
 
   const pending = allTrades.filter((t) => t.status === "pending");
   const accepted = allTrades.filter((t) => t.status === "accepted");
@@ -768,6 +806,94 @@ const Transactions = () => {
           <h1 className="text-3xl font-bold mb-2">Transactions</h1>
           <p className="text-muted-foreground">Review pending and accepted trades, plus league activity. Cast your vote to approve or veto.</p>
         </div>
+
+        {/* Iter 170c — trade filters: team chips + date range */}
+        <Card className="mb-6 border-border/60" data-testid="transactions-filters">
+          <CardContent className="py-4 space-y-3">
+            <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+              <Filter className="h-3.5 w-3.5" />
+              Filters
+              {(selectedTeamIds.size > 0 || dateFrom || dateTo) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 ml-auto text-xs gap-1"
+                  data-testid="transactions-filters-clear"
+                  onClick={() => {
+                    setSelectedTeamIds(new Set());
+                    setDateFrom("");
+                    setDateTo("");
+                  }}
+                >
+                  <X className="h-3 w-3" />
+                  Clear
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap" data-testid="transactions-team-chips">
+              <span className="text-[10px] uppercase text-muted-foreground tracking-wider mr-1">
+                {selectedTeamIds.size === 0
+                  ? "Filter by team"
+                  : `Showing ${selectedTeamIds.size} team${selectedTeamIds.size === 1 ? "" : "s"}`}
+              </span>
+              {(leagueTeams || []).map((t: any) => {
+                const isOn = selectedTeamIds.has(t.id);
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    aria-pressed={isOn}
+                    data-testid={`transactions-team-chip-${t.id}`}
+                    onClick={() => {
+                      setSelectedTeamIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(t.id)) next.delete(t.id);
+                        else next.add(t.id);
+                        return next;
+                      });
+                    }}
+                    className={
+                      "px-2 py-0.5 rounded text-[11px] font-medium uppercase border transition-colors " +
+                      (isOn
+                        ? "bg-primary/25 border-primary/60 text-primary"
+                        : "bg-secondary/30 border-border/40 text-muted-foreground hover:border-primary/40 hover:text-foreground")
+                    }
+                  >
+                    {t.logo_abbr || (t.name || "").slice(0, 3).toUpperCase()}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-end gap-3 flex-wrap">
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="trans-date-from" className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  From
+                </Label>
+                <Input
+                  id="trans-date-from"
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  data-testid="transactions-date-from"
+                  className="h-8 text-xs w-40"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label htmlFor="trans-date-to" className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  To
+                </Label>
+                <Input
+                  id="trans-date-to"
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  data-testid="transactions-date-to"
+                  className="h-8 text-xs w-40"
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="mb-6">

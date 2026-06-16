@@ -1666,6 +1666,98 @@ async def set_salary_retention_slots(league_id: str, payload: dict, request: Req
     }
 
 
+# ─── Roster Limits (Iter 170c) ────────────────────────────────────────
+# Commissioner-editable per-section roster caps. Persists on
+# `league.roster_limits` so the Roster Monitor (routes/monitors.py)
+# and frontend Settings panel all read from one source of truth.
+
+ROSTER_LIMIT_FIELDS = ("starting_skaters", "starting_goalies", "bench", "ir", "minors")
+DEFAULT_ROSTER_LIMITS_LEAGUES = {
+    "starting_skaters": 18,
+    "starting_goalies": 2,
+    "bench": 6,
+    "ir": 3,
+    "minors": 6,
+}
+
+
+@router.get("/leagues/{league_id}/roster-limits")
+async def get_roster_limits(league_id: str):
+    """Return the league's roster section limits (defaults applied if unset)."""
+    db = _deps["db"]
+    _safe_object_id = _deps["_safe_object_id"]
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    persisted = league.get("roster_limits") or {}
+    return {
+        "league_id": league_id,
+        "roster_limits": {**DEFAULT_ROSTER_LIMITS_LEAGUES, **persisted},
+        "defaults": DEFAULT_ROSTER_LIMITS_LEAGUES,
+    }
+
+
+@router.put("/leagues/{league_id}/roster-limits")
+async def update_roster_limits(league_id: str, payload: dict, request: Request):
+    """Commissioner-only setter for roster section limits.
+
+    Body: ``{"starting_skaters": int, "starting_goalies": int, "bench": int,
+             "ir": int, "minors": int}``. Any subset can be sent; omitted
+    fields retain their prior value. Each field must be ≥ 0 and ≤ 50 (a
+    reasonable upper bound that catches obvious mis-entries).
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_comm = league["commissioner_id"] == user["_id"]
+    co_comms = league.get("co_commissioners", []) or []
+    if not (is_comm or user["_id"] in co_comms):
+        raise HTTPException(status_code=403, detail="Only commissioners can update roster limits")
+
+    existing = {**DEFAULT_ROSTER_LIMITS_LEAGUES, **(league.get("roster_limits") or {})}
+    new_limits = dict(existing)
+    diff: dict = {}
+    for key in ROSTER_LIMIT_FIELDS:
+        if key not in payload:
+            continue
+        try:
+            val = int(payload[key])
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail=f"{key} must be an integer")
+        if val < 0 or val > 50:
+            raise HTTPException(status_code=400, detail=f"{key} must be between 0 and 50")
+        if val != existing[key]:
+            diff[key] = {"from": existing[key], "to": val}
+            new_limits[key] = val
+
+    if diff:
+        await db.leagues.update_one(
+            {"_id": league["_id"]},
+            {"$set": {"roster_limits": new_limits}},
+        )
+        await db.audit_log.insert_one({
+            "league_id": league_id,
+            "actor_id": user["_id"],
+            "actor_name": user.get("name", user.get("email", "Unknown")),
+            "action": "roster_limits_updated",
+            "role": "commissioner" if is_comm else "co_commissioner",
+            "diff": diff,
+            "created_at": datetime.now(timezone.utc),
+        })
+
+    return {
+        "league_id": league_id,
+        "roster_limits": new_limits,
+        "changed": bool(diff),
+        "diff": diff,
+    }
+
+
 
 # ─── GET /leagues/{league_id}/veto-threshold-preview ───────────
 @router.get("/leagues/{league_id}/veto-threshold-preview")
