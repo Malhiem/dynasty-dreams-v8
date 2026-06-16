@@ -372,6 +372,56 @@ export default function DraftRoom() {
     setChatInput("");
   };
 
+  // Iter 170 — Manager-only "Simulate Pick" action. Advances the draft
+  // clock by one pick by marking the top-ranked undrafted player as
+  // selected by the on-clock team. Lets us verify the
+  // picks-until-my-turn counter decrements correctly without wiring the
+  // mock board to the live POST /drafts/{id}/pick endpoint.
+  const handleSimulatePick = () => {
+    const totalPicks = totalTeams * draftConfig.totalRounds;
+    if (draftConfig.currentPick > totalPicks) {
+      toast.info("Draft is complete.");
+      return;
+    }
+    const teamAbbr = getTeamForPick(draftConfig.currentPick);
+    const teamFull = leagueTeams.find((t) => t.abbr === teamAbbr);
+    const nextPlayer = players.find((p) => !p.drafted);
+    if (!nextPlayer) {
+      toast.warning("No eligible players left to draft.");
+      return;
+    }
+    const round = Math.ceil(draftConfig.currentPick / totalTeams);
+    const pickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
+    setPlayers((prev) =>
+      prev.map((p) =>
+        p.id === nextPlayer.id
+          ? { ...p, drafted: true, draftedBy: teamAbbr, draftedRound: round, draftedPick: pickInRound }
+          : p,
+      ),
+    );
+    setPicks((prev) => [
+      ...prev,
+      {
+        round,
+        pickInRound,
+        overall: draftConfig.currentPick,
+        team: teamAbbr,
+        player: { ...nextPlayer, drafted: true, draftedBy: teamAbbr, draftedRound: round, draftedPick: pickInRound },
+      } as DraftPick,
+    ]);
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: `pick-${Date.now()}`,
+        type: "pick",
+        sender: "System",
+        text: `${teamFull?.name || teamAbbr} selects ${nextPlayer.name} (${nextPlayer.position}) at #${draftConfig.currentPick}`,
+        timestamp: new Date(),
+      },
+    ]);
+    setDraftConfig((prev) => ({ ...prev, currentPick: prev.currentPick + 1 }));
+  };
+
   // ─── Derived values ────────────────────────────────────────────────────────
 
   const onTheClockTeam = getTeamForPick(draftConfig.currentPick);
@@ -612,44 +662,49 @@ export default function DraftRoom() {
   const currentPickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
   // Iter 170 — Picks-until-my-turn counter. The Draft Board uses a
   // mock 12-team `leagueTeams` array while `myTeam` comes from the
-  // real league. Map by position: find myTeam's index in liveTeams,
-  // then read the matching mock column abbr. Falls back to abbr/name
-  // derivations when the live index isn't available.
-  const picksUntilMyTurn: number | null = (() => {
+  // real league. Strategy:
+  //   1. If liveTeams.length matches the mock column count exactly, map
+  //      myTeam's index in liveTeams → that column's abbr (deterministic).
+  //   2. Otherwise, try direct abbr matches against the mock columns.
+  //   3. Final fallback: bucket by myTeam.name's first letter into the
+  //      first mock column whose abbr starts with the same letter so the
+  //      counter stays informative on the demo board.
+  const picksUntilMyTurn: number | null = useMemo(() => {
     if (!myTeam) return null;
     const myAbbrCandidates = new Set<string>();
-    if (Array.isArray(liveTeams) && liveTeams.length > 0) {
+    // (1) deterministic index mapping when array sizes line up
+    if (Array.isArray(liveTeams) && liveTeams.length === leagueTeams.length) {
       const idx = liveTeams.findIndex(
-        (t: any) => (t.id || t._id) === (myTeam as any).id || (t.id || t._id) === (myTeam as any)._id,
+        (t: any) => (t.id || t._id) === (myTeam as any).id,
       );
-      if (idx >= 0 && leagueTeams[idx % leagueTeams.length]) {
-        myAbbrCandidates.add(leagueTeams[idx % leagueTeams.length].abbr);
-      }
+      if (idx >= 0) myAbbrCandidates.add(leagueTeams[idx].abbr);
     }
+    // (2) explicit abbr/initials matches against the mock columns
     [
       (myTeam as any).abbr,
       (myTeam as any).logo_abbr,
       myTeam.name?.replace(/\s/g, "").slice(0, 3).toUpperCase(),
       myTeam.name?.split(" ").map((w: string) => w[0] || "").join("").toUpperCase(),
-    ].filter(Boolean).forEach((a: string) => myAbbrCandidates.add(a));
-    // Last-resort fallback so the counter is always informative in mock
-    // mode: bucket by name's first letter into a column whose abbr
-    // starts with the same letter. Keeps the counter live even on the
-    // demo board where the real team isn't a column.
-    if (myAbbrCandidates.size === 0 || ![...myAbbrCandidates].some((a) => teamAbbrs.includes(a))) {
+    ]
+      .filter(Boolean)
+      .forEach((a: string) => {
+        if (teamAbbrs.includes(a)) myAbbrCandidates.add(a);
+      });
+    // (3) first-letter fallback so the demo always has a column to land on
+    if (myAbbrCandidates.size === 0) {
       const firstLetter = myTeam.name?.charAt(0).toUpperCase();
       const fallback = teamAbbrs.find((a) => a.startsWith(firstLetter || ""));
       if (fallback) myAbbrCandidates.add(fallback);
       else if (teamAbbrs.length > 0) myAbbrCandidates.add(teamAbbrs[teamAbbrs.length - 1]);
     }
-    const totalPicks = totalTeams * draftConfig.rounds;
+    const totalPicks = totalTeams * draftConfig.totalRounds;
     for (let n = draftConfig.currentPick; n <= totalPicks; n++) {
       if (myAbbrCandidates.has(getTeamForPick(n))) {
         return n - draftConfig.currentPick;
       }
     }
     return null;
-  })();
+  }, [myTeam, liveTeams, draftConfig.currentPick, draftConfig.totalRounds, totalTeams, getTeamForPick]);
 
   const positions = [
     { value: "all", label: "All Positions" },
@@ -873,6 +928,18 @@ export default function DraftRoom() {
                                 Pause Timer
                               </>
                             )}
+                          </Button>
+                        )}
+                        {isLeagueManager && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="w-full mt-1"
+                            onClick={handleSimulatePick}
+                            data-testid="draft-room-simulate-pick"
+                          >
+                            <Play className="h-3.5 w-3.5 mr-1" />
+                            Simulate Pick
                           </Button>
                         )}
                       </div>
