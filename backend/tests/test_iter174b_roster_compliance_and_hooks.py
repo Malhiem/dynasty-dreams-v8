@@ -37,11 +37,14 @@ def test_roster_endpoint_no_longer_hardcodes_age_27():
 
 def test_roster_endpoint_surfaces_prospect_signal_to_frontend():
     """The frontend's compliance widget reads `minor_eligible` + the
-    section to decide whether to flag a player."""
+    section to decide whether to flag a player. Iter 175 broadened the
+    derivation: explicit prospect status OR (age AND career-GP under
+    thresholds) now sets is_prospect."""
     src = ROSTER_PY.read_text()
     assert '"player_type": player_type or "skater",' in src
     assert '"minor_eligible": is_prospect,' in src
-    assert "is_prospect = player_type == \"prospect\" or bool(p.get(\"minor_eligible\"))" in src
+    assert 'player_type == "prospect"' in src
+    assert 'bool(p.get("minor_eligible"))' in src
 
 
 def test_spillover_keeps_veterans_off_minors():

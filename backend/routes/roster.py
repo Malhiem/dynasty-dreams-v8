@@ -259,21 +259,42 @@ async def get_roster_detail(team_id: str):
 
         # Iter 174 — Compute a real age + surface prospect status so the
         # spillover logic (and frontend compliance flags) can tell
-        # veterans apart from minor-league-eligible prospects. Falls
-        # back to whatever the player doc carries; a sensible default
-        # only kicks in when we have nothing at all to work with.
+        # veterans apart from minor-league-eligible prospects.
+        # Iter 175 — Backfilled `birth_date` + `career_games_played` from
+        # the NHL stats API make these resolutions accurate. Falls back
+        # to whatever the player doc carries if backfill hasn't reached
+        # this row yet.
         player_age = p.get("age")
         bd = p.get("birth_date")
         if not player_age and bd:
             try:
                 from datetime import datetime as _dt, timezone as _tz
                 bd_dt = _dt.fromisoformat(bd.split("T")[0]) if isinstance(bd, str) else bd
-                player_age = (_dt.now(_tz.utc).replace(tzinfo=None) - bd_dt).days // 365
+                today = _dt.now(_tz.utc).replace(tzinfo=None)
+                player_age = today.year - bd_dt.year - (
+                    (today.month, today.day) < (bd_dt.month, bd_dt.day)
+                )
             except Exception:
                 player_age = None
-        # Prospect bona fides: explicit type wins, then minor_eligible flag.
+        career_gp = p.get("career_games_played")
+        # Iter 175 — Minor-eligibility now follows the strict league
+        # rules (age AND career-GP thresholds, with sensible defaults).
+        # A player is eligible to occupy a minors slot if BOTH:
+        #   • age is unknown OR ≤ league.minors_max_age  (default 22)
+        #   • career_gp is unknown OR ≤ league.minors_max_career_games  (default 25)
+        # Explicit prospect status (player_type or minor_eligible flag)
+        # always wins so seeded prospects keep their eligibility even
+        # without backfilled NHL stats.
+        max_age = int((league or {}).get("minors_max_age") or 22)
+        max_career_gp = int((league or {}).get("minors_max_career_games") or 25)
+        age_ok = player_age is None or player_age <= max_age
+        gp_ok = career_gp is None or int(career_gp) <= max_career_gp
         player_type = (p.get("player_type") or "").lower()
-        is_prospect = player_type == "prospect" or bool(p.get("minor_eligible"))
+        is_prospect = (
+            player_type == "prospect"
+            or bool(p.get("minor_eligible"))
+            or (age_ok and gp_ok)
+        )
 
         stats_by_period = {
             "season": round(fpts_season, 1),
@@ -307,12 +328,16 @@ async def get_roster_detail(team_id: str):
             "position": pos,
             "eligiblePositions": eligible,
             "is_goalie": is_g,
-            # Iter 174 — Real age (or None) instead of a hard-coded 27.
-            # The frontend's `checkIneligibility` uses this to flag
-            # players who've aged out of minors eligibility.
+            # Iter 175 — Real age + career_games_played make the team
+            # page's compliance check accurate (no more "Player aged
+            # out" false positives when age was a hardcoded 27).
             "age": player_age,
-            # Iter 173/174 — surface prospect status + minor-eligibility
-            # for the team page compliance check.
+            "career_games_played": career_gp,
+            # Iter 173/175 — surface prospect status + minor-eligibility
+            # (now derived from age AND career-GP, with prospect flag as
+            # an explicit override). The frontend compliance widget
+            # only flags a player as ineligible when they're sitting in
+            # a minors slot AND minor_eligible is False.
             "player_type": player_type or "skater",
             "minor_eligible": is_prospect,
             "dynastyValue": dyn_val,
