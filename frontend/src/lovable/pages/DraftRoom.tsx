@@ -70,6 +70,8 @@ import {
   formatPickTimer,
 } from "@/lovable/pages/draftroom/draftConstants";
 import SelectedPlayerCard from "@/lovable/pages/draftroom/SelectedPlayerCard";
+// Iter 172 — Audio alerts for "next up" + "on the clock" transitions.
+import useDraftSounds, { useTabTitleAlert } from "@/hooks/use-draft-sounds";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 import api from "@/lib/api";
@@ -1227,6 +1229,47 @@ export default function DraftRoom() {
   const currentCriteria = draftCriteria.find((c) => c.value === effectiveCriteria)
     || { value: effectiveCriteria, label: effectiveCriteria === "open" ? "Open · NHL Players" : effectiveCriteria, description: "" };
 
+  // ── Iter 172 — Draft Room audio alerts ───────────────────────────────────
+  // Two distinct synthesized tones so a manager who's tabbed away still
+  // hears their turn coming:
+  //   • picksUntilMyTurn transitions to 1 → soft "Next Up" chime
+  //   • picksUntilMyTurn transitions to 0 → urgent "On the Clock" arpeggio
+  // Plus a flashing browser-tab title while the user is on the clock.
+  const draftSounds = useDraftSounds();
+  const prevPicksUntilRef = useRef<number | null>(null);
+  useEffect(() => {
+    const prev = prevPicksUntilRef.current;
+    const curr = picksUntilMyTurn;
+    // Only react to actual transitions and only once a draft is live, so
+    // hydration + initial mount don't blast the user with a chime.
+    if (
+      draftConfig.draftStarted
+      && prev !== null
+      && curr !== null
+      && prev !== curr
+    ) {
+      if (curr === 1 && prev > 1) {
+        draftSounds.playNextUp();
+        try {
+          toast.info("You're next up", {
+            description: "Your team is on the clock after this pick. Get your queue ready.",
+          });
+        } catch {}
+      } else if (curr === 0 && prev > 0) {
+        draftSounds.playOnTheClock();
+        try {
+          toast.success("You're on the clock!", {
+            description: "Make your pick before the timer expires.",
+          });
+        } catch {}
+      }
+    }
+    prevPicksUntilRef.current = curr;
+  }, [picksUntilMyTurn, draftConfig.draftStarted, draftSounds]);
+  // Flash the browser tab title while the user is on the clock and not
+  // currently viewing the page.
+  useTabTitleAlert(draftConfig.draftStarted && picksUntilMyTurn === 0);
+
   return (
     <AppLayout>
       <TooltipProvider>
@@ -1398,6 +1441,23 @@ export default function DraftRoom() {
               undoCount={undoCount}
               setUndoCount={setUndoCount}
               handleUndoPicks={handleUndoPicks}
+              soundsEnabled={draftSounds.enabled}
+              onToggleSounds={() => {
+                const next = !draftSounds.enabled;
+                draftSounds.setEnabled(next);
+                // Preview tones the moment a manager flips the toggle on
+                // — this also primes the AudioContext inside the user
+                // gesture so the next real alert can fire when hidden.
+                if (next) {
+                  draftSounds.playNextUp();
+                  toast.success("Draft alerts enabled", {
+                    description: "You'll hear a chime when you're next up, and an alert when you're on the clock.",
+                  });
+                } else {
+                  toast.info("Draft alerts muted");
+                }
+              }}
+              onPreviewOnTheClock={draftSounds.playOnTheClock}
             />
           </div>
 

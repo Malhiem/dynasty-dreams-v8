@@ -17,7 +17,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Clock, Play, Pause, Timer, AlertCircle, RotateCcw } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Clock, Play, Pause, Timer, AlertCircle, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCountdown, formatPickTimer } from "@/lovable/pages/draftroom/draftConstants";
 
@@ -45,6 +50,10 @@ export default function DraftLiveTile({
   undoCount,
   setUndoCount,
   handleUndoPicks,
+  // Iter 172 — audio alerts (opt-in toggle + preview)
+  soundsEnabled,
+  onToggleSounds,
+  onPreviewOnTheClock,
 }) {
   return (
     <Card className="border-border bg-card/80 min-w-[320px]">
@@ -77,12 +86,62 @@ export default function DraftLiveTile({
                 <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
                 <span className="text-sm font-semibold text-foreground">Draft Live</span>
               </div>
-              {draftConfig.earlyStart && countdown > 0 && (
-                <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/30">
-                  <AlertCircle className="h-3 w-3 mr-1" />
-                  No Clock
-                </Badge>
-              )}
+              <div className="flex items-center gap-1">
+                {draftConfig.earlyStart && countdown > 0 && (
+                  <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/30">
+                    <AlertCircle className="h-3 w-3 mr-1" />
+                    No Clock
+                  </Badge>
+                )}
+                {typeof onToggleSounds === "function" && (
+                  <>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={cn(
+                            "h-6 w-6 shrink-0",
+                            soundsEnabled
+                              ? "text-emerald-300 hover:text-emerald-200"
+                              : "text-muted-foreground hover:text-foreground",
+                          )}
+                          onClick={onToggleSounds}
+                          data-testid="draft-room-sounds-toggle"
+                          aria-pressed={!!soundsEnabled}
+                          aria-label={soundsEnabled ? "Mute draft alerts" : "Enable draft alerts"}
+                        >
+                          {soundsEnabled
+                            ? <Volume2 className="h-3.5 w-3.5" />
+                            : <VolumeX className="h-3.5 w-3.5" />}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {soundsEnabled
+                          ? "Draft alerts ON — chime when you're next up, alarm when you're on the clock"
+                          : "Draft alerts muted — click to enable"}
+                      </TooltipContent>
+                    </Tooltip>
+                    {soundsEnabled && typeof onPreviewOnTheClock === "function" && (
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 shrink-0 text-muted-foreground hover:text-foreground"
+                            onClick={onPreviewOnTheClock}
+                            data-testid="draft-room-sounds-preview"
+                            aria-label="Preview on-the-clock alert"
+                          >
+                            <Play className="h-3 w-3" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Preview the on-the-clock alert</TooltipContent>
+                      </Tooltip>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
             <div className="bg-secondary/50 rounded-lg p-3 text-center space-y-1">
               <p className="text-[10px] uppercase tracking-wider text-muted-foreground">On the Clock</p>
