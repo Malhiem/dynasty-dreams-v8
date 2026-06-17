@@ -19,6 +19,20 @@ from pathlib import Path
 DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
 SEED_SCRIPT = Path("/app/backend/scripts/iter170o_seed_prospects.py")
 DRAFT_ROOM = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
+# Iter 174 — header strip (subheader + criteria popover + toggles) was
+# extracted into DraftHeaderActions.tsx. Concatenate so existing
+# grep-style assertions keep working.
+_DRAFT_ROOM_FAMILY = [
+    DRAFT_ROOM,
+    Path("/app/frontend/src/lovable/pages/draftroom/DraftHeaderActions.tsx"),
+    Path("/app/frontend/src/lovable/pages/draftroom/DraftLiveTile.tsx"),
+    Path("/app/frontend/src/lovable/pages/draftroom/DraftBoard.tsx"),
+    Path("/app/frontend/src/lovable/pages/draftroom/PlayerSearchPanel.tsx"),
+]
+
+
+def _draft_room_concat() -> str:
+    return "\n".join(p.read_text() for p in _DRAFT_ROOM_FAMILY if p.exists())
 
 
 def test_seed_script_stamps_prospect_type_and_safe_nhl_id():
@@ -58,7 +72,7 @@ def test_auto_pick_respects_criteria_filter():
 
 
 def test_draftroom_subheader_mirrors_backend_criteria():
-    src = DRAFT_ROOM.read_text()
+    src = _draft_room_concat()
     assert 'data-testid="draft-room-subheader"' in src
     # Dynamic label based on backend value.
     assert 'currentDraft?.player_criteria === "entry"' in src
