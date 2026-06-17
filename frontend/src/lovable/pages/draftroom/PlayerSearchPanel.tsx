@@ -160,7 +160,7 @@ export default function PlayerSearchPanel({
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{player.name}</p>
                     <p className="text-[10px] text-muted-foreground">
-                      {player.league} · {player.age}y · {player.gp}GP {player.g}G {player.a}A
+                      {player.league} · {player.age}y · {player.gp}GP {player.g}G {player.a}A {player.pts}P
                     </p>
                   </div>
                   <Tooltip>

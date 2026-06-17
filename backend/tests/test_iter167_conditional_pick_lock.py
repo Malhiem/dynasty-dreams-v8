@@ -24,6 +24,31 @@ from pathlib import Path
 import pytest
 from httpx import AsyncClient
 
+# Iter 171 — DraftRoom.tsx was split into sub-components. Resolve the legacy
+# "read the entire draft room source" pattern as the concatenation of the
+# parent + extracted draftroom/* files so existing grep-style assertions
+# keep working without rewriting every spec.
+def _iter171_draftroom_concat() -> str:
+    from pathlib import Path as _P
+    paths = [
+        _P("/app/frontend/src/lovable/pages/DraftRoom.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/DraftLiveTile.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/DraftBoard.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/PlayerSearchPanel.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/draftConstants.ts"),
+    ]
+    return chr(10).join(p.read_text() for p in paths if p.exists())
+
+
+class _Iter171DraftRoomShim:
+    def read_text(self, *a, **kw) -> str:
+        return _iter171_draftroom_concat()
+
+
+def _iter171_install_shim_after_imports():
+    pass
+
+
 
 def _backend_url():
     env = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", ".env")
@@ -141,7 +166,7 @@ FRONT = Path("/app/frontend/src")
 
 
 def test_draft_room_renders_conditional_asterisk():
-    src = (FRONT / "lovable/pages/DraftRoom.tsx").read_text()
+    src = _iter171_draftroom_concat()
     # State derived from pending_protections
     assert "const conditionalProtections = (livePick?.pending_protections || []) as any[]" in src
     assert "const isConditional = conditionalProtections.length > 0" in src
@@ -156,5 +181,5 @@ def test_abbr_fallback_no_longer_overrides_ownerteam_lookup():
     ownerTeam.id has already resolved. Previously the abbr fallback
     could overwrite the strict-ID lookup and pull a stale pick whose
     `trade_history` belonged to a different team."""
-    src = (FRONT / "lovable/pages/DraftRoom.tsx").read_text()
+    src = _iter171_draftroom_concat()
     assert "|| (!ownerTeam?.id ? livePicksByOrigKey[`${round}|abbr:${teamAbbr}`] : null)" in src

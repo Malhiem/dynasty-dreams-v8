@@ -60,6 +60,15 @@ import TruncatedRosterPanel from "@/lovable/pages/draftroom/TruncatedRosterPanel
 import SortableQueue from "@/lovable/pages/draftroom/SortableQueue";
 // Iter 171 — Player Search tabs (Eligible / Queue / Shortlist) extracted.
 import PlayerSearchPanel from "@/lovable/pages/draftroom/PlayerSearchPanel";
+// Iter 171 — Draft Live tile + Draft Board extracted into their own files.
+import DraftLiveTile from "@/lovable/pages/draftroom/DraftLiveTile";
+import DraftBoard from "@/lovable/pages/draftroom/DraftBoard";
+import {
+  positionColors,
+  positionTints,
+  formatCountdown,
+  formatPickTimer,
+} from "@/lovable/pages/draftroom/draftConstants";
 import SelectedPlayerCard from "@/lovable/pages/draftroom/SelectedPlayerCard";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
@@ -130,26 +139,6 @@ const mockLeagueTeams = [
 
 // ─── Position colors ─────────────────────────────────────────────────────────
 
-const positionColors: Record<string, string> = {
-  C: "bg-blue-600/80 text-blue-100 border-blue-500/50",
-  LW: "bg-emerald-600/80 text-emerald-100 border-emerald-500/50",
-  RW: "bg-teal-600/80 text-teal-100 border-teal-500/50",
-  D: "bg-amber-600/80 text-amber-100 border-amber-500/50",
-  G: "bg-purple-600/80 text-purple-100 border-purple-500/50",
-};
-
-// Iter 170e — softer position tints used to wash the drafted-pick tile
-// background so a manager can scan position distribution at a glance.
-const positionTints: Record<string, string> = {
-  C: "bg-blue-500/15 border-blue-500/40",
-  LW: "bg-emerald-500/15 border-emerald-500/40",
-  RW: "bg-teal-500/15 border-teal-500/40",
-  D: "bg-amber-500/15 border-amber-500/40",
-  G: "bg-purple-500/15 border-purple-500/40",
-};
-
-// ─── Draft criteria descriptions ─────────────────────────────────────────────
-
 const draftCriteria = [
   { value: "entry", label: "NHL Entry Draft", description: "Players aged 18-20 who have not been previously drafted by an NHL team. Includes CHL, European, and college players eligible for the first time." },
   { value: "rookies", label: "Rookies Only", description: "Players who have not played more than 25 games in any single preceding season or 6+ games in each of any two preceding seasons in the NHL." },
@@ -210,20 +199,8 @@ const myRoster = [
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatCountdown(ms: number) {
-  if (ms <= 0) return "00:00:00";
-  const totalSec = Math.floor(ms / 1000);
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  const s = totalSec % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-}
-
-function formatPickTimer(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
+// Iter 171 — formatCountdown / formatPickTimer / positionColors / positionTints
+// extracted to /draftroom/draftConstants.ts and re-imported above.
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -1396,591 +1373,61 @@ export default function DraftRoom() {
             })()}
             </div>
 
-            {/* Draft Timer Card */}
-            <Card className="border-border bg-card/80 min-w-[320px]">
-              <CardContent className="p-4 space-y-3">
-                {!draftConfig.draftStarted ? (
-                  <>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Clock className="h-4 w-4" />
-                      <span>Draft starts in</span>
-                    </div>
-                    <div className="text-3xl font-mono font-bold text-primary tracking-widest text-center">
-                      {formatCountdown(countdown)}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground text-center">
-                      Scheduled: {draftConfig.scheduledTime?.toLocaleString()}
-                    </p>
-                    <Button variant="ice" size="sm" className="w-full" onClick={handleEarlyStart}>
-                      <Play className="h-3.5 w-3.5 mr-1" />
-                      Start Draft Early (No Clock)
-                    </Button>
-                    <Button
-                      variant="gold"
-                      size="sm"
-                      className="w-full"
-                      onClick={handleStartWithTimer}
-                    >
-                      <Timer className="h-3.5 w-3.5 mr-1" />
-                      Start Draft (With Timer)
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                        <span className="text-sm font-semibold text-foreground">Draft Live</span>
-                      </div>
-                      {draftConfig.earlyStart && countdown > 0 && (
-                        <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/30">
-                          <AlertCircle className="h-3 w-3 mr-1" />
-                          No Clock
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="bg-secondary/50 rounded-lg p-3 text-center space-y-1">
-                      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">On the Clock</p>
-                      <p className="text-lg font-bold text-foreground" data-testid="draft-room-on-the-clock-team">{onTheClockTeamFull?.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Round {currentRound}, Pick {currentPickInRound} (#{draftConfig.currentPick} overall)
-                      </p>
-                      {/* Iter 170n — Surface the draft format so a
-                          manager isn't surprised when NHL stars (vs.
-                          entry-level prospects) populate the eligible
-                          list. Backed by `draft.player_criteria`. */}
-                      {currentDraft?.player_criteria && (
-                        <p
-                          className="text-[10px] uppercase tracking-wider text-muted-foreground/70"
-                          data-testid="draft-room-criteria-badge"
-                        >
-                          Format: {currentDraft.player_criteria === "entry" ? "Entry / Rookies" : "Open · all eligible NHL players"}
-                        </p>
-                      )}
-                      {/* Iter 170e — Next team up to pick. Helps managers
-                          mentally queue while the clock is running on the
-                          current team. */}
-                      {(() => {
-                        const nextOverall = draftConfig.currentPick + 1;
-                        const nextAbbr = nextOverall <= totalTeams * draftConfig.totalRounds
-                          ? getTeamForPick(nextOverall)
-                          : null;
-                        const nextTeam = nextAbbr ? boardTeams.find((t) => t.abbr === nextAbbr) : null;
-                        if (!nextTeam) return null;
-                        return (
-                          <p
-                            className="text-[11px] text-muted-foreground/90 mt-1 pt-1 border-t border-border/40"
-                            data-testid="draft-room-next-on-clock"
-                          >
-                            <span className="uppercase tracking-wider text-muted-foreground/60 mr-1">Next:</span>
-                            <span className="font-medium text-foreground/85">{nextTeam.name}</span>
-                            <span className="text-muted-foreground/60"> (#{nextOverall})</span>
-                          </p>
-                        );
-                      })()}
-                      {/* Iter 170 — Picks-until-my-turn counter (always visible) */}
-                      <p
-                        className={cn(
-                          "text-[11px] font-medium mt-1.5 pt-1.5 border-t border-border/40",
-                          picksUntilMyTurn === 0 ? "text-emerald-400" : "text-primary",
-                        )}
-                        data-testid="draft-picks-until-my-turn"
-                      >
-                        {picksUntilMyTurn === null
-                          ? "Picks until your turn: —"
-                          : picksUntilMyTurn === 0
-                          ? "You're on the clock!"
-                          : `${picksUntilMyTurn} ${picksUntilMyTurn === 1 ? "pick" : "picks"} until ${myTeam?.name || "your team"}`}
-                      </p>
-                    </div>
-                    {isClockActive && (
-                      <div className="space-y-1.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="flex items-center gap-1 text-muted-foreground">
-                            <Timer className="h-3 w-3" />
-                            Pick Timer
-                            {timerPaused && (
-                              <Badge variant="outline" className="text-[10px] text-amber-400 border-amber-400/30 ml-1">
-                                Paused
-                              </Badge>
-                            )}
-                          </span>
-                          <span className={cn("font-mono font-bold text-lg", timerPaused ? "text-muted-foreground" : pickTimeLeft <= 15 ? "text-destructive" : "text-primary")}>
-                            {formatPickTimer(pickTimeLeft)}
-                          </span>
-                        </div>
-                        <Progress value={(pickTimeLeft / draftConfig.pickTimerSeconds) * 100} className="h-1.5" />
-                        {isLeagueManager && (
-                          <Button
-                            variant={timerPaused ? "gold" : "outline"}
-                            size="sm"
-                            className="w-full mt-1"
-                            onClick={() => setTimerPaused((prev) => !prev)}
-                          >
-                            {timerPaused ? (
-                              <>
-                                <Play className="h-3.5 w-3.5 mr-1" />
-                                Resume Timer
-                              </>
-                            ) : (
-                              <>
-                                <Pause className="h-3.5 w-3.5 mr-1" />
-                                Pause Timer
-                              </>
-                            )}
-                          </Button>
-                        )}
-                        {isLeagueManager && (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            className="w-full mt-1"
-                            onClick={handleSimulatePick}
-                            data-testid="draft-room-simulate-pick"
-                          >
-                            <Play className="h-3.5 w-3.5 mr-1" />
-                            Simulate Pick
-                          </Button>
-                        )}
-                        {/* Iter 170i — Commissioner-only Undo with
-                            count picker. Default 1; up to last N picks. */}
-                        {isLeagueManager && picks.length > 0 && (
-                          <div className="flex items-stretch gap-1 mt-1" data-testid="draft-room-undo-bar">
-                            <Input
-                              type="number"
-                              min={1}
-                              max={picks.length}
-                              value={undoCount}
-                              onChange={(e) => setUndoCount(Math.max(1, Math.min(picks.length, parseInt(e.target.value || "1", 10))))}
-                              data-testid="draft-room-undo-count"
-                              className="h-9 w-14 text-center text-sm"
-                            />
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="flex-1 gap-1.5 text-amber-400 border-amber-400/30 hover:bg-amber-400/10"
-                              onClick={() => handleUndoPicks(undoCount)}
-                              data-testid="draft-room-undo-pick"
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                              {undoCount === 1 ? "Undo Last Pick" : `Undo ${undoCount} Picks`}
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {draftConfig.earlyStart && countdown > 0 && (
-                      <p className="text-[10px] text-muted-foreground text-center">
-                        Clock activates in {formatCountdown(countdown)}
-                      </p>
-                    )}
-                  </>
-                )}
-              </CardContent>
-            </Card>
+            {/* Draft Live tile (Iter 171 extracted) */}
+            <DraftLiveTile
+              draftConfig={draftConfig}
+              countdown={countdown}
+              onEarlyStart={handleEarlyStart}
+              onStartWithTimer={handleStartWithTimer}
+              onTheClockTeamFull={onTheClockTeamFull}
+              currentRound={currentRound}
+              currentPickInRound={currentPickInRound}
+              currentDraft={currentDraft}
+              totalTeams={totalTeams}
+              getTeamForPick={getTeamForPick}
+              boardTeams={boardTeams}
+              picksUntilMyTurn={picksUntilMyTurn}
+              myTeam={myTeam}
+              isClockActive={isClockActive}
+              timerPaused={timerPaused}
+              setTimerPaused={setTimerPaused}
+              pickTimeLeft={pickTimeLeft}
+              isLeagueManager={isLeagueManager}
+              handleSimulatePick={handleSimulatePick}
+              picks={picks}
+              undoCount={undoCount}
+              setUndoCount={setUndoCount}
+              handleUndoPicks={handleUndoPicks}
+            />
           </div>
 
-          {/* ── Draft Board (full width, top) ──────────────────────────── */}
-          <Card className="border-border">
-            <CardHeader className="pb-2 space-y-2">
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <CardTitle className="text-base">Draft Board</CardTitle>
-                <div className="flex items-center gap-1 flex-wrap" data-testid="draft-board-owner-filter">
-                  <span className="text-[10px] uppercase text-muted-foreground tracking-wider mr-1">
-                    {selectedOwnerAbbrs.size === 0 ? "Filter by owner" : `Showing ${selectedOwnerAbbrs.size} team${selectedOwnerAbbrs.size === 1 ? "" : "s"}`}
-                  </span>
-                  {boardTeamAbbrs.map((abbr) => {
-                    const isOn = selectedOwnerAbbrs.has(abbr);
-                    return (
-                      <button
-                        key={abbr}
-                        type="button"
-                        onClick={() => {
-                          setSelectedOwnerAbbrs((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(abbr)) next.delete(abbr);
-                            else next.add(abbr);
-                            return next;
-                          });
-                        }}
-                        className={cn(
-                          "px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border transition-colors",
-                          isOn
-                            ? "bg-primary/25 border-primary/60 text-primary"
-                            : "bg-secondary/30 border-border/40 text-muted-foreground hover:border-primary/40 hover:text-foreground",
-                        )}
-                        data-testid={`draft-board-owner-chip-${abbr}`}
-                        aria-pressed={isOn}
-                      >
-                        {abbr}
-                      </button>
-                    );
-                  })}
-                  {selectedOwnerAbbrs.size > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedOwnerAbbrs(new Set())}
-                      className="px-1.5 py-0.5 rounded text-[10px] uppercase text-muted-foreground hover:text-foreground border border-transparent"
-                      data-testid="draft-board-owner-clear"
-                    >
-                      Clear
-                    </button>
-                  )}
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <ScrollArea className="w-full">
-                <div className="min-w-[700px] p-4 pt-0">
-                  <div
-                    className="grid gap-1 mb-1 sticky top-0 bg-card z-10 pt-2"
-                    style={{ gridTemplateColumns: `48px repeat(${totalTeams}, minmax(72px, 1fr))` }}
-                  >
-                    <div className="p-1.5 text-[10px] font-semibold text-muted-foreground uppercase">Rd</div>
-                    {boardTeamAbbrs.map((abbr) => (
-                      <div
-                        key={abbr}
-                        className={cn(
-                          "p-1.5 text-[10px] font-semibold text-center text-muted-foreground uppercase truncate rounded",
-                          abbr === onTheClockTeam && draftConfig.draftStarted
-                            ? "bg-primary/15 text-primary"
-                            : abbr === myTeam?.abbr
-                            ? "bg-accent/10 text-accent"
-                            : "bg-secondary/50"
-                        )}
-                      >
-                        {abbr}
-                      </div>
-                    ))}
-                  </div>
-                  {allPicks.map((roundPicks, rIdx) => {
-                    const round = rIdx + 1;
-                    return (
-                      <div
-                        key={round}
-                        className="grid gap-1 mb-1"
-                        style={{ gridTemplateColumns: `48px repeat(${totalTeams}, minmax(72px, 1fr))` }}
-                      >
-                        <div className="p-1.5 flex items-center justify-center text-[10px] font-bold text-muted-foreground bg-secondary/30 rounded">
-                          {round}
-                        </div>
-                        {boardTeamAbbrs.map((teamAbbr) => {
-                          const pick = roundPicks.find((p) => p.team === teamAbbr);
-                          const isCurrentPick = pick?.overall === draftConfig.currentPick && draftConfig.draftStarted;
-                          // Iter 170b — prefer the exact board-team entry
-                          // (carries real id when liveTeams is present).
-                          const boardEntry = boardTeams.find((t) => t.abbr === teamAbbr);
-                          const ownerTeam = (liveTeams || []).find((t: any) => {
-                            if (boardEntry?.id && (t.id || t._id) === boardEntry.id) return true;
-                            const nameAbbr = (t.name || "").replace(/\s/g, "").slice(0, 3).toUpperCase();
-                            const fullName = (t.name || "").split(" ").map((w: string) => w[0]).join("").toUpperCase();
-                            return t.logo_abbr === teamAbbr || nameAbbr === teamAbbr || fullName === teamAbbr;
-                          });
-                          const isPlayerOnBlock = pick?.player && tradeBlockPlayerIds.has(String(pick.player.id));
-                          const isPickOnBlock = ownerTeam?.id && tradeBlockOverallKeys.has(`${ownerTeam.id}|R${round}`);
-                          // Iter 151 — on-block megaphone overlays are ALWAYS visible
-                          // (no longer gated by tradeBlockMode). The toggle only controls
-                          // the interactive "Mark available" quick-add buttons below.
-                          const onBlock = isPlayerOnBlock || isPickOnBlock;
-                          const isMyTile = ownerTeam?.id && ownerTeam.id === myTeam?.id;
-                          // Iter 164 — owner-filter highlight/dim.
-                          // The column abbr is the team that currently
-                          // displays in this column header. When the
-                          // commissioner toggles 1+ owner chips, tiles
-                          // owned by un-selected teams dim out so the
-                          // selected teams' picks pop. Empty selection
-                          // = "show all" (no dimming).
-                          const ownerFilterActive = selectedOwnerAbbrs.size > 0;
-                          // Iter 165 — pick provenance lookup. Strict
-                          // ID match preferred (avoids the abbr-collision
-                          // false positive bug); abbr fallback only when
-                          // ownerTeam.id genuinely doesn't resolve.
-                          const livePick =
-                            (ownerTeam?.id ? livePicksByOrigKey[`${round}|${ownerTeam.id}`] : null)
-                            || (!ownerTeam?.id ? livePicksByOrigKey[`${round}|abbr:${teamAbbr}`] : null);
-                          const tradeHistory = (livePick?.trade_history || []) as any[];
-                          const isTradedPick = tradeHistory.length > 0;
-                          // Iter 166 — filter resolves against the CURRENT
-                          // owner, not the original column. For traded
-                          // picks the live pick payload carries the new
-                          // owner's abbr list; for untraded picks the
-                          // column header IS the current owner.
-                          // Iter 170e — always include the column's own
-                          // (deduped) abbr so a chip click on this column
-                          // highlights it even when livePick carries a
-                          // different abbr derivation.
-                          const currentOwnerAbbrs: string[] = Array.from(new Set([
-                            ...(livePick?._currentOwnerAbbrs || []),
-                            teamAbbr,
-                          ]));
-                          const isOwnedBySelected = ownerFilterActive && currentOwnerAbbrs.some((a: string) => selectedOwnerAbbrs.has(a));
-                          const isDimmedByFilter = ownerFilterActive && !isOwnedBySelected;
-                          // Iter 167 — conditional-pick asterisk. Backend
-                          // surfaces `pending_protections` per pick (set
-                          // when a trade contains an unresolved upgrade
-                          // clause). Mark the tile with an `*` and a
-                          // tooltip; the original team can't re-trade.
-                          const conditionalProtections = (livePick?.pending_protections || []) as any[];
-                          const isConditional = conditionalProtections.length > 0;
-                          return (
-                            <div
-                              key={`${round}-${teamAbbr}`}
-                              data-testid={`draft-board-tile-${teamAbbr}-${round}`}
-                              className={cn(
-                                "p-1.5 rounded border text-center min-h-[64px] flex flex-col items-center justify-center gap-0.5 transition-all relative",
-                                isCurrentPick
-                                  ? "bg-primary/10 border-primary/50 ring-1 ring-primary/30"
-                                  : pick?.player
-                                  ? (positionTints[pick.player.position] || "bg-secondary/60 border-border")
-                                  : "bg-card/50 border-border/50",
-                                onBlock && "ring-1 ring-amber-400/60 border-amber-400/40",
-                                isOwnedBySelected && "ring-2 ring-primary/70 border-primary/50",
-                                isDimmedByFilter && "opacity-30",
-                              )}
-                              data-testid={onBlock ? `draft-room-block-tile-${teamAbbr}-${pick?.overall ?? "x"}` : undefined}
-                            >
-                              <span className="text-[9px] text-muted-foreground">
-                                #{pick?.overall}
-                                {isConditional && (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span
-                                        className="ml-0.5 text-amber-400 font-bold cursor-help"
-                                        data-testid={`draft-board-pick-conditional-${teamAbbr}-${round}`}
-                                      >*</span>
-                                    </TooltipTrigger>
-                                    <TooltipContent className="max-w-sm">
-                                      <div className="space-y-1 text-xs">
-                                        <p className="font-semibold">Conditional protection — locked from re-trade</p>
-                                        {conditionalProtections.map((c: any, idx: number) => (
-                                          <p key={idx} className="text-muted-foreground">
-                                            {c.description || `${c.subject_type} ${c.metric} ${c.operator} ${c.threshold}`}
-                                          </p>
-                                        ))}
-                                      </div>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                )}
-                              </span>
-                              {pick?.player ? (
-                                <>
-                                  {/* Iter 170k — Auto-picked badge: tiny
-                                      clock pip in the top-right corner
-                                      so a manager can spot a timeout
-                                      pick at a glance. Tooltip carries
-                                      the resolution (queue vs top
-                                      eligible) for context. */}
-                                  {(pick as any).auto_picked && (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span
-                                          className="absolute top-0.5 right-0.5 inline-flex items-center justify-center h-4 w-4 rounded-sm bg-sky-500/25 text-sky-300"
-                                          data-testid={`draft-board-auto-pick-${pick.overall}`}
-                                        >
-                                          <Clock className="h-2.5 w-2.5" />
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        Auto-picked on timeout — via {(pick as any).auto_pick_via === "queue" ? "manager's queue" : "top-ranked eligible"}
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  )}
-                                  {/* Iter 170e — Headshot (or initial circle) +
-                                      richer line for league · pts so a tile
-                                      reads as a mini player card. */}
-                                  {pick.player.photo || pick.player.headshot ? (
-                                    <img
-                                      src={pick.player.photo || pick.player.headshot}
-                                      alt={pick.player.name}
-                                      className="h-6 w-6 rounded-full object-cover border border-border/60"
-                                      data-testid={`draft-board-tile-photo-${teamAbbr}-${round}`}
-                                    />
-                                  ) : (
-                                    <span
-                                      className="h-6 w-6 rounded-full bg-card/70 border border-border/60 flex items-center justify-center text-[10px] font-bold text-foreground/80"
-                                      data-testid={`draft-board-tile-initial-${teamAbbr}-${round}`}
-                                    >
-                                      {pick.player.name.charAt(0)}
-                                    </span>
-                                  )}
-                                  <span className="text-[10px] font-medium text-foreground truncate w-full leading-tight">
-                                    {pick.player.name.split(" ").map((n, i) => i === 0 ? n[0] + "." : n).join(" ")}
-                                  </span>
-                                  <div className="flex items-center gap-1 justify-center">
-                                    <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border", positionColors[pick.player.position] || "bg-muted text-muted-foreground")}>
-                                      {pick.player.position}
-                                    </Badge>
-                                    {(pick.player.league || pick.player.nhlTeam) && (
-                                      <span className="text-[8px] text-muted-foreground truncate">
-                                        {pick.player.league || pick.player.nhlTeam}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {typeof pick.player.pts === "number" && (
-                                    <span className="text-[8px] text-muted-foreground/80">{pick.player.pts} pts</span>
-                                  )}
-                                  {/* Iter 170i — Commissioner-only Swap
-                                      affordance on every drafted tile.
-                                      Opens a popover with a quick search
-                                      to replace this pick's player. */}
-                                  {isLeagueManager && (
-                                    <Popover
-                                      open={swapPickOverall === pick.overall}
-                                      onOpenChange={(open) => {
-                                        setSwapPickOverall(open ? pick.overall : null);
-                                        if (!open) setSwapSearch("");
-                                      }}
-                                    >
-                                      <PopoverTrigger asChild>
-                                        <button
-                                          type="button"
-                                          className="absolute bottom-0.5 right-0.5 h-4 w-4 rounded-sm bg-card/70 border border-border/60 flex items-center justify-center text-foreground/70 hover:bg-primary/20 hover:text-primary"
-                                          data-testid={`draft-board-swap-btn-${pick.overall}`}
-                                          aria-label="Swap player"
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          <ArrowRightLeft className="h-2.5 w-2.5" />
-                                        </button>
-                                      </PopoverTrigger>
-                                      <PopoverContent
-                                        align="end"
-                                        className="w-72 p-2 space-y-2"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <div className="text-xs font-semibold text-foreground">
-                                          Swap pick #{pick.overall} ({pick.team})
-                                        </div>
-                                        <div className="text-[10px] text-muted-foreground">
-                                          Currently: <span className="text-foreground">{pick.player.name}</span> ({pick.player.position})
-                                        </div>
-                                        <Input
-                                          autoFocus
-                                          value={swapSearch}
-                                          onChange={(e) => setSwapSearch(e.target.value)}
-                                          placeholder="Search for replacement player…"
-                                          className="h-8 text-xs"
-                                          data-testid="draft-board-swap-search"
-                                        />
-                                        <div className="max-h-48 overflow-y-auto space-y-0.5">
-                                          {players
-                                            .filter((p) => !p.drafted && (!swapSearch || p.name.toLowerCase().includes(swapSearch.toLowerCase()) || p.position.toLowerCase().includes(swapSearch.toLowerCase())))
-                                            .slice(0, 12)
-                                            .map((p) => (
-                                              <button
-                                                key={p.id}
-                                                type="button"
-                                                onClick={async () => {
-                                                  await handleSwapPickPlayer(pick.overall, String(p.id));
-                                                  setSwapPickOverall(null);
-                                                  setSwapSearch("");
-                                                }}
-                                                className="flex items-center justify-between w-full px-2 py-1 rounded hover:bg-secondary/60 text-left"
-                                                data-testid={`draft-board-swap-option-${p.id}`}
-                                              >
-                                                <span className="text-xs text-foreground truncate">{p.name}</span>
-                                                <span className="text-[10px] text-muted-foreground ml-2">{p.position}</span>
-                                              </button>
-                                            ))}
-                                          {players.filter((p) => !p.drafted).length === 0 && (
-                                            <p className="text-[11px] text-muted-foreground text-center py-2">No eligible players</p>
-                                          )}
-                                        </div>
-                                      </PopoverContent>
-                                    </Popover>
-                                  )}
-                                </>
-                              ) : (
-                                <span className="text-[10px] text-muted-foreground/40">—</span>
-                              )}
-                              {/* Iter 149 — Megaphone icon overlay when the player or pick is on trade block */}
-                              {onBlock && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span
-                                      className="absolute top-0.5 left-0.5 inline-flex items-center justify-center h-4 w-4 rounded-sm bg-amber-500/25 text-amber-300"
-                                      data-testid={`draft-room-block-icon-${teamAbbr}-${pick?.overall ?? "x"}`}
-                                    >
-                                      <Megaphone className="h-2.5 w-2.5" />
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent>
-                                    {isPlayerOnBlock ? "Player available — on trade block" : "Upcoming pick available — on trade block"}
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
-                              {/* Iter 165 — Traded-pick provenance chip */}
-                              {isTradedPick && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <span
-                                      className="absolute top-0.5 right-0.5 inline-flex items-center justify-center h-4 w-4 rounded-sm bg-sky-500/25 text-sky-300 cursor-help"
-                                      data-testid={`draft-board-pick-traded-${teamAbbr}-${round}`}
-                                    >
-                                      <ArrowRightLeft className="h-2.5 w-2.5" />
-                                    </span>
-                                  </TooltipTrigger>
-                                  <TooltipContent className="max-w-sm">
-                                    <PickProvenance tradeHistory={tradeHistory} />
-                                  </TooltipContent>
-                                </Tooltip>
-                              )}
-                              {/* Iter 149/150/152 — "Mark available for draft" quick-add.
-                                  Iter 152: only own-team tiles render the add button. Other teams'
-                                  on-block items remain visible at all times via the `onBlock` icon above. */}
-                              {tradeBlockMode && !onBlock && isMyTile && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (pick?.player) {
-                                          markAvailableForDraft("player", { id: pick.player.id, name: pick.player.name });
-                                        } else {
-                                          markAvailableForDraft("pick", { year: new Date().getFullYear(), round, name: `R${round}` });
-                                        }
-                                      }}
-                                      data-testid={`draft-room-block-add-${teamAbbr}-${pick?.overall ?? "x"}`}
-                                      aria-label="Mark available for draft"
-                                      className="absolute top-0.5 left-0.5 h-4 w-4 inline-flex items-center justify-center rounded-sm bg-amber-500/20 text-amber-300 hover:bg-amber-500/35"
-                                    >
-                                      <Megaphone className="h-2.5 w-2.5" />
-                                    </button>
-                                  </TooltipTrigger>
-                                  <TooltipContent>Mark available for draft</TooltipContent>
-                                </Tooltip>
-                              )}
-                              {/* Iter 147 — Per-pick trade button (visible only in trade mode) */}
-                              {tradeMode && pick && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleAddDraftPickToTrade(pick.team, round, pick.overall, pick.player);
-                                  }}
-                                  data-testid={`draft-room-pick-trade-${pick.team}-${pick.overall}`}
-                                  aria-label="Add pick to trade"
-                                  className="absolute top-0.5 right-0.5 h-4 w-4 inline-flex items-center justify-center rounded-sm bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/30"
-                                >
-                                  <Repeat className="h-2.5 w-2.5" />
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    );
-                  })}
-                  <div className="flex items-center gap-3 mt-3 pt-2 border-t border-border">
-                    <span className="text-[10px] text-muted-foreground">Positions:</span>
-                    {Object.entries(positionColors).map(([pos, colorClass]) => (
-                      <Badge key={pos} className={cn("text-[9px] px-1.5 py-0 h-3.5 border", colorClass)}>{pos}</Badge>
-                    ))}
-                  </div>
-                </div>
-              </ScrollArea>
-            </CardContent>
-          </Card>
+          {/* ── Draft Board (Iter 171 extracted) ────────────────────────── */}
+          <DraftBoard
+            boardTeams={boardTeams}
+            boardTeamAbbrs={boardTeamAbbrs}
+            totalTeams={totalTeams}
+            allPicks={allPicks}
+            selectedOwnerAbbrs={selectedOwnerAbbrs}
+            setSelectedOwnerAbbrs={setSelectedOwnerAbbrs}
+            draftConfig={draftConfig}
+            onTheClockTeam={onTheClockTeam}
+            myTeam={myTeam}
+            liveTeams={liveTeams}
+            livePicksByOrigKey={livePicksByOrigKey}
+            tradeBlockPlayerIds={tradeBlockPlayerIds}
+            tradeBlockOverallKeys={tradeBlockOverallKeys}
+            tradeBlockMode={tradeBlockMode}
+            tradeMode={tradeMode}
+            markAvailableForDraft={markAvailableForDraft}
+            handleAddDraftPickToTrade={handleAddDraftPickToTrade}
+            isLeagueManager={isLeagueManager}
+            swapPickOverall={swapPickOverall}
+            setSwapPickOverall={setSwapPickOverall}
+            swapSearch={swapSearch}
+            setSwapSearch={setSwapSearch}
+            handleSwapPickPlayer={handleSwapPickPlayer}
+            players={players}
+          />
 
           {/* ── Bottom section: (LEFT) Player Search tabs · (CENTER) Truncated Roster · (RIGHT) Draft Chat ── */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">

@@ -6,6 +6,22 @@ BACKEND = Path("/app/backend")
 
 
 def _read(rel_under_frontend: str) -> str:
+    # Iter 171 — DraftRoom.tsx was split into sub-components. To keep
+    # grep-style legacy assertions working, return the concatenation of
+    # the parent + extracted draftroom/* files when asked for it.
+    if rel_under_frontend.endswith("lovable/pages/DraftRoom.tsx"):
+        parts = []
+        for sub in (
+            "lovable/pages/DraftRoom.tsx",
+            "lovable/pages/draftroom/DraftLiveTile.tsx",
+            "lovable/pages/draftroom/DraftBoard.tsx",
+            "lovable/pages/draftroom/PlayerSearchPanel.tsx",
+            "lovable/pages/draftroom/draftConstants.ts",
+        ):
+            fp = FRONTEND / sub
+            if fp.exists():
+                parts.append(fp.read_text(encoding="utf-8"))
+        return chr(10).join(parts)
     return (FRONTEND / rel_under_frontend).read_text(encoding="utf-8")
 
 

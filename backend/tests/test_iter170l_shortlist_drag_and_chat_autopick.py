@@ -11,7 +11,28 @@
 """
 from pathlib import Path
 
-DRAFT_ROOM = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
+# Iter 171 — DraftRoom.tsx parent was refactored. Draft Live tile + Draft Board
+# JSX now live in /draftroom/DraftLiveTile.tsx + DraftBoard.tsx. We treat
+# `DRAFT_ROOM.read_text()` as the concatenation of the parent and the
+# extracted subcomponents so existing grep-style assertions keep passing.
+def _read_draftroom_family() -> str:
+    from pathlib import Path as _P
+    paths = [
+        _P("/app/frontend/src/lovable/pages/DraftRoom.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/DraftLiveTile.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/DraftBoard.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/PlayerSearchPanel.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/draftConstants.ts"),
+    ]
+    return chr(10).join(p.read_text() for p in paths if p.exists())
+
+
+class _DraftRoomShim:
+    def read_text(self) -> str:
+        return _read_draftroom_family()
+
+
+DRAFT_ROOM = _DraftRoomShim()
 CHAT_PANEL = Path("/app/frontend/src/lovable/pages/draftroom/DraftChatPanel.tsx")
 DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
 

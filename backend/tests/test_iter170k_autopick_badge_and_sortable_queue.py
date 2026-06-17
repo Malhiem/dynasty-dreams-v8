@@ -13,7 +13,28 @@ Frontend changes:
 """
 from pathlib import Path
 
-DRAFT_ROOM = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
+# Iter 171 — DraftRoom.tsx parent was refactored. Draft Live tile + Draft Board
+# JSX now live in /draftroom/DraftLiveTile.tsx + DraftBoard.tsx. We treat
+# `DRAFT_ROOM.read_text()` as the concatenation of the parent and the
+# extracted subcomponents so existing grep-style assertions keep passing.
+def _read_draftroom_family() -> str:
+    from pathlib import Path as _P
+    paths = [
+        _P("/app/frontend/src/lovable/pages/DraftRoom.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/DraftLiveTile.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/DraftBoard.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/PlayerSearchPanel.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/draftConstants.ts"),
+    ]
+    return chr(10).join(p.read_text() for p in paths if p.exists())
+
+
+class _DraftRoomShim:
+    def read_text(self) -> str:
+        return _read_draftroom_family()
+
+
+DRAFT_ROOM = _DraftRoomShim()
 SORTABLE_QUEUE = Path("/app/frontend/src/lovable/pages/draftroom/SortableQueue.tsx")
 
 
@@ -21,11 +42,16 @@ def test_auto_pick_badge_present_on_tile():
     src = DRAFT_ROOM.read_text()
     # Conditional render on auto_picked, with a stable testid keyed by
     # overall so QA can grab the badge per-pick.
-    assert "(pick as any).auto_picked" in src
+    # Iter 171 — tile JSX moved to DraftBoard.tsx (which has @ts-nocheck
+    # so the cast was dropped); accept either form.
+    assert "(pick as any).auto_picked" in src or "pick.auto_picked" in src
     assert 'data-testid={`draft-board-auto-pick-${pick.overall}`}' in src
     # Tooltip explains the resolution (queue vs top eligible).
     assert "Auto-picked on timeout" in src
-    assert '(pick as any).auto_pick_via === "queue"' in src
+    assert (
+        '(pick as any).auto_pick_via === "queue"' in src
+        or 'pick.auto_pick_via === "queue"' in src
+    )
     # Uses the existing Clock icon (already imported from lucide).
     assert "<Clock className=\"h-2.5 w-2.5\"" in src
 

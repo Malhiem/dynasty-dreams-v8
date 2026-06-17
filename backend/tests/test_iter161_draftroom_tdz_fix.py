@@ -11,7 +11,32 @@ This test guards against that ordering ever regressing.
 """
 from pathlib import Path
 
-DR = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
+# Iter 171 — DraftRoom.tsx was split into sub-components. Resolve the legacy
+# "read the entire draft room source" pattern as the concatenation of the
+# parent + extracted draftroom/* files so existing grep-style assertions
+# keep working without rewriting every spec.
+def _iter171_draftroom_concat() -> str:
+    from pathlib import Path as _P
+    paths = [
+        _P("/app/frontend/src/lovable/pages/DraftRoom.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/DraftLiveTile.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/DraftBoard.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/PlayerSearchPanel.tsx"),
+        _P("/app/frontend/src/lovable/pages/draftroom/draftConstants.ts"),
+    ]
+    return chr(10).join(p.read_text() for p in paths if p.exists())
+
+
+class _Iter171DraftRoomShim:
+    def read_text(self, *a, **kw) -> str:
+        return _iter171_draftroom_concat()
+
+
+def _iter171_install_shim_after_imports():
+    pass
+
+
+DR = _Iter171DraftRoomShim()
 
 
 def test_use_active_league_called_before_first_use():
