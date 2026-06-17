@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -272,6 +272,10 @@ export default function DraftRoom() {
   const [shortlist, setShortlist] = useState<Set<string>>(new Set());
   const [queue, setQueue] = useState<string[]>([]);
   const [picks, setPicks] = useState<DraftPick[]>([]);
+  // Iter 170f — Last picked player id. The SelectedPlayerCard tile
+  // defaults to this when the user isn't actively previewing a player.
+  // "Live View" button reverts to this default after a preview click.
+  const [lastPickedPlayerId, setLastPickedPlayerId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [positionFilter, setPositionFilter] = useState("all");
   const [countdown, setCountdown] = useState<number>(0);
@@ -287,6 +291,72 @@ export default function DraftRoom() {
   const [chatInput, setChatInput] = useState("");
   const [timerPaused, setTimerPaused] = useState(false);
   const isLeagueManager = true; // Current user is LM or co-LM
+
+  // Iter 170f — Persistence. The Draft Room is currently a mock and
+  // the real `POST /api/drafts/{id}/pick` wiring is queued as P3.
+  // Until then, mirror `picks`, `currentPick`, `draftStarted` and
+  // `lastPickedPlayerId` into localStorage keyed by the active league
+  // id so a manager doesn't lose progress on page reload.
+  const draftStorageKey = activeLeagueCtx?.id
+    ? `draftroom-state-v1:${activeLeagueCtx.id}`
+    : null;
+  const hasHydratedRef = useRef(false);
+  useEffect(() => {
+    if (!draftStorageKey || hasHydratedRef.current) return;
+    try {
+      const raw = localStorage.getItem(draftStorageKey);
+      if (!raw) { hasHydratedRef.current = true; return; }
+      const data = JSON.parse(raw);
+      if (Array.isArray(data.picks) && data.picks.length > 0) {
+        setPicks(data.picks);
+        // Mark drafted players so the eligible list reflects history.
+        const draftedIds = new Set(
+          data.picks
+            .map((p: any) => p.player?.id)
+            .filter((id: any) => id !== undefined && id !== null)
+            .map(String),
+        );
+        if (draftedIds.size > 0) {
+          setPlayers((prev) =>
+            prev.map((p) =>
+              draftedIds.has(String(p.id))
+                ? { ...p, drafted: true }
+                : p,
+            ),
+          );
+        }
+      }
+      if (typeof data.currentPick === "number") {
+        setDraftConfig((prev) => ({
+          ...prev,
+          currentPick: data.currentPick,
+          draftStarted: !!data.draftStarted,
+        }));
+      }
+      if (data.lastPickedPlayerId) {
+        setLastPickedPlayerId(String(data.lastPickedPlayerId));
+      }
+    } catch {
+      /* ignore parse errors */
+    }
+    hasHydratedRef.current = true;
+  }, [draftStorageKey]);
+  useEffect(() => {
+    if (!draftStorageKey || !hasHydratedRef.current) return;
+    try {
+      localStorage.setItem(
+        draftStorageKey,
+        JSON.stringify({
+          picks,
+          currentPick: draftConfig.currentPick,
+          draftStarted: draftConfig.draftStarted,
+          lastPickedPlayerId,
+        }),
+      );
+    } catch {
+      /* storage quota — non-fatal */
+    }
+  }, [draftStorageKey, picks, draftConfig.currentPick, draftConfig.draftStarted, lastPickedPlayerId]);
 
   // ─── Countdown ──────────────────────────────────────────────────────────────
 
@@ -416,12 +486,16 @@ export default function DraftRoom() {
     setChatInput("");
   };
 
-  // Iter 170 — Manager-only "Simulate Pick" action. Advances the draft
-  // clock by one pick by marking the top-ranked undrafted player as
-  // selected by the on-clock team. Lets us verify the
-  // picks-until-my-turn counter decrements correctly without wiring the
-  // mock board to the live POST /drafts/{id}/pick endpoint.
-  const handleSimulatePick = () => {
+  // Iter 170f — Draft a player. If `chosen` is provided, that player is
+  // taken (used when a manager clicks Draft on the SelectedPlayerCard).
+  // Otherwise the top-ranked undrafted player is auto-picked (Simulate
+  // Pick). In both cases we:
+  //   • advance `currentPick` (clock + on-the-clock recompute)
+  //   • mark the player as drafted
+  //   • push to `picks` array + chat
+  //   • set `lastPickedPlayerId` so the Selected Player card defaults
+  //     to "live view" of the most-recent pick
+  const handleDraftPlayer = (chosen?: DraftEligiblePlayer | null) => {
     const totalPicks = totalTeams * draftConfig.totalRounds;
     if (draftConfig.currentPick > totalPicks) {
       toast.info("Draft is complete.");
@@ -429,7 +503,9 @@ export default function DraftRoom() {
     }
     const teamAbbr = getTeamForPick(draftConfig.currentPick);
     const teamFull = boardTeams.find((t) => t.abbr === teamAbbr);
-    const nextPlayer = players.find((p) => !p.drafted);
+    const nextPlayer = chosen && !chosen.drafted
+      ? chosen
+      : players.find((p) => !p.drafted);
     if (!nextPlayer) {
       toast.warning("No eligible players left to draft.");
       return;
@@ -463,8 +539,13 @@ export default function DraftRoom() {
         timestamp: new Date(),
       },
     ]);
+    setLastPickedPlayerId(String(nextPlayer.id));
+    setSelectedPlayerId(null);
     setDraftConfig((prev) => ({ ...prev, currentPick: prev.currentPick + 1 }));
   };
+
+  // Kept the old name for the Simulate Pick button binding.
+  const handleSimulatePick = () => handleDraftPlayer();
 
   // ─── Derived values ────────────────────────────────────────────────────────
 
@@ -857,25 +938,56 @@ export default function DraftRoom() {
 
             {/* Iter 153 — SelectedPlayerCard sits *inside* the left flex item so
                 it ends where the draft clock begins (not under it) and can grow
-                taller to fill the open space. */}
-            <SelectedPlayerCard
-              player={
-                selectedPlayerId
-                  ? players.find((p) => String(p.id) === String(selectedPlayerId)) || null
-                  : null
-              }
-              isOnTheClock={draftConfig.draftStarted}
-              isQueued={!!selectedPlayerId && queue.includes(Number(selectedPlayerId))}
-              isShortlisted={!!selectedPlayerId && shortlist.has(Number(selectedPlayerId))}
-              onDraftPlayer={(p) => {
-                toast.success(`Draft ${p.name} — locked for current pick`);
-                setSelectedPlayerId(null);
-              }}
-              onToggleQueue={(id) => toggleQueue(Number(id))}
-              onToggleShortlist={(id) => toggleShortlist(Number(id))}
-              onClose={() => setSelectedPlayerId(null)}
-              onExpand={(p) => setExpandedPlayer(p)}
-            />
+                taller to fill the open space.
+                Iter 170f — Default to the LAST DRAFTED player when nothing
+                else is being previewed. A small "Live View" pill above
+                the card reverts back to that default after a manager
+                clicks a player's card to preview them. */}
+            {(() => {
+              const previewId = selectedPlayerId ?? lastPickedPlayerId;
+              const isCustomPreview = !!selectedPlayerId && selectedPlayerId !== lastPickedPlayerId;
+              const previewPlayer = previewId
+                ? players.find((p) => String(p.id) === String(previewId)) || null
+                : null;
+              return (
+                <>
+                  <div className="flex items-center justify-between mb-1 px-1">
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      {isCustomPreview
+                        ? "Previewing"
+                        : lastPickedPlayerId
+                        ? "Live View · Last Pick"
+                        : "Player Preview"}
+                    </span>
+                    {isCustomPreview && lastPickedPlayerId && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-5 px-2 text-[10px] gap-1"
+                        onClick={() => setSelectedPlayerId(null)}
+                        data-testid="draft-room-live-view-btn"
+                      >
+                        <Activity className="h-3 w-3" />
+                        Live View
+                      </Button>
+                    )}
+                  </div>
+                  <SelectedPlayerCard
+                    player={previewPlayer}
+                    isOnTheClock={draftConfig.draftStarted}
+                    isQueued={!!previewId && queue.includes(String(previewId))}
+                    isShortlisted={!!previewId && shortlist.has(String(previewId))}
+                    onDraftPlayer={(p) => {
+                      handleDraftPlayer(p as DraftEligiblePlayer);
+                    }}
+                    onToggleQueue={(id) => toggleQueue(String(id))}
+                    onToggleShortlist={(id) => toggleShortlist(String(id))}
+                    onClose={() => setSelectedPlayerId(null)}
+                    onExpand={(p) => setExpandedPlayer(p)}
+                  />
+                </>
+              );
+            })()}
             </div>
 
             {/* Draft Timer Card */}

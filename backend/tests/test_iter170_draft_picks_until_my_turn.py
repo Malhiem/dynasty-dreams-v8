@@ -59,9 +59,11 @@ def test_simulate_pick_button_present_and_wired():
 def test_simulate_pick_stores_full_player_object_not_string():
     """Regression: a previous version stored `player: nextPlayer.name`
     (a string) which crashed `pick.player.name.split(...)` downstream
-    in the Draft Board renderer."""
+    in the Draft Board renderer. Iter 170f renamed handleSimulatePick →
+    handleDraftPlayer (with Simulate Pick as a thin alias), so we
+    inspect that unified handler instead."""
     src = _source()
-    handler_block = src.split("const handleSimulatePick")[1].split("};")[0]
+    handler_block = src.split("const handleDraftPlayer")[1].split("};")[0]
     # Must store the full player object so downstream `.name`,
     # `.position` accesses on the draft-board tile work.
     assert "player: { ...nextPlayer" in handler_block
