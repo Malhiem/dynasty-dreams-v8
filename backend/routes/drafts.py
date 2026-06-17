@@ -1387,6 +1387,179 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
 @router.post("/drafts/{draft_id}/pause")
 async def pause_draft(draft_id: str, request: Request):
     user = await _get_user(request)
+
+
+# ─── Iter 170j — Auto-pick on Timeout ─────────────────────────────────
+
+
+@router.post("/drafts/{draft_id}/auto-pick")
+async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
+    """Auto-pick for whoever is on the clock when their timer expires.
+
+    Resolution order:
+      1. The on-clock team's `team.draft_queue` (first undrafted entry)
+      2. The top-ranked undrafted player (eligible-players ordering)
+
+    Anyone (manager) can fire this — the backend resolves the right
+    team via the stored `team_map` so a missed pick can be skipped
+    even when the absent manager isn't logged in.
+    """
+    await _get_user(request)  # auth required, but no role check
+    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft["status"] != "active":
+        raise HTTPException(status_code=400, detail="Draft is not active")
+
+    on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"])
+    on_clock_team_id = (draft.get("team_map") or {}).get(on_clock, {}).get("id")
+    if not on_clock_team_id:
+        raise HTTPException(status_code=500, detail="Could not resolve on-clock team")
+
+    drafted_ids = {p.get("player_id") for p in draft.get("picks", []) if p.get("player_id")}
+
+    chosen_player = None
+    via = "top_eligible"
+    team = await _db().teams.find_one({"_id": ObjectId(on_clock_team_id)})
+    queue = list((team or {}).get("draft_queue") or [])
+    for pid in queue:
+        if pid in drafted_ids:
+            continue
+        try:
+            cand = await _db().players.find_one({"_id": ObjectId(pid)})
+        except Exception:
+            continue
+        if cand:
+            chosen_player = cand
+            via = "queue"
+            break
+
+    if chosen_player is None:
+        # Top eligible — same ordering as `get_draft_eligible_players`.
+        async for p in _db().players.find().sort([("points", -1), ("name", 1)]):
+            if str(p["_id"]) in drafted_ids:
+                continue
+            chosen_player = p
+            break
+
+    if chosen_player is None:
+        raise HTTPException(status_code=400, detail="No eligible players left")
+
+    total_teams = len(draft["team_abbrs"])
+    current_pick = draft["current_pick"]
+    round_num = ((current_pick - 1) // total_teams) + 1
+    pick_in_round = ((current_pick - 1) % total_teams) + 1
+
+    pick_doc = {
+        "round": round_num,
+        "pick_in_round": pick_in_round,
+        "overall": current_pick,
+        "team": on_clock,
+        "team_id": on_clock_team_id,
+        "player_id": str(chosen_player["_id"]),
+        "player": {
+            "id": str(chosen_player["_id"]),
+            "name": chosen_player["name"],
+            "position": chosen_player["position"],
+            "nhlTeam": chosen_player.get("team", ""),
+            "team_name": chosen_player.get("team_name", ""),
+            "pts": chosen_player.get("points", 0),
+            "g": chosen_player.get("goals", 0),
+            "a": chosen_player.get("assists", 0),
+            "gp": chosen_player.get("games_played", 0),
+            "league": "NHL",
+            "headshot": (
+                f"https://assets.nhle.com/mugs/nhl/20252026/{chosen_player.get('team', 'NHL')}/{chosen_player.get('nhl_id', '')}.png"
+                if chosen_player.get("nhl_id") else None
+            ),
+        },
+        "auto_picked": True,
+        "auto_pick_via": via,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    next_pick = current_pick + 1
+    total_picks = draft["total_rounds"] * total_teams
+    new_status = "completed" if next_pick > total_picks else "active"
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {"$push": {"picks": pick_doc}, "$set": {"current_pick": next_pick, "status": new_status}},
+    )
+    await _db().teams.update_one(
+        {"_id": ObjectId(on_clock_team_id)},
+        {
+            "$addToSet": {"roster": str(chosen_player["_id"])},
+            "$pull": {"draft_queue": str(chosen_player["_id"])},
+        },
+    )
+    msg = {
+        "id": f"autopick-{datetime.now(timezone.utc).timestamp()}",
+        "type": "pick",
+        "sender": "System",
+        "text": (
+            f"⏱ Auto-pick — {on_clock} took {chosen_player['name']} ({chosen_player['position']}) "
+            f"at #{current_pick} (via {'queue' if via == 'queue' else 'top eligible'})"
+        ),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})
+    await _broadcast(f"draft_{draft_id}", "draft_chat", msg)
+    await _broadcast(f"draft_{draft_id}", "draft_pick", {
+        **pick_doc,
+        "next_pick": next_pick,
+        "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"]) if new_status == "active" else None,
+        "draft_complete": new_status == "completed",
+    })
+    return {"pick": pick_doc, "via": via}
+
+
+# ─── Iter 170j — Draft Queue persistence (per-team) ───────────────────
+
+
+class DraftQueueRequest(BaseModel):
+    player_ids: list[str] = Field(default_factory=list)
+
+
+@router.put("/teams/{team_id}/draft-queue")
+async def update_team_draft_queue(team_id: str, payload: DraftQueueRequest, request: Request):
+    """Owner-only: persist the team's auto-pick queue (list of player ids).
+
+    The auto-pick endpoint reads this list when a manager's clock
+    expires and drafts the first undrafted entry before falling back
+    to the global top-ranked eligible player.
+    """
+    user = await _get_user(request)
+    team = await _db().teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    # Owner or league commissioner can edit.
+    league = await _db().leagues.find_one({"_id": ObjectId(team["league_id"])})
+    is_owner = team.get("owner_id") == user["_id"]
+    is_comm = league and league.get("commissioner_id") == user["_id"]
+    if not (is_owner or is_comm):
+        raise HTTPException(status_code=403, detail="Only the team's owner or league commissioner can edit the draft queue")
+    # Dedupe + cap length to avoid runaway payloads.
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for pid in payload.player_ids:
+        if pid not in seen:
+            seen.add(pid)
+            cleaned.append(pid)
+        if len(cleaned) >= 100:
+            break
+    await _db().teams.update_one(
+        {"_id": ObjectId(team_id)},
+        {"$set": {"draft_queue": cleaned}},
+    )
+    return {"team_id": team_id, "draft_queue": cleaned, "size": len(cleaned)}
+
+
+@router.get("/teams/{team_id}/draft-queue")
+async def get_team_draft_queue(team_id: str, request: Request):
+    await _get_user(request)
+    team = await _db().teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return {"team_id": team_id, "draft_queue": list(team.get("draft_queue") or [])}
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")

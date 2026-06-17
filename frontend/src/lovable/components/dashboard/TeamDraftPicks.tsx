@@ -11,6 +11,11 @@ import {
 import type { TradeDraftPick } from "@/lovable/components/trade/TradeBuilder";
 import api from "@/lib/api";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
+// Iter 170j — Live refresh on draft undo / swap. The Roster page mounts
+// this card; subscribing to the active draft room means commissioner
+// rollbacks/swaps reflect on the Future Draft Picks card instantly.
+import { useSocket } from "@/hooks/use-socket";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface TradeContext {
   date: string;
@@ -90,9 +95,13 @@ interface TeamDraftPicksProps {
   isOwnTeam?: boolean;
   currentTeamContext?: string;
   teamId?: string;
+  // Iter 170j — Optional league id; when present, this card subscribes
+  // to the active draft socket room and refetches itself on every
+  // commissioner undo / swap broadcast.
+  leagueId?: string;
 }
 
-const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "mine", teamId = "frostbite" }: TeamDraftPicksProps) => {
+const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "mine", teamId = "frostbite", leagueId }: TeamDraftPicksProps) => {
   // Iter 166 — when `teamId` looks like a real Mongo ObjectId (24 hex
   // chars) fetch the live `/api/teams/{id}/draft-picks` payload and
   // hydrate `draftPicks` from that. Falls back to the seeded mock
@@ -100,6 +109,37 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
   const looksLikeObjectId = typeof teamId === "string" && /^[a-f0-9]{24}$/.test(teamId);
   const [livePicks, setLivePicks] = useState<DraftPick[] | null>(null);
   const [liveRawByKey, setLiveRawByKey] = useState<Record<string, any>>({});
+  // Iter 170j — bump to force a refetch (driven by socket events).
+  const [reloadTick, setReloadTick] = useState(0);
+  const { user } = useAuth();
+
+  // Iter 170j — Resolve the active draft id for the league so we can
+  // subscribe to its socket room (commissioner undo/swap broadcasts).
+  const [activeDraftId, setActiveDraftId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!leagueId) { setActiveDraftId(null); return; }
+    let cancelled = false;
+    api.get(`/drafts?league_id=${leagueId}`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const drafts = Array.isArray(data) ? data : (data?.drafts || []);
+        if (drafts.length === 0) { setActiveDraftId(null); return; }
+        const sorted = [...drafts].sort((a: any, b: any) => (b.created_at || "").localeCompare(a.created_at || ""));
+        setActiveDraftId(String(sorted[0]._id || sorted[0].id));
+      })
+      .catch(() => { if (!cancelled) setActiveDraftId(null); });
+    return () => { cancelled = true; };
+  }, [leagueId]);
+
+  useSocket(
+    activeDraftId ? `draft_${activeDraftId}` : null,
+    {
+      draft_undo: () => setReloadTick((t) => t + 1),
+      draft_pick_swapped: () => setReloadTick((t) => t + 1),
+      draft_pick: () => setReloadTick((t) => t + 1),
+    },
+    user?.id || user?._id,
+  );
 
   useEffect(() => {
     if (!looksLikeObjectId) { setLivePicks(null); setLiveRawByKey({}); return; }
@@ -127,7 +167,7 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
         setLiveRawByKey(raw);
       })
       .catch(() => { setLivePicks(null); setLiveRawByKey({}); });
-  }, [teamId, looksLikeObjectId]);
+  }, [teamId, looksLikeObjectId, reloadTick]);
 
   const draftPicks = useMemo(() => {
     if (livePicks !== null) return livePicks;

@@ -599,16 +599,33 @@ export default function DraftRoom() {
     setTimerPaused(false);
   }, [isClockActive, draftConfig.currentPick, draftConfig.pickTimerSeconds]);
 
+  // Iter 170j — Auto-pick on timeout. When the pick clock expires
+  // (and there's a backend draft + we're not paused), the frontend
+  // fires `/drafts/{id}/auto-pick` which picks from the on-clock
+  // team's draft_queue (first undrafted) before falling back to the
+  // top-ranked eligible player. We only fire once per pick using a
+  // ref guard keyed by `currentPick`.
+  const lastAutoFireRef = useRef<number | null>(null);
+  useEffect(() => { lastAutoFireRef.current = null; }, [draftConfig.currentPick]);
   useEffect(() => {
     if (!isClockActive || timerPaused) return;
     const interval = setInterval(() => {
       setPickTimeLeft((prev) => {
-        if (prev <= 1) return draftConfig.pickTimerSeconds;
+        if (prev <= 1) {
+          // Backend-driven auto-pick when a real draft is active.
+          if (currentDraft?._id && isDraftActive && lastAutoFireRef.current !== draftConfig.currentPick) {
+            lastAutoFireRef.current = draftConfig.currentPick;
+            api.post(`/drafts/${currentDraft._id}/auto-pick`)
+              .then(() => refreshDraftState())
+              .catch(() => {/* ignore — next tick will retry */});
+          }
+          return draftConfig.pickTimerSeconds;
+        }
         return prev - 1;
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [isClockActive, timerPaused, draftConfig.pickTimerSeconds]);
+  }, [isClockActive, timerPaused, draftConfig.pickTimerSeconds, draftConfig.currentPick, currentDraft?._id, isDraftActive, refreshDraftState]);
 
   // ─── Draft order ────────────────────────────────────────────────────────────
 
@@ -640,6 +657,9 @@ export default function DraftRoom() {
       return next;
     });
   };
+
+  // (Iter 170j — queue hydrate/persist effects moved below `myTeam`
+  // declaration to avoid TDZ; see below.)
 
   const toggleQueue = (playerId: string) => {
     setQueue((prev) =>
@@ -967,6 +987,29 @@ export default function DraftRoom() {
   const canPickForCurrentTurn =
     isLeagueManager ||
     (!!myTeam && !!onTheClockBoardEntry && onTheClockBoardEntry.id === (myTeam as any).id);
+
+  // Iter 170j — Hydrate the persisted queue for the user's team on
+  // mount + persist back via PUT whenever the queue changes. Falls
+  // back silently when the user has no team (Storybook / demo).
+  const hasHydratedQueueRef = useRef(false);
+  useEffect(() => {
+    if (!(myTeam as any)?.id) return;
+    hasHydratedQueueRef.current = false;
+    api.get(`/teams/${(myTeam as any).id}/draft-queue`)
+      .then(({ data }) => {
+        setQueue((data?.draft_queue || []).map(String));
+        hasHydratedQueueRef.current = true;
+      })
+      .catch(() => { hasHydratedQueueRef.current = true; });
+  }, [(myTeam as any)?.id]);
+  useEffect(() => {
+    if (!(myTeam as any)?.id || !hasHydratedQueueRef.current) return;
+    const t = setTimeout(() => {
+      api.put(`/teams/${(myTeam as any).id}/draft-queue`, { player_ids: queue })
+        .catch(() => {/* non-fatal */});
+    }, 400); // debounce
+    return () => clearTimeout(t);
+  }, [queue, (myTeam as any)?.id]);
 
   // Iter 149 — Fetch league trade-block listings so the overlay can paint
   // megaphone icons on player tiles + pick tiles that are publicly available.

@@ -869,6 +869,7 @@ const Team = () => {
               isOwnTeam={!!isOwnTeam}
               currentTeamContext={isOwnTeam ? "mine" : selectedTeam.name}
               teamId={selectedTeamId as string}
+              leagueId={league?.id}
             />
 
             <TradeBlockManager
