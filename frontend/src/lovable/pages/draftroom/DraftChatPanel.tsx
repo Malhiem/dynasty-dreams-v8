@@ -217,9 +217,16 @@ function TradeRow({ trade, myUserId, isCommissioner, vetoThreshold, onVote, onFo
 }
 
 function ChatBubble({ msg, mySender }) {
+  // Iter 170l — pick rows surfaced by an `auto-pick` system message
+  // get a small clock badge next to the sender label so the Picks
+  // list mirrors the Draft Board tile's auto-pick affordance. We
+  // detect via the explicit `auto_picked` meta when present, falling
+  // back to a tolerant "Auto-pick" sniff for older messages.
+  const isAutoPick = msg.type === "pick" && (msg.auto_picked || /auto.pick/i.test(msg.text || ""));
   return (
     <div
       key={msg.id}
+      data-testid={isAutoPick ? `draft-chat-auto-pick-${msg.id}` : undefined}
       className={cn(
         "text-xs rounded-md p-2",
         msg.type === "pick"
@@ -232,11 +239,19 @@ function ChatBubble({ msg, mySender }) {
       <div className="flex items-center justify-between mb-0.5">
         <span
           className={cn(
-            "font-semibold text-[11px]",
+            "font-semibold text-[11px] inline-flex items-center gap-1",
             msg.type === "pick" ? "text-primary" : "text-foreground",
           )}
         >
           {msg.sender}
+          {isAutoPick && (
+            <span
+              className="inline-flex items-center justify-center h-3.5 w-3.5 rounded-sm bg-sky-500/25 text-sky-300"
+              title="Auto-picked on timeout"
+            >
+              <Clock className="h-2 w-2" />
+            </span>
+          )}
         </span>
         <span className="text-[9px] text-muted-foreground">{fmtTs(msg.timestamp)}</span>
       </div>

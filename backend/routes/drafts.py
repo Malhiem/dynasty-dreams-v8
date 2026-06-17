@@ -1499,6 +1499,8 @@ async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
             f"⏱ Auto-pick — {on_clock} took {chosen_player['name']} ({chosen_player['position']}) "
             f"at #{current_pick} (via {'queue' if via == 'queue' else 'top eligible'})"
         ),
+        "auto_picked": True,
+        "auto_pick_via": via,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})

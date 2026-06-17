@@ -275,7 +275,10 @@ export default function DraftRoom() {
   });
 
   const [players, setPlayers] = useState<DraftEligiblePlayer[]>(mockEligiblePlayers);
-  const [shortlist, setShortlist] = useState<Set<string>>(new Set());
+  // Iter 170l — Shortlist is now an ordered string[] (was a Set) so
+  // we can render it in a SortableQueue + persist the manager's manual
+  // ranking. Has-checks become `.includes(...)`.
+  const [shortlist, setShortlist] = useState<string[]>([]);
   const [queue, setQueue] = useState<string[]>([]);
   const [picks, setPicks] = useState<DraftPick[]>([]);
   // Iter 170f — Last picked player id. The SelectedPlayerCard tile
@@ -655,12 +658,9 @@ export default function DraftRoom() {
   // ─── Shortlist & Queue ─────────────────────────────────────────────────────
 
   const toggleShortlist = (playerId: string) => {
-    setShortlist((prev) => {
-      const next = new Set(prev);
-      if (next.has(playerId)) next.delete(playerId);
-      else next.add(playerId);
-      return next;
-    });
+    setShortlist((prev) =>
+      prev.includes(playerId) ? prev.filter((id) => id !== playerId) : [...prev, playerId]
+    );
   };
 
   // (Iter 170j — queue hydrate/persist effects moved below `myTeam`
@@ -690,7 +690,12 @@ export default function DraftRoom() {
   }, [players, searchQuery, positionFilter]);
 
   const shortlistedPlayers = useMemo(() => {
-    return players.filter((p) => shortlist.has(p.id) && !p.drafted);
+    // Iter 170l — preserve the manager's drag-ordered shortlist (was
+    // sorted by global ranking before, which made drag-to-reorder
+    // visually no-op).
+    return shortlist
+      .map((id) => players.find((p) => p.id === id))
+      .filter((p): p is DraftEligiblePlayer => !!p && !p.drafted);
   }, [players, shortlist]);
 
   const queuedPlayers = useMemo(() => {
@@ -1317,7 +1322,7 @@ export default function DraftRoom() {
                     player={previewPlayer}
                     isOnTheClock={draftConfig.draftStarted}
                     isQueued={!!previewId && queue.includes(String(previewId))}
-                    isShortlisted={!!previewId && shortlist.has(String(previewId))}
+                    isShortlisted={!!previewId && shortlist.includes(String(previewId))}
                     canPick={canPickForCurrentTurn}
                     onDraftPlayer={(p) => {
                       handleDraftPlayer(p as DraftEligiblePlayer);
@@ -1956,7 +1961,7 @@ export default function DraftRoom() {
                         // Iter 151 — on-block visibility no longer requires the toggle
                         const isOnBlock = tradeBlockPlayerIds.has(String(player.id));
                         const isQueued = queue.includes(player.id);
-                        const isShortlisted = shortlist.has(player.id);
+                        const isShortlisted = shortlist.includes(player.id);
                         return (
                         <div
                           key={player.id}
@@ -2020,14 +2025,14 @@ export default function DraftRoom() {
                                 size="icon"
                                 className={cn(
                                   "h-7 w-7 shrink-0 transition-colors",
-                                  shortlist.has(player.id) ? "text-accent" : "text-muted-foreground/30 hover:text-accent"
+                                  shortlist.includes(player.id) ? "text-accent" : "text-muted-foreground/30 hover:text-accent"
                                 )}
                                 onClick={(e) => { e.stopPropagation(); toggleShortlist(player.id); }}
                               >
-                                <Star className={cn("h-3.5 w-3.5", shortlist.has(player.id) && "fill-current")} />
+                                <Star className={cn("h-3.5 w-3.5", shortlist.includes(player.id) && "fill-current")} />
                               </Button>
                             </TooltipTrigger>
-                            <TooltipContent>{shortlist.has(player.id) ? "Remove from shortlist" : "Add to shortlist"}</TooltipContent>
+                            <TooltipContent>{shortlist.includes(player.id) ? "Remove from shortlist" : "Add to shortlist"}</TooltipContent>
                           </Tooltip>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -2071,37 +2076,16 @@ export default function DraftRoom() {
                 </TabsContent>
 
                 <TabsContent value="shortlist" className="mt-3">
+                  <p className="text-[10px] text-muted-foreground px-1 pb-2">
+                    Drag to rank your shortlist manually.
+                  </p>
                   <ScrollArea className="h-[450px]">
-                    {shortlistedPlayers.length === 0 ? (
-                      <div className="text-center py-12 space-y-2">
-                        <Star className="h-8 w-8 text-muted-foreground/20 mx-auto" />
-                        <p className="text-sm text-muted-foreground">No players shortlisted yet</p>
-                        <p className="text-xs text-muted-foreground/60">Star players to add them here</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-1">
-                        {shortlistedPlayers.map((player, idx) => (
-                          <div key={player.id} className="flex items-center gap-2 p-2 rounded-md bg-secondary/30 group">
-                            <span className="text-[10px] font-medium text-muted-foreground w-4 shrink-0">{idx + 1}.</span>
-                            <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border shrink-0", positionColors[player.position])}>
-                              {player.position}
-                            </Badge>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-foreground truncate">{player.name}</p>
-                              <p className="text-[10px] text-muted-foreground">#{player.ranking} · {player.league} · {player.pts}P</p>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
-                              onClick={() => toggleShortlist(player.id)}
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <SortableQueue
+                      players={shortlistedPlayers}
+                      positionColors={positionColors}
+                      onReorder={(orderedIds) => setShortlist(orderedIds)}
+                      onRemove={(id) => toggleShortlist(id)}
+                    />
                   </ScrollArea>
                 </TabsContent>
               </Tabs>
