@@ -75,6 +75,8 @@ import SelectedPlayerCard from "@/lovable/pages/draftroom/SelectedPlayerCard";
 import DraftHeaderActions from "@/lovable/pages/draftroom/DraftHeaderActions";
 // Iter 172 — Audio alerts for "next up" + "on the clock" transitions.
 import useDraftSounds, { useTabTitleAlert } from "@/hooks/use-draft-sounds";
+// Iter 174 — trade-block state-blob + polling extracted into a hook.
+import useDraftLiveState from "@/hooks/use-draft-live-state";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 import api from "@/lib/api";
@@ -893,7 +895,6 @@ export default function DraftRoom() {
   const [tradeMode, setTradeMode] = useState(false);
   // Iter 149 — Trading Block overlay mode
   const [tradeBlockMode, setTradeBlockMode] = useState(false);
-  const [tradeBlockItems, setTradeBlockItems] = useState<any[]>([]);
   // Iter 152 — Selected player for the inline card above the Draft Board
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   // Iter 153 — Window-within-window expanded player card (PlayerCardModal)
@@ -1013,6 +1014,21 @@ export default function DraftRoom() {
     };
   }, [user, liveTeams]);
 
+  // Iter 174 — Trade-block state-blob + polling lifted into a hook.
+  // Must be called AFTER myTeam is computed since the hook depends on
+  // (myTeam as any)?.id for ownership-scoped mutations.
+  const {
+    tradeBlockItems,
+    tradeBlockPlayerIds,
+    tradeBlockOverallKeys,
+    markAvailableForDraft,
+    toggleMyTeamTradeBlock,
+  } = useDraftLiveState({
+    leagueId: (activeLeagueCtx as any)?.id,
+    myTeamId: (myTeam as any)?.id,
+    overlayActive: tradeBlockMode,
+  });
+
   // Iter 170h — Whose pick is it? When the on-clock board column maps
   // back to the user's own team, the manual Draft Player button is
   // enabled. Commissioners can pick for anyone.
@@ -1061,102 +1077,6 @@ export default function DraftRoom() {
     }, 400);
     return () => clearTimeout(t);
   }, [shortlist, (myTeam as any)?.id]);
-
-  // Iter 149 — Fetch league trade-block listings so the overlay can paint
-  // megaphone icons on player tiles + pick tiles that are publicly available.
-  // Re-fetches every 20s while the overlay is on.
-  useEffect(() => {
-    if (!activeLeagueCtx?.id) return;
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const api = (await import("@/lib/api")).default;
-        const { data } = await api.get(`/trade-block?league_id=${activeLeagueCtx.id}`);
-        if (!cancelled) setTradeBlockItems(Array.isArray(data) ? data : []);
-      } catch { /* noop */ }
-    };
-    load();
-    if (!tradeBlockMode) return; // poll only while overlay is on
-    const id = setInterval(load, 20_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [activeLeagueCtx?.id, tradeBlockMode]);
-
-  const tradeBlockPlayerIds = useMemo(
-    () => new Set((tradeBlockItems || []).filter((x) => x.item_type === "player" && x.player_id).map((x) => String(x.player_id))),
-    [tradeBlockItems],
-  );
-  const tradeBlockPickIds = useMemo(
-    () => new Set((tradeBlockItems || []).filter((x) => x.item_type === "pick" && x.pick_id).map((x) => String(x.pick_id))),
-    [tradeBlockItems],
-  );
-  // Composite "round-team" key for picks not yet assigned a `pick_id`
-  // (mock data uses overall#); lets us light up the overlay on placeholder picks.
-  const tradeBlockOverallKeys = useMemo(
-    () => new Set(
-      (tradeBlockItems || [])
-        .filter((x) => x.item_type === "pick")
-        .map((x) => `${x.team_id || ""}|R${x.pick_round || ""}`)
-    ),
-    [tradeBlockItems],
-  );
-
-  const markAvailableForDraft = useCallback(
-    async (kind: "player" | "pick", payload: any) => {
-      if (!activeLeagueCtx?.id || !myTeam?.id) {
-        toast.error("Join a team in this league to mark items available");
-        return;
-      }
-      try {
-        const api = (await import("@/lib/api")).default;
-        const body: any = {
-          item_type: kind,
-          league_id: activeLeagueCtx.id,
-          team_id: myTeam.id,
-          draft_only: true,
-        };
-        if (kind === "player") body.player_id = payload.id;
-        else { body.pick_year = payload.year; body.pick_round = String(payload.round); }
-        const { data } = await api.post("/trade-block", body);
-        toast.success(`Marked ${payload.name || `R${payload.round}`} available for draft`);
-        setTradeBlockItems((prev) => [...prev, data]);
-      } catch (e: any) {
-        toast.error(e?.response?.data?.detail || "Could not mark available");
-      }
-    },
-    [activeLeagueCtx?.id, myTeam],
-  );
-
-  // Iter 151 — Toggle a player on/off the LOGGED-IN user's team trade block.
-  // Called from the TruncatedRosterPanel when the user clicks the megaphone
-  // beside the propose-trade icon on one of their own players.
-  const toggleMyTeamTradeBlock = useCallback(
-    async (player: any) => {
-      if (!activeLeagueCtx?.id || !myTeam?.id || !player?.id) return;
-      const existing = (tradeBlockItems || []).find(
-        (x) => x.item_type === "player" && x.team_id === myTeam.id && String(x.player_id) === String(player.id),
-      );
-      const api = (await import("@/lib/api")).default;
-      try {
-        if (existing) {
-          await api.delete(`/trade-block/${existing._id || existing.id}`);
-          setTradeBlockItems((prev) => prev.filter((x) => (x._id || x.id) !== (existing._id || existing.id)));
-          toast.success(`Removed ${player.name} from your trade block`);
-        } else {
-          const { data } = await api.post("/trade-block", {
-            item_type: "player",
-            league_id: activeLeagueCtx.id,
-            team_id: myTeam.id,
-            player_id: String(player.id),
-          });
-          setTradeBlockItems((prev) => [...prev, data]);
-          toast.success(`Added ${player.name} to your trade block`);
-        }
-      } catch (e: any) {
-        toast.error(e?.response?.data?.detail || "Trade block update failed");
-      }
-    },
-    [activeLeagueCtx?.id, myTeam, tradeBlockItems],
-  );
 
   const handleAddDraftPickToTrade = (ownerAbbr: string, round: number, overall: number, player: any) => {
     if (!myTeam) { toast.error("Join a team in this league to propose trades"); return; }

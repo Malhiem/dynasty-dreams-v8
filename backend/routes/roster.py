@@ -257,6 +257,24 @@ async def get_roster_detail(team_id: str):
             points=points, nhl_id=p.get("nhl_id"),
         )
 
+        # Iter 174 — Compute a real age + surface prospect status so the
+        # spillover logic (and frontend compliance flags) can tell
+        # veterans apart from minor-league-eligible prospects. Falls
+        # back to whatever the player doc carries; a sensible default
+        # only kicks in when we have nothing at all to work with.
+        player_age = p.get("age")
+        bd = p.get("birth_date")
+        if not player_age and bd:
+            try:
+                from datetime import datetime as _dt, timezone as _tz
+                bd_dt = _dt.fromisoformat(bd.split("T")[0]) if isinstance(bd, str) else bd
+                player_age = (_dt.now(_tz.utc).replace(tzinfo=None) - bd_dt).days // 365
+            except Exception:
+                player_age = None
+        # Prospect bona fides: explicit type wins, then minor_eligible flag.
+        player_type = (p.get("player_type") or "").lower()
+        is_prospect = player_type == "prospect" or bool(p.get("minor_eligible"))
+
         stats_by_period = {
             "season": round(fpts_season, 1),
             "1d": round(live["fpts"], 1),
@@ -289,7 +307,14 @@ async def get_roster_detail(team_id: str):
             "position": pos,
             "eligiblePositions": eligible,
             "is_goalie": is_g,
-            "age": 27,
+            # Iter 174 — Real age (or None) instead of a hard-coded 27.
+            # The frontend's `checkIneligibility` uses this to flag
+            # players who've aged out of minors eligibility.
+            "age": player_age,
+            # Iter 173/174 — surface prospect status + minor-eligibility
+            # for the team page compliance check.
+            "player_type": player_type or "skater",
+            "minor_eligible": is_prospect,
             "dynastyValue": dyn_val,
             "trend": trend,
             "contract": contract,
@@ -319,6 +344,10 @@ async def get_roster_detail(team_id: str):
                 break
 
     # Spillover: bench (up to 6) → minors; goalies → goalies/goalies_minors.
+    # Iter 174 — Veterans (player_type != "prospect") never spill into
+    # minors. They stay on the bench even if it visually exceeds the
+    # 6-slot cap — the compliance widget will surface "Bench over
+    # limit" but it won't fabricate an illegal minors placement.
     for cand in enriched:
         if cand["id"] in assigned_ids:
             continue
@@ -327,12 +356,24 @@ async def get_roster_detail(team_id: str):
             goalie_count = sum(
                 1 for c in enriched if c.get("rosterSection") == "goalies"
             )
-            cand["rosterSection"] = "goalies" if goalie_count < 4 else "goalies_minors"
+            # Goalies-minors only accepts prospects too.
+            if goalie_count < 4 or not cand.get("minor_eligible"):
+                cand["rosterSection"] = "goalies"
+            else:
+                cand["rosterSection"] = "goalies_minors"
         else:
             bench_count = sum(
                 1 for c in enriched if c.get("rosterSection") == "bench"
             )
-            cand["rosterSection"] = "bench" if bench_count < 6 else "minors"
+            if bench_count < 6:
+                cand["rosterSection"] = "bench"
+            elif cand.get("minor_eligible"):
+                cand["rosterSection"] = "minors"
+            else:
+                # Veteran with no bench spot — keep on bench so the page
+                # doesn't fabricate an illegal minors placement. The
+                # over-cap is a legitimate "Bench over limit" warning.
+                cand["rosterSection"] = "bench"
         assigned_ids.add(cand["id"])
 
     # Honor team.lineup overrides (commissioner-set sections like ir, ir+, taxi).
