@@ -130,6 +130,16 @@ const positionColors: Record<string, string> = {
   G: "bg-purple-600/80 text-purple-100 border-purple-500/50",
 };
 
+// Iter 170e — softer position tints used to wash the drafted-pick tile
+// background so a manager can scan position distribution at a glance.
+const positionTints: Record<string, string> = {
+  C: "bg-blue-500/15 border-blue-500/40",
+  LW: "bg-emerald-500/15 border-emerald-500/40",
+  RW: "bg-teal-500/15 border-teal-500/40",
+  D: "bg-amber-500/15 border-amber-500/40",
+  G: "bg-purple-500/15 border-purple-500/40",
+};
+
 // ─── Draft criteria descriptions ─────────────────────────────────────────────
 
 const draftCriteria = [
@@ -223,16 +233,24 @@ export default function DraftRoom() {
   // snake-draft order, and the "picks until your turn" counter.
   // Falls back to the mock 12-team roster ONLY when the user isn't
   // attached to a league yet (e.g. Storybook / standalone demo).
+  // Iter 170e — Use the backend-computed `logo_abbr` (which already
+  // honours `logo_abbr_override` and splits on `-` like " ") and
+  // dedupe collisions (e.g. two CC teams in the same league) by
+  // appending a suffix to the second occurrence so each board column
+  // gets a stable, unique key.
   const boardTeams = useMemo<Array<{ id?: string; name: string; abbr: string }>>(() => {
     if (Array.isArray(liveTeams) && liveTeams.length > 0) {
-      return liveTeams.map((t: any) => ({
-        id: t.id || t._id,
-        name: t.name,
-        abbr:
+      const seen = new Map<string, number>();
+      return liveTeams.map((t: any) => {
+        let abbr =
           t.logo_abbr ||
-          (t.name || "").split(" ").map((w: string) => w[0] || "").join("").toUpperCase().slice(0, 4) ||
-          (t.name || "").slice(0, 3).toUpperCase(),
-      }));
+          (t.name || "").replace(/-/g, " ").split(" ").map((w: string) => w[0] || "").join("").toUpperCase().slice(0, 4) ||
+          (t.name || "").slice(0, 3).toUpperCase();
+        const count = seen.get(abbr) || 0;
+        seen.set(abbr, count + 1);
+        if (count > 0) abbr = `${abbr}${count + 1}`;
+        return { id: t.id || t._id, name: t.name, abbr };
+      });
     }
     return mockLeagueTeams as Array<{ id?: string; name: string; abbr: string }>;
   }, [liveTeams]);
@@ -486,29 +504,41 @@ export default function DraftRoom() {
         const map: Record<string, any> = {};
         // Compute all the abbr fallbacks the Draft Board's column header
         // matcher uses, so picks resolve even when `ownerTeam` doesn't.
-        const computeAbbrs = (name: string): string[] => {
-          if (!name) return [];
-          const nameAbbr = name.replace(/\s/g, "").slice(0, 3).toUpperCase();
-          const fullName = name.split(" ").map((w) => w[0] || "").join("").toUpperCase();
-          return [nameAbbr, fullName];
+        // Iter 170e — also include backend-derived `logo_abbr` from
+        // liveTeams (which honours `logo_abbr_override` + hyphen-splits)
+        // so chips like BAD (Ice Breakers) or FHF (Five-Hole Fighters)
+        // light up the right picks under the filter.
+        const computeAbbrs = (name: string, teamId?: string): string[] => {
+          if (!name && !teamId) return [];
+          const out: string[] = [];
+          if (teamId && Array.isArray(liveTeams)) {
+            const lt = liveTeams.find((t: any) => (t.id || t._id) === teamId);
+            if (lt?.logo_abbr) out.push(String(lt.logo_abbr).toUpperCase());
+          }
+          if (name) {
+            out.push(name.replace(/\s/g, "").slice(0, 3).toUpperCase());
+            out.push(name.split(" ").map((w) => w[0] || "").join("").toUpperCase());
+            out.push(name.replace(/-/g, " ").split(" ").map((w) => w[0] || "").join("").toUpperCase().slice(0, 4));
+          }
+          return Array.from(new Set(out.filter(Boolean)));
         };
         for (const p of picks) {
           // Iter 166 — annotate each pick with its CURRENT owner's
           // abbr list so the filter can highlight traded picks under
           // the new owner.
-          const currentAbbrs = computeAbbrs(p.current_team_name || p.original_team_name || "");
+          const currentAbbrs = computeAbbrs(p.current_team_name || p.original_team_name || "", p.current_team_id || p.original_team_id);
           const entry = { ...p, _currentOwnerAbbrs: currentAbbrs };
           // Primary key — original_team_id
           map[`${p.round}|${p.original_team_id}`] = entry;
           // Secondary keys — every column-abbr derivation we might see
-          for (const ab of computeAbbrs(p.original_team_name || "")) {
+          for (const ab of computeAbbrs(p.original_team_name || "", p.original_team_id)) {
             map[`${p.round}|abbr:${ab}`] = entry;
           }
         }
         setLivePicksByOrigKey(map);
       })
       .catch(() => setLivePicksByOrigKey({}));
-  }, [activeLeagueCtx?.id]);
+  }, [activeLeagueCtx?.id, liveTeams]);
   // Iter 154 — When the expanded player has a Mongo ObjectId, fetch the real
   // record (NHL stats, contract, schedule) and merge over the lean fallback.
   useEffect(() => {
@@ -893,10 +923,31 @@ export default function DraftRoom() {
                     </div>
                     <div className="bg-secondary/50 rounded-lg p-3 text-center space-y-1">
                       <p className="text-[10px] uppercase tracking-wider text-muted-foreground">On the Clock</p>
-                      <p className="text-lg font-bold text-foreground">{onTheClockTeamFull?.name}</p>
+                      <p className="text-lg font-bold text-foreground" data-testid="draft-room-on-the-clock-team">{onTheClockTeamFull?.name}</p>
                       <p className="text-xs text-muted-foreground">
                         Round {currentRound}, Pick {currentPickInRound} (#{draftConfig.currentPick} overall)
                       </p>
+                      {/* Iter 170e — Next team up to pick. Helps managers
+                          mentally queue while the clock is running on the
+                          current team. */}
+                      {(() => {
+                        const nextOverall = draftConfig.currentPick + 1;
+                        const nextAbbr = nextOverall <= totalTeams * draftConfig.totalRounds
+                          ? getTeamForPick(nextOverall)
+                          : null;
+                        const nextTeam = nextAbbr ? boardTeams.find((t) => t.abbr === nextAbbr) : null;
+                        if (!nextTeam) return null;
+                        return (
+                          <p
+                            className="text-[11px] text-muted-foreground/90 mt-1 pt-1 border-t border-border/40"
+                            data-testid="draft-room-next-on-clock"
+                          >
+                            <span className="uppercase tracking-wider text-muted-foreground/60 mr-1">Next:</span>
+                            <span className="font-medium text-foreground/85">{nextTeam.name}</span>
+                            <span className="text-muted-foreground/60"> (#{nextOverall})</span>
+                          </p>
+                        );
+                      })()}
                       {/* Iter 170 — Picks-until-my-turn counter (always visible) */}
                       <p
                         className={cn(
@@ -1099,9 +1150,14 @@ export default function DraftRoom() {
                           // picks the live pick payload carries the new
                           // owner's abbr list; for untraded picks the
                           // column header IS the current owner.
-                          const currentOwnerAbbrs: string[] = livePick?._currentOwnerAbbrs?.length
-                            ? livePick._currentOwnerAbbrs
-                            : [teamAbbr];
+                          // Iter 170e — always include the column's own
+                          // (deduped) abbr so a chip click on this column
+                          // highlights it even when livePick carries a
+                          // different abbr derivation.
+                          const currentOwnerAbbrs: string[] = Array.from(new Set([
+                            ...(livePick?._currentOwnerAbbrs || []),
+                            teamAbbr,
+                          ]));
                           const isOwnedBySelected = ownerFilterActive && currentOwnerAbbrs.some((a: string) => selectedOwnerAbbrs.has(a));
                           const isDimmedByFilter = ownerFilterActive && !isOwnedBySelected;
                           // Iter 167 — conditional-pick asterisk. Backend
@@ -1114,12 +1170,13 @@ export default function DraftRoom() {
                           return (
                             <div
                               key={`${round}-${teamAbbr}`}
+                              data-testid={`draft-board-tile-${teamAbbr}-${round}`}
                               className={cn(
-                                "p-1.5 rounded border text-center min-h-[52px] flex flex-col items-center justify-center gap-0.5 transition-all relative",
+                                "p-1.5 rounded border text-center min-h-[64px] flex flex-col items-center justify-center gap-0.5 transition-all relative",
                                 isCurrentPick
                                   ? "bg-primary/10 border-primary/50 ring-1 ring-primary/30"
                                   : pick?.player
-                                  ? "bg-secondary/60 border-border"
+                                  ? (positionTints[pick.player.position] || "bg-secondary/60 border-border")
                                   : "bg-card/50 border-border/50",
                                 onBlock && "ring-1 ring-amber-400/60 border-amber-400/40",
                                 isOwnedBySelected && "ring-2 ring-primary/70 border-primary/50",
@@ -1152,12 +1209,40 @@ export default function DraftRoom() {
                               </span>
                               {pick?.player ? (
                                 <>
+                                  {/* Iter 170e — Headshot (or initial circle) +
+                                      richer line for league · pts so a tile
+                                      reads as a mini player card. */}
+                                  {pick.player.photo || pick.player.headshot ? (
+                                    <img
+                                      src={pick.player.photo || pick.player.headshot}
+                                      alt={pick.player.name}
+                                      className="h-6 w-6 rounded-full object-cover border border-border/60"
+                                      data-testid={`draft-board-tile-photo-${teamAbbr}-${round}`}
+                                    />
+                                  ) : (
+                                    <span
+                                      className="h-6 w-6 rounded-full bg-card/70 border border-border/60 flex items-center justify-center text-[10px] font-bold text-foreground/80"
+                                      data-testid={`draft-board-tile-initial-${teamAbbr}-${round}`}
+                                    >
+                                      {pick.player.name.charAt(0)}
+                                    </span>
+                                  )}
                                   <span className="text-[10px] font-medium text-foreground truncate w-full leading-tight">
                                     {pick.player.name.split(" ").map((n, i) => i === 0 ? n[0] + "." : n).join(" ")}
                                   </span>
-                                  <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border", positionColors[pick.player.position] || "bg-muted text-muted-foreground")}>
-                                    {pick.player.position}
-                                  </Badge>
+                                  <div className="flex items-center gap-1 justify-center">
+                                    <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border", positionColors[pick.player.position] || "bg-muted text-muted-foreground")}>
+                                      {pick.player.position}
+                                    </Badge>
+                                    {(pick.player.league || pick.player.nhlTeam) && (
+                                      <span className="text-[8px] text-muted-foreground truncate">
+                                        {pick.player.league || pick.player.nhlTeam}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {typeof pick.player.pts === "number" && (
+                                    <span className="text-[8px] text-muted-foreground/80">{pick.player.pts} pts</span>
+                                  )}
                                 </>
                               ) : (
                                 <span className="text-[10px] text-muted-foreground/40">—</span>
