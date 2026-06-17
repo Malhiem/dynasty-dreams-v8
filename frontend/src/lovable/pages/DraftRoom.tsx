@@ -56,6 +56,8 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 import { toast } from "sonner";
 import DraftChatPanel from "@/lovable/pages/draftroom/DraftChatPanel";
 import TruncatedRosterPanel from "@/lovable/pages/draftroom/TruncatedRosterPanel";
+// Iter 170k — drag-to-reorder queue.
+import SortableQueue from "@/lovable/pages/draftroom/SortableQueue";
 import SelectedPlayerCard from "@/lovable/pages/draftroom/SelectedPlayerCard";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
@@ -395,6 +397,8 @@ export default function DraftRoom() {
             overall: p.overall,
             team: p.team,
             player: p.player,
+            auto_picked: !!p.auto_picked,
+            auto_pick_via: p.auto_pick_via,
           })));
           const lastPlayerId = d.picks[d.picks.length - 1]?.player_id;
           if (lastPlayerId) setLastPickedPlayerId(String(lastPlayerId));
@@ -485,6 +489,7 @@ export default function DraftRoom() {
       setPicks((data.picks || []).map((p: any) => ({
         round: p.round, pickInRound: p.pick_in_round, overall: p.overall,
         team: p.team, player: p.player,
+        auto_picked: !!p.auto_picked, auto_pick_via: p.auto_pick_via,
       })));
       setDraftConfig((prev) => ({ ...prev, currentPick: data.current_pick }));
       setRosterReloadTick((t) => t + 1);
@@ -796,6 +801,7 @@ export default function DraftRoom() {
         setPicks((data.picks || []).map((p: any) => ({
           round: p.round, pickInRound: p.pick_in_round, overall: p.overall,
           team: p.team, player: p.player,
+          auto_picked: !!p.auto_picked, auto_pick_via: p.auto_pick_via,
         })));
         setDraftConfig((prev) => ({ ...prev, currentPick: data.current_pick }));
         setPlayers((prev) =>
@@ -1682,6 +1688,27 @@ export default function DraftRoom() {
                               </span>
                               {pick?.player ? (
                                 <>
+                                  {/* Iter 170k — Auto-picked badge: tiny
+                                      clock pip in the top-right corner
+                                      so a manager can spot a timeout
+                                      pick at a glance. Tooltip carries
+                                      the resolution (queue vs top
+                                      eligible) for context. */}
+                                  {(pick as any).auto_picked && (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span
+                                          className="absolute top-0.5 right-0.5 inline-flex items-center justify-center h-4 w-4 rounded-sm bg-sky-500/25 text-sky-300"
+                                          data-testid={`draft-board-auto-pick-${pick.overall}`}
+                                        >
+                                          <Clock className="h-2.5 w-2.5" />
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        Auto-picked on timeout — via {(pick as any).auto_pick_via === "queue" ? "manager's queue" : "top-ranked eligible"}
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  )}
                                   {/* Iter 170e — Headshot (or initial circle) +
                                       richer line for league · pts so a tile
                                       reads as a mini player card. */}
@@ -2025,44 +2052,21 @@ export default function DraftRoom() {
                   </ScrollArea>
                 </TabsContent>
 
-                {/* Iter 150 — Queue moved into a tab (was the col-2 LEFT card) */}
+                {/* Iter 150 — Queue moved into a tab (was the col-2 LEFT card)
+                    Iter 170k — Drag-to-reorder via @dnd-kit. Reorder
+                    triggers an immediate `setQueue` which the debounced
+                    PUT effect persists to /teams/{id}/draft-queue. */}
                 <TabsContent value="queue" className="mt-3">
                   <p className="text-[10px] text-muted-foreground px-1 pb-2">
-                    Private — only you can see this
+                    Private — only you can see this. Drag rows to set auto-pick fallback order.
                   </p>
                   <ScrollArea className="h-[420px]" data-testid="draft-room-queue-list">
-                    {queuedPlayers.length === 0 ? (
-                      <div className="text-center py-12 space-y-2">
-                        <ListOrdered className="h-8 w-8 text-muted-foreground/20 mx-auto" />
-                        <p className="text-sm text-muted-foreground">Queue is empty</p>
-                        <p className="text-xs text-muted-foreground/60">Use the queue icon in eligible players</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-1">
-                        {queuedPlayers.map((player, idx) => (
-                          <div key={player.id}
-                               className="flex items-center gap-2 p-2 rounded-md bg-secondary/30 group"
-                               data-testid={`draft-room-queue-row-${player.id}`}>
-                            <span className="text-[10px] font-mono text-muted-foreground w-5 text-right shrink-0">{idx + 1}.</span>
-                            <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border shrink-0", positionColors[player.position])}>
-                              {player.position}
-                            </Badge>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-foreground truncate">{player.name}</p>
-                              <p className="text-[10px] text-muted-foreground">#{player.ranking} · {player.league}</p>
-                            </div>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100"
-                              onClick={() => removeFromQueue(player.id)}
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <SortableQueue
+                      players={queuedPlayers}
+                      positionColors={positionColors}
+                      onReorder={(orderedIds) => setQueue(orderedIds)}
+                      onRemove={(id) => removeFromQueue(id)}
+                    />
                   </ScrollArea>
                 </TabsContent>
 
