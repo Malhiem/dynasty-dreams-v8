@@ -803,6 +803,21 @@ async def startup():
     except Exception as e:
         logger.warning(f"Could not start TBD deadline worker: {e}")
 
+    # Iter 175 — Daily NHL stats backfill so player ages / career-GP
+    # (and the minor-eligibility flag derived from them) stay current
+    # without manual ops intervention. Skipped under PYTEST_CURRENT_TEST
+    # so unit tests don't bind to the public NHL endpoint.
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        try:
+            from player_data_backfill_worker import player_data_backfill_loop
+            loop = asyncio.get_event_loop()
+            fastapi_app.state.player_data_backfill_task = loop.create_task(
+                player_data_backfill_loop(db)
+            )
+            logger.info("Player-data backfill worker scheduled (daily)")
+        except Exception as e:
+            logger.warning(f"Could not start player-data backfill worker: {e}")
+
 
 @fastapi_app.on_event("shutdown")
 async def shutdown():
@@ -815,6 +830,9 @@ async def shutdown():
     tbd_task = getattr(fastapi_app.state, "tbd_deadline_task", None)
     if tbd_task:
         tbd_task.cancel()
+    backfill_task = getattr(fastapi_app.state, "player_data_backfill_task", None)
+    if backfill_task:
+        backfill_task.cancel()
     client.close()
 
 # Wrap FastAPI with Socket.IO
