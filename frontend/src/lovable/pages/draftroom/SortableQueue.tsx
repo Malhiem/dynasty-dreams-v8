@@ -22,7 +22,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { GripVertical, ListOrdered, X } from "lucide-react";
+import { GripVertical, ListOrdered, X, ArrowUpToLine } from "lucide-react";
 
 interface QueuePlayer {
   id: string | number;
@@ -37,9 +37,16 @@ interface Props {
   positionColors: Record<string, string>;
   onReorder: (orderedIds: string[]) => void;
   onRemove: (id: string) => void;
+  // Iter 170n — Optional "Quick Promote" callback. When provided, each
+  // row shows a small ⤴ button that copies the player into the parent's
+  // target list (e.g. shortlist → queue). The `isPromoted(id)` predicate
+  // controls disabled state so an already-promoted row dims the button.
+  onPromote?: (id: string) => void;
+  isPromoted?: (id: string) => boolean;
+  promoteLabel?: string;
 }
 
-function SortableQueueRow({ player, idx, positionColors, onRemove }: any) {
+function SortableQueueRow({ player, idx, positionColors, onRemove, onPromote, isPromoted, promoteLabel }: any) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: String(player.id) });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -85,11 +92,27 @@ function SortableQueueRow({ player, idx, positionColors, onRemove }: any) {
       >
         <X className="h-3 w-3" />
       </Button>
+      {/* Iter 170n — Optional Quick Promote affordance (e.g. shortlist
+          → queue) so a manager doesn't have to retype star-rated picks
+          into the auto-pick fallback list. */}
+      {onPromote && (
+        <Button
+          variant="ghost"
+          size="icon"
+          title={isPromoted?.(String(player.id)) ? "Already in queue" : (promoteLabel || "Promote to queue")}
+          className="h-6 w-6 text-muted-foreground hover:text-primary opacity-0 group-hover:opacity-100 disabled:opacity-30"
+          disabled={isPromoted?.(String(player.id))}
+          onClick={() => onPromote(String(player.id))}
+          data-testid={`draft-room-queue-promote-${player.id}`}
+        >
+          <ArrowUpToLine className="h-3 w-3" />
+        </Button>
+      )}
     </div>
   );
 }
 
-export default function SortableQueue({ players, positionColors, onReorder, onRemove }: Props) {
+export default function SortableQueue({ players, positionColors, onReorder, onRemove, onPromote, isPromoted, promoteLabel }: Props) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -126,6 +149,9 @@ export default function SortableQueue({ players, positionColors, onReorder, onRe
               idx={idx}
               positionColors={positionColors}
               onRemove={onRemove}
+              onPromote={onPromote}
+              isPromoted={isPromoted}
+              promoteLabel={promoteLabel}
             />
           ))}
         </div>

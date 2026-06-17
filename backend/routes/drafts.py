@@ -1030,7 +1030,11 @@ async def auto_init_draft(league_id: str, request: Request):
         "total_rounds": 5,
         "time_per_pick": 120,
         "snake_draft": True,
-        "player_criteria": "entry",
+        "player_criteria": "open",  # Iter 170n — the players collection
+        # currently holds NHL-active players only (no prospect pool). The
+        # default reflects what the data supports; once a prospect pool
+        # is seeded, this can switch back to "entry" + filter
+        # eligible-players accordingly.
         "missed_pick_action": "skip",
         "current_pick": 1,
         "status": "scheduled",

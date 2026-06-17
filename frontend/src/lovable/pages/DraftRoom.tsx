@@ -772,11 +772,25 @@ export default function DraftRoom() {
 
   const handleSendChat = () => {
     if (!chatInput.trim()) return;
+    const text = chatInput.trim();
+    setChatInput("");
+    // Iter 170n — Persist outbound chat via backend so reload + every
+    // other connected manager see the message. Falls back to a local
+    // optimistic append when no backend draft exists (demo / pre-init).
+    if (currentDraft?._id) {
+      api.post(`/drafts/${currentDraft._id}/chat`, { text })
+        .catch(() => {
+          setChatMessages((prev) => [
+            ...prev,
+            { id: `chat-${Date.now()}`, type: "chat", sender: (myTeam as any)?.name || "You", text, timestamp: new Date() },
+          ]);
+        });
+      return;
+    }
     setChatMessages((prev) => [
       ...prev,
-      { id: `chat-${Date.now()}`, type: "chat", sender: "Team Frostbite", text: chatInput.trim(), timestamp: new Date() },
+      { id: `chat-${Date.now()}`, type: "chat", sender: (myTeam as any)?.name || "You", text, timestamp: new Date() },
     ]);
-    setChatInput("");
   };
 
   // Iter 170f — Draft a player. If `chosen` is provided, that player is
@@ -1422,6 +1436,18 @@ export default function DraftRoom() {
                       <p className="text-xs text-muted-foreground">
                         Round {currentRound}, Pick {currentPickInRound} (#{draftConfig.currentPick} overall)
                       </p>
+                      {/* Iter 170n — Surface the draft format so a
+                          manager isn't surprised when NHL stars (vs.
+                          entry-level prospects) populate the eligible
+                          list. Backed by `draft.player_criteria`. */}
+                      {currentDraft?.player_criteria && (
+                        <p
+                          className="text-[10px] uppercase tracking-wider text-muted-foreground/70"
+                          data-testid="draft-room-criteria-badge"
+                        >
+                          Format: {currentDraft.player_criteria === "entry" ? "Entry / Rookies" : "Open · all eligible NHL players"}
+                        </p>
+                      )}
                       {/* Iter 170e — Next team up to pick. Helps managers
                           mentally queue while the clock is running on the
                           current team. */}
@@ -2113,7 +2139,7 @@ export default function DraftRoom() {
 
                 <TabsContent value="shortlist" className="mt-3">
                   <p className="text-[10px] text-muted-foreground px-1 pb-2">
-                    Drag to rank your shortlist manually.
+                    Drag to rank your shortlist manually. Use ⤴ to promote a player to the auto-pick queue.
                   </p>
                   <ScrollArea className="h-[450px]">
                     <SortableQueue
@@ -2121,6 +2147,11 @@ export default function DraftRoom() {
                       positionColors={positionColors}
                       onReorder={(orderedIds) => setShortlist(orderedIds)}
                       onRemove={(id) => toggleShortlist(id)}
+                      onPromote={(id) => {
+                        if (!queue.includes(id)) setQueue((prev) => [...prev, id]);
+                      }}
+                      isPromoted={(id) => queue.includes(id)}
+                      promoteLabel="Promote to auto-pick queue"
                     />
                   </ScrollArea>
                 </TabsContent>
