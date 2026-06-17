@@ -415,6 +415,15 @@ export default function DraftRoom() {
             pickTimerSeconds: d.time_per_pick || prev.pickTimerSeconds,
           }));
         }
+        // Iter 170m — hydrate historic chat (picks + system messages
+        // including auto-pick badges) so a reload preserves the
+        // narrative arc of the draft.
+        if (Array.isArray(d.chat_messages) && d.chat_messages.length > 0) {
+          setChatMessages(d.chat_messages.map((m: any) => ({
+            ...m,
+            timestamp: new Date(m.timestamp || Date.now()),
+          })));
+        }
       } catch (e) {
         // Non-commissioners get 403 → fall back to mock/local-only flow
         if (!cancelled) setCurrentDraft(null);
@@ -496,6 +505,15 @@ export default function DraftRoom() {
       })));
       setDraftConfig((prev) => ({ ...prev, currentPick: data.current_pick }));
       setRosterReloadTick((t) => t + 1);
+      // Iter 170m — Keep chat in sync with backend on every refresh
+      // (undo / swap / remote pick) so the Picks tab always reflects
+      // the canonical message log.
+      if (Array.isArray(data.chat_messages)) {
+        setChatMessages(data.chat_messages.map((m: any) => ({
+          ...m,
+          timestamp: new Date(m.timestamp || Date.now()),
+        })));
+      }
     } catch { /* ignore — will retry on next event */ }
   }, [currentDraft?._id]);
 
@@ -1003,15 +1021,24 @@ export default function DraftRoom() {
   // mount + persist back via PUT whenever the queue changes. Falls
   // back silently when the user has no team (Storybook / demo).
   const hasHydratedQueueRef = useRef(false);
+  const hasHydratedShortlistRef = useRef(false);
   useEffect(() => {
     if (!(myTeam as any)?.id) return;
     hasHydratedQueueRef.current = false;
+    hasHydratedShortlistRef.current = false;
     api.get(`/teams/${(myTeam as any).id}/draft-queue`)
       .then(({ data }) => {
         setQueue((data?.draft_queue || []).map(String));
         hasHydratedQueueRef.current = true;
       })
       .catch(() => { hasHydratedQueueRef.current = true; });
+    // Iter 170m — hydrate persisted shortlist too.
+    api.get(`/teams/${(myTeam as any).id}/shortlist`)
+      .then(({ data }) => {
+        setShortlist((data?.shortlist || []).map(String));
+        hasHydratedShortlistRef.current = true;
+      })
+      .catch(() => { hasHydratedShortlistRef.current = true; });
   }, [(myTeam as any)?.id]);
   useEffect(() => {
     if (!(myTeam as any)?.id || !hasHydratedQueueRef.current) return;
@@ -1021,6 +1048,15 @@ export default function DraftRoom() {
     }, 400); // debounce
     return () => clearTimeout(t);
   }, [queue, (myTeam as any)?.id]);
+  // Iter 170m — debounced shortlist persist (same pattern).
+  useEffect(() => {
+    if (!(myTeam as any)?.id || !hasHydratedShortlistRef.current) return;
+    const t = setTimeout(() => {
+      api.put(`/teams/${(myTeam as any).id}/shortlist`, { player_ids: shortlist })
+        .catch(() => {/* non-fatal */});
+    }, 400);
+    return () => clearTimeout(t);
+  }, [shortlist, (myTeam as any)?.id]);
 
   // Iter 149 — Fetch league trade-block listings so the overlay can paint
   // megaphone icons on player tiles + pick tiles that are publicly available.

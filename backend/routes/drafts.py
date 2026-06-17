@@ -1562,6 +1562,50 @@ async def get_team_draft_queue(team_id: str, request: Request):
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     return {"team_id": team_id, "draft_queue": list(team.get("draft_queue") or [])}
+
+
+# ─── Iter 170m — Shortlist persistence (per-team) ─────────────────────
+
+
+class ShortlistRequest(BaseModel):
+    player_ids: list[str] = Field(default_factory=list)
+
+
+@router.put("/teams/{team_id}/shortlist")
+async def update_team_shortlist(team_id: str, payload: ShortlistRequest, request: Request):
+    """Owner-or-commissioner: persist the team's draft Shortlist (the
+    ordered "watch list" the manager curates while scouting)."""
+    user = await _get_user(request)
+    team = await _db().teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    league = await _db().leagues.find_one({"_id": ObjectId(team["league_id"])})
+    is_owner = team.get("owner_id") == user["_id"]
+    is_comm = league and league.get("commissioner_id") == user["_id"]
+    if not (is_owner or is_comm):
+        raise HTTPException(status_code=403, detail="Only the team's owner or league commissioner can edit the shortlist")
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for pid in payload.player_ids:
+        if pid not in seen:
+            seen.add(pid)
+            cleaned.append(pid)
+        if len(cleaned) >= 200:
+            break
+    await _db().teams.update_one(
+        {"_id": ObjectId(team_id)},
+        {"$set": {"shortlist": cleaned}},
+    )
+    return {"team_id": team_id, "shortlist": cleaned, "size": len(cleaned)}
+
+
+@router.get("/teams/{team_id}/shortlist")
+async def get_team_shortlist(team_id: str, request: Request):
+    await _get_user(request)
+    team = await _db().teams.find_one({"_id": ObjectId(team_id)})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    return {"team_id": team_id, "shortlist": list(team.get("shortlist") or [])}
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
