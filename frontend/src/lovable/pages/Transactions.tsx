@@ -798,6 +798,55 @@ const Transactions = () => {
   const accepted = allTrades.filter((t) => t.status === "accepted");
   const all = allTrades;
 
+  // Iter 170d — KPI strip. Runs over the SAME filtered rows that drive
+  // the tabs so the numbers always match what's on screen below.
+  //   • This Week    = trades whose created_at falls in the last 7 days
+  //   • This Month   = trades whose created_at falls in the last 30 days
+  //   • Most Active  = team appearing on the most trades (counts both
+  //                    proposer and target sides)
+  const kpis = useMemo(() => {
+    const filtered = mappedWithIds.filter(({ card }) =>
+      ((card.assetsFromA?.length || 0) > 0 || (card.assetsFromB?.length || 0) > 0) &&
+      card.teamA && card.teamB && card.teamA !== card.teamB,
+    ).filter(({ _proposerId, _targetId, _createdAt }) => {
+      if (selectedTeamIds.size > 0 &&
+          !(_proposerId && selectedTeamIds.has(_proposerId)) &&
+          !(_targetId && selectedTeamIds.has(_targetId))) return false;
+      const day = (_createdAt || "").slice(0, 10);
+      if (dateFrom && (!day || day < dateFrom)) return false;
+      if (dateTo && (!day || day > dateTo)) return false;
+      return true;
+    });
+    const now = new Date();
+    const sevenDays = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const thirtyDays = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    let weekCount = 0;
+    let monthCount = 0;
+    const teamCounts: Record<string, number> = {};
+    for (const row of filtered) {
+      const ts = row._createdAt ? new Date(row._createdAt) : null;
+      if (ts && !isNaN(ts.getTime())) {
+        if (ts >= sevenDays) weekCount += 1;
+        if (ts >= thirtyDays) monthCount += 1;
+      }
+      if (row._proposerId) teamCounts[row._proposerId] = (teamCounts[row._proposerId] || 0) + 1;
+      if (row._targetId) teamCounts[row._targetId] = (teamCounts[row._targetId] || 0) + 1;
+    }
+    let topTeamId: string | null = null;
+    let topTeamCount = 0;
+    for (const [tid, c] of Object.entries(teamCounts)) {
+      if (c > topTeamCount) { topTeamId = tid; topTeamCount = c; }
+    }
+    return {
+      total: filtered.length,
+      week: weekCount,
+      month: monthCount,
+      mostActive: topTeamId
+        ? { id: topTeamId, name: teamName(topTeamId), count: topTeamCount }
+        : null,
+    };
+  }, [mappedWithIds, selectedTeamIds, dateFrom, dateTo, leagueTeams]);
+
   return (
     <AppLayout>
         <div className="container py-8">
@@ -805,6 +854,44 @@ const Transactions = () => {
         <div className="mb-6 animate-fade-in">
           <h1 className="text-3xl font-bold mb-2">Transactions</h1>
           <p className="text-muted-foreground">Review pending and accepted trades, plus league activity. Cast your vote to approve or veto.</p>
+        </div>
+
+        {/* Iter 170d — KPI strip. Reflects active filters in real-time. */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6" data-testid="transactions-kpi-strip">
+          <Card className="border-border/60">
+            <CardContent className="py-3 px-4 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Trades · This Week</div>
+                <div className="text-2xl font-semibold text-foreground leading-tight" data-testid="transactions-kpi-week">{kpis.week}</div>
+                <div className="text-[10px] text-muted-foreground">last 7 days</div>
+              </div>
+              <Clock className="h-5 w-5 text-primary/70" />
+            </CardContent>
+          </Card>
+          <Card className="border-border/60">
+            <CardContent className="py-3 px-4 flex items-center justify-between">
+              <div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Trades · This Month</div>
+                <div className="text-2xl font-semibold text-foreground leading-tight" data-testid="transactions-kpi-month">{kpis.month}</div>
+                <div className="text-[10px] text-muted-foreground">last 30 days</div>
+              </div>
+              <Activity className="h-5 w-5 text-accent/70" />
+            </CardContent>
+          </Card>
+          <Card className="border-border/60">
+            <CardContent className="py-3 px-4 flex items-center justify-between">
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Most Active Team</div>
+                <div className="text-base font-semibold text-foreground leading-tight truncate" data-testid="transactions-kpi-most-active">
+                  {kpis.mostActive ? kpis.mostActive.name : "—"}
+                </div>
+                <div className="text-[10px] text-muted-foreground">
+                  {kpis.mostActive ? `${kpis.mostActive.count} trade${kpis.mostActive.count === 1 ? "" : "s"}` : "no trades in range"}
+                </div>
+              </div>
+              <Zap className="h-5 w-5 text-yellow-500/70" />
+            </CardContent>
+          </Card>
         </div>
 
         {/* Iter 170c — trade filters: team chips + date range */}
