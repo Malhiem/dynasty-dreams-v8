@@ -280,6 +280,10 @@ export default function DraftRoom() {
   // defaults to this when the user isn't actively previewing a player.
   // "Live View" button reverts to this default after a preview click.
   const [lastPickedPlayerId, setLastPickedPlayerId] = useState<string | null>(null);
+  // Iter 170i — Commissioner undo + swap-popover UI state.
+  const [undoCount, setUndoCount] = useState<number>(1);
+  const [swapPickOverall, setSwapPickOverall] = useState<number | null>(null);
+  const [swapSearch, setSwapSearch] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [positionFilter, setPositionFilter] = useState("all");
   const [countdown, setCountdown] = useState<number>(0);
@@ -489,17 +493,44 @@ export default function DraftRoom() {
 
   // Iter 170h — Subscribe to the draft's Socket.IO room. Listeners fire
   // for every pick / undo / swap broadcast by the backend.
+  // Iter 170i — Surface a toast to other managers when a remote event
+  // lands. We dedupe self-originated events by stamping a
+  // `_selfActionId` ref on local actions and skipping the toast for
+  // the matching incoming event.
+  const lastSelfPickRef = useRef<string | null>(null);
   const draftRoomId = currentDraft?._id ? `draft_${currentDraft._id}` : null;
   useSocket(
     draftRoomId,
     {
-      draft_pick: () => { refreshDraftState(); },
-      draft_undo: () => { refreshDraftState(); },
-      draft_pick_swapped: () => { refreshDraftState(); },
+      draft_pick: (p: any) => {
+        refreshDraftState();
+        // Skip the toast if this is the echo of OUR pick (we already
+        // toasted locally in handleDraftPlayer).
+        const sig = `${p?.overall}-${p?.player_id}`;
+        if (sig && sig !== lastSelfPickRef.current) {
+          const team = (boardTeams.find((t) => t.abbr === p?.team)?.name) || p?.team || "A team";
+          toast.info(`${team} drafted ${p?.player?.name || "a player"}`, {
+            description: `Pick #${p?.overall} · ${p?.player?.position || ""} ${p?.player?.nhlTeam || ""}`.trim(),
+          });
+        }
+      },
+      draft_undo: (p: any) => {
+        refreshDraftState();
+        const count = p?.count || 1;
+        const onClk = p?.on_the_clock
+          ? (boardTeams.find((t) => t.abbr === p.on_the_clock)?.name || p.on_the_clock)
+          : null;
+        toast.warning(`Commissioner undid ${count} pick${count === 1 ? "" : "s"}`, {
+          description: onClk ? `Now on the clock: ${onClk}` : undefined,
+        });
+      },
+      draft_pick_swapped: (p: any) => {
+        refreshDraftState();
+        toast.warning(`Commissioner swapped pick #${p?.overall}`, {
+          description: p?.pick?.player?.name ? `Now: ${p.pick.player.name}` : undefined,
+        });
+      },
       draft_chat: (msg: any) => {
-        // Avoid duplicates if the system pick chat is already in the
-        // refreshed draft (we drop the optimistic local chat in v3
-        // anyway — picks now come from backend).
         if (!msg?.id) return;
         setChatMessages((prev) =>
           prev.find((m: any) => m.id === msg.id) ? prev : [
@@ -509,7 +540,7 @@ export default function DraftRoom() {
         );
       },
     },
-    (user as any)?._id,
+    userId,
   );
 
   // Iter 170h — Commissioner: undo the last N picks.
@@ -735,6 +766,9 @@ export default function DraftRoom() {
     // Iter 170g — Backend round-trip when a real draft is active.
     if (currentDraft?._id && isDraftActive && /^[0-9a-fA-F]{24}$/.test(String(nextPlayer.id))) {
       try {
+        // Stamp the self-action so our own Socket.IO echo doesn't
+        // double-toast (Iter 170i).
+        lastSelfPickRef.current = `${draftConfig.currentPick}-${nextPlayer.id}`;
         await api.post(`/drafts/${currentDraft._id}/pick`, { player_id: nextPlayer.id });
         // Refetch the canonical state so picks + on-clock stay in sync.
         const { data } = await api.get(`/drafts/${currentDraft._id}`);
@@ -1383,20 +1417,30 @@ export default function DraftRoom() {
                             Simulate Pick
                           </Button>
                         )}
-                        {/* Iter 170h — Commissioner-only Undo. Pops the
-                            last completed pick off the backend + frees
-                            the drafted player from the team's roster. */}
+                        {/* Iter 170i — Commissioner-only Undo with
+                            count picker. Default 1; up to last N picks. */}
                         {isLeagueManager && picks.length > 0 && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full mt-1 gap-1.5 text-amber-400 border-amber-400/30 hover:bg-amber-400/10"
-                            onClick={() => handleUndoPicks(1)}
-                            data-testid="draft-room-undo-pick"
-                          >
-                            <RotateCcw className="h-3.5 w-3.5" />
-                            Undo Last Pick
-                          </Button>
+                          <div className="flex items-stretch gap-1 mt-1" data-testid="draft-room-undo-bar">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={picks.length}
+                              value={undoCount}
+                              onChange={(e) => setUndoCount(Math.max(1, Math.min(picks.length, parseInt(e.target.value || "1", 10))))}
+                              data-testid="draft-room-undo-count"
+                              className="h-9 w-14 text-center text-sm"
+                            />
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1 gap-1.5 text-amber-400 border-amber-400/30 hover:bg-amber-400/10"
+                              onClick={() => handleUndoPicks(undoCount)}
+                              data-testid="draft-room-undo-pick"
+                            >
+                              <RotateCcw className="h-3.5 w-3.5" />
+                              {undoCount === 1 ? "Undo Last Pick" : `Undo ${undoCount} Picks`}
+                            </Button>
+                          </div>
                         )}
                       </div>
                     )}
@@ -1628,6 +1672,75 @@ export default function DraftRoom() {
                                   </div>
                                   {typeof pick.player.pts === "number" && (
                                     <span className="text-[8px] text-muted-foreground/80">{pick.player.pts} pts</span>
+                                  )}
+                                  {/* Iter 170i — Commissioner-only Swap
+                                      affordance on every drafted tile.
+                                      Opens a popover with a quick search
+                                      to replace this pick's player. */}
+                                  {isLeagueManager && (
+                                    <Popover
+                                      open={swapPickOverall === pick.overall}
+                                      onOpenChange={(open) => {
+                                        setSwapPickOverall(open ? pick.overall : null);
+                                        if (!open) setSwapSearch("");
+                                      }}
+                                    >
+                                      <PopoverTrigger asChild>
+                                        <button
+                                          type="button"
+                                          className="absolute bottom-0.5 right-0.5 h-4 w-4 rounded-sm bg-card/70 border border-border/60 flex items-center justify-center text-foreground/70 hover:bg-primary/20 hover:text-primary"
+                                          data-testid={`draft-board-swap-btn-${pick.overall}`}
+                                          aria-label="Swap player"
+                                          onClick={(e) => e.stopPropagation()}
+                                        >
+                                          <ArrowRightLeft className="h-2.5 w-2.5" />
+                                        </button>
+                                      </PopoverTrigger>
+                                      <PopoverContent
+                                        align="end"
+                                        className="w-72 p-2 space-y-2"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <div className="text-xs font-semibold text-foreground">
+                                          Swap pick #{pick.overall} ({pick.team})
+                                        </div>
+                                        <div className="text-[10px] text-muted-foreground">
+                                          Currently: <span className="text-foreground">{pick.player.name}</span> ({pick.player.position})
+                                        </div>
+                                        <Input
+                                          autoFocus
+                                          value={swapSearch}
+                                          onChange={(e) => setSwapSearch(e.target.value)}
+                                          placeholder="Search for replacement player…"
+                                          className="h-8 text-xs"
+                                          data-testid="draft-board-swap-search"
+                                        />
+                                        <div className="max-h-48 overflow-y-auto space-y-0.5">
+                                          {players
+                                            .filter((p) => !p.drafted && (!swapSearch || p.name.toLowerCase().includes(swapSearch.toLowerCase()) || p.position.toLowerCase().includes(swapSearch.toLowerCase())))
+                                            .slice(0, 12)
+                                            .map((p) => (
+                                              <button
+                                                key={p.id}
+                                                type="button"
+                                                onClick={async () => {
+                                                  await handleSwapPickPlayer(pick.overall, String(p.id));
+                                                  setSwapPickOverall(null);
+                                                  setSwapSearch("");
+                                                }}
+                                                className="flex items-center justify-between w-full px-2 py-1 rounded hover:bg-secondary/60 text-left"
+                                                data-testid={`draft-board-swap-option-${p.id}`}
+                                              >
+                                                <span className="text-xs text-foreground truncate">{p.name}</span>
+                                                <span className="text-[10px] text-muted-foreground ml-2">{p.position}</span>
+                                              </button>
+                                            ))}
+                                          {players.filter((p) => !p.drafted).length === 0 && (
+                                            <p className="text-[11px] text-muted-foreground text-center py-2">No eligible players</p>
+                                          )}
+                                        </div>
+                                      </PopoverContent>
+                                    </Popover>
                                   )}
                                 </>
                               ) : (

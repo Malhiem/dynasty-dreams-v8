@@ -102,7 +102,9 @@ def test_draftroom_passes_canpick_and_roster_tick():
 def test_undo_button_renders_and_calls_handler():
     src = DRAFT_ROOM.read_text()
     assert 'data-testid="draft-room-undo-pick"' in src
-    assert "handleUndoPicks(1)" in src
+    # Iter 170i — handler is invoked with the user-chosen count, not a
+    # hardcoded 1.
+    assert "handleUndoPicks(undoCount)" in src
     # Handler POSTs to /drafts/{id}/undo when backend draft exists.
     assert "/drafts/${currentDraft._id}/undo`" in src
     # And swap handler PATCHes the specific pick.
