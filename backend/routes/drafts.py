@@ -952,6 +952,14 @@ async def get_draft_eligible_players(
     if drafted_ids:
         query["_id"] = {"$nin": [ObjectId(pid) for pid in drafted_ids]}
 
+    # Iter 170o — Criteria-aware filter. "entry" → prospect pool only;
+    # "open" / anything else → all NHL skaters/goalies (no prospects).
+    criteria = (draft.get("player_criteria") or "open").lower()
+    if criteria == "entry":
+        query["player_type"] = "prospect"
+    else:
+        query["player_type"] = {"$ne": "prospect"}
+
     if search:
         query["$or"] = [
             {"name": {"$regex": search, "$options": "i"}},
@@ -1439,8 +1447,12 @@ async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
             break
 
     if chosen_player is None:
-        # Top eligible — same ordering as `get_draft_eligible_players`.
-        async for p in _db().players.find().sort([("points", -1), ("name", 1)]):
+        # Top eligible — same ordering as `get_draft_eligible_players`,
+        # honouring the same criteria filter so an entry draft auto-picks
+        # a prospect even when the manager has no queue set.
+        criteria = (draft.get("player_criteria") or "open").lower()
+        q = {"player_type": "prospect"} if criteria == "entry" else {"player_type": {"$ne": "prospect"}}
+        async for p in _db().players.find(q).sort([("points", -1), ("name", 1)]):
             if str(p["_id"]) in drafted_ids:
                 continue
             chosen_player = p

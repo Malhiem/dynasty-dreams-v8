@@ -61,12 +61,13 @@ export default function SelectedPlayerCard({
     );
   }
 
-  // Friendly stat-line — falls back gracefully when fields are absent
+  // Iter 171 — Points (P) removed; it's just G+A and reads as arbitrary
+  // alongside per-category goals/assists. Stat-line falls back gracefully
+  // when fields are absent.
   const stats = [
     { label: "GP", v: player.gp },
     { label: "G", v: player.g },
     { label: "A", v: player.a },
-    { label: "P", v: player.pts },
     { label: "+/-", v: player.plus_minus },
     { label: "PIM", v: player.pim },
     { label: "SOG", v: player.shots },
@@ -148,7 +149,7 @@ export default function SelectedPlayerCard({
 
         {/* Stat-line — grid for vertical balance */}
         <div
-          className="grid grid-cols-7 gap-1 bg-secondary/30 rounded-md p-2"
+          className="grid grid-cols-6 gap-1 bg-secondary/30 rounded-md p-2"
           data-testid="draft-room-selected-card-statline"
         >
           {stats.map((s) => (
