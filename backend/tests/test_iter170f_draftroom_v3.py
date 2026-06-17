@@ -22,8 +22,8 @@ def _src() -> str:
 
 def test_unified_draft_handler_replaces_old_simulate():
     src = _src()
-    # New unified handler accepts an optional chosen player.
-    assert "const handleDraftPlayer = (chosen?: DraftEligiblePlayer | null) => {" in src
+    # Iter 170g — handler became async to await backend POST.
+    assert "const handleDraftPlayer = async (chosen?: DraftEligiblePlayer | null) => {" in src
     # Old name kept as a thin alias so the Simulate Pick button binding stays.
     assert "const handleSimulatePick = () => handleDraftPlayer();" in src
 

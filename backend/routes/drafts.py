@@ -47,6 +47,41 @@ async def _broadcast(room, event, payload):
 def _calculate_fantasy_points(*a, **kw): return _deps["calculate_fantasy_points"](*a, **kw)
 
 
+# ─── Iter 170g — Team abbr derivation aligned with the frontend ────────
+# Matches `team_to_response` (routes/teams.py) which honours
+# `logo_abbr_override` then hyphen-aware initials, AND dedupes collisions
+# by appending a 2/3/… suffix so two teams that share initials (e.g.
+# "Crease Crashers" + "Checkmate Chiefs") get unique board columns.
+def _derive_team_abbr(team: dict) -> str:
+    name = team.get("name", "")
+    override = (team.get("logo_abbr_override") or "").strip().upper()
+    if override:
+        return override[:4]
+    words = [w for w in name.replace("-", " ").split() if w and w[0].isalnum()]
+    if len(words) >= 2:
+        return (words[0][0] + words[1][0] + (words[2][0] if len(words) > 2 else "")).upper()[:4]
+    return (name[:3].upper() if name else "TBD")
+
+
+def _abbrs_with_dedup(teams: list[dict]) -> tuple[list[str], dict]:
+    """Return (abbrs_in_order, team_map_by_abbr) with collision dedup."""
+    seen: dict[str, int] = {}
+    abbrs: list[str] = []
+    team_map: dict[str, dict] = {}
+    for t in teams:
+        base = _derive_team_abbr(t)
+        count = seen.get(base, 0)
+        seen[base] = count + 1
+        abbr = base if count == 0 else f"{base}{count + 1}"
+        abbrs.append(abbr)
+        team_map[abbr] = {
+            "id": str(t["_id"]),
+            "name": t.get("name"),
+            "owner_id": t.get("owner_id"),
+        }
+    return abbrs, team_map
+
+
 @router.get("/drafts/{league_id}/picks")
 async def get_draft_picks(league_id: str, year: Optional[int] = None):
     db = _deps["db"]
@@ -821,8 +856,11 @@ async def create_draft(input: CreateDraftRequest, request: Request):
 
     # Get league teams for draft order
     teams = await _db().teams.find({"league_id": input.league_id}).to_list(100)
-    team_abbrs = [t["name"][:4].upper() for t in teams]
-    team_map = {t["name"][:4].upper(): {"id": str(t["_id"]), "name": t["name"], "owner_id": t["owner_id"]} for t in teams}
+    # Iter 170g — abbr derivation aligned with frontend (`logo_abbr` +
+    # dedup) so the Draft Room board renders the same column keys the
+    # backend stores against `picks.team` and broadcasts as
+    # `on_the_clock`.
+    team_abbrs, team_map = _abbrs_with_dedup(teams)
 
     scheduled = None
     if input.scheduled_time:
@@ -928,6 +966,13 @@ async def get_draft_eligible_players(
 
     result = []
     for i, p in enumerate(players):
+        # Iter 170g — surface a best-effort NHL headshot URL based on
+        # nhl_id + team. Frontend falls back to an initials circle if
+        # the image 404s.
+        headshot = (
+            f"https://assets.nhle.com/mugs/nhl/20252026/{p.get('team', 'NHL')}/{p.get('nhl_id', '')}.png"
+            if p.get("nhl_id") else None
+        )
         result.append({
             "id": str(p["_id"]),
             "name": p["name"],
@@ -942,10 +987,67 @@ async def get_draft_eligible_players(
             "pts": p.get("points", 0),
             "plus_minus": p.get("plus_minus", 0),
             "ranking": skip + i + 1,
-            "drafted": False
+            "drafted": False,
+            "headshot": headshot,
+            "nhl_id": p.get("nhl_id"),
         })
 
     return {"players": result, "total": total, "page": page, "pages": (total + limit - 1) // limit}
+
+
+# ─── Iter 170g — Auto-init draft for a league ─────────────────────────
+# Used by the Draft Room on mount: returns the most-recent draft for the
+# league, creating one with sensible defaults if none exists yet. Idempotent
+# — re-running returns the existing draft. Commissioner-only.
+
+@router.post("/drafts/auto-init/{league_id}")
+async def auto_init_draft(league_id: str, request: Request):
+    user = await _get_user(request)
+    league = await _db().leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_comm = league["commissioner_id"] == user["_id"]
+    co_comms = league.get("co_commissioners", []) or []
+    if not (is_comm or user["_id"] in co_comms):
+        raise HTTPException(status_code=403, detail="Only commissioners can auto-init drafts")
+
+    existing = await _db().drafts.find_one({"league_id": league_id}, sort=[("created_at", -1)])
+    if existing:
+        existing["_id"] = str(existing["_id"])
+        existing.pop("team_map", None)
+        return {"draft": existing, "created": False}
+
+    teams = await _db().teams.find({"league_id": league_id}).to_list(100)
+    if not teams:
+        raise HTTPException(status_code=400, detail="League has no teams")
+    team_abbrs, team_map = _abbrs_with_dedup(teams)
+
+    draft_doc = {
+        "league_id": league_id,
+        "league_name": league.get("name"),
+        "draft_type": "snake",
+        "scheduled_time": None,
+        "total_rounds": 5,
+        "time_per_pick": 120,
+        "snake_draft": True,
+        "player_criteria": "entry",
+        "missed_pick_action": "skip",
+        "current_pick": 1,
+        "status": "scheduled",
+        "draft_started": False,
+        "early_start": False,
+        "timer_paused": False,
+        "team_abbrs": team_abbrs,
+        "team_map": team_map,
+        "picks": [],
+        "chat_messages": [],
+        "created_by": user["_id"],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    res = await _db().drafts.insert_one(draft_doc)
+    draft_doc["_id"] = str(res.inserted_id)
+    draft_doc.pop("team_map", None)
+    return {"draft": draft_doc, "created": True}
 
 @router.post("/drafts/{draft_id}/start")
 async def start_draft(draft_id: str, request: Request, early_start: bool = False):
@@ -1005,20 +1107,23 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
     if draft["status"] != "active":
         raise HTTPException(status_code=400, detail="Draft is not active")
 
-    # Validate it's the user's turn
+    # Iter 170g — abbr derivation aligned with the draft's stored
+    # team_map (which was built by `_abbrs_with_dedup` at create time).
+    # The user's team_id is the source of truth; we map it back to the
+    # stored abbr for the on-clock comparison.
     team = await _db().teams.find_one({"league_id": draft["league_id"], "owner_id": user["_id"]})
-    if not team:
-        raise HTTPException(status_code=403, detail="You don't have a team in this league")
-
-    team_abbr = team["name"][:4].upper()
     on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"])
+    on_clock_team_id = (draft.get("team_map") or {}).get(on_clock, {}).get("id")
 
     # Commissioner can pick for any team, or it must be the user's turn
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
     is_commissioner = league["commissioner_id"] == user["_id"]
 
-    if team_abbr != on_clock and not is_commissioner:
-        raise HTTPException(status_code=403, detail=f"Not your turn. {on_clock} is on the clock.")
+    if not is_commissioner:
+        if not team:
+            raise HTTPException(status_code=403, detail="You don't have a team in this league")
+        if str(team["_id"]) != on_clock_team_id:
+            raise HTTPException(status_code=403, detail=f"Not your turn. {on_clock} is on the clock.")
 
     # Validate player exists and not already drafted
     player = await _db().players.find_one({"_id": ObjectId(input.player_id)})
@@ -1039,15 +1144,29 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         "pick_in_round": pick_in_round,
         "overall": current_pick,
         "team": on_clock,
+        "team_id": on_clock_team_id,
         "player_id": str(player["_id"]),
         "player": {
+            "id": str(player["_id"]),
             "name": player["name"],
             "position": player["position"],
             "nhlTeam": player.get("team", ""),
-            "pts": player.get("points", 0)
+            "team_name": player.get("team_name", ""),
+            "pts": player.get("points", 0),
+            "g": player.get("goals", 0),
+            "a": player.get("assists", 0),
+            "gp": player.get("games_played", 0),
+            "league": "NHL",
+            # Iter 170g — headshot URL from NHL's CDN. The frontend's
+            # tile / SelectedPlayerCard render this when present and
+            # fall back to the initial circle if it 404s.
+            "headshot": (
+                f"https://assets.nhle.com/mugs/nhl/20252026/{player.get('team', 'NHL')}/{player.get('nhl_id', '')}.png"
+                if player.get("nhl_id") else None
+            ),
         },
         "picked_by": user["_id"],
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
     next_pick = current_pick + 1
@@ -1058,16 +1177,26 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         {"_id": ObjectId(draft_id)},
         {
             "$push": {"picks": pick_doc},
-            "$set": {"current_pick": next_pick, "status": new_status}
-        }
+            "$set": {"current_pick": next_pick, "status": new_status},
+        },
     )
+
+    # Iter 170g — also push the picked player onto the on-clock team's
+    # roster so the Roster page + My Roster tile in the Draft Room both
+    # reflect the pick without a separate manual step. Idempotent via
+    # `$addToSet`.
+    if on_clock_team_id:
+        await _db().teams.update_one(
+            {"_id": ObjectId(on_clock_team_id)},
+            {"$addToSet": {"roster": str(player["_id"])}},
+        )
 
     # Broadcast pick
     await _broadcast(f"draft_{draft_id}", "draft_pick", {
         **pick_doc,
         "next_pick": next_pick,
         "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"]) if new_status == "active" else None,
-        "draft_complete": new_status == "completed"
+        "draft_complete": new_status == "completed",
     })
 
     # System chat for the pick

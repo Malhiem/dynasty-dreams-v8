@@ -90,8 +90,9 @@ def test_draft_room_filter_uses_current_owner():
     src = (FRONT / "lovable/pages/DraftRoom.tsx").read_text()
     # Pick map carries the current-owner abbr list
     assert "_currentOwnerAbbrs: currentAbbrs" in src
-    # Filter resolves against current_owner_abbrs
-    assert "const currentOwnerAbbrs: string[] = livePick?._currentOwnerAbbrs?.length" in src
+    # Iter 170e — filter now spreads livePick abbrs + column abbr into
+    # a deduped set so chip clicks reliably highlight their column.
+    assert "...(livePick?._currentOwnerAbbrs || []),\n                            teamAbbr,\n                          ]" in src
     assert "currentOwnerAbbrs.some((a: string) => selectedOwnerAbbrs.has(a))" in src
 
 

@@ -358,6 +358,92 @@ export default function DraftRoom() {
     }
   }, [draftStorageKey, picks, draftConfig.currentPick, draftConfig.draftStarted, lastPickedPlayerId]);
 
+  // Iter 170g — Backend draft wiring. On mount with an active league
+  // context, auto-init (or fetch) the draft so we can POST picks +
+  // hydrate state from the source of truth instead of relying solely
+  // on localStorage. Commissioner-only; non-commish viewers just read.
+  const [currentDraft, setCurrentDraft] = useState<any>(null);
+  const isDraftActive = currentDraft?.status === "active";
+  useEffect(() => {
+    if (!activeLeagueCtx?.id) { setCurrentDraft(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.post(`/drafts/auto-init/${activeLeagueCtx.id}`);
+        if (cancelled) return;
+        const d = data?.draft;
+        if (!d) return;
+        setCurrentDraft(d);
+        // Hydrate picks + currentPick from backend if any picks exist
+        if (Array.isArray(d.picks) && d.picks.length > 0) {
+          setPicks(d.picks.map((p: any) => ({
+            round: p.round,
+            pickInRound: p.pick_in_round,
+            overall: p.overall,
+            team: p.team,
+            player: p.player,
+          })));
+          const lastPlayerId = d.picks[d.picks.length - 1]?.player_id;
+          if (lastPlayerId) setLastPickedPlayerId(String(lastPlayerId));
+        }
+        if (typeof d.current_pick === "number") {
+          setDraftConfig((prev) => ({
+            ...prev,
+            currentPick: d.current_pick,
+            draftStarted: d.status === "active",
+            totalRounds: d.total_rounds || prev.totalRounds,
+            pickTimerSeconds: d.time_per_pick || prev.pickTimerSeconds,
+          }));
+        }
+      } catch (e) {
+        // Non-commissioners get 403 → fall back to mock/local-only flow
+        if (!cancelled) setCurrentDraft(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeLeagueCtx?.id]);
+
+  // Iter 170g — Fetch real eligible players for the active draft.
+  // Replaces the mock list when a draft exists; the SelectedPlayerCard
+  // will then render real NHL stats + headshot.
+  useEffect(() => {
+    if (!currentDraft?._id) return;
+    let cancelled = false;
+    api.get(`/drafts/${currentDraft._id}/eligible-players?limit=100`)
+      .then((res) => {
+        if (cancelled) return;
+        const real = (res.data?.players || []) as any[];
+        if (real.length === 0) return;
+        // Mark already-drafted players based on backend picks
+        const draftedIds = new Set(
+          (currentDraft.picks || [])
+            .map((p: any) => p.player_id)
+            .filter(Boolean)
+            .map(String),
+        );
+        setPlayers(real.map((p) => ({
+          id: p.id,
+          name: p.name,
+          position: p.position,
+          nhlTeam: p.nhlTeam || "—",
+          age: p.age || 0,
+          league: p.league || "NHL",
+          gp: p.gp || 0,
+          g: p.g || 0,
+          a: p.a || 0,
+          pts: p.pts || 0,
+          ranking: p.ranking || 0,
+          drafted: draftedIds.has(String(p.id)),
+          headshot: p.headshot,
+          // SelectedPlayerCard reads headshot_url; alias for compatibility.
+          headshot_url: p.headshot,
+          nhl_id: p.nhl_id,
+        }) as any));
+      })
+      .catch(() => { /* keep mock players */ });
+    return () => { cancelled = true; };
+  }, [currentDraft?._id]);
+
   // ─── Countdown ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -473,8 +559,36 @@ export default function DraftRoom() {
 
   // ─── Draft actions ─────────────────────────────────────────────────────────
 
-  const handleEarlyStart = () => {
+  const handleEarlyStart = async () => {
+    // Iter 170g — Backend-aware start: if a draft exists, transition
+    // it to active via /drafts/{id}/start so picks can be POSTed.
+    if (currentDraft?._id && currentDraft.status !== "active") {
+      try {
+        await api.post(`/drafts/${currentDraft._id}/start?early_start=true`);
+        const { data } = await api.get(`/drafts/${currentDraft._id}`);
+        setCurrentDraft(data);
+        setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: true, currentPick: data.current_pick }));
+        return;
+      } catch (e: any) {
+        toast.error("Couldn't start draft", { description: e?.response?.data?.detail || e?.message });
+      }
+    }
     setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: true }));
+  };
+
+  const handleStartWithTimer = async () => {
+    if (currentDraft?._id && currentDraft.status !== "active") {
+      try {
+        await api.post(`/drafts/${currentDraft._id}/start?early_start=false`);
+        const { data } = await api.get(`/drafts/${currentDraft._id}`);
+        setCurrentDraft(data);
+        setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: false, currentPick: data.current_pick }));
+        return;
+      } catch (e: any) {
+        toast.error("Couldn't start draft", { description: e?.response?.data?.detail || e?.message });
+      }
+    }
+    setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: false }));
   };
 
   const handleSendChat = () => {
@@ -495,7 +609,12 @@ export default function DraftRoom() {
   //   • push to `picks` array + chat
   //   • set `lastPickedPlayerId` so the Selected Player card defaults
   //     to "live view" of the most-recent pick
-  const handleDraftPlayer = (chosen?: DraftEligiblePlayer | null) => {
+  // Iter 170g — When a backend draft exists and is active, POST the
+  // pick to `/drafts/{id}/pick` so it persists, broadcasts to other
+  // managers, and adds the player to the team's roster. Falls back to
+  // pure local state when no backend draft is available (Storybook /
+  // pre-draft demo mode).
+  const handleDraftPlayer = async (chosen?: DraftEligiblePlayer | null) => {
     const totalPicks = totalTeams * draftConfig.totalRounds;
     if (draftConfig.currentPick > totalPicks) {
       toast.info("Draft is complete.");
@@ -512,6 +631,34 @@ export default function DraftRoom() {
     }
     const round = Math.ceil(draftConfig.currentPick / totalTeams);
     const pickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
+
+    // Iter 170g — Backend round-trip when a real draft is active.
+    if (currentDraft?._id && isDraftActive && /^[0-9a-fA-F]{24}$/.test(String(nextPlayer.id))) {
+      try {
+        await api.post(`/drafts/${currentDraft._id}/pick`, { player_id: nextPlayer.id });
+        // Refetch the canonical state so picks + on-clock stay in sync.
+        const { data } = await api.get(`/drafts/${currentDraft._id}`);
+        setCurrentDraft(data);
+        setPicks((data.picks || []).map((p: any) => ({
+          round: p.round, pickInRound: p.pick_in_round, overall: p.overall,
+          team: p.team, player: p.player,
+        })));
+        setDraftConfig((prev) => ({ ...prev, currentPick: data.current_pick }));
+        setPlayers((prev) =>
+          prev.map((p) => p.id === nextPlayer.id ? { ...p, drafted: true } : p),
+        );
+        setLastPickedPlayerId(String(nextPlayer.id));
+        setSelectedPlayerId(null);
+        toast.success(`${teamFull?.name || teamAbbr} drafted ${nextPlayer.name}`);
+        return;
+      } catch (e: any) {
+        toast.error("Pick failed", { description: e?.response?.data?.detail || e?.message });
+        return;
+      }
+    }
+
+    // Fallback: local-only mock progression (used when no backend draft
+    // exists yet, e.g. before commissioner starts the draft).
     setPlayers((prev) =>
       prev.map((p) =>
         p.id === nextPlayer.id
@@ -1013,7 +1160,7 @@ export default function DraftRoom() {
                       variant="gold"
                       size="sm"
                       className="w-full"
-                      onClick={() => setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: false }))}
+                      onClick={handleStartWithTimer}
                     >
                       <Timer className="h-3.5 w-3.5 mr-1" />
                       Start Draft (With Timer)
