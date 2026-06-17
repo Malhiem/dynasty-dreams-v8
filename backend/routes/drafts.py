@@ -1224,6 +1224,166 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
 
     return pick_doc
 
+# ─── Iter 170h — Commissioner powers: undo picks + swap picked player ─
+
+class UndoDraftPicksRequest(BaseModel):
+    count: int = Field(default=1, ge=1, le=50, description="How many of the most recent picks to undo.")
+
+
+@router.post("/drafts/{draft_id}/undo")
+async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, request: Request):
+    """Commissioner-only: rewind the draft by N picks. Removes the
+    drafted players from the picking team's roster and broadcasts the
+    undo so connected managers see the rollback live."""
+    user = await _get_user(request)
+    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can undo picks")
+
+    picks = list(draft.get("picks", []))
+    if not picks:
+        raise HTTPException(status_code=400, detail="No picks to undo")
+    count = min(payload.count, len(picks))
+    removed = picks[-count:]
+    kept = picks[:-count]
+
+    # Remove the drafted players from the team rosters.
+    for p in removed:
+        tid = p.get("team_id") or (draft.get("team_map") or {}).get(p.get("team", ""), {}).get("id")
+        pid = p.get("player_id")
+        if tid and pid:
+            await _db().teams.update_one(
+                {"_id": ObjectId(tid)},
+                {"$pull": {"roster": pid}},
+            )
+
+    new_current = max(1, draft.get("current_pick", 1) - count)
+    new_status = "active" if draft.get("draft_started") else draft.get("status", "scheduled")
+    if draft.get("status") == "completed":
+        new_status = "active"
+
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {"$set": {"picks": kept, "current_pick": new_current, "status": new_status}},
+    )
+
+    # Chat + broadcast.
+    msg = {
+        "id": f"undo-{datetime.now(timezone.utc).timestamp()}",
+        "type": "pick",
+        "sender": "System",
+        "text": (
+            f"Commissioner undid {count} pick{'s' if count != 1 else ''} — "
+            f"on the clock returns to {get_team_for_pick(draft['team_abbrs'], new_current, draft['snake_draft'])}"
+        ),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})
+    await _broadcast(f"draft_{draft_id}", "draft_chat", msg)
+    await _broadcast(f"draft_{draft_id}", "draft_undo", {
+        "count": count,
+        "removed_overalls": [p.get("overall") for p in removed],
+        "current_pick": new_current,
+        "on_the_clock": get_team_for_pick(draft["team_abbrs"], new_current, draft["snake_draft"]),
+    })
+    return {"undone": count, "current_pick": new_current, "on_the_clock": get_team_for_pick(draft["team_abbrs"], new_current, draft["snake_draft"])}
+
+
+class SwapPickPlayerRequest(BaseModel):
+    new_player_id: str = Field(..., description="Mongo ObjectId of the replacement player.")
+
+
+@router.patch("/drafts/{draft_id}/picks/{overall}")
+async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerRequest, request: Request):
+    """Commissioner-only: replace the player on an existing pick.
+
+    Use case: a mis-typed pick or a mid-draft correction. The previously
+    drafted player is removed from the team's roster and the new player
+    is added. Other picks + the on-the-clock pointer are unchanged.
+    """
+    user = await _get_user(request)
+    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can swap pick players")
+
+    picks = list(draft.get("picks", []))
+    target_idx = next((i for i, p in enumerate(picks) if p.get("overall") == overall), -1)
+    if target_idx == -1:
+        raise HTTPException(status_code=404, detail=f"Pick #{overall} not found")
+
+    old_pick = picks[target_idx]
+    new_player = await _db().players.find_one({"_id": ObjectId(payload.new_player_id)})
+    if not new_player:
+        raise HTTPException(status_code=404, detail="Replacement player not found")
+    # Reject if the replacement is already drafted elsewhere.
+    if any(p.get("player_id") == payload.new_player_id and p.get("overall") != overall for p in picks):
+        raise HTTPException(status_code=400, detail="Replacement player is already drafted on another pick")
+
+    tid = old_pick.get("team_id") or (draft.get("team_map") or {}).get(old_pick.get("team", ""), {}).get("id")
+    old_player_id = old_pick.get("player_id")
+    if tid and old_player_id:
+        await _db().teams.update_one(
+            {"_id": ObjectId(tid)},
+            {"$pull": {"roster": old_player_id}},
+        )
+    if tid:
+        await _db().teams.update_one(
+            {"_id": ObjectId(tid)},
+            {"$addToSet": {"roster": str(new_player["_id"])}},
+        )
+
+    picks[target_idx] = {
+        **old_pick,
+        "player_id": str(new_player["_id"]),
+        "player": {
+            "id": str(new_player["_id"]),
+            "name": new_player["name"],
+            "position": new_player["position"],
+            "nhlTeam": new_player.get("team", ""),
+            "team_name": new_player.get("team_name", ""),
+            "pts": new_player.get("points", 0),
+            "g": new_player.get("goals", 0),
+            "a": new_player.get("assists", 0),
+            "gp": new_player.get("games_played", 0),
+            "league": "NHL",
+            "headshot": (
+                f"https://assets.nhle.com/mugs/nhl/20252026/{new_player.get('team', 'NHL')}/{new_player.get('nhl_id', '')}.png"
+                if new_player.get("nhl_id") else None
+            ),
+        },
+        "swapped_at": datetime.now(timezone.utc).isoformat(),
+        "swapped_by": user["_id"],
+    }
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {"$set": {"picks": picks}},
+    )
+    msg = {
+        "id": f"swap-{datetime.now(timezone.utc).timestamp()}",
+        "type": "pick",
+        "sender": "System",
+        "text": (
+            f"Commissioner swapped pick #{overall} ({old_pick.get('team', '')}): "
+            f"{old_pick.get('player', {}).get('name', 'Unknown')} → {new_player['name']}"
+        ),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})
+    await _broadcast(f"draft_{draft_id}", "draft_chat", msg)
+    await _broadcast(f"draft_{draft_id}", "draft_pick_swapped", {
+        "overall": overall,
+        "pick": picks[target_idx],
+        "previous_player_id": old_player_id,
+    })
+    return {"overall": overall, "pick": picks[target_idx]}
+
+
 @router.post("/drafts/{draft_id}/pause")
 async def pause_draft(draft_id: str, request: Request):
     user = await _get_user(request)

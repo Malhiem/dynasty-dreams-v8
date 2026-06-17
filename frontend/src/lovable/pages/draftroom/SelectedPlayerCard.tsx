@@ -44,6 +44,11 @@ export default function SelectedPlayerCard({
   onToggleShortlist,
   onClose,
   onExpand,
+  // Iter 170h — gate the Draft Player button. When false, the button
+  // is hidden entirely so non-commissioner viewers don't see a CTA
+  // they'd just hit a 403 on. Defaults to true for backward compat
+  // (Storybook / standalone demo render the button as always-available).
+  canPick = true,
 }) {
   if (!player) {
     return (
@@ -178,16 +183,18 @@ export default function SelectedPlayerCard({
             <ListOrdered className={cn("h-3.5 w-3.5", isQueued && "text-primary")} />
             <span className="text-[11px]">{isQueued ? "Queued" : "Queue"}</span>
           </Button>
-          <Button
-            size="sm"
-            className="h-8 gap-1.5 bg-primary hover:bg-primary/90 flex-1"
-            disabled={!isOnTheClock}
-            onClick={() => onDraftPlayer?.(player)}
-            data-testid="draft-room-selected-card-draft-btn"
-          >
-            <CheckCircle2 className="h-3.5 w-3.5" />
-            Draft Player
-          </Button>
+          {canPick && (
+            <Button
+              size="sm"
+              className="h-8 gap-1.5 bg-primary hover:bg-primary/90 flex-1"
+              disabled={!isOnTheClock}
+              onClick={() => onDraftPlayer?.(player)}
+              data-testid="draft-room-selected-card-draft-btn"
+            >
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Draft Player
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>

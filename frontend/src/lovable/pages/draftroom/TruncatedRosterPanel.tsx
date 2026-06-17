@@ -90,6 +90,7 @@ export default function TruncatedRosterPanel({
   onPickPlayerForTrade,
   onToggleTradeBlock, // (player) => Promise — toggles for the LOGGED-IN user's team
   capEnabled = false,
+  reloadTrigger = 0, // Iter 170h — bump to force a roster refetch (e.g. after a draft pick)
 }) {
   const [selectedTeamId, setSelectedTeamId] = useState(myTeamId || teams?.[0]?.id || null);
   const [statFilter, setStatFilter] = useState("season");
@@ -125,7 +126,7 @@ export default function TruncatedRosterPanel({
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedTeamId, statFilter]);
+  }, [selectedTeamId, statFilter, reloadTrigger]);
 
   // Reset sort whenever the team or filter changes so the new bucket starts clean.
   useEffect(() => { setSort({ col: null, dir: null }); }, [selectedTeamId, statFilter]);

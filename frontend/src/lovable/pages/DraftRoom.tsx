@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+// Iter 170h — Socket.IO subscription for live draft updates.
+import { useSocket } from "@/hooks/use-socket";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +46,8 @@ import {
   Repeat,
   Megaphone,
   ArrowRightLeft,
+  RotateCcw,
+  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
@@ -290,7 +294,8 @@ export default function DraftRoom() {
   ]);
   const [chatInput, setChatInput] = useState("");
   const [timerPaused, setTimerPaused] = useState(false);
-  const isLeagueManager = true; // Current user is LM or co-LM
+  // (Iter 170h — isLeagueManager moved down to derive from the active
+  // league context; see below.)
 
   // Iter 170f — Persistence. The Draft Room is currently a mock and
   // the real `POST /api/drafts/{id}/pick` wiring is queued as P3.
@@ -364,6 +369,10 @@ export default function DraftRoom() {
   // on localStorage. Commissioner-only; non-commish viewers just read.
   const [currentDraft, setCurrentDraft] = useState<any>(null);
   const isDraftActive = currentDraft?.status === "active";
+  // Iter 170h — bumped after every backend pick so the My Roster tile
+  // (TruncatedRosterPanel) refetches the active team and shows the
+  // newly drafted player without a full page reload.
+  const [rosterReloadTick, setRosterReloadTick] = useState(0);
   useEffect(() => {
     if (!activeLeagueCtx?.id) { setCurrentDraft(null); return; }
     let cancelled = false;
@@ -443,6 +452,97 @@ export default function DraftRoom() {
       .catch(() => { /* keep mock players */ });
     return () => { cancelled = true; };
   }, [currentDraft?._id]);
+
+  // Iter 170h — Commissioner check (drives undo/swap UI + ability to
+  // pick for any team). `isLeagueManager` is kept for backward-compat
+  // but is now derived from the active league context. Handles both
+  // shapes: `{is_commissioner: true}` (computed by useActiveLeague) and
+  // raw `{commissioner_id: ...}`.
+  const userId = (user as any)?.id || (user as any)?._id;
+  const isLeagueManager = !!(
+    activeLeagueCtx?.is_commissioner ||
+    activeLeagueCtx?.is_co_commissioner ||
+    (userId && activeLeagueCtx?.commissioner_id === userId) ||
+    (userId && Array.isArray(activeLeagueCtx?.co_commissioners) && activeLeagueCtx.co_commissioners.includes(userId))
+  );
+
+  // (Iter 170h — onTheClockBoardEntry + canPickForCurrentTurn moved
+  // below `onTheClockTeam` declaration to avoid TDZ; see below.)
+
+  // Iter 170h — Refetch the canonical draft state + bump roster reload
+  // tick. Called from the Socket.IO `draft_pick` / `draft_undo` /
+  // `draft_pick_swapped` handlers so every connected manager sees the
+  // board update in real time without polling.
+  const refreshDraftState = useCallback(async () => {
+    if (!currentDraft?._id) return;
+    try {
+      const { data } = await api.get(`/drafts/${currentDraft._id}`);
+      setCurrentDraft(data);
+      setPicks((data.picks || []).map((p: any) => ({
+        round: p.round, pickInRound: p.pick_in_round, overall: p.overall,
+        team: p.team, player: p.player,
+      })));
+      setDraftConfig((prev) => ({ ...prev, currentPick: data.current_pick }));
+      setRosterReloadTick((t) => t + 1);
+    } catch { /* ignore — will retry on next event */ }
+  }, [currentDraft?._id]);
+
+  // Iter 170h — Subscribe to the draft's Socket.IO room. Listeners fire
+  // for every pick / undo / swap broadcast by the backend.
+  const draftRoomId = currentDraft?._id ? `draft_${currentDraft._id}` : null;
+  useSocket(
+    draftRoomId,
+    {
+      draft_pick: () => { refreshDraftState(); },
+      draft_undo: () => { refreshDraftState(); },
+      draft_pick_swapped: () => { refreshDraftState(); },
+      draft_chat: (msg: any) => {
+        // Avoid duplicates if the system pick chat is already in the
+        // refreshed draft (we drop the optimistic local chat in v3
+        // anyway — picks now come from backend).
+        if (!msg?.id) return;
+        setChatMessages((prev) =>
+          prev.find((m: any) => m.id === msg.id) ? prev : [
+            ...prev,
+            { ...msg, timestamp: new Date(msg.timestamp || Date.now()) },
+          ],
+        );
+      },
+    },
+    (user as any)?._id,
+  );
+
+  // Iter 170h — Commissioner: undo the last N picks.
+  const handleUndoPicks = async (count: number = 1) => {
+    if (!currentDraft?._id) {
+      // Local-only fallback when no backend draft exists.
+      setPicks((prev) => prev.slice(0, Math.max(0, prev.length - count)));
+      setDraftConfig((prev) => ({ ...prev, currentPick: Math.max(1, prev.currentPick - count) }));
+      return;
+    }
+    try {
+      await api.post(`/drafts/${currentDraft._id}/undo`, { count });
+      await refreshDraftState();
+      toast.success(`Undid ${count} pick${count === 1 ? "" : "s"}`);
+    } catch (e: any) {
+      toast.error("Undo failed", { description: e?.response?.data?.detail || e?.message });
+    }
+  };
+
+  // Iter 170h — Commissioner: replace an existing pick's player.
+  const handleSwapPickPlayer = async (overall: number, newPlayerId: string) => {
+    if (!currentDraft?._id) {
+      toast.info("Swap requires an active backend draft.");
+      return;
+    }
+    try {
+      await api.patch(`/drafts/${currentDraft._id}/picks/${overall}`, { new_player_id: newPlayerId });
+      await refreshDraftState();
+      toast.success(`Pick #${overall} swapped`);
+    } catch (e: any) {
+      toast.error("Swap failed", { description: e?.response?.data?.detail || e?.message });
+    }
+  };
 
   // ─── Countdown ──────────────────────────────────────────────────────────────
 
@@ -649,6 +749,7 @@ export default function DraftRoom() {
         );
         setLastPickedPlayerId(String(nextPlayer.id));
         setSelectedPlayerId(null);
+        setRosterReloadTick((t) => t + 1);
         toast.success(`${teamFull?.name || teamAbbr} drafted ${nextPlayer.name}`);
         return;
       } catch (e: any) {
@@ -698,6 +799,8 @@ export default function DraftRoom() {
 
   const onTheClockTeam = getTeamForPick(draftConfig.currentPick);
   const onTheClockTeamFull = boardTeams.find((t) => t.abbr === onTheClockTeam);
+  // (Iter 170h — canPickForCurrentTurn declared below `myTeam` to
+  // avoid TDZ.)
 
   // Iter 147 — Propose-trade mode (mirrors Draft Board)
   const [tradeMode, setTradeMode] = useState(false);
@@ -822,6 +925,14 @@ export default function DraftRoom() {
       owner: user.username || user.email,
     };
   }, [user, liveTeams]);
+
+  // Iter 170h — Whose pick is it? When the on-clock board column maps
+  // back to the user's own team, the manual Draft Player button is
+  // enabled. Commissioners can pick for anyone.
+  const onTheClockBoardEntry = onTheClockTeamFull;
+  const canPickForCurrentTurn =
+    isLeagueManager ||
+    (!!myTeam && !!onTheClockBoardEntry && onTheClockBoardEntry.id === (myTeam as any).id);
 
   // Iter 149 — Fetch league trade-block listings so the overlay can paint
   // megaphone icons on player tiles + pick tiles that are publicly available.
@@ -1124,6 +1235,7 @@ export default function DraftRoom() {
                     isOnTheClock={draftConfig.draftStarted}
                     isQueued={!!previewId && queue.includes(String(previewId))}
                     isShortlisted={!!previewId && shortlist.has(String(previewId))}
+                    canPick={canPickForCurrentTurn}
                     onDraftPlayer={(p) => {
                       handleDraftPlayer(p as DraftEligiblePlayer);
                     }}
@@ -1269,6 +1381,21 @@ export default function DraftRoom() {
                           >
                             <Play className="h-3.5 w-3.5 mr-1" />
                             Simulate Pick
+                          </Button>
+                        )}
+                        {/* Iter 170h — Commissioner-only Undo. Pops the
+                            last completed pick off the backend + frees
+                            the drafted player from the team's roster. */}
+                        {isLeagueManager && picks.length > 0 && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="w-full mt-1 gap-1.5 text-amber-400 border-amber-400/30 hover:bg-amber-400/10"
+                            onClick={() => handleUndoPicks(1)}
+                            data-testid="draft-room-undo-pick"
+                          >
+                            <RotateCcw className="h-3.5 w-3.5" />
+                            Undo Last Pick
                           </Button>
                         )}
                       </div>
@@ -1825,6 +1952,7 @@ export default function DraftRoom() {
               <TruncatedRosterPanel
                 leagueId={activeLeagueCtx?.id}
                 myTeamId={myTeam?.id}
+                reloadTrigger={rosterReloadTick}
                 teams={(liveTeams || []).map((t: any) => ({
                   id: t.id,
                   name: t.name,
