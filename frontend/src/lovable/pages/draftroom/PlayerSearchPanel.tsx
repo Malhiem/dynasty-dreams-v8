@@ -30,7 +30,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Search, Star, ListOrdered, Megaphone } from "lucide-react";
+import { Search, Star, ListOrdered, Megaphone, Sprout } from "lucide-react";
 import { cn } from "@/lib/utils";
 import SortableQueue from "@/lovable/pages/draftroom/SortableQueue";
 
@@ -46,6 +46,8 @@ export default function PlayerSearchPanel({
   selectedPlayerId,
   setSelectedPlayerId,
   tradeBlockPlayerIds,
+  // Iter 173 — league flag drives the "Minor-eligible" badge surfacing.
+  minorsEnabled,
   // Queue / Shortlist state
   queue,
   shortlist,
@@ -121,6 +123,21 @@ export default function PlayerSearchPanel({
                   <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border shrink-0", positionColors[player.position])}>
                     {player.position}
                   </Badge>
+                  {/* Iter 173 — Minor-eligible badge for prospects when
+                      the league has minors_enabled. */}
+                  {minorsEnabled && (player.minor_eligible || player.player_type === "prospect") && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          className="inline-flex h-4 w-4 items-center justify-center rounded-sm bg-emerald-500/20 text-emerald-300 shrink-0"
+                          data-testid={`draft-room-minor-eligible-${player.id}`}
+                        >
+                          <Sprout className="h-2.5 w-2.5" />
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>Minor-eligible — can be slotted into your minors</TooltipContent>
+                    </Tooltip>
+                  )}
                   {isShortlisted && (
                     <Tooltip>
                       <TooltipTrigger asChild>

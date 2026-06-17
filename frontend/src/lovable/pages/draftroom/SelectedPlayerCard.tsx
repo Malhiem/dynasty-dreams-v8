@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
-  CheckCircle2, ListOrdered, Star, Trophy, MapPin, Hash, X, Maximize2,
+  CheckCircle2, ListOrdered, Star, Trophy, MapPin, Hash, X, Maximize2, Sprout,
 } from "lucide-react";
 
 const positionColors = {
@@ -49,6 +49,9 @@ export default function SelectedPlayerCard({
   // they'd just hit a 403 on. Defaults to true for backward compat
   // (Storybook / standalone demo render the button as always-available).
   canPick = true,
+  // Iter 173 — surface the league's minors_enabled flag so we can
+  // render the "Minor-eligible" affordance on prospects.
+  minorsEnabled = false,
 }) {
   if (!player) {
     return (
@@ -120,11 +123,26 @@ export default function SelectedPlayerCard({
             <div className="flex items-center gap-2 mt-1 flex-wrap text-[11px] text-muted-foreground">
               {player.age != null && <span>{player.age}y</span>}
               {player.league && <span>· {player.league}</span>}
-              {player.team && (
+              {(player.team || player.nhlTeam || player.team_name) && (
                 <span className="flex items-center gap-0.5">
                   <MapPin className="h-2.5 w-2.5" />
-                  {player.team}
+                  {/* Iter 173 — Prefer the human-readable team_name when
+                      available (prospects ship "OHL · London"); fall
+                      back to nhlTeam abbr for NHL players. */}
+                  {player.team_name && player.team_name.includes("·")
+                    ? player.team_name.split("·").slice(-1)[0].trim()
+                    : (player.team || player.nhlTeam || player.team_name)}
                 </span>
+              )}
+              {minorsEnabled && (player.minor_eligible || player.player_type === "prospect") && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] border-emerald-400/40 text-emerald-300 bg-emerald-500/10 gap-1"
+                  data-testid="draft-room-selected-card-minor-eligible"
+                >
+                  <Sprout className="h-2.5 w-2.5" />
+                  Minor-eligible
+                </Badge>
               )}
               {adp != null && (
                 <Badge variant="outline" className="text-[10px] gap-0.5 ml-1" data-testid="draft-room-selected-card-adp">

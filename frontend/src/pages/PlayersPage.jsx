@@ -146,7 +146,18 @@ function StarToggle({ player, onToggle }) {
 
 function OwnedCell({ player }) {
   if (!player.owned_by_team_id) {
-    return <span className="text-emerald-400 text-xs font-bold">FA</span>;
+    // Iter 173 — Per user request: undrafted players display "N/A" instead
+    // of "FA" in the fantasy-team column. The expanded player card still
+    // surfaces their actual league + real-life team.
+    return (
+      <span
+        className="text-muted-foreground/70 text-xs font-bold"
+        data-testid="players-owned-cell-na"
+        title="Not drafted by any fantasy team yet"
+      >
+        N/A
+      </span>
+    );
   }
   return (
     <Link

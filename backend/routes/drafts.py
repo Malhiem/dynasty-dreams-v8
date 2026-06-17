@@ -977,18 +977,30 @@ async def get_draft_eligible_players(
         # Iter 170g — surface a best-effort NHL headshot URL based on
         # nhl_id + team. Frontend falls back to an initials circle if
         # the image 404s.
+        # Iter 173 — Prospects don't have NHL headshots; skip the URL so
+        # the frontend renders the initials avatar instead of a broken img.
+        player_type = p.get("player_type") or "skater"
+        is_prospect = player_type == "prospect"
         headshot = (
             f"https://assets.nhle.com/mugs/nhl/20252026/{p.get('team', 'NHL')}/{p.get('nhl_id', '')}.png"
-            if p.get("nhl_id") else None
+            if p.get("nhl_id") and not is_prospect else None
         )
+        # For prospects, the "league" they play in is their amateur league
+        # (OHL/WHL/SHL/…), not "NHL". For NHL players, fall back to "NHL".
+        league_label = p.get("amateur_league") if is_prospect else "NHL"
+        if not league_label:
+            league_label = "NHL"
+        # display_name strips the "(Prospect)" suffix added at seed time so
+        # the UI shows the real human name.
+        display_name = p.get("display_name") or p["name"]
         result.append({
             "id": str(p["_id"]),
-            "name": p["name"],
+            "name": display_name,
             "position": p["position"],
             "nhlTeam": p.get("team", ""),
             "team_name": p.get("team_name", ""),
-            "age": 0,
-            "league": "NHL",
+            "age": p.get("age", 0),
+            "league": league_label,
             "gp": p.get("games_played", 0),
             "g": p.get("goals", 0),
             "a": p.get("assists", 0),
@@ -998,6 +1010,12 @@ async def get_draft_eligible_players(
             "drafted": False,
             "headshot": headshot,
             "nhl_id": p.get("nhl_id"),
+            # Iter 173 — expose prospect status so the Draft Room + Player
+            # Cards can render a "Minor-eligible" affordance when the
+            # league has minors_enabled. `minor_eligible` is a derived
+            # convenience flag that mirrors `player_type == "prospect"`.
+            "player_type": player_type,
+            "minor_eligible": is_prospect,
         })
 
     return {"players": result, "total": total, "page": page, "pages": (total + limit - 1) // limit}
@@ -1023,6 +1041,9 @@ async def auto_init_draft(league_id: str, request: Request):
     if existing:
         existing["_id"] = str(existing["_id"])
         existing.pop("team_map", None)
+        # Iter 173 — Surface the league's minors_enabled flag so the Draft
+        # Room can render a "Minor-eligible" affordance on prospects.
+        existing["league_minors_enabled"] = bool(league.get("minors_enabled"))
         return {"draft": existing, "created": False}
 
     teams = await _db().teams.find({"league_id": league_id}).to_list(100)
@@ -1059,6 +1080,8 @@ async def auto_init_draft(league_id: str, request: Request):
     res = await _db().drafts.insert_one(draft_doc)
     draft_doc["_id"] = str(res.inserted_id)
     draft_doc.pop("team_map", None)
+    # Iter 173 — surface league minors_enabled for the Draft Room badges.
+    draft_doc["league_minors_enabled"] = bool(league.get("minors_enabled"))
     return {"draft": draft_doc, "created": True}
 
 @router.post("/drafts/{draft_id}/start")

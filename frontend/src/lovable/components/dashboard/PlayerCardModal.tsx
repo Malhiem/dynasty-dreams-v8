@@ -34,6 +34,7 @@ import {
   Minus,
   Repeat,
   ExternalLink,
+  Sprout,
 } from "lucide-react";
 import {
   BarChart,
@@ -359,7 +360,44 @@ const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", 
                   <Badge variant="outline" className="text-xs">
                     {player.position}
                   </Badge>
-                  <span className="text-sm text-muted-foreground">{player.team}</span>
+                  {/* Iter 173 — Show league + team they actually play for.
+                      For NHL players that's "NHL · {team}"; for prospects
+                      we surface the feeder league + their club (e.g.
+                      "OHL · London Knights"). */}
+                  <span className="text-sm text-muted-foreground" data-testid="player-card-affiliation">
+                    {(() => {
+                      const league = (player as any).league
+                        || (player as any).amateurLeague
+                        || (player as any).amateur_league
+                        || "NHL";
+                      const teamName = (player as any).teamName
+                        || (player as any).team_name
+                        || player.team;
+                      return teamName && teamName !== league
+                        ? `${league} · ${teamName}`
+                        : (league || player.team);
+                    })()}
+                  </span>
+                  {/* Iter 173 — Minor-league-eligible badge. Surfaces only
+                      when the active league has minors_enabled and the
+                      player is a prospect (or explicitly minor_eligible). */}
+                  {((player as any).minor_eligible || (player as any).player_type === "prospect") && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] border-emerald-400/40 text-emerald-300 bg-emerald-500/10 gap-1"
+                          data-testid="player-card-minor-eligible"
+                        >
+                          <Sprout className="h-3 w-3" />
+                          Minor-eligible
+                        </Badge>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Can be slotted into your roster's minors / farm system
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
                   <span className="text-sm text-muted-foreground">• Age {player.age}</span>
                   <Badge className={`text-xs ${getContractTypeColor(player.contract.type)}`}>
                     {player.contract.type}

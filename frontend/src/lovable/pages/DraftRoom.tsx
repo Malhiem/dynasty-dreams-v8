@@ -436,6 +436,7 @@ export default function DraftRoom() {
           name: p.name,
           position: p.position,
           nhlTeam: p.nhlTeam || "—",
+          team_name: p.team_name || "",
           age: p.age || 0,
           league: p.league || "NHL",
           gp: p.gp || 0,
@@ -448,6 +449,11 @@ export default function DraftRoom() {
           // SelectedPlayerCard reads headshot_url; alias for compatibility.
           headshot_url: p.headshot,
           nhl_id: p.nhl_id,
+          // Iter 173 — prospect / minor-eligibility passthrough so the
+          // Eligible row + SelectedPlayerCard can render the sprout badge
+          // when the league has minors_enabled.
+          player_type: p.player_type,
+          minor_eligible: !!p.minor_eligible,
         }) as any));
       })
       .catch(() => { /* keep mock players */ });
@@ -1403,6 +1409,7 @@ export default function DraftRoom() {
                     isQueued={!!previewId && queue.includes(String(previewId))}
                     isShortlisted={!!previewId && shortlist.includes(String(previewId))}
                     canPick={canPickForCurrentTurn}
+                    minorsEnabled={!!(currentDraft as any)?.league_minors_enabled}
                     onDraftPlayer={(p) => {
                       handleDraftPlayer(p as DraftEligiblePlayer);
                     }}
@@ -1505,6 +1512,7 @@ export default function DraftRoom() {
                 selectedPlayerId={selectedPlayerId}
                 setSelectedPlayerId={setSelectedPlayerId}
                 tradeBlockPlayerIds={tradeBlockPlayerIds}
+                minorsEnabled={!!(currentDraft as any)?.league_minors_enabled}
                 queue={queue}
                 shortlist={shortlist}
                 queuedPlayers={queuedPlayers}

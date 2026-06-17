@@ -486,7 +486,13 @@ const PlayerPool = () => {
                               </Tooltip>
                             </TooltipProvider>
                           ) : (
-                            <span className="text-[10px] text-muted-foreground/60">FA</span>
+                            <span
+                              className="text-[10px] text-muted-foreground/60"
+                              data-testid="player-pool-fantasy-team-na"
+                              title="Not drafted by any fantasy team yet"
+                            >
+                              N/A
+                            </span>
                           )}
                         </td>
                       )}
