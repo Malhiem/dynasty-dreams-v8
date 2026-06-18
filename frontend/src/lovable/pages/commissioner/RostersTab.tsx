@@ -155,6 +155,36 @@ export default function RostersTab() {
     setIrModes((prev) => prev.includes(key) ? prev.filter((m) => m !== key) : [...prev, key]);
   };
 
+  // Iter 181 — Inline cap validation. Computes per-row error
+  // strings the moment the commissioner edits a Position Breakdown
+  // cell or a Roster Size input. Surfaces under the matrix BEFORE
+  // they hit Save so they can fix the problem in one go. Mirrors
+  // the backend's `check_position_breakdown_within_caps` rule.
+  const _rowSumFor = (rowKey: string): number => {
+    const row = (positionBreakdown as any)[rowKey] || {};
+    return POSITIONS.reduce((s, p) => s + (parseIntOrNull(row[p.key]) ?? 0), 0);
+  };
+  const breakdownCapErrors: Record<string, string | null> = (() => {
+    const errs: Record<string, string | null> = { active: null, bench: null, minors: null };
+    const checks: Array<[string, string, number | null]> = [
+      ["active", "Active Roster", parseIntOrNull(rosterSpots)],
+      ["bench",  "Bench",         parseIntOrNull(benchSpots)],
+      ["minors", "Minors Team",   parseIntOrNull(prospectPool)],
+    ];
+    for (const [key, label, cap] of checks) {
+      if (cap === null || cap <= 0) continue;
+      const s = _rowSumFor(key);
+      if (s > cap) {
+        errs[key] = (
+          `${label} per-position caps sum to ${s} but ${label} size is only ${cap}. `
+          + `Increase ${label} size first, or lower the caps on this row.`
+        );
+      }
+    }
+    return errs;
+  })();
+  const hasBreakdownCapError = Object.values(breakdownCapErrors).some(Boolean);
+
   const buildPayload = () => {
     const payload: Record<string, any> = {};
     const numFields: Array<[string, string, number, number]> = [
@@ -287,7 +317,7 @@ export default function RostersTab() {
               text="Defines the total capacity each team has across every roster section. Bench is non-active backup, IR holds players the NHL has flagged as injured (no cap relief), and IR+ holds long-term injury (frees their cap hit). Prospect pool is the dynasty farm system."
             />
           </CardTitle>
-          <CardDescription>Active roster, bench, IR, and prospect pool capacity.</CardDescription>
+          <CardDescription>Active roster, bench, IR, and Minors team capacity.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
@@ -365,8 +395,8 @@ export default function RostersTab() {
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="roster-size-prospects">
-                Prospect Pool Size (0–100)
-                <InfoHint testId="info-prospect-pool" text="Dynasty farm system slots. Players in the prospect pool don't earn fantasy points and are excluded from cap math, but they auto-promote when they hit your league's age/games threshold." />
+                Minors Team Size (0–100)
+                <InfoHint testId="info-prospect-pool" text="Dynasty farm system slots. Players in the Minors don't earn fantasy points and are excluded from cap math, but they auto-promote when they hit your league's age/games threshold." />
               </Label>
               <Input id="roster-size-prospects" type="number" min={0} max={100}
                 value={prospectPool} onChange={(e) => setProspectPool(e.target.value)}
@@ -382,43 +412,44 @@ export default function RostersTab() {
                 placeholder="5" data-testid="rosters-taxi-squad-input" />
             </div>
           </div>
-        </CardContent>
-      </Card>
 
-      {/* Iter 176 — Position Breakdown (renamed from the legacy single-row card).
-          Three editable rows: Active Roster (always shown), Bench (only
-          when bench spots are configured), and Minors (only when the
-          Minors section is enabled). Leaving any cell blank keeps that
-          position unlimited. The Active row's sum drives the league's
-          `roster_spots`. */}
-      <Card className="bg-card border-border" data-testid="rosters-positions-card">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <ShieldAlert className="h-5 w-5 text-amber-400" />
-            Position Breakdown
-            <InfoHint testId="info-position-breakdown" text="Caps the number of players each team can roster at each position, per section. Leave a cell blank for no cap. The Active Roster row's total drives the league's overall active roster size. Pair with 'Enforce Position Maximums' below to harden the rule." />
-          </CardTitle>
-          <CardDescription>
-            Active roster, bench (if any), and minors (if enabled) position caps.
-            <span className="block text-[12px] text-muted-foreground/80 mt-1">
-              <em>Untouched cells = unlimited. Filling any Active cell drives the league's overall active roster size.</em>
-            </span>
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Column headers */}
-          <div className="grid gap-2" style={{ gridTemplateColumns: `120px repeat(${POSITIONS.length}, minmax(72px, 1fr)) 90px` }}>
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground self-end">Section</div>
-            {POSITIONS.map((p) => (
-              <div key={p.key} className="text-[11px] uppercase tracking-wider text-muted-foreground text-center self-end">
-                <div className="flex items-center justify-center gap-1">
-                  {p.key}
-                  {p.help && <InfoHint testId={`info-position-${p.key}`} text={p.help} />}
+          {/* Iter 181 — Position Breakdown is now nested inside the
+              Roster Size card so commissioners see the per-position
+              caps alongside the section sizes they constrain. Cap
+              enforcement (see backend `check_position_breakdown_within_caps`)
+              rejects any per-row sum that exceeds its section size with
+              a clear "increase Roster Size first" error. */}
+          <Separator className="my-2" />
+          <div className="space-y-3">
+            <div className="flex items-start gap-2">
+              <ShieldAlert className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="flex items-center gap-2 text-base font-semibold">
+                  Position Breakdown
+                  <InfoHint testId="info-position-breakdown" text="Caps the number of players each team can roster at each position, per section. Leave a cell blank for no cap. Per-section sums cannot exceed the section sizes above — increase Roster Size first to allow larger caps." />
                 </div>
+                <p className="text-sm text-muted-foreground">
+                  Per-position caps for Active Roster, Bench (if any), and Minors (if enabled).
+                  <span className="block text-[12px] text-muted-foreground/80 mt-1">
+                    <em>Untouched cells = unlimited. Each row's total must stay within its section size above.</em>
+                  </span>
+                </p>
               </div>
-            ))}
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground text-right self-end">Total</div>
-          </div>
+            </div>
+
+            {/* Column headers */}
+            <div className="grid gap-2" style={{ gridTemplateColumns: `120px repeat(${POSITIONS.length}, minmax(72px, 1fr)) 90px` }}>
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground self-end">Section</div>
+              {POSITIONS.map((p) => (
+                <div key={p.key} className="text-[11px] uppercase tracking-wider text-muted-foreground text-center self-end">
+                  <div className="flex items-center justify-center gap-1">
+                    {p.key}
+                    {p.help && <InfoHint testId={`info-position-${p.key}`} text={p.help} />}
+                  </div>
+                </div>
+              ))}
+              <div className="text-[11px] uppercase tracking-wider text-muted-foreground text-right self-end">Total</div>
+            </div>
 
           {BREAKDOWN_ROWS.map((row) => {
             const rowState = positionBreakdown[row.key] || {};
@@ -488,6 +519,14 @@ export default function RostersTab() {
                 >
                   {anySet ? rowSum : "—"}
                 </div>
+                {breakdownCapErrors[row.key] && (
+                  <div
+                    className="col-span-full text-[12px] text-destructive bg-destructive/10 border border-destructive/30 rounded-md px-3 py-2"
+                    data-testid={`rosters-position-${row.key}-cap-error`}
+                  >
+                    {breakdownCapErrors[row.key]}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -507,6 +546,7 @@ export default function RostersTab() {
               onCheckedChange={setEnforcePositions}
               data-testid="rosters-enforce-positions"
             />
+          </div>
           </div>
         </CardContent>
       </Card>
@@ -657,8 +697,17 @@ export default function RostersTab() {
         </CardContent>
       </Card>
 
+      {hasBreakdownCapError && (
+        <div
+          className="rounded-md bg-destructive/10 border border-destructive/40 px-4 py-3 text-sm text-destructive"
+          data-testid="rosters-cap-error-banner"
+        >
+          One or more Position Breakdown rows exceed their section size.
+          Increase Roster Size first, or lower the per-position caps to save.
+        </div>
+      )}
       <div className="flex justify-end">
-        <Button onClick={onSave} disabled={saving} className="gap-2" data-testid="rosters-save-btn">
+        <Button onClick={onSave} disabled={saving || hasBreakdownCapError} className="gap-2" data-testid="rosters-save-btn">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {saving ? "Saving…" : "Save Roster Settings"}
         </Button>

@@ -7,6 +7,7 @@ import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
 import { useTradeBlockUiPrefs } from "@/hooks/use-trade-block-ui-prefs";
 import api from "@/lib/api";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
+import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -587,7 +588,10 @@ const TradeBlock = () => {
                             {player.team || player.nhl_team || "?"}
                           </div>
                           <div className="min-w-0">
-                            <p className="font-medium truncate">{player.name}</p>
+                            <p className="font-medium truncate flex items-center gap-1.5">
+                              {player.name}
+                              <MinorEligibleBadge eligible={(player as any).minor_eligible || (player as any).player_type === "prospect"} />
+                            </p>
                             <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-1">
                               <span>{player.position}</span>
                               {(player.lookingFor || []).length > 0 && (

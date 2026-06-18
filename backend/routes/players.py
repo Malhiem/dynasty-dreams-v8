@@ -10,6 +10,8 @@ from typing import Optional
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
 
+from utils.roster_rules import compute_minor_eligible
+
 router = APIRouter()
 _deps: dict = {}
 
@@ -79,7 +81,15 @@ async def get_players(
 
     owned_by: dict[str, dict] = {}
     league_total_teams = 0
+    # Iter 181 — fetch the league doc (with the minors_max_age /
+    # minors_max_career_games thresholds) so per-player minor-eligibility
+    # can be computed against the same rules the rest of the app uses.
+    league_doc: dict = {}
     if league_id:
+        try:
+            league_doc = await db.leagues.find_one({"_id": ObjectId(league_id)}) or {}
+        except Exception:
+            league_doc = {}
         teams = await db.teams.find({"league_id": league_id}).to_list(100)
         league_total_teams = len(teams)
         for t in teams:
@@ -293,6 +303,9 @@ async def get_players(
         # platform default otherwise). Always populated so the table column
         # works even without a selected league.
         is_g = (player.get("position") == "G")
+        # Iter 181 — surface minor-eligibility so the Players directory
+        # renders the same Sprout badge as the rest of the app.
+        player["minor_eligible"] = compute_minor_eligible(player, league_doc)
         stats_for_fpts = {
             "goals": player.get("goals", 0), "assists": player.get("assists", 0),
             "points": player.get("points", 0), "plus_minus": player.get("plus_minus", 0),

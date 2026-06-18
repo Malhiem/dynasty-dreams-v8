@@ -4,6 +4,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
+import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,8 @@ interface TradeAsset {
   points: number;
   fantasyPts: number;
   type: "player" | "pick";
+  // Iter 181 — surface minor-eligibility in the transactions feed.
+  minorEligible?: boolean;
 }
 
 interface PendingTrade {
@@ -160,7 +163,10 @@ function TradeCard({ trade }: { trade: PendingTrade }) {
                 {trade.assetsFromA.map((asset) => (
                   <TableRow key={asset.name}>
                     <TableCell className="font-medium text-sm">
-                      {asset.name}
+                      <span className="inline-flex items-center gap-1.5">
+                        {asset.name}
+                        <MinorEligibleBadge eligible={asset.type === "player" && asset.minorEligible} />
+                      </span>
                       {asset.type === "pick" && <Badge variant="secondary" className="ml-1 text-[10px]">Pick</Badge>}
                     </TableCell>
                     <TableCell className="text-sm">{asset.position}</TableCell>
@@ -196,7 +202,10 @@ function TradeCard({ trade }: { trade: PendingTrade }) {
                 {trade.assetsFromB.map((asset) => (
                   <TableRow key={asset.name}>
                     <TableCell className="font-medium text-sm">
-                      {asset.name}
+                      <span className="inline-flex items-center gap-1.5">
+                        {asset.name}
+                        <MinorEligibleBadge eligible={asset.type === "player" && asset.minorEligible} />
+                      </span>
                       {asset.type === "pick" && <Badge variant="secondary" className="ml-1 text-[10px]">Pick</Badge>}
                     </TableCell>
                     <TableCell className="text-sm">{asset.position}</TableCell>
@@ -735,6 +744,7 @@ const Transactions = () => {
             points: a.points || 0,
             fantasyPts: a.fantasy_points || 0,
             type: (a.asset_type === "pick" || a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
+            minorEligible: !!a.minor_eligible || a.player_type === "prospect",
           })),
           assetsFromB: toAssets.map((a: any) => ({
             name: a.player_name || a.name || (a.asset_type === "pick" ? `${a.pick_year || ""} ${a.pick_round || ""} Pick` : "Unknown"),
@@ -746,6 +756,7 @@ const Transactions = () => {
             points: a.points || 0,
             fantasyPts: a.fantasy_points || 0,
             type: (a.asset_type === "pick" || a.item_type === "pick" ? "pick" : "player") as "player" | "pick",
+            minorEligible: !!a.minor_eligible || a.player_type === "prospect",
           })),
           status: (t.status || "pending") as any,
           submittedAt: (createdAt || "").slice(0, 16).replace("T", " "),

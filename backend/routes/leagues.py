@@ -11,6 +11,8 @@ from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from utils.roster_rules import check_position_breakdown_within_caps
+
 router = APIRouter()
 _deps: dict = {}
 
@@ -1525,6 +1527,43 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
                 old_rs = league.get("roster_spots")
                 update["roster_spots"] = active_sum
                 diff["roster_spots"] = {"from": old_rs, "to": active_sum, "derived": True}
+
+    # ── Iter 181: per-row caps cannot exceed the section's overall size.
+    # If the active row sums to 21 but roster_spots is 19, reject the
+    # save with a clear "increase Roster Size first" message — silently
+    # overriding either side would surprise the commissioner. We
+    # validate using the EFFECTIVE values (post-update) so a commissioner
+    # who's resizing rosters and per-position caps in the same save
+    # against consistent numbers is not punished by the old DB state.
+    effective_breakdown = (
+        update.get("position_breakdown")
+        if "position_breakdown" in update
+        else league.get("position_breakdown")
+    )
+    if effective_breakdown is not None:
+        effective_roster_spots = (
+            update.get("roster_spots")
+            if "roster_spots" in update
+            else league.get("roster_spots")
+        )
+        effective_bench_spots = (
+            update.get("bench_spots")
+            if "bench_spots" in update
+            else league.get("bench_spots")
+        )
+        effective_minors_spots = (
+            update.get("minors_spots")
+            if "minors_spots" in update
+            else league.get("minors_spots")
+        )
+        cap_err = check_position_breakdown_within_caps(
+            position_breakdown=effective_breakdown,
+            roster_spots=effective_roster_spots,
+            bench_spots=effective_bench_spots,
+            minors_spots=effective_minors_spots,
+        )
+        if cap_err:
+            raise HTTPException(status_code=400, detail=cap_err)
 
     # ── Iter 100: cross-field validation for playoffs vs regular season ──
     # Only enforce when the request actually touches one of the relevant

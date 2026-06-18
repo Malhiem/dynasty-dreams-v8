@@ -19,6 +19,7 @@ import api, { formatApiError } from "@/lib/api";
 import TeamLink from "@/lovable/components/TeamLink";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 
 interface WaiverPlayer {
   id: number;
@@ -249,6 +250,9 @@ const Waivers = () => {
       percentOwned: Math.min(99, Math.round(((p.games_played || 0) / 50) * 100)),
       trending: (p.points > 30 ? "up" : "stable") as any,
       hasActiveClaim: !!p.has_active_claim,
+      // Iter 181 — surface minor eligibility from the backend so the
+      // MinorEligibleBadge can render in the Available Players table.
+      minorEligible: !!p.minor_eligible || p.player_type === "prospect",
     }));
     // Iter 180 — apply free-text filter (name + NHL team abbr,
     // case-insensitive substring match). Applied BEFORE the 20-row
@@ -504,6 +508,7 @@ const Waivers = () => {
                             <div>
                               <div className="flex items-center gap-2">
                                 <p className="font-medium">{player.name}</p>
+                                <MinorEligibleBadge eligible={(player as any).minorEligible} />
                                 {player.trending === "up" && <TrendingUp className="h-3 w-3 text-success" />}
                               </div>
                               {player.previousOwner && (

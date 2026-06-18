@@ -1,0 +1,33 @@
+{
+  "summary": "Iter 181 — All four follow-ups VERIFIED end-to-end against live deployment. Backend: 5/5 live integration tests + 9/9 file-content tests pass (14/14 total). Frontend: Minors badge live on /waivers (7 prospects show green Sprout badge — Misa, McKenna, Kindel, O'Brien, Reschny, Carbonneau; McDavid/Kucherov correctly do NOT show badge). Commissioner Rosters tab: Position Breakdown matrix is nested INSIDE the Roster Size card (DOM-confirmed), standalone rosters-positions-card absent, 'Minors Team Size (0–100)' label rendered, 'Prospect Pool Size' string gone. Cap enforcement: setting Active=19 + C-cap=25 triggers inline error pill with exact required message, top-level banner, and Save button disabled. League DB state unchanged after test (roster_spots=25, breakdown.active={C:4,LW:4,RW:4,D:6,G:1}).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter181_minors_badge_and_caps.py",
+    "/app/backend/tests/test_iter181_integration.py",
+    "/app/test_reports/pytest/iter181_file_content.xml",
+    "/app/test_reports/pytest/iter181_integration.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Spec note (cosmetic, not a bug): the review-request acceptance criterion 'once user adjusts roster_spots to 30 the error clears' assumed other position rows were empty. With Ice Kings' existing breakdown (LW:4 RW:4 D:6 G:1), C=25 + others = 40, so the error only clears at roster_spots ≥40 (or by lowering C). Backend + UI behaviour is mathematically correct — the spec writer just under-counted the residual caps. No code change needed; possibly tighten the spec for future iterations.",
+    "Live waivers payload still includes one duplicate 'Gavin McKenna' row (one with '(Prospect)' suffix, one without). Both correctly carry minor_eligible — but the duplicate may confuse users. Worth tracking down whether the player_type='prospect' duplicate is a CHL/AHL split or a stale-data join issue."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter181_integration.py (NEW — 5 live API integration tests for the 4 backend smoke items)"
+  ],
+  "success_rate": {
+    "backend": "100% (5/5 live integration + 9/9 file-content = 14/14 pytest tests pass)",
+    "frontend": "100% — Waivers badge live-verified (7 prospect badges, McDavid/Kucherov correctly absent). Rosters tab: Position Breakdown nested inside Roster Size card (DOM-confirmed), 'Minors Team Size (0–100)' label confirmed, standalone positions card removed. Cap enforcement: inline error pill text matches exactly + banner + Save disabled. /team /depth-chart /transactions /trade-block show 0 badges because Ice Kings has no rostered prospects — expected data condition; file-content tests verify the badge wiring is present in each surface."
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026!  —  Ice Kings (69e46af167999bfb85c39628) currently has roster_spots=25 and position_breakdown.active={C:4,LW:4,RW:4,D:6,G:1}. Frozen Dynasty (69e46af167999bfb85c3962a). No DB writes were performed; values intentionally reset after the cap-error UI test so DB state is unchanged.",
+  "seed_data_creation": "None. The test exercised the cap-error UI flow live but did NOT click Save (button stayed correctly disabled), and reverted inputs back to the original values. League doc on Ice Kings is unchanged. Verified via GET /api/leagues after the test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter181 is COMPLETE and SHIP-READY. All four follow-ups (Minors badge surfaces, Position Breakdown inside Roster Size card, per-row cap enforcement with helpful error, label rename) work end-to-end. Live waivers page is the easiest visual confirmation of the badge surfacing — Misa, McKenna, Kindel, O'Brien, Reschny, Carbonneau all show the green Sprout badge. Cap-error inline message text: 'Active Roster per-position caps sum to {N} but Active Roster size is only {M}. Increase Active Roster size first, or lower the caps on this row.' — exactly matches backend HTTPException detail. The cosmetic Gavin McKenna duplicate row in /waivers/available is unrelated to this iteration; flag for a separate cleanup pass if the duplicate persists in future tests.",
+  "rca of the issue": "N/A — no bugs. All four features confirmed working. The only nuance: the review-request acceptance criterion for cap-error self-clearing assumed empty siblings (C=25 alone vs roster=30); with Ice Kings' existing breakdown the sum is 40, so error correctly persists at roster=30. The enforcement logic itself is correct; the spec was just optimistic about the test fixture."
+}

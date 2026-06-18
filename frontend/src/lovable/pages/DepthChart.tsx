@@ -23,6 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Save, RotateCcw, ArrowUpDown, ArrowUp, ArrowDown, Copy } from "lucide-react";
+import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
 import { toast } from "sonner";
@@ -118,7 +119,10 @@ function PlayerTile({ player, dragId }: any) {
           {player.team}
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-semibold truncate">{player.name}</p>
+          <p className="text-xs font-semibold truncate flex items-center gap-1">
+            <span className="truncate">{player.name}</span>
+            <MinorEligibleBadge eligible={(player as any).minor_eligible || (player as any).player_type === "prospect"} />
+          </p>
           <p className="text-[10px] text-muted-foreground truncate">
             {player.position} · {fmt(player.contract?.salary || 0)}
           </p>

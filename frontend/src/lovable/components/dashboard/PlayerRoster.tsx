@@ -3,6 +3,7 @@ import { useState, useMemo, useCallback, useEffect, useRef, createContext, useCo
 import { useLocation } from "react-router-dom";
 import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings, Megaphone, Shield } from "lucide-react";
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
+import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
@@ -850,6 +851,10 @@ const PlayerRoster = ({
           categoryBreakdown: p.categoryBreakdown || { G: 0, A: 0, PPP: 0, SHP: 0, SOG: 0, HIT: 0, BLK: 0, PIM: 0, "+/-": 0, FOW: 0, FOL: 0 },
           matchupGames: p.matchupGames || 0,
           schedule: generateSchedule(idx + 1),
+          // Iter 181 — propagate minor_eligible + player_type so the
+          // MinorEligibleBadge renders consistently on the team page.
+          minor_eligible: !!p.minor_eligible,
+          player_type: p.player_type || "skater",
         }));
         setLivePlayers(shaped);
       })
@@ -2745,6 +2750,7 @@ const PlayerRow = ({
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-1.5 min-w-0">
               <button onClick={() => onPlayerClick(player)} className="font-medium text-sm text-foreground hover:text-primary transition-colors cursor-pointer truncate text-left">{player.name}</button>
+              <MinorEligibleBadge eligible={(player as any).minor_eligible || (player as any).player_type === "prospect"} />
               {newsInfo && <NewsSignalIcon player={{ ...newsInfo, _id: player.id, name: player.name }} />}
               {hasWarnings && (
                 <TooltipProvider>

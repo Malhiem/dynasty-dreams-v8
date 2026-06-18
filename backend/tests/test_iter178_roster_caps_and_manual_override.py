@@ -25,7 +25,8 @@ TEAM_TSX = Path("/app/frontend/src/lovable/pages/Team.tsx")
 def test_prospect_and_taxi_inputs_allow_up_to_100():
     src = ROSTERS_TAB.read_text()
     # Labels updated alongside the max=100 attribute.
-    assert "Prospect Pool Size (0–100)" in src
+    # Iter 181 — "Prospect Pool Size" renamed to "Minors Team Size".
+    assert "Minors Team Size (0–100)" in src
     assert "Taxi Squad Size (0–100)" in src
     # Validator block reflects the new ceiling.
     assert '["minors_spots", prospectPool, 0, 100]' in src

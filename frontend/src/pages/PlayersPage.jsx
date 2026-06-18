@@ -16,6 +16,7 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
+import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 
 const VIEWS = [
   { value: "available", label: "All Available Players (default)" },
@@ -445,6 +446,7 @@ export default function PlayersPage() {
                     <td className="p-2">
                       <div className="flex items-center gap-1.5">
                         <Link to={`/players/${p._id}`} className="font-medium text-white hover:text-primary">{p.name}</Link>
+                        <MinorEligibleBadge eligible={p.minor_eligible || p.player_type === "prospect"} />
                         {p.news_signal && <NewsSignalIcon player={p} />}
                       </div>
                     </td>

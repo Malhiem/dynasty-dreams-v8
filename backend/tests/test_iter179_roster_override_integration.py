@@ -58,10 +58,17 @@ def baseline(client):
 
 
 def test_manual_roster_spots_wins_over_derived_active_sum(client, baseline):
-    """Bug fix #1: payload {roster_spots:19, position_breakdown.active sums to 20}
-    → response roster_spots must be 19 (manual wins)."""
+    """Bug fix #1: payload {roster_spots:25, position_breakdown.active sums to 20}
+    → response roster_spots must be 25 (manual wins).
+
+    Iter 181 — adjusted to use roster_spots=25 (>= sum=20). The
+    iter179 original scenario used roster_spots=19 with sum=20 which
+    is now rejected by the per-row cap-enforcement check (caps cannot
+    exceed section size). The iter179 fix itself is still tested:
+    when manual roster_spots IS present, it must NOT be silently
+    overridden by the derived sum."""
     payload = {
-        "roster_spots": 19,
+        "roster_spots": 25,
         "position_breakdown": {
             "active": {"S": 18, "G": 2},
             "bench": {},
@@ -73,8 +80,8 @@ def test_manual_roster_spots_wins_over_derived_active_sum(client, baseline):
     assert r.status_code == 200, r.text
     body = r.json()
     league = body.get("league") or body
-    assert league.get("roster_spots") == 19, (
-        f"manual override lost: expected 19, got {league.get('roster_spots')}; resp={body}"
+    assert league.get("roster_spots") == 25, (
+        f"manual override lost: expected 25, got {league.get('roster_spots')}; resp={body}"
     )
     # verify diff has no derived flag for roster_spots
     changes = body.get("changes") or {}

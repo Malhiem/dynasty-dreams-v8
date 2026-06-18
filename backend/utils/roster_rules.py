@@ -153,3 +153,108 @@ def check_min_games_played(
             "Player may not count toward roster minimums until eligible."
         )
     return None
+
+
+def compute_minor_eligible(player: dict, league: Optional[dict] = None) -> bool:
+    """Iter 181 — Shared helper for the "is this player eligible to be
+    rostered in a Minors slot?" question. Centralises the rule that was
+    previously duplicated across `roster.py`, `drafts.py`, and now the
+    waivers / players directory.
+
+    A player is minor-eligible when ANY of the following holds:
+      • They are explicitly seeded as a prospect (`player_type ==
+        "prospect"` or the legacy `minor_eligible: True` flag).
+      • Both their age AND career games played fall under the league's
+        configured thresholds (defaults: ≤22 years old, ≤25 career
+        NHL games). Unknown values count as "eligible" so a freshly
+        signed prospect without backfilled NHL stats still qualifies.
+    """
+    league = league or {}
+    player_type = (player.get("player_type") or "").lower()
+    if player_type == "prospect" or bool(player.get("minor_eligible")):
+        return True
+    try:
+        max_age = int(league.get("minors_max_age") or 22)
+    except (TypeError, ValueError):
+        max_age = 22
+    try:
+        max_career_gp = int(league.get("minors_max_career_games") or 25)
+    except (TypeError, ValueError):
+        max_career_gp = 25
+    age_val = player.get("age")
+    gp_val = player.get("career_games_played")
+    try:
+        age_int = int(age_val) if age_val is not None else None
+    except (TypeError, ValueError):
+        age_int = None
+    try:
+        gp_int = int(gp_val) if gp_val is not None else None
+    except (TypeError, ValueError):
+        gp_int = None
+    age_ok = age_int is None or age_int <= max_age
+    gp_ok = gp_int is None or gp_int <= max_career_gp
+    return age_ok and gp_ok
+
+
+def check_position_breakdown_within_caps(
+    position_breakdown: Optional[dict],
+    roster_spots: Optional[int],
+    bench_spots: Optional[int],
+    minors_spots: Optional[int],
+) -> Optional[str]:
+    """Iter 181 — Reject `PUT /api/leagues/{id}` when the per-position
+    caps on any row would sum to more than the section's overall cap.
+
+    The Position Breakdown matrix lets commissioners set per-position
+    caps for Active Roster, Bench, and Minors. The sum of those caps
+    on each row MUST be ≤ the corresponding section's total size,
+    otherwise the league becomes mathematically impossible to fill:
+    e.g. caps summing to 21 with `roster_spots = 19` would force 2
+    players into thin air.
+
+    Returns a single human-readable error string (callers raise it as
+    a 400). Returns None when every row is within its cap, OR when the
+    breakdown is empty / the row's section cap is unset (no constraint
+    to enforce). User-friendly note: tells the commissioner WHICH
+    section overflowed and BY how much, plus the fix ("increase the
+    section size first").
+    """
+    if not position_breakdown or not isinstance(position_breakdown, dict):
+        return None
+
+    def _row_sum(row_key: str) -> int:
+        row = position_breakdown.get(row_key) or {}
+        if not isinstance(row, dict):
+            return 0
+        total = 0
+        for v in row.values():
+            if v is None or v == "":
+                continue
+            try:
+                total += int(v)
+            except (TypeError, ValueError):
+                continue
+        return total
+
+    sections = [
+        ("active", "Active Roster", roster_spots),
+        ("bench",  "Bench",         bench_spots),
+        ("minors", "Minors",        minors_spots),
+    ]
+    for row_key, label, cap in sections:
+        if cap is None:
+            continue
+        try:
+            cap_int = int(cap)
+        except (TypeError, ValueError):
+            continue
+        if cap_int <= 0:
+            continue
+        s = _row_sum(row_key)
+        if s > cap_int:
+            return (
+                f"{label} per-position caps sum to {s} but {label} size "
+                f"is only {cap_int}. Increase {label} size first, or "
+                f"lower the per-position caps on the {label} row."
+            )
+    return None

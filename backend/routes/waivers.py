@@ -12,6 +12,8 @@ from fastapi import APIRouter, HTTPException, Request
 
 from trade_waiver_engine import WaiverClaimCreate
 
+from utils.roster_rules import compute_minor_eligible
+
 router = APIRouter()
 _deps: dict = {}
 
@@ -37,6 +39,16 @@ async def get_waiver_players(
 ):
     """Get players available on waivers (not on any team roster)."""
     db = _db()
+    # Iter 181 — load the league so minor-eligibility is computed against
+    # the same thresholds the commissioner configured (minors_max_age,
+    # minors_max_career_games). Falls back to defaults when no league_id
+    # is provided.
+    league_doc: dict = {}
+    if league_id:
+        try:
+            league_doc = await db.leagues.find_one({"_id": ObjectId(league_id)}) or {}
+        except Exception:
+            league_doc = {}
     query: dict = {}
     if search:
         query["$or"] = [
@@ -67,6 +79,11 @@ async def get_waiver_players(
             "assists": p.get("assists", 0),
             "games_played": p.get("games_played", 0),
             "has_active_claim": active_claim is not None,
+            # Iter 181 — surface prospect / minor-eligibility so the
+            # Waivers / Players directory can render the same Minors
+            # leaf badge as the roster, trade block, depth chart, etc.
+            "player_type": p.get("player_type") or "skater",
+            "minor_eligible": compute_minor_eligible(p, league_doc),
         })
 
     return {"players": result, "total": total, "page": page, "pages": (total + limit - 1) // limit}
