@@ -818,7 +818,10 @@ const Team = () => {
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3" data-testid="team-overview-tiles">
           <StatCard title="League Rank" value={rank} subtitle={`of ${allTeams.length} teams`} icon={Trophy} highlight />
           <StatCard title="Total Points" value={String(pointsTotal)} subtitle="Season + live" icon={TrendingUp} />
-          <StatCard title="Roster Size" value={String(selectedTeam.roster_count)} subtitle={`${Math.max(0, 25 - selectedTeam.roster_count)} spots open`} icon={Users} />
+          {/* Iter 178 — "spots open" gauge reads the actual league
+              roster cap instead of a hardcoded 25 so a league
+              configured for 19 or 30 active slots displays correctly. */}
+          <StatCard title="Roster Size" value={String(selectedTeam.roster_count)} subtitle={`${Math.max(0, ((league as any)?.roster_spots ?? 25) - selectedTeam.roster_count)} spots open`} icon={Users} />
           <RosterStatusTile teamId={selectedTeamId} key={`compliance-${selectedTeamId}-${rosterReloadKey}`} />
         </div>
 

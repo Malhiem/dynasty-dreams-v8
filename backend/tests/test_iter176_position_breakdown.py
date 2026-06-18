@@ -79,17 +79,18 @@ def test_blank_cells_send_no_limit_for_that_cell():
 
 
 def test_roster_spots_derived_from_active_row_sum():
-    """The 'Active Roster' input flips read-only and displays the sum
-    of the Active row when the commissioner has set any per-position
-    caps. Save payload sends `roster_spots = activeSum` so the league
-    document stays consistent."""
+    """The Active Roster input pre-fills with the Position Breakdown
+    active-row sum when the commissioner has set per-position caps.
+    Iter 178 — the input STAYS EDITABLE (the lock was removed because
+    typing a manual override was being silently dropped). Save sends
+    the manual value when present, the derived sum otherwise."""
     src = ROSTERS_TAB.read_text()
-    # UI side: derived flag + read-only + computed display.
-    assert "readOnly={derived}" in src
+    # UI side: derived hint surfaces as a helper note (no readOnly lock).
     assert 'data-testid="rosters-roster-spots-derived-note"' in src
-    assert "Derived from Position Breakdown → Active Roster" in src
-    # Payload side: ships the derived total.
-    assert "payload.roster_spots = activeSum" in src
+    assert "Position Breakdown → Active sums to" in src
+    # Payload side: manual value wins; falls back to derived sum.
+    assert "payload.roster_spots = manualRoster;" in src
+    assert "payload.roster_spots = activeSum;" in src
 
 
 def test_legacy_position_limits_mirror_for_backward_compat():

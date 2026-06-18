@@ -58,7 +58,7 @@ class LeagueCreate(BaseModel):
     salary_cap_enabled: bool = False
     salary_cap: Optional[float] = None
     draft_type: DraftType = DraftType.SNAKE
-    roster_spots: int = Field(default=20, ge=10, le=30)
+    roster_spots: int = Field(default=20, ge=10, le=100)
     keepers_allowed: int = Field(default=0, ge=0, le=10)
     entry_fee: Optional[float] = None
     is_private: bool = False
@@ -1312,9 +1312,9 @@ class LeagueUpdate(BaseModel):
     is_private: Optional[bool] = None
     name: Optional[str] = Field(default=None, max_length=120)
     # Roster shape
-    roster_spots: Optional[int] = Field(default=None, ge=10, le=40)
+    roster_spots: Optional[int] = Field(default=None, ge=10, le=100)
     bench_spots: Optional[int] = Field(default=None, ge=0, le=20)
-    minors_spots: Optional[int] = Field(default=None, ge=0, le=20)
+    minors_spots: Optional[int] = Field(default=None, ge=0, le=100)
     # Format + scoring
     scoring_format: Optional[str] = None
     max_teams: Optional[int] = Field(default=None, ge=4, le=32)
@@ -1357,7 +1357,7 @@ class LeagueUpdate(BaseModel):
     # defaults at runtime (no migration required for existing leagues).
     ir_slots: Optional[int] = Field(default=None, ge=0, le=15)
     ir_plus_slots: Optional[int] = Field(default=None, ge=0, le=10)
-    taxi_squad_size: Optional[int] = Field(default=None, ge=0, le=20)
+    taxi_squad_size: Optional[int] = Field(default=None, ge=0, le=100)
     position_limits: Optional[dict] = None  # e.g. {"C": 4, "LW": 4, "RW": 4, "D": 6, "G": 3}
     # Iter 176 — Position Breakdown: per-section position caps.
     #   {"active": {"S": 18, "G": 2, ...}, "bench": {...}, "minors": {...}}

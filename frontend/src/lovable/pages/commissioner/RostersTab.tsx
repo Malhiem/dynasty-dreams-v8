@@ -152,12 +152,12 @@ export default function RostersTab() {
   const buildPayload = () => {
     const payload: Record<string, any> = {};
     const numFields: Array<[string, string, number, number]> = [
-      ["roster_spots", rosterSpots, 10, 40],
+      ["roster_spots", rosterSpots, 10, 100],
       ["bench_spots", benchSpots, 0, 20],
       ["ir_slots", irSlots, 0, 15],
       ["ir_plus_slots", irPlusSlots, 0, 10],
-      ["minors_spots", prospectPool, 0, 20],
-      ["taxi_squad_size", taxiSquad, 0, 20],
+      ["minors_spots", prospectPool, 0, 100],
+      ["taxi_squad_size", taxiSquad, 0, 100],
       ["min_active_players", minActivePlayers, 0, 40],
       ["min_games_played", minGamesPlayed, 0, 200],
       ["prospect_max_age", prospectMaxAge, 16, 30],
@@ -195,12 +195,19 @@ export default function RostersTab() {
     payload.position_breakdown = breakdown;
     // Legacy mirror — keeps callers that still read `position_limits`
     // (waivers, trade engine helpers) working until they migrate.
+    // Iter 178 — When the commissioner has set any per-position
+    // Active Roster cap, the input PRE-FILLS to the derived sum but
+    // STAYS EDITABLE so they can override. Manual value (if it differs
+    // from the derived sum) wins on save. Previously this was locked
+    // read-only which silently dropped the user's manual override.
     payload.position_limits = breakdown.active;
-    // Derive total active roster size from the active row when the
-    // commissioner has supplied any per-position limits. Otherwise
-    // the existing manual roster_spots input wins.
+    const manualRoster = parseIntOrNull(rosterSpots);
     const activeSum = Object.values(breakdown.active).reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
-    if (Object.keys(breakdown.active).length > 0 && activeSum > 0) {
+    if (manualRoster !== null) {
+      // Explicit value the commissioner typed (or pre-filled, then kept).
+      payload.roster_spots = manualRoster;
+    } else if (Object.keys(breakdown.active).length > 0 && activeSum > 0) {
+      // No manual input but per-position caps drive a derived sum.
       payload.roster_spots = activeSum;
     }
     payload.enforce_position_maxes = enforcePositions;
@@ -280,41 +287,44 @@ export default function RostersTab() {
           <div className="grid gap-4 md:grid-cols-4">
             <div className="space-y-2">
               <Label htmlFor="roster-size-active">
-                Active Roster (10–40)
+                Active Roster (10–100)
                 <InfoHint testId="info-active-roster" text="Players eligible to earn points each scoring period. Excludes bench, IR, IR+, prospects, and taxi squad. If you've set per-position caps in Position Breakdown → Active Roster, the total is derived from that row." />
               </Label>
-              {/* Iter 176 — When the commissioner has set any per-position
-                  Active Roster cap, derive the total instead of letting
-                  the input drift. The input becomes read-only and shows
-                  the computed sum so they can see the relationship. */}
+              {/* Iter 176/178 — When the commissioner has set any
+                  per-position Active Roster cap, this input pre-fills
+                  with the derived sum but STAYS EDITABLE so they can
+                  override (e.g. set caps that sum to 20 but allow a
+                  19-player active roster). On save, the manual value
+                  wins; clearing the input falls back to the derived
+                  sum. */}
               {(() => {
                 const activeSum = POSITIONS.reduce((s, p) => {
                   const n = parseIntOrNull(positionBreakdown.active?.[p.key]);
                   return s + (n ?? 0);
                 }, 0);
-                const derived = POSITIONS.some(
+                const hasCaps = POSITIONS.some(
                   (p) => parseIntOrNull(positionBreakdown.active?.[p.key]) !== null,
                 ) && activeSum > 0;
+                // Manual input drives the value; the derived sum acts
+                // as a placeholder hint when the input is empty.
                 return (
                   <>
                     <Input
                       id="roster-size-active"
                       type="number"
                       min={10}
-                      max={40}
-                      value={derived ? String(activeSum) : rosterSpots}
-                      onChange={(e) => !derived && setRosterSpots(e.target.value)}
-                      readOnly={derived}
-                      placeholder="20"
-                      className={derived ? "bg-secondary/60 text-muted-foreground" : ""}
+                      max={100}
+                      value={rosterSpots}
+                      onChange={(e) => setRosterSpots(e.target.value)}
+                      placeholder={hasCaps ? String(activeSum) : "20"}
                       data-testid="rosters-roster-spots-input"
                     />
-                    {derived && (
+                    {hasCaps && (
                       <p
                         className="text-[11px] text-muted-foreground"
                         data-testid="rosters-roster-spots-derived-note"
                       >
-                        Derived from Position Breakdown → Active Roster (sum: {activeSum}).
+                        Position Breakdown → Active sums to <strong>{activeSum}</strong>. Leave blank to inherit, or type a different value to override.
                       </p>
                     )}
                   </>
@@ -349,19 +359,19 @@ export default function RostersTab() {
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="roster-size-prospects">
-                Prospect Pool Size (0–20)
+                Prospect Pool Size (0–100)
                 <InfoHint testId="info-prospect-pool" text="Dynasty farm system slots. Players in the prospect pool don't earn fantasy points and are excluded from cap math, but they auto-promote when they hit your league's age/games threshold." />
               </Label>
-              <Input id="roster-size-prospects" type="number" min={0} max={20}
+              <Input id="roster-size-prospects" type="number" min={0} max={100}
                 value={prospectPool} onChange={(e) => setProspectPool(e.target.value)}
                 placeholder="10" data-testid="rosters-minors-spots-input" />
             </div>
             <div className="space-y-2">
               <Label htmlFor="roster-size-taxi">
-                Taxi Squad Size (0–20)
+                Taxi Squad Size (0–100)
                 <InfoHint testId="info-taxi-squad" text="Mid-season stash for emerging NHL talent. Unlike prospects, taxi-squad players can be activated mid-week with a single move. Cap hit still applies." />
               </Label>
-              <Input id="roster-size-taxi" type="number" min={0} max={20}
+              <Input id="roster-size-taxi" type="number" min={0} max={100}
                 value={taxiSquad} onChange={(e) => setTaxiSquad(e.target.value)}
                 placeholder="5" data-testid="rosters-taxi-squad-input" />
             </div>
