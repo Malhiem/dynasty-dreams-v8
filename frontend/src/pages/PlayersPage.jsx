@@ -50,13 +50,22 @@ const POSITIONS = [
 ];
 
 const TIMEFRAMES = [
-  { value: "season", label: "Season Totals" },
+  // Iter 182 — Expanded set: prior seasons + playoffs + current
+  // matchup period, alongside the existing rolling windows. Backend
+  // gates per-value whether real data is available (else returns
+  // `timeframe_supported: false` so the UI shows the rollout note).
+  { value: "season", label: "YTD (2025-26)" },
+  { value: "matchup", label: "Current Matchup" },
   { value: "today", label: "Today" },
-  { value: "7d", label: "Last 7 Days" },
+  { value: "7d",  label: "Last 7 Days" },
   { value: "14d", label: "Last 14 Days" },
   { value: "30d", label: "Last 30 Days" },
   { value: "60d", label: "Last 60 Days" },
   { value: "90d", label: "Last 90 Days" },
+  { value: "2024-25",       label: "2024-25 Regular" },
+  { value: "2024-playoffs", label: "2024 Playoffs" },
+  { value: "2023-24",       label: "2023-24 Regular" },
+  { value: "2023-playoffs", label: "2023 Playoffs" },
 ];
 
 // All league-tracked stat columns (in display order). Each row maps to a sortable

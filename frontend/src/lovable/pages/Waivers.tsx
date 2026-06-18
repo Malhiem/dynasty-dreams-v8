@@ -20,6 +20,7 @@ import TeamLink from "@/lovable/components/TeamLink";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface WaiverPlayer {
   id: number;
@@ -83,6 +84,11 @@ const Waivers = () => {
   // state (URL persistence intentionally skipped — owners typically
   // search-then-claim within one session).
   const [availableSearch, setAvailableSearch] = useState("");
+  // Iter 182 — Timeframe filter on the Available Players table.
+  // Defaults to YTD ("season"). Forwarded to the backend via the
+  // `timeframe` query-string parameter; backend gates which
+  // values produce real (vs placeholder) stats.
+  const [availableTimeframe, setAvailableTimeframe] = useState("season");
   const [cancellingClaimId, setCancellingClaimId] = useState<string | null>(null);
 
   // Iter 180 — Drop-player selector inside the claim modal. When the
@@ -96,7 +102,7 @@ const Waivers = () => {
     if (!league?.id) return;
     let cancelled = false;
     Promise.all([
-      api.get(`/waivers/available?league_id=${league.id}&limit=20`).catch(() => ({ data: { players: [] } })),
+      api.get(`/waivers/available?league_id=${league.id}&limit=20&timeframe=${encodeURIComponent(availableTimeframe)}`).catch(() => ({ data: { players: [] } })),
       api.get(`/waivers/claims?league_id=${league.id}`).catch(() => ({ data: { claims: [] } })),
       api.get(`/waivers/history?league_id=${league.id}`).catch(() => ({ data: { history: [] } })),
       myTeam?.id
@@ -116,7 +122,7 @@ const Waivers = () => {
       .then(({ data }) => { if (!cancelled) setTxConfig(data); })
       .catch(() => { if (!cancelled) setTxConfig(null); });
     return () => { cancelled = true; };
-  }, [league?.id, myTeam?.id]);
+  }, [league?.id, myTeam?.id, availableTimeframe]);
 
   // Re-fetch precheck whenever the modal opens, selected player changes,
   // or the bid amount changes (FAAB blocker depends on bid).
@@ -453,8 +459,9 @@ const Waivers = () => {
           <TabsContent value="available">
             <Card className="bg-card border-border">
               <CardContent className="p-0">
-                {/* Iter 180 — Free-text search across name / NHL team / position */}
-                <div className="p-4 border-b border-border flex items-center gap-3">
+                {/* Iter 180 — Free-text search across name / NHL team / position
+                    Iter 182 — Added timeframe dropdown alongside search. */}
+                <div className="p-4 border-b border-border flex flex-wrap items-center gap-3">
                   <Input
                     placeholder="Search by player name, NHL team, or position…"
                     value={availableSearch}
@@ -472,6 +479,22 @@ const Waivers = () => {
                       Clear
                     </Button>
                   )}
+                  <Select value={availableTimeframe} onValueChange={setAvailableTimeframe}>
+                    <SelectTrigger className="w-[200px]" data-testid="waiver-available-timeframe">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="season">YTD (2025-26)</SelectItem>
+                      <SelectItem value="matchup">Current Matchup</SelectItem>
+                      <SelectItem value="7d">Last 7 Days</SelectItem>
+                      <SelectItem value="14d">Last 14 Days</SelectItem>
+                      <SelectItem value="30d">Last 30 Days</SelectItem>
+                      <SelectItem value="2024-25">2024-25 Regular</SelectItem>
+                      <SelectItem value="2024-playoffs">2024 Playoffs</SelectItem>
+                      <SelectItem value="2023-24">2023-24 Regular</SelectItem>
+                      <SelectItem value="2023-playoffs">2023 Playoffs</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <span className="text-xs text-muted-foreground ml-auto" data-testid="waiver-available-count">
                     {waiverPlayers.length} shown
                   </span>
@@ -480,6 +503,7 @@ const Waivers = () => {
                   <TableHeader>
                     <TableRow className="border-border">
                       <TableHead>Player</TableHead>
+                      <TableHead className="text-center">Team</TableHead>
                       <TableHead className="text-center">POS</TableHead>
                       <TableHead className="text-center">Clears In</TableHead>
                       <TableHead className="text-right">Week Pts</TableHead>
@@ -491,7 +515,7 @@ const Waivers = () => {
                   <TableBody>
                     {waiverPlayers.length === 0 && (
                       <TableRow data-testid="waiver-available-empty">
-                        <TableCell colSpan={7} className="text-center py-8 text-sm text-muted-foreground">
+                        <TableCell colSpan={8} className="text-center py-8 text-sm text-muted-foreground">
                           {availableSearch
                             ? `No available players match "${availableSearch}".`
                             : "No players currently on the waiver wire."}
@@ -501,21 +525,20 @@ const Waivers = () => {
                     {waiverPlayers.map((player) => (
                       <TableRow key={player.id} className="border-border">
                         <TableCell>
-                          <div className="flex items-center gap-3">
-                            <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center text-xs font-bold">
-                              {player.team}
-                            </div>
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <p className="font-medium">{player.name}</p>
-                                <MinorEligibleBadge eligible={(player as any).minorEligible} />
-                                {player.trending === "up" && <TrendingUp className="h-3 w-3 text-success" />}
-                              </div>
-                              {player.previousOwner && (
-                                <p className="text-xs text-muted-foreground">Dropped by <TeamLink name={player.previousOwner} /></p>
-                              )}
-                            </div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{player.name}</p>
+                            <MinorEligibleBadge eligible={(player as any).minorEligible} />
+                            {player.trending === "up" && <TrendingUp className="h-3 w-3 text-success" />}
                           </div>
+                          {player.previousOwner && (
+                            <p className="text-xs text-muted-foreground">Dropped by <TeamLink name={player.previousOwner} /></p>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-center" data-testid={`waiver-team-${player.id}`}>
+                          {/* Iter 182 — Dedicated Team column for easier filtering. */}
+                          <Badge variant="outline" className="bg-secondary/40 text-xs font-bold uppercase tracking-wider">
+                            {player.team || "—"}
+                          </Badge>
                         </TableCell>
                         <TableCell className="text-center">
                           <Badge variant="outline" className="bg-secondary/50">{player.position}</Badge>

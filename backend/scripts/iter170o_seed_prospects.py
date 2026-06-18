@@ -57,11 +57,14 @@ async def main():
     now_iso = datetime.now(timezone.utc).isoformat()
     inserted = updated = 0
     for i, (name, pos, age, league, gp, g, a, pts) in enumerate(PROSPECTS):
-        # Some prospects (e.g. James Hagens, Ivan Ryabkin) already exist
-        # in the NHL `players` rows. Disambiguate by suffixing the
-        # prospect record's name so they coexist without a unique-index
-        # collision.
-        prospect_name = f"{name} (Prospect)"
+        # Iter 182 — the legacy " (Prospect)" suffix was dropped.
+        # Surfaces now differentiate prospects from veterans via the
+        # MinorEligibleBadge (iter 181) and the `player_type` field,
+        # so the suffix had become user-visible clutter. We keep the
+        # `nhl_id` namespace negative + use `(name, player_type)` as
+        # the upsert key, which is safe under the players-collection's
+        # non-unique `name_1` index.
+        prospect_name = name
         doc = {
             "name": prospect_name,
             "display_name": name,

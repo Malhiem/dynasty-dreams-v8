@@ -1,0 +1,32 @@
+{
+  "summary": "Iter 182 — All three follow-ups VERIFIED end-to-end. Backend: 8/8 static file-content tests + 4/4 live integration smokes = 12/12 pytest pass. Live API confirmed: GET /api/players?search=McKenna returns exactly ONE Gavin McKenna (no '(Prospect)' suffix, no duplicate); GET /api/players?timeframe=2024-25 returns timeframe_supported:true with Kucherov real stats GP:78 G:37 A:84 P:121; GET /api/players?timeframe=2024-playoffs returns McDavid GP:22 P:33; GET /api/waivers/available?timeframe=2024-25&league_id=Ice-Kings honours the timeframe (timeframe_supported:true, timeframe='2024-25'). Frontend (live preview): /waivers Available Players table has dedicated 'Team' column AFTER Player (20 waiver-team-* testid cells rendered, Player col no longer has team-logo div); 'waiver-available-timeframe' Select renders all 9 expected options (YTD, Current Matchup, 7/14/30d, 2024-25 Regular, 2024 Playoffs, 2023-24 Regular, 2023 Playoffs); selecting '2024 Playoffs' updates dropdown text AND triggers refetch — first row McDavid EDM shows playoff stats (e.g., 33pts). /players?league_id=... TIMEFRAMES Select renders 12 options including all expected prior-season + playoff + matchup entries. Zero '(Prospect)' suffix occurrences across /waivers, /players, /transactions, /trade-block. 6 MinorEligibleBadge surfaces on /waivers (Misa, McKenna, Kindel, O'Brien, Reschny, Carbonneau — matches iter 181 expectations).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter182_suffix_cleanup_and_timeframes.py",
+    "/app/backend/tests/test_iter182_live_integration.py",
+    "/app/test_reports/pytest/iter182_live.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Known iter-183 cleanup item flagged by main agent (NOT a blocker): NHL-API seasonTotals occasionally has multiple rows per (season, gameType) with last-wins. Some 2024-25 regular-season rows reflect international tournaments instead of NHL totals (e.g., McDavid 2024-25 shows GP:4 in waivers/players). Recommend per-key aggregation or 'leagueAbbrev == NHL' filter when ingesting in scripts/iter182_backfill_season_stats.py.",
+    "Acceptance criterion smoke #5 says 'McDavid GP:4 P:5' for waivers 2024-25 which I confirmed live; this is the same NHL-API quirk and was anticipated by spec — Kucherov shows correctly at GP:78 P:121. No code change required for iter 182."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter182_live_integration.py (NEW — 4 live-API integration smokes covering items #1-#5)"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 file-content + 4/4 live integration = 12/12 pytest)",
+    "frontend": "100% (10/10 UI checks: login, Team column 20 cells, no suffix on /waivers /players /transactions /trade-block, minor-eligible-badge=6 on /waivers, /waivers timeframe 9 opts present + selection refetches + dropdown text updates, /players timeframe shows 12 options w/ all 6 required entries)"
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026!  —  Ice Kings (69e46af167999bfb85c39628) — login lands on /dashboard (active league is 'Zarek\\u2019s Frozen'); navigated directly to /waivers?league_id=... and /players?league_id=...",
+  "seed_data_creation": "None — read-only test. No mutations.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 182 is SHIP-READY. Three follow-ups all verified: (1) suffix-strip DB cleanup + de-dup of orphan Gavin McKenna confirmed via live API; (2) dedicated Team column rendered on /waivers Available table with waiver-team-{id} testids (20 cells observed); (3) timeframe dropdown expansion live on both /waivers (9 options, refetch wired) and /players (12 options). 12 pytest pass. The one known nuance (NHL-API multi-stint rows causing McDavid 2024-25 to show GP:4 instead of 82) is documented in critical_code_review_comments and was pre-flagged by main agent as an iter-183 cleanup item — do NOT treat as a blocker.",
+  "rca of the issue": "N/A — no bugs found. All acceptance criteria met."
+}

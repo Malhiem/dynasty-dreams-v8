@@ -343,7 +343,69 @@ async def get_players(
     if out and timeframe and timeframe != "season":
         days_map = {"today": 1, "7d": 7, "14d": 14, "30d": 30, "60d": 60, "90d": 90}
         days = days_map.get(timeframe)
-        if days is not None:
+        # Iter 182 — also accept prior-season + playoffs + current
+        # matchup-period filters. Prior seasons resolve from a
+        # pre-cached `player_season_stats` collection (populated by
+        # the iter182 NHL-API backfill script). "matchup" computes a
+        # rolling window from the active league's matchup config.
+        prior_season_match: Optional[dict] = None
+        if timeframe in ("2024-25", "2023-24"):
+            prior_season_match = {"season": timeframe, "season_type": "regular"}
+        elif timeframe in ("2024-playoffs", "2023-playoffs"):
+            year = timeframe.split("-")[0]
+            # Stored as e.g. season="2023-24", season_type="playoffs"
+            season_lookup = "2024-25" if year == "2024" else "2023-24"
+            prior_season_match = {"season": season_lookup, "season_type": "playoffs"}
+        elif timeframe == "matchup" and league_doc:
+            # Use the active matchup window: lookup the current
+            # matchup period from the league's schedule_metadata.
+            md = league_doc.get("schedule_metadata") or {}
+            cur = md.get("current_matchup_period") or {}
+            start_iso = cur.get("start_date")
+            end_iso = cur.get("end_date")
+            if start_iso and end_iso:
+                try:
+                    start_dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+                    end_dt = datetime.fromisoformat(end_iso.replace("Z", "+00:00"))
+                except ValueError:
+                    start_dt = end_dt = None
+                if start_dt and end_dt:
+                    days = max(1, (end_dt - start_dt).days + 1)
+                    cutoff = end_dt - timedelta(days=days)
+
+        if prior_season_match is not None:
+            # Cached historical season lookup.
+            page_pids_str = [str(p["_id"]) for p in out]
+            cached = await db.player_season_stats.find(
+                {**prior_season_match, "player_id": {"$in": page_pids_str}}
+            ).to_list(len(page_pids_str))
+            if cached:
+                timeframe_supported = True
+                by_pid = {row["player_id"]: row for row in cached}
+                for p in out:
+                    a = by_pid.get(p["_id"])
+                    if not a:
+                        p["goals"] = 0; p["assists"] = 0; p["points"] = 0
+                        p["plus_minus"] = 0
+                        p["category_breakdown"] = {
+                            "G": 0, "A": 0, "+/-": 0, "SOG": 0, "PPP": 0,
+                            "SHP": 0, "HIT": 0, "BLK": 0,
+                        }
+                        p["games_played"] = 0
+                        continue
+                    p["goals"] = a.get("goals", 0)
+                    p["assists"] = a.get("assists", 0)
+                    p["points"] = a.get("points", 0)
+                    p["plus_minus"] = a.get("plus_minus", 0)
+                    p["games_played"] = a.get("games_played", 0)
+                    p["category_breakdown"] = {
+                        "G": a.get("goals", 0), "A": a.get("assists", 0),
+                        "+/-": a.get("plus_minus", 0),
+                        "SOG": a.get("sog", 0), "PPP": a.get("ppg", 0),
+                        "SHP": a.get("shg", 0), "HIT": a.get("hits", 0),
+                        "BLK": a.get("blocks", 0),
+                    }
+        elif days is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
             page_pids = [p["_id"] for p in out]
             agg = {}

@@ -36,8 +36,16 @@ async def get_waiver_players(
     position: Optional[str] = None,
     page: int = 1,
     limit: int = 50,
+    timeframe: str = "season",
 ):
-    """Get players available on waivers (not on any team roster)."""
+    """Get players available on waivers (not on any team roster).
+
+    Iter 182 — `timeframe` echoes through to the response so the
+    frontend can render the "rolling out" banner when historical /
+    matchup-window data isn't available yet. Real historical stats
+    will be supplied by the iter 182 NHL-API backfill once the
+    `player_season_stats` collection is populated.
+    """
     db = _db()
     # Iter 181 — load the league so minor-eligibility is computed against
     # the same thresholds the commissioner configured (minors_max_age,
@@ -62,22 +70,64 @@ async def get_waiver_players(
     players = await db.players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
     total = await db.players.count_documents(query)
 
+    # Iter 182 — apply prior-season / playoffs stat overrides BEFORE
+    # building the response so the Available Players table reflects
+    # the chosen timeframe instead of the always-current season points.
+    timeframe_supported = (timeframe == "season")
+    season_stats_by_pid: dict = {}
+    if timeframe in ("2024-25", "2023-24", "2024-playoffs", "2023-playoffs"):
+        prior_match: dict
+        if timeframe.endswith("-playoffs"):
+            year = timeframe.split("-")[0]
+            prior_match = {
+                "season": "2024-25" if year == "2024" else "2023-24",
+                "season_type": "playoffs",
+            }
+        else:
+            prior_match = {"season": timeframe, "season_type": "regular"}
+        pid_strs = [str(p["_id"]) for p in players]
+        cached = await db.player_season_stats.find(
+            {**prior_match, "player_id": {"$in": pid_strs}}
+        ).to_list(len(pid_strs))
+        if cached:
+            timeframe_supported = True
+            season_stats_by_pid = {row["player_id"]: row for row in cached}
+
     result = []
     for p in players:
         active_claim = await db.waiver_claims.find_one({
             "player_id": str(p["_id"]),
             "status": "pending",
         })
+        # Default stats = current season values from the player doc.
+        stats = {
+            "points": p.get("points", 0),
+            "goals": p.get("goals", 0),
+            "assists": p.get("assists", 0),
+            "games_played": p.get("games_played", 0),
+        }
+        # If the user picked a prior-season timeframe and we have a
+        # cached row for this player, override with that row's
+        # values. Players without cached rows (most prospects) drop
+        # to all-zeros so the user can clearly see "no data".
+        if timeframe in ("2024-25", "2023-24", "2024-playoffs", "2023-playoffs"):
+            cached_row = season_stats_by_pid.get(str(p["_id"]))
+            if cached_row:
+                stats = {
+                    "points": cached_row.get("points", 0),
+                    "goals": cached_row.get("goals", 0),
+                    "assists": cached_row.get("assists", 0),
+                    "games_played": cached_row.get("games_played", 0),
+                }
+            else:
+                stats = {"points": 0, "goals": 0, "assists": 0, "games_played": 0}
         result.append({
             "id": str(p["_id"]),
             "name": p["name"],
             "position": p["position"],
             "team": p.get("team", ""),
             "team_name": p.get("team_name", ""),
-            "points": p.get("points", 0),
-            "goals": p.get("goals", 0),
-            "assists": p.get("assists", 0),
-            "games_played": p.get("games_played", 0),
+            **stats,
             "has_active_claim": active_claim is not None,
             # Iter 181 — surface prospect / minor-eligibility so the
             # Waivers / Players directory can render the same Minors
@@ -86,7 +136,14 @@ async def get_waiver_players(
             "minor_eligible": compute_minor_eligible(p, league_doc),
         })
 
-    return {"players": result, "total": total, "page": page, "pages": (total + limit - 1) // limit}
+    return {
+        "players": result,
+        "total": total,
+        "page": page,
+        "pages": (total + limit - 1) // limit,
+        "timeframe": timeframe,
+        "timeframe_supported": timeframe_supported,
+    }
 
 
 @router.get("/waivers/suggest")

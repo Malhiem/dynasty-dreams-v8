@@ -43,7 +43,10 @@ def test_seed_script_stamps_prospect_type_and_safe_nhl_id():
     assert '"player_status": "amateur"' in src
     # Disambiguate name to avoid unique-index collisions on existing
     # NHL players sharing the same name (Hagens, Ryabkin).
-    assert 'prospect_name = f"{name} (Prospect)"' in src
+    # Iter 182 — the legacy " (Prospect)" suffix was dropped from the
+    # seed; surfaces now use the MinorEligibleBadge + player_type
+    # field to differentiate prospects from veterans.
+    assert 'prospect_name = name' in src
     # Synthetic negative nhl_id sidesteps the nhl_id unique-null
     # collision that bit us on the first run.
     assert '"nhl_id": -(1_000_000 + i)' in src
