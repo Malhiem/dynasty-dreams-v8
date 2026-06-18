@@ -76,6 +76,20 @@ const Waivers = () => {
   const [precheck, setPrecheck] = useState<any>(null);
   const [prechecking, setPrechecking] = useState(false);
   const [claimSubmitting, setClaimSubmitting] = useState(false);
+  // Iter 180 — Free-text search filter on the Available Players table.
+  // Operates on player name + NHL team abbreviation. Empty string = no
+  // filter (full table). Persists across tab switches via component
+  // state (URL persistence intentionally skipped — owners typically
+  // search-then-claim within one session).
+  const [availableSearch, setAvailableSearch] = useState("");
+  const [cancellingClaimId, setCancellingClaimId] = useState<string | null>(null);
+
+  // Iter 180 — Drop-player selector inside the claim modal. When the
+  // precheck reports the roster is full (`requires_drop`), the user
+  // now picks the player to drop directly in the modal instead of
+  // being kicked over to the Roster page.
+  const [dropPlayerId, setDropPlayerId] = useState<string>("");
+  const [myRoster, setMyRoster] = useState<any[]>([]);
 
   useEffect(() => {
     if (!league?.id) return;
@@ -126,7 +140,35 @@ const Waivers = () => {
     setSelectedPlayer(player);
     setBidAmount(1);
     setPrecheck(null);
+    setDropPlayerId("");
     setClaimModalOpen(true);
+    // Iter 180 — fetch the owner's current roster so the dropdown
+    // is ready by the time precheck flips `requires_drop`. Cheap
+    // (always under 30 entries) and re-runs each modal open so
+    // dropped/added players stay in sync.
+    if (myTeam?.id) {
+      api.get(`/roster/${myTeam.id}/detail`)
+        .then(({ data }) => setMyRoster(data?.players || []))
+        .catch(() => setMyRoster([]));
+    }
+  };
+
+  // Iter 180 — Cancel a pending claim. Optimistically removes it from
+  // the local list, then re-fetches authoritative state. Disabled
+  // while the request is in-flight to prevent double-cancel.
+  const handleCancelClaim = async (claimId: string) => {
+    if (!claimId || cancellingClaimId) return;
+    setCancellingClaimId(claimId);
+    try {
+      await api.delete(`/waivers/claims/${claimId}`);
+      toast.success("Claim cancelled");
+      setLiveClaims((prev) => prev.filter((c: any) => (c._id || c.id) !== claimId));
+      await refreshLive();
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setCancellingClaimId(null);
+    }
   };
 
   const refreshLive = async () => {
@@ -147,11 +189,18 @@ const Waivers = () => {
     if (!selectedPlayer || !league?.id) return;
     setClaimSubmitting(true);
     try {
-      await api.post("/waivers/claim", {
+      // Iter 180 — include `drop_player_id` when the precheck flagged
+      // a full roster and the user selected a player to drop. Backend
+      // accepts the optional field via /waivers/claim.
+      const body: Record<string, any> = {
         league_id: league.id,
         player_id: selectedPlayer.id,
         bid_amount: bidAmount,
-      });
+      };
+      if (precheck?.requires_drop && dropPlayerId) {
+        body.drop_player_id = dropPlayerId;
+      }
+      await api.post("/waivers/claim", body);
       toast.success(`Claim placed on ${selectedPlayer.name} for $${bidAmount}`, {
         description: "You'll see the result after waivers process.",
       });
@@ -187,19 +236,33 @@ const Waivers = () => {
 
   const waiverPriority = Math.max(1, waiverOrder.findIndex((w: any) => w.teamId === myTeam?.id) + 1);
 
-  const waiverPlayers: WaiverPlayer[] = useMemo(() => (livePlayers || []).slice(0, 20).map((p: any, i: number) => ({
-    id: p.id || i,
-    name: p.name,
-    position: p.position,
-    team: p.team,
-    previousOwner: undefined,
-    clearTime: "24h",
-    weekPoints: 0,
-    seasonPoints: p.points || 0,
-    percentOwned: Math.min(99, Math.round(((p.games_played || 0) / 50) * 100)),
-    trending: (p.points > 30 ? "up" : "stable") as any,
-    hasActiveClaim: !!p.has_active_claim,
-  })), [livePlayers]);
+  const waiverPlayers: WaiverPlayer[] = useMemo(() => {
+    const all = (livePlayers || []).map((p: any, i: number) => ({
+      id: p.id || i,
+      name: p.name,
+      position: p.position,
+      team: p.team,
+      previousOwner: undefined,
+      clearTime: "24h",
+      weekPoints: 0,
+      seasonPoints: p.points || 0,
+      percentOwned: Math.min(99, Math.round(((p.games_played || 0) / 50) * 100)),
+      trending: (p.points > 30 ? "up" : "stable") as any,
+      hasActiveClaim: !!p.has_active_claim,
+    }));
+    // Iter 180 — apply free-text filter (name + NHL team abbr,
+    // case-insensitive substring match). Applied BEFORE the 20-row
+    // slice so a player matching the search isn't cut off.
+    const q = availableSearch.trim().toLowerCase();
+    const filtered = q
+      ? all.filter((p) =>
+          p.name.toLowerCase().includes(q)
+          || (p.team || "").toLowerCase().includes(q)
+          || (p.position || "").toLowerCase().includes(q),
+        )
+      : all;
+    return filtered.slice(0, 20);
+  }, [livePlayers, availableSearch]);
 
   const myClaims: WaiverClaim[] = useMemo(() => (liveClaims || []).map((c: any, i: number) => ({
     id: c._id || i,
@@ -386,6 +449,29 @@ const Waivers = () => {
           <TabsContent value="available">
             <Card className="bg-card border-border">
               <CardContent className="p-0">
+                {/* Iter 180 — Free-text search across name / NHL team / position */}
+                <div className="p-4 border-b border-border flex items-center gap-3">
+                  <Input
+                    placeholder="Search by player name, NHL team, or position…"
+                    value={availableSearch}
+                    onChange={(e) => setAvailableSearch(e.target.value)}
+                    className="max-w-sm"
+                    data-testid="waiver-available-search"
+                  />
+                  {availableSearch && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setAvailableSearch("")}
+                      data-testid="waiver-available-search-clear"
+                    >
+                      Clear
+                    </Button>
+                  )}
+                  <span className="text-xs text-muted-foreground ml-auto" data-testid="waiver-available-count">
+                    {waiverPlayers.length} shown
+                  </span>
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow className="border-border">
@@ -399,6 +485,15 @@ const Waivers = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
+                    {waiverPlayers.length === 0 && (
+                      <TableRow data-testid="waiver-available-empty">
+                        <TableCell colSpan={7} className="text-center py-8 text-sm text-muted-foreground">
+                          {availableSearch
+                            ? `No available players match "${availableSearch}".`
+                            : "No players currently on the waiver wire."}
+                        </TableCell>
+                      </TableRow>
+                    )}
                     {waiverPlayers.map((player) => (
                       <TableRow key={player.id} className="border-border">
                         <TableCell>
@@ -454,9 +549,22 @@ const Waivers = () => {
                 <CardTitle>Pending Claims</CardTitle>
               </CardHeader>
               <CardContent>
+                {myClaims.length === 0 ? (
+                  <div
+                    className="text-center py-8 text-sm text-muted-foreground"
+                    data-testid="waiver-my-claims-empty"
+                  >
+                    You haven't placed any waiver claims yet. Pick a player from
+                    the Available Players tab to start.
+                  </div>
+                ) : (
                 <div className="space-y-4">
                   {myClaims.map((claim) => (
-                    <div key={claim.id} className="flex items-center justify-between p-4 rounded-lg bg-secondary/30">
+                    <div
+                      key={claim.id}
+                      className="flex items-center justify-between p-4 rounded-lg bg-secondary/30"
+                      data-testid={`waiver-my-claim-${claim.id}`}
+                    >
                       <div className="flex items-center gap-3">
                         <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center text-xs font-bold">
                           {claim.team}
@@ -479,13 +587,23 @@ const Waivers = () => {
                           <Clock className="h-3 w-3 mr-1" />
                           {claim.processTime}
                         </Badge>
-                        <Button variant="outline" size="sm" className="text-destructive border-destructive/30">
-                          Cancel
-                        </Button>
+                        {claim.status === "pending" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                            disabled={cancellingClaimId === String(claim.id)}
+                            onClick={() => handleCancelClaim(String(claim.id))}
+                            data-testid={`waiver-claim-cancel-${claim.id}`}
+                          >
+                            {cancellingClaimId === String(claim.id) ? "Cancelling…" : "Cancel"}
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ))}
                 </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -496,6 +614,14 @@ const Waivers = () => {
                 <CardTitle>Recent Claim History</CardTitle>
               </CardHeader>
               <CardContent>
+                {claimHistory.length === 0 ? (
+                  <div
+                    className="text-center py-8 text-sm text-muted-foreground"
+                    data-testid="waiver-history-empty"
+                  >
+                    No waiver claims have been processed in this league yet.
+                  </div>
+                ) : (
                 <div className="space-y-4">
                   {claimHistory.map((claim) => (
                     <div
@@ -534,6 +660,7 @@ const Waivers = () => {
                     </div>
                   ))}
                 </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -645,18 +772,36 @@ const Waivers = () => {
                   })}
 
                   {precheck.requires_drop && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full border-primary/40 text-primary hover:bg-primary/10 gap-1"
-                      data-testid="precheck-proceed-to-drop"
-                      onClick={() => {
-                        setClaimModalOpen(false);
-                        navigate("/roster");
-                      }}
-                    >
-                      Proceed to Drop Player <ArrowRight className="h-3.5 w-3.5" />
-                    </Button>
+                    <div className="space-y-2" data-testid="precheck-drop-picker">
+                      <label className="text-xs text-muted-foreground">
+                        Roster is full — pick a player to drop if this claim wins:
+                      </label>
+                      <select
+                        className="w-full text-sm rounded-md bg-secondary/40 border border-border px-3 py-2"
+                        value={dropPlayerId}
+                        onChange={(e) => setDropPlayerId(e.target.value)}
+                        data-testid="precheck-drop-select"
+                      >
+                        <option value="">Decide later (visit Roster)</option>
+                        {myRoster.map((p: any) => (
+                          <option key={p.id} value={String(p.id)}>
+                            {p.name} ({p.position}{p.team ? ` · ${p.team}` : ""})
+                          </option>
+                        ))}
+                      </select>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full text-xs text-muted-foreground hover:text-primary gap-1"
+                        data-testid="precheck-proceed-to-drop"
+                        onClick={() => {
+                          setClaimModalOpen(false);
+                          navigate("/roster");
+                        }}
+                      >
+                        Or manage roster directly <ArrowRight className="h-3 w-3" />
+                      </Button>
+                    </div>
                   )}
                 </div>
               )}

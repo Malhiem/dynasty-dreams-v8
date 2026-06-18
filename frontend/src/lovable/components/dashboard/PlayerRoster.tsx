@@ -5,6 +5,7 @@ import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { useActiveLeague } from "@/hooks/use-active-league";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -137,6 +138,10 @@ const slotEligibility: Record<RosterSlotType, string[]> = {
 };
 
 // League manager configured starting roster slots (order matters)
+// Iter 180 — DEFAULT shape only. Real leagues drive this from
+// `league.position_breakdown.active` via the `LEAGUE_ROSTER_SLOTS`
+// useMemo inside the PlayerRoster component (which shadows this
+// constant). Used as a fallback when no league config is loaded.
 const LEAGUE_ROSTER_SLOTS: RosterSlot[] = [
   { id: "C1", label: "C", eligiblePositions: slotEligibility.C },
   { id: "C2", label: "C", eligiblePositions: slotEligibility.C },
@@ -148,6 +153,38 @@ const LEAGUE_ROSTER_SLOTS: RosterSlot[] = [
   // Note: G slot intentionally omitted — goalies render in their dedicated
   // "Goalies" section below, not in the skater Starting Roster grid.
 ];
+
+// Iter 180 — Build the dynamic starting-roster slot list from a
+// league's `position_breakdown.active` config. Goalie slots are
+// omitted (rendered in a dedicated section). Returns the default
+// list when the breakdown is empty/unset so the team page still
+// renders before the league config is loaded.
+const buildLeagueRosterSlots = (
+  active: Record<string, number> | null | undefined,
+): RosterSlot[] => {
+  if (!active || Object.keys(active).length === 0) {
+    return LEAGUE_ROSTER_SLOTS;
+  }
+  // Render slots in a stable, scannable order: C, LW, RW, W, F, SK, D, UTIL.
+  // G is intentionally omitted (goalie section renders separately).
+  const ORDER: RosterSlotType[] = ["C", "LW", "RW", "W", "F", "SK", "D", "UTIL"];
+  const slots: RosterSlot[] = [];
+  for (const pos of ORDER) {
+    const raw = active[pos];
+    const count = typeof raw === "number"
+      ? raw
+      : (raw != null ? parseInt(String(raw), 10) || 0 : 0);
+    for (let i = 0; i < count; i++) {
+      slots.push({
+        id: `${pos}${i + 1}`,
+        label: pos,
+        eligiblePositions: slotEligibility[pos] || [pos],
+      });
+    }
+  }
+  // Empty breakdown after coercion — fall back to default
+  return slots.length > 0 ? slots : LEAGUE_ROSTER_SLOTS;
+};
 
 // ── Mock Data ──────────────────────────────────────────
 
@@ -719,6 +756,38 @@ const PlayerRoster = ({
 }: PlayerRosterProps) => {
   const location = useLocation();
   const isTeamRosterPage = location.pathname.startsWith("/team");
+
+  // Iter 180 — Shadow the module-level LEAGUE_ROSTER_SLOTS with a
+  // league-driven version derived from `position_breakdown.active`.
+  // Falls back to the module default when no breakdown is configured
+  // (e.g. legacy leagues, or before the league has loaded). The
+  // shadow only takes effect inside this component scope; module-level
+  // helpers (mock-data generation, etc.) continue to read the default.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { league: activeLeagueFromHook } = useActiveLeague();
+  const LEAGUE_ROSTER_SLOTS = useMemo(
+    () => buildLeagueRosterSlots((activeLeagueFromHook as any)?.position_breakdown?.active),
+    [(activeLeagueFromHook as any)?.position_breakdown],
+  );
+
+  // Iter 180 — Section maxSlots also need to honor the active
+  // league config (bench_spots / ir_slots / minors_spots). Shadow the
+  // module-level `sectionConfig` so the move-validation logic and
+  // section headers all read the right caps. Falls back to the
+  // module defaults when a value isn't configured.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const sectionConfig = useMemo(() => {
+    const l: any = activeLeagueFromHook || {};
+    const _modDefaults = ({
+      starting: { label: "Starting Roster", color: "bg-primary/10", borderColor: "border-l-primary", maxSlots: LEAGUE_ROSTER_SLOTS.length },
+      bench: { label: "Bench", color: "bg-accent/10", borderColor: "border-l-accent", maxSlots: typeof l.bench_spots === "number" ? l.bench_spots : 4 },
+      ir: { label: "Injury Reserve", color: "bg-destructive/10", borderColor: "border-l-destructive", maxSlots: typeof l.ir_slots === "number" ? l.ir_slots : 3 },
+      minors: { label: "Minors Pool", color: "bg-purple-500/10", borderColor: "border-l-purple-500", maxSlots: typeof l.minors_spots === "number" ? l.minors_spots : 5 },
+      goalies: { label: "Goalies", color: "bg-teal-500/10", borderColor: "border-l-teal-500", maxSlots: 4 },
+      goalies_minors: { label: "Goalies — Minors Pool", color: "bg-teal-500/5", borderColor: "border-l-teal-700", maxSlots: typeof l.minors_spots === "number" ? l.minors_spots : 5 },
+    });
+    return _modDefaults;
+  }, [activeLeagueFromHook, LEAGUE_ROSTER_SLOTS.length]);
 
   // Detect MongoDB ObjectId (24 hex) — if so, load the real roster from the backend.
   const isRealTeamId = useMemo(() => /^[a-f0-9]{24}$/i.test(teamId), [teamId]);

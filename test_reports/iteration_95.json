@@ -1,0 +1,54 @@
+{
+  "summary": "Iter 180/180b testing. Backend smoke ALL PASS (6/6 integration + 11/11 file-content). Frontend: commissioner Rosters tab correctly drops 'Bench (Reserve)' row and shows Minors. CRITICAL BUG found: dynamic Active Roster slots on the team page (feature #1) is NOT working — even after PUT position_breakdown.active={C:4,LW:4,RW:4,D:6,G:1} with roster_spots=19, the team page STARTING ROSTER section still renders the hardcoded 7-slot default (C, C, LW, RW, W, D, UTIL).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "PlayerRoster.tsx STARTING ROSTER section",
+        "issue": "Hardcoded default 7-slot grid (C, C, LW, RW, W, D, UTIL) is being rendered even when the active league has position_breakdown.active={C:4,LW:4,RW:4,D:6,G:1} persisted in db.leagues and returned by GET /api/leagues/{id}. Expected 18 skater slots (4 C, 4 LW, 4 RW, 6 D) plus 1 G in the Goalies section. The useMemo'd LEAGUE_ROSTER_SLOTS shadow at PlayerRoster.tsx:768 is falling through to the module default — most likely `activeLeagueFromHook?.position_breakdown?.active` is undefined at render time because the useActiveLeague hook isn't surfacing position_breakdown on its returned league object.",
+        "selector": "STARTING ROSTER table rows (first td slot label badge)",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Commissioner saves position_breakdown.active in Rosters tab → Team page should reflect new slot grid on next render. Backend PUT/GET round-trip is fine; frontend useActiveLeague hook is not propagating the new breakdown to PlayerRoster.",
+        "issue": "Disconnect between the persisted league config and what PlayerRoster reads via useActiveLeague. Verify the hook fetches /api/leagues/{id} (not a cached / partial league shape) and that position_breakdown is in the response payload that the hook exposes.",
+        "affected_selectors": ["STARTING ROSTER", "BENCH - X/4"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter180_integration.py",
+    "/app/backend/tests/test_iter180_dynamic_roster_slots.py",
+    "/app/backend/tests/test_iter180b_faab_polish.py",
+    "/app/test_reports/pytest/iter180_integration.xml"
+  ],
+  "action_items": [
+    "FIX feature #1: PlayerRoster.tsx is not reading the league's position_breakdown.active. The `useActiveLeague` hook likely returns a league object that does NOT include position_breakdown. Either (a) extend the hook to include position_breakdown on the league object, or (b) have PlayerRoster fetch /api/leagues/{leagueId} directly when in team-page mode. Repro: as Chris Zarek with Ice Kings Head-to-Head active and position_breakdown.active={C:4,LW:4,RW:4,D:6,G:1} persisted, /team still renders the 7-slot legacy default in STARTING ROSTER.",
+    "Verify that after the fix the goalies section also reads max-slots from breakdown.active.G."
+  ],
+  "critical_code_review_comments": [
+    "buildLeagueRosterSlots fallback ('return LEAGUE_ROSTER_SLOTS;') silently hides the bug — if the input dict is undefined/empty the helper returns the module default with NO warning. Consider adding a console.warn in dev mode when a leagueId is present but position_breakdown is missing.",
+    "PlayerRoster.tsx is now 2904 lines — well over the 700-line guideline. Should be split into focused modules (slot-rendering, section-config, lineup-validation, drag-and-drop, mock-data helpers).",
+    "Iter180 file-content tests in test_iter180_dynamic_roster_slots.py only assert string presence in the source code — they don't verify the runtime wiring. Recommend adding an end-to-end Playwright test that PUTs a known breakdown and asserts slot label counts in the rendered DOM. (This test file caught the regression manually but is not automated.)",
+    "Commissioner Rosters tab — Bench (Reserve) drop verified visually; Minors row visibility verified via text scan. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter180_integration.py (new — 6 integration tests covering position_breakdown round-trip, drop_player_id persistence, DELETE cancel happy path + 400 + 403)"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 integration + 11/11 file-content)",
+    "frontend": "50% — feature #2 (bench2 → minors rename) works; feature #1 (dynamic active roster slots) DOES NOT work end-to-end despite source code changes; features #3-6 (FAAB polish) covered by file-content tests but not browser-tested in this run because feature #1 regression was the priority blocker."
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! — commissioner of Frozen Dynasty (69e46af167999bfb85c3962a) and owner of 'Zarek's Frozen' team (id 69e59b30cbd3fea02a914c61) in Ice Kings Head-to-Head (69e46af167999bfb85c39628).",
+  "seed_data_creation": "Ice Kings Head-to-Head league config restored to roster_spots=19 and position_breakdown.active={C:4,LW:4,RW:4,D:6,G:1} after testing. Frozen Dynasty config snapshot+restored via pytest fixture (no leakage). One pending waiver claim was created and cancelled during /api/waivers tests (test cleans up).",
+  "retest_needed": true,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "Backend smoke (position_breakdown round-trip, drop_player_id persist, DELETE claim) verified via test_iter180_integration.py — all 6 PASS. Feature #2 (commissioner Bench Reserve → Minors) verified visually in DOM — works. Feature #1 (dynamic team-page active roster slots) DOES NOT WORK end-to-end — STARTING ROSTER renders hardcoded 7-slot default even with Ice Kings league having position_breakdown.active={C:4,LW:4,RW:4,D:6,G:1} persisted. Root cause hypothesis: useActiveLeague hook does NOT include position_breakdown on its returned league object, so buildLeagueRosterSlots(undefined) falls through to LEAGUE_ROSTER_SLOTS module default. After main agent fixes, re-test by: (1) login as Chris Zarek, (2) set localStorage.activeLeagueId=69e46af167999bfb85c39628, (3) PUT /api/leagues/{id} with position_breakdown.active={C:4,LW:4,RW:4,D:6,G:1} & roster_spots=19, (4) GET /team and assert STARTING ROSTER section shows 4 C + 4 LW + 4 RW + 6 D = 18 skater slot labels (G in Goalies section). FAAB polish features 3-6 were not browser-tested (file-content tests pass); recommend a follow-up Playwright pass on /waivers covering search filter, cancel button, empty states, drop-player <select>.",
+  "rca of the issue": "Pre-fix: PlayerRoster.tsx still rendered the module-level hardcoded LEAGUE_ROSTER_SLOTS (7 slots: C, C, LW, RW, W, D, UTIL) regardless of the active league's position_breakdown.active. Iter180 attempted fix: shadow the module constant with a useMemo'd version derived from useActiveLeague (PlayerRoster.tsx:768-771). The source-code change is in place and the file-content tests in test_iter180_dynamic_roster_slots.py confirm the string presence — but runtime behaviour shows the fallback path is being taken. Likely root cause: the league object returned by useActiveLeague does not include the position_breakdown field, OR the hook returns a stale snapshot taken before the PUT updated the league. Suggested investigation: log `activeLeagueFromHook` and `(activeLeagueFromHook as any)?.position_breakdown?.active` at render time on /team — if `undefined`, the hook is the bug; if present, the buildLeagueRosterSlots helper or its consumers are the bug. Reproduction confirmed via Playwright screenshot at /tmp/team_dynamic_slots.png — STARTING ROSTER reads C, C, LW, RW, W, D, UTIL (7 slots, hardcoded) even though /api/leagues/{id} returns the expected breakdown."
+}

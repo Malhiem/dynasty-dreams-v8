@@ -67,9 +67,8 @@ def test_rostertab_breakdown_row_visible_when_row_has_saved_data():
     src = rosters_tab.read_text()
     assert "hasExistingData" in src
     assert "|| hasExistingData" in src
-    # The original predicate is still there so a fresh row still
-    # honours the bench/minors visibility rules.
-    assert (
-        '(row.key === "bench" || row.key === "bench2") '
-        '&& (parseIntOrNull(benchSpots) || 0) > 0'
-    ) in src
+    # Iter 180 — the bench-row visibility predicate was simplified
+    # (bench2 dropped from UI). A fresh bench row still honours
+    # `benchSpots > 0` via the new `benchOn` constant.
+    assert "const benchOn = (parseIntOrNull(benchSpots) || 0) > 0;" in src
+    assert '(row.key === "bench" && benchOn)' in src

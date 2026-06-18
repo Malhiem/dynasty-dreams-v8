@@ -44,15 +44,21 @@ const POSITIONS = [
 // that run a tiered bench (e.g. active bench + deep reserve) can cap
 // each tier independently. Both bench rows share the same
 // visibility predicate.
+// Iter 180 — User feedback: the "Bench (Reserve)" tier was
+// confusingly redundant with the Minors row. Dropped from the UI
+// (still kept in state shape + save payload for backward compat with
+// any leagues that wrote bench2 caps under iter 177 — those values
+// stay in Mongo, just no longer rendered). Minors row visibility
+// widened so it surfaces whenever the league has bench spots OR
+// minors capacity OR pre-existing saved data — no more "where did
+// my row go" confusion when toggling premium features.
 const BREAKDOWN_ROWS: Array<{ key: "active" | "bench" | "bench2" | "minors"; label: string; help: string }> = [
   { key: "active", label: "Active Roster",
     help: "Players eligible to earn points each scoring period. The total Active Roster size is the SUM of the values you enter on this row — leave a cell blank to keep it unlimited." },
   { key: "bench",  label: "Bench",
     help: "Reserves that don't earn points but still count against the cap. Only shown when the league has bench spots configured." },
-  { key: "bench2", label: "Bench (Reserve)",
-    help: "Optional second bench tier — useful for leagues that distinguish a primary bench from a deeper reserve pool. Leave blank if you only run a single bench." },
   { key: "minors", label: "Minors",
-    help: "Farm-system players (only minor-eligible prospects can sit here). Only shown when the league has the Minors section enabled." },
+    help: "Farm-system slots (minor-eligible prospects). Surfaces whenever the league has bench spots configured, minors capacity, or existing saved caps." },
 ];
 
 const IR_MODES = [
@@ -427,11 +433,20 @@ export default function RostersTab() {
             const hasExistingData = POSITIONS.some(
               (p) => parseIntOrNull(rowState[p.key]) !== null,
             );
+            const benchOn = (parseIntOrNull(benchSpots) || 0) > 0;
+            const minorsOn =
+              !!(league as any).minors_enabled
+              || (parseIntOrNull(prospectPool) || 0) > 0
+              || benchOn; // Iter 180 — surface Minors row by default
+                          // whenever the league runs a bench. Dynasty
+                          // leagues almost always use both, and the
+                          // separate `minors_enabled` premium flag was
+                          // confusing UX.
             const visible =
               row.key === "active"
               || hasExistingData
-              || ((row.key === "bench" || row.key === "bench2") && (parseIntOrNull(benchSpots) || 0) > 0)
-              || (row.key === "minors" && !!(league as any).minors_enabled);
+              || (row.key === "bench" && benchOn)
+              || (row.key === "minors" && minorsOn);
             if (!visible) return null;
             const rowSum = POSITIONS.reduce((s, p) => {
               const n = parseIntOrNull(rowState[p.key]);
