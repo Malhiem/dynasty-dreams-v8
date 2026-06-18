@@ -40,11 +40,17 @@ const POSITIONS = [
 // Iter 176 — Three editable rows. `bench` and `minors` are only
 // surfaced when the league actually has those sections enabled
 // (benchSpots > 0 / minors_enabled).
-const BREAKDOWN_ROWS: Array<{ key: "active" | "bench" | "minors"; label: string; help: string }> = [
+// Iter 177 — Added a second bench row ("Bench Reserve") so leagues
+// that run a tiered bench (e.g. active bench + deep reserve) can cap
+// each tier independently. Both bench rows share the same
+// visibility predicate.
+const BREAKDOWN_ROWS: Array<{ key: "active" | "bench" | "bench2" | "minors"; label: string; help: string }> = [
   { key: "active", label: "Active Roster",
     help: "Players eligible to earn points each scoring period. The total Active Roster size is the SUM of the values you enter on this row — leave a cell blank to keep it unlimited." },
   { key: "bench",  label: "Bench",
     help: "Reserves that don't earn points but still count against the cap. Only shown when the league has bench spots configured." },
+  { key: "bench2", label: "Bench (Reserve)",
+    help: "Optional second bench tier — useful for leagues that distinguish a primary bench from a deeper reserve pool. Leave blank if you only run a single bench." },
   { key: "minors", label: "Minors",
     help: "Farm-system players (only minor-eligible prospects can sit here). Only shown when the league has the Minors section enabled." },
 ];
@@ -81,8 +87,9 @@ export default function RostersTab() {
   const [positionBreakdown, setPositionBreakdown] = useState<{
     active: Record<string, string>;
     bench: Record<string, string>;
+    bench2: Record<string, string>;
     minors: Record<string, string>;
-  }>({ active: {}, bench: {}, minors: {} });
+  }>({ active: {}, bench: {}, bench2: {}, minors: {} });
   const [enforcePositions, setEnforcePositions] = useState(false);
 
   // Requirements
@@ -109,6 +116,25 @@ export default function RostersTab() {
     setIrPlusSlots(league.ir_plus_slots != null ? String(league.ir_plus_slots) : "");
     setProspectPool(league.minors_spots != null ? String(league.minors_spots) : "");
     setTaxiSquad(league.taxi_squad_size != null ? String(league.taxi_squad_size) : "");
+    // Iter 176/177 — Hydrate the 3- (or 4-, when bench-reserve is in
+    // use) row Position Breakdown. New canonical field is
+    // `position_breakdown`; legacy `position_limits` (single dict,
+    // active-row only) is migrated transparently on first save.
+    const breakdownDoc = (league as any).position_breakdown
+      || { active: league.position_limits || {}, bench: {}, bench2: {}, minors: {} };
+    const hydrateRow = (src: Record<string, any> | undefined): Record<string, string> => {
+      const out: Record<string, string> = {};
+      for (const p of POSITIONS) {
+        out[p.key] = src && src[p.key] != null ? String(src[p.key]) : "";
+      }
+      return out;
+    };
+    setPositionBreakdown({
+      active: hydrateRow(breakdownDoc.active),
+      bench: hydrateRow(breakdownDoc.bench),
+      bench2: hydrateRow(breakdownDoc.bench2),
+      minors: hydrateRow(breakdownDoc.minors),
+    });
     setEnforcePositions(!!league.enforce_position_maxes);
     setMinActivePlayers(league.min_active_players != null ? String(league.min_active_players) : "");
     setMinGamesPlayed(league.min_games_played != null ? String(league.min_games_played) : "");
@@ -163,6 +189,7 @@ export default function RostersTab() {
     const breakdown = {
       active: rowToDict(positionBreakdown.active),
       bench: rowToDict(positionBreakdown.bench),
+      bench2: rowToDict(positionBreakdown.bench2),
       minors: rowToDict(positionBreakdown.minors),
     };
     payload.position_breakdown = breakdown;
@@ -380,7 +407,7 @@ export default function RostersTab() {
           {BREAKDOWN_ROWS.map((row) => {
             const visible =
               row.key === "active"
-              || (row.key === "bench" && (parseIntOrNull(benchSpots) || 0) > 0)
+              || ((row.key === "bench" || row.key === "bench2") && (parseIntOrNull(benchSpots) || 0) > 0)
               || (row.key === "minors" && !!(league as any).minors_enabled);
             if (!visible) return null;
             const rowState = positionBreakdown[row.key] || {};
