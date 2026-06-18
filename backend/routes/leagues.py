@@ -115,6 +115,7 @@ class LeagueResponse(BaseModel):
     ir_plus_slots: Optional[int] = None
     taxi_squad_size: Optional[int] = None
     position_limits: Optional[dict] = None
+    position_breakdown: Optional[dict] = None
     enforce_position_maxes: Optional[bool] = None
     min_active_players: Optional[int] = None
     min_games_played: Optional[int] = None
@@ -272,6 +273,7 @@ def _league_to_response(league: dict) -> LeagueResponse:
         ir_plus_slots=league.get("ir_plus_slots"),
         taxi_squad_size=league.get("taxi_squad_size"),
         position_limits=league.get("position_limits"),
+        position_breakdown=league.get("position_breakdown"),
         enforce_position_maxes=league.get("enforce_position_maxes"),
         min_active_players=league.get("min_active_players"),
         min_games_played=league.get("min_games_played"),
@@ -1357,6 +1359,10 @@ class LeagueUpdate(BaseModel):
     ir_plus_slots: Optional[int] = Field(default=None, ge=0, le=10)
     taxi_squad_size: Optional[int] = Field(default=None, ge=0, le=20)
     position_limits: Optional[dict] = None  # e.g. {"C": 4, "LW": 4, "RW": 4, "D": 6, "G": 3}
+    # Iter 176 — Position Breakdown: per-section position caps.
+    #   {"active": {"S": 18, "G": 2, ...}, "bench": {...}, "minors": {...}}
+    # Untouched cell = no limit for that position in that section.
+    position_breakdown: Optional[dict] = None
     enforce_position_maxes: Optional[bool] = None
     min_active_players: Optional[int] = Field(default=None, ge=0, le=40)
     min_games_played: Optional[int] = Field(default=None, ge=0, le=200)
@@ -1428,6 +1434,7 @@ _LEAGUE_UPDATE_ALLOWED = {
     "consolation_uses_playoff_schedule",
     # Iter 81: extended roster controls
     "ir_slots", "ir_plus_slots", "taxi_squad_size", "position_limits",
+    "position_breakdown",
     "enforce_position_maxes", "min_active_players", "min_games_played",
     "prorate_min_max_by_period", "allow_illegal_rosters", "ir_eligibility_modes",
     # Iter 100: roster lock + lineup lock + NHL stats window
@@ -1489,6 +1496,33 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
         if new_val != old_val:
             update[field] = new_val
             diff[field] = {"from": old_val, "to": new_val}
+
+    # ── Iter 176: derive `roster_spots` from `position_breakdown.active`
+    # whenever the commissioner has set per-position caps for the
+    # Active Roster section. The breakdown row is the single source of
+    # truth for active roster size — any drift between this and the
+    # explicit `roster_spots` input is reconciled here so direct API
+    # callers behave identically to the UI.
+    if "position_breakdown" in update or "position_breakdown" in body:
+        breakdown = (
+            update.get("position_breakdown")
+            or body.get("position_breakdown")
+            or {}
+        )
+        active = (breakdown or {}).get("active") or {}
+        # Sum only the cells the commissioner actually set; blank cells
+        # (missing keys) mean "no cap" and should NOT contribute to the
+        # derived total. An empty `active` dict means "untouched".
+        if active:
+            try:
+                active_sum = sum(int(v) for v in active.values()
+                                 if v is not None and v != "")
+            except (TypeError, ValueError):
+                active_sum = 0
+            if active_sum > 0 and active_sum != league.get("roster_spots"):
+                old_rs = league.get("roster_spots")
+                update["roster_spots"] = active_sum
+                diff["roster_spots"] = {"from": old_rs, "to": active_sum, "derived": True}
 
     # ── Iter 100: cross-field validation for playoffs vs regular season ──
     # Only enforce when the request actually touches one of the relevant

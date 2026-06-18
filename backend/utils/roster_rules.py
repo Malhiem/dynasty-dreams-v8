@@ -49,35 +49,69 @@ def check_position_limits(
     """Return an error string if adding `candidate_player` to the roster
     would exceed any configured position limit, else None.
 
-    No-op when `enforce_position_maxes` is False or `position_limits` is
-    empty/missing — preserves legacy behaviour for leagues that haven't
-    configured the rule.
+    No-op when `enforce_position_maxes` is False or no caps are
+    configured — preserves legacy behaviour for leagues that haven't
+    set up Position Breakdown.
+
+    Iter 176 — Reads the new canonical `position_breakdown.active`
+    field first, with legacy fallback to the old single-row
+    `position_limits` dict so unmigrated leagues keep working.
+    Also expands two categorical bucket caps:
+
+      • "S" (Skater) — applies to any non-goalie
+      • "W" (Wing) — applies to LW or RW
     """
     if not league.get("enforce_position_maxes"):
         return None
-    limits = league.get("position_limits") or {}
+    # Iter 176 — new canonical source: position_breakdown.active.
+    # Falls back to the legacy `position_limits` dict.
+    breakdown = league.get("position_breakdown") or {}
+    active_limits = breakdown.get("active") if isinstance(breakdown, dict) else None
+    limits = active_limits if active_limits else (league.get("position_limits") or {})
     if not limits:
         return None
+
     pos = _position_of(candidate_player)
-    if not pos or pos not in limits:
+    if not pos:
         return None
-    # An explicit `0` means "zero players allowed at this position" — block
-    # the add. A missing key is treated as "no limit" via the membership
-    # check above. Negative values fall through as no-limit (defensive).
-    raw_max = limits[pos]
-    if raw_max is None:
-        return None
-    max_at_pos = int(raw_max)
-    if max_at_pos < 0:
-        return None
-    current_at_pos = sum(1 for p in current_roster_players if _position_of(p) == pos)
-    if current_at_pos + 1 > max_at_pos:
-        name = candidate_player.get("name") or candidate_player.get("display_name") or "player"
-        return (
-            f"Position limit reached for {pos}: roster already has "
-            f"{current_at_pos}/{max_at_pos}. Adding {name} would exceed the "
-            f"league's configured {pos} cap."
-        )
+
+    # Build the list of bucket keys this candidate touches so we can
+    # check categorical caps in one pass. A C player triggers "C" and
+    # "S" (skater); an LW player triggers "LW", "W" (wing) and "S".
+    triggered_buckets = {pos}
+    if pos in ("C", "LW", "RW", "D"):
+        triggered_buckets.add("S")
+    if pos in ("LW", "RW"):
+        triggered_buckets.add("W")
+
+    name = candidate_player.get("name") or candidate_player.get("display_name") or "player"
+    for bucket in triggered_buckets:
+        raw_max = limits.get(bucket)
+        if raw_max is None:
+            continue
+        try:
+            max_at_pos = int(raw_max)
+        except (TypeError, ValueError):
+            continue
+        if max_at_pos < 0:
+            continue
+        # Count current roster members that fall under this bucket so
+        # the cap behaves consistently regardless of how the
+        # commissioner phrased it.
+        def _matches_bucket(p: dict) -> bool:
+            existing = _position_of(p)
+            if bucket == "S":
+                return existing != "G" and existing != ""
+            if bucket == "W":
+                return existing in ("LW", "RW")
+            return existing == bucket
+        current_at_pos = sum(1 for p in current_roster_players if _matches_bucket(p))
+        if current_at_pos + 1 > max_at_pos:
+            return (
+                f"Position limit reached for {bucket}: roster already has "
+                f"{current_at_pos}/{max_at_pos}. Adding {name} would exceed the "
+                f"league's configured {bucket} cap."
+            )
     return None
 
 

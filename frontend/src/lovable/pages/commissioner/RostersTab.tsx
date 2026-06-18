@@ -1,6 +1,6 @@
 // @ts-nocheck
 /**
- * RostersTab — wired commissioner editor for roster shape, position limits,
+ * RostersTab — wired commissioner editor for roster shape, position breakdown,
  * roster requirements, and IR rules. Replaces the cosmetic legacy mock that
  * showed hardcoded `defaultValue` numbers.
  *
@@ -21,12 +21,32 @@ import api from "@/lib/api";
 import InfoHint from "@/components/ui/info-hint";
 import { useActiveLeague } from "@/hooks/use-active-league";
 
+// Iter 176 — Expanded position taxonomy for "Position Breakdown".
+// `S` (Skater) and `W` (Wing) are categorical buckets; the
+// enforcement helper treats them as supersets:
+//   S → matches any non-goalie player
+//   W → matches LW or RW
+// Leaving any cell blank disables that limit (no restriction).
 const POSITIONS = [
-  { key: "C", label: "Centers (C)" },
-  { key: "LW", label: "Left Wing (LW)" },
-  { key: "RW", label: "Right Wing (RW)" },
-  { key: "D", label: "Defensemen (D)" },
-  { key: "G", label: "Goalies (G)" },
+  { key: "S", label: "Skater (S)", help: "Any non-goalie. Covers C, LW, RW, and D." },
+  { key: "C", label: "Center (C)", help: "" },
+  { key: "LW", label: "Left Wing (LW)", help: "" },
+  { key: "RW", label: "Right Wing (RW)", help: "" },
+  { key: "W", label: "Wing (W)", help: "Either LW or RW. Useful when leagues lump wingers together." },
+  { key: "D", label: "Defenseman (D)", help: "" },
+  { key: "G", label: "Goalie (G)", help: "" },
+];
+
+// Iter 176 — Three editable rows. `bench` and `minors` are only
+// surfaced when the league actually has those sections enabled
+// (benchSpots > 0 / minors_enabled).
+const BREAKDOWN_ROWS: Array<{ key: "active" | "bench" | "minors"; label: string; help: string }> = [
+  { key: "active", label: "Active Roster",
+    help: "Players eligible to earn points each scoring period. The total Active Roster size is the SUM of the values you enter on this row — leave a cell blank to keep it unlimited." },
+  { key: "bench",  label: "Bench",
+    help: "Reserves that don't earn points but still count against the cap. Only shown when the league has bench spots configured." },
+  { key: "minors", label: "Minors",
+    help: "Farm-system players (only minor-eligible prospects can sit here). Only shown when the league has the Minors section enabled." },
 ];
 
 const IR_MODES = [
@@ -54,8 +74,15 @@ export default function RostersTab() {
   const [prospectPool, setProspectPool] = useState("");
   const [taxiSquad, setTaxiSquad] = useState("");
 
-  // Position Limits
-  const [positionLimits, setPositionLimits] = useState<Record<string, string>>({});
+  // Iter 176 — Position Breakdown: three editable rows (active / bench
+  // / minors) each holding the same 7-position dict. Leaving any cell
+  // blank means "no limit" for that row+position. The Active row's
+  // sum (when any value is set) drives the league's `roster_spots`.
+  const [positionBreakdown, setPositionBreakdown] = useState<{
+    active: Record<string, string>;
+    bench: Record<string, string>;
+    minors: Record<string, string>;
+  }>({ active: {}, bench: {}, minors: {} });
   const [enforcePositions, setEnforcePositions] = useState(false);
 
   // Requirements
@@ -82,10 +109,6 @@ export default function RostersTab() {
     setIrPlusSlots(league.ir_plus_slots != null ? String(league.ir_plus_slots) : "");
     setProspectPool(league.minors_spots != null ? String(league.minors_spots) : "");
     setTaxiSquad(league.taxi_squad_size != null ? String(league.taxi_squad_size) : "");
-    const pl = league.position_limits || {};
-    const seeded: Record<string, string> = {};
-    for (const p of POSITIONS) seeded[p.key] = pl[p.key] != null ? String(pl[p.key]) : "";
-    setPositionLimits(seeded);
     setEnforcePositions(!!league.enforce_position_maxes);
     setMinActivePlayers(league.min_active_players != null ? String(league.min_active_players) : "");
     setMinGamesPlayed(league.min_games_played != null ? String(league.min_games_played) : "");
@@ -123,12 +146,36 @@ export default function RostersTab() {
       }
       payload[key] = n;
     }
-    const limits: Record<string, number> = {};
-    for (const p of POSITIONS) {
-      const n = parseIntOrNull(positionLimits[p.key]);
-      if (n !== null) limits[p.key] = n;
+    // Iter 176 — Persist the new 3-row Position Breakdown. Each row
+    // only carries the cells the commissioner actually filled in so
+    // blank = "no limit" survives a round-trip. The Active row's
+    // total is the source of truth for `roster_spots`; if the
+    // commissioner DID set any active limits we override the manual
+    // roster_spots input to keep things consistent.
+    const rowToDict = (row: Record<string, string>): Record<string, number> => {
+      const out: Record<string, number> = {};
+      for (const p of POSITIONS) {
+        const n = parseIntOrNull(row?.[p.key]);
+        if (n !== null) out[p.key] = n;
+      }
+      return out;
+    };
+    const breakdown = {
+      active: rowToDict(positionBreakdown.active),
+      bench: rowToDict(positionBreakdown.bench),
+      minors: rowToDict(positionBreakdown.minors),
+    };
+    payload.position_breakdown = breakdown;
+    // Legacy mirror — keeps callers that still read `position_limits`
+    // (waivers, trade engine helpers) working until they migrate.
+    payload.position_limits = breakdown.active;
+    // Derive total active roster size from the active row when the
+    // commissioner has supplied any per-position limits. Otherwise
+    // the existing manual roster_spots input wins.
+    const activeSum = Object.values(breakdown.active).reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
+    if (Object.keys(breakdown.active).length > 0 && activeSum > 0) {
+      payload.roster_spots = activeSum;
     }
-    payload.position_limits = limits;
     payload.enforce_position_maxes = enforcePositions;
     payload.prorate_min_max_by_period = prorateByPeriod;
     payload.allow_illegal_rosters = allowIllegal;
@@ -207,11 +254,45 @@ export default function RostersTab() {
             <div className="space-y-2">
               <Label htmlFor="roster-size-active">
                 Active Roster (10–40)
-                <InfoHint testId="info-active-roster" text="Players eligible to earn points each scoring period. Excludes bench, IR, IR+, prospects, and taxi squad." />
+                <InfoHint testId="info-active-roster" text="Players eligible to earn points each scoring period. Excludes bench, IR, IR+, prospects, and taxi squad. If you've set per-position caps in Position Breakdown → Active Roster, the total is derived from that row." />
               </Label>
-              <Input id="roster-size-active" type="number" min={10} max={40}
-                value={rosterSpots} onChange={(e) => setRosterSpots(e.target.value)}
-                placeholder="20" data-testid="rosters-roster-spots-input" />
+              {/* Iter 176 — When the commissioner has set any per-position
+                  Active Roster cap, derive the total instead of letting
+                  the input drift. The input becomes read-only and shows
+                  the computed sum so they can see the relationship. */}
+              {(() => {
+                const activeSum = POSITIONS.reduce((s, p) => {
+                  const n = parseIntOrNull(positionBreakdown.active?.[p.key]);
+                  return s + (n ?? 0);
+                }, 0);
+                const derived = POSITIONS.some(
+                  (p) => parseIntOrNull(positionBreakdown.active?.[p.key]) !== null,
+                ) && activeSum > 0;
+                return (
+                  <>
+                    <Input
+                      id="roster-size-active"
+                      type="number"
+                      min={10}
+                      max={40}
+                      value={derived ? String(activeSum) : rosterSpots}
+                      onChange={(e) => !derived && setRosterSpots(e.target.value)}
+                      readOnly={derived}
+                      placeholder="20"
+                      className={derived ? "bg-secondary/60 text-muted-foreground" : ""}
+                      data-testid="rosters-roster-spots-input"
+                    />
+                    {derived && (
+                      <p
+                        className="text-[11px] text-muted-foreground"
+                        data-testid="rosters-roster-spots-derived-note"
+                      >
+                        Derived from Position Breakdown → Active Roster (sum: {activeSum}).
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
             </div>
             <div className="space-y-2">
               <Label htmlFor="roster-size-bench">Bench Spots (0–20)</Label>
@@ -261,44 +342,100 @@ export default function RostersTab() {
         </CardContent>
       </Card>
 
-      {/* Position Limits */}
+      {/* Iter 176 — Position Breakdown (renamed from the legacy single-row card).
+          Three editable rows: Active Roster (always shown), Bench (only
+          when bench spots are configured), and Minors (only when the
+          Minors section is enabled). Leaving any cell blank keeps that
+          position unlimited. The Active row's sum drives the league's
+          `roster_spots`. */}
       <Card className="bg-card border-border" data-testid="rosters-positions-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ShieldAlert className="h-5 w-5 text-amber-400" />
-            Position Limits
-            <InfoHint testId="info-position-limits" text="Caps the number of players each team can roster at each position (C, LW, RW, D, G). Leave blank for no cap. Pair with 'Enforce Position Maximums' below to harden the rule." />
+            Position Breakdown
+            <InfoHint testId="info-position-breakdown" text="Caps the number of players each team can roster at each position, per section. Leave a cell blank for no cap. The Active Roster row's total drives the league's overall active roster size. Pair with 'Enforce Position Maximums' below to harden the rule." />
           </CardTitle>
-          <CardDescription>Maximum players allowed at each position. Leave blank for no limit.</CardDescription>
+          <CardDescription>
+            Active roster, bench (if any), and minors (if enabled) position caps.
+            <span className="block text-[12px] text-muted-foreground/80 mt-1">
+              <em>Untouched cells = unlimited. Filling any Active cell drives the league's overall active roster size.</em>
+            </span>
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-5">
+          {/* Column headers */}
+          <div className="grid gap-2" style={{ gridTemplateColumns: `120px repeat(${POSITIONS.length}, minmax(72px, 1fr)) 90px` }}>
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground self-end">Section</div>
             {POSITIONS.map((p) => (
-              <div key={p.key} className="space-y-2">
-                <Label htmlFor={`pos-${p.key}`}>{p.label}</Label>
-                <Input
-                  id={`pos-${p.key}`}
-                  type="number"
-                  min={0}
-                  max={30}
-                  value={positionLimits[p.key] ?? ""}
-                  onChange={(e) =>
-                    setPositionLimits((prev) => ({ ...prev, [p.key]: e.target.value }))
-                  }
-                  placeholder="—"
-                  data-testid={`rosters-position-${p.key}-input`}
-                />
+              <div key={p.key} className="text-[11px] uppercase tracking-wider text-muted-foreground text-center self-end">
+                <div className="flex items-center justify-center gap-1">
+                  {p.key}
+                  {p.help && <InfoHint testId={`info-position-${p.key}`} text={p.help} />}
+                </div>
               </div>
             ))}
+            <div className="text-[11px] uppercase tracking-wider text-muted-foreground text-right self-end">Total</div>
           </div>
-          <div className="flex items-center justify-between">
+
+          {BREAKDOWN_ROWS.map((row) => {
+            const visible =
+              row.key === "active"
+              || (row.key === "bench" && (parseIntOrNull(benchSpots) || 0) > 0)
+              || (row.key === "minors" && !!(league as any).minors_enabled);
+            if (!visible) return null;
+            const rowState = positionBreakdown[row.key] || {};
+            const rowSum = POSITIONS.reduce((s, p) => {
+              const n = parseIntOrNull(rowState[p.key]);
+              return s + (n ?? 0);
+            }, 0);
+            const anySet = POSITIONS.some((p) => parseIntOrNull(rowState[p.key]) !== null);
+            return (
+              <div
+                key={row.key}
+                className="grid gap-2 items-center"
+                style={{ gridTemplateColumns: `120px repeat(${POSITIONS.length}, minmax(72px, 1fr)) 90px` }}
+                data-testid={`rosters-position-breakdown-row-${row.key}`}
+              >
+                <div className="flex items-center gap-1 text-sm font-medium text-foreground">
+                  {row.label}
+                  <InfoHint testId={`info-row-${row.key}`} text={row.help} />
+                </div>
+                {POSITIONS.map((p) => (
+                  <Input
+                    key={`${row.key}-${p.key}`}
+                    type="number"
+                    min={0}
+                    max={30}
+                    value={rowState[p.key] ?? ""}
+                    onChange={(e) =>
+                      setPositionBreakdown((prev) => ({
+                        ...prev,
+                        [row.key]: { ...prev[row.key], [p.key]: e.target.value },
+                      }))
+                    }
+                    placeholder="—"
+                    className="h-9 text-center"
+                    data-testid={`rosters-position-${row.key}-${p.key}-input`}
+                  />
+                ))}
+                <div
+                  className="text-right text-sm font-mono text-muted-foreground"
+                  data-testid={`rosters-position-${row.key}-total`}
+                >
+                  {anySet ? rowSum : "—"}
+                </div>
+              </div>
+            );
+          })}
+
+          <div className="flex items-center justify-between pt-2 border-t border-border/40">
             <div>
               <Label>
                 Enforce Position Maximums
-                <InfoHint testId="info-enforce-position" text="When ON, the system rejects any add/trade/draft that would put a team over a position limit. When OFF, the limits are advisory only — owners get a warning but can still pile up D-men." />
+                <InfoHint testId="info-enforce-position" text="When ON, the system rejects any add/trade/draft that would put a team over a position cap in any section. When OFF, the caps are advisory only — owners get a warning but can still pile up D-men." />
               </Label>
               <p className="text-sm text-muted-foreground">
-                Block acquisitions (waivers, trades, draft picks) that exceed any position limit.
+                Block acquisitions (waivers, trades, draft picks) that exceed any active-section limit.
               </p>
             </div>
             <Switch
