@@ -583,9 +583,29 @@ const Waivers = () => {
                             <p className="text-xs text-muted-foreground">FAAB Bid</p>
                           </div>
                         ) : null}
-                        <Badge className="bg-accent/20 text-accent border-accent/30">
-                          <Clock className="h-3 w-3 mr-1" />
-                          {claim.processTime}
+                        {/* Iter 180 — explicit status badge. The backend
+                            returns mixed statuses on the /waivers/claims
+                            endpoint (pending / won / lost / denied /
+                            cancelled). Without a badge here, users were
+                            confused why some rows had no Cancel button. */}
+                        <Badge
+                          className={
+                            claim.status === "pending"
+                              ? "bg-accent/20 text-accent border-accent/30"
+                              : claim.status === "won"
+                              ? "bg-success/20 text-success border-success/30"
+                              : claim.status === "denied" || claim.status === "lost" || claim.status === "cancelled"
+                              ? "bg-destructive/15 text-destructive border-destructive/30"
+                              : "bg-secondary/20 text-muted-foreground border-border"
+                          }
+                          data-testid={`waiver-claim-status-${claim.id}`}
+                        >
+                          {claim.status === "pending" ? (
+                            <Clock className="h-3 w-3 mr-1" />
+                          ) : null}
+                          {claim.status === "pending"
+                            ? claim.processTime
+                            : claim.status.charAt(0).toUpperCase() + claim.status.slice(1)}
                         </Badge>
                         {claim.status === "pending" && (
                           <Button

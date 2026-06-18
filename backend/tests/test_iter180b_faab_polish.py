@@ -77,3 +77,19 @@ def test_drop_player_selector_inside_claim_modal():
     # The "manage roster directly" escape hatch is still available
     # but is now a tertiary action, not the only option.
     assert 'data-testid="precheck-proceed-to-drop"' in src
+
+
+def test_my_claims_row_shows_status_badge():
+    """Iter 180 — `/waivers/claims` returns ALL claims (pending +
+    won/lost/denied/cancelled), not just pending. The first round of
+    iter 180 was confusing because non-pending rows showed NO badge
+    AND no Cancel button — users couldn't tell why the cancel option
+    was missing. Now every row has an explicit status badge with
+    distinct colour per status."""
+    src = WAIVERS.read_text()
+    assert "data-testid={`waiver-claim-status-${claim.id}`}" in src
+    # Status-aware colour coding.
+    assert 'claim.status === "pending"' in src
+    assert 'claim.status === "won"' in src
+    assert ('claim.status === "denied" || claim.status === "lost" '
+            '|| claim.status === "cancelled"') in src
