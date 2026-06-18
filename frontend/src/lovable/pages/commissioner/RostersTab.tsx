@@ -415,12 +415,24 @@ export default function RostersTab() {
           </div>
 
           {BREAKDOWN_ROWS.map((row) => {
+            const rowState = positionBreakdown[row.key] || {};
+            // Iter 179 — Always show a row if it has previously-saved
+            // data, even when the visibility predicate (bench_spots > 0,
+            // minors_enabled) would otherwise hide it. Without this, a
+            // commissioner who lowers `bench_spots` to 0 after setting
+            // bench caps would see the bench row vanish AND their caps
+            // appear lost on reload — the actual root cause of "the
+            // Position Breakdown menu seems to reset when reentering
+            // the league administration menus" bug report.
+            const hasExistingData = POSITIONS.some(
+              (p) => parseIntOrNull(rowState[p.key]) !== null,
+            );
             const visible =
               row.key === "active"
+              || hasExistingData
               || ((row.key === "bench" || row.key === "bench2") && (parseIntOrNull(benchSpots) || 0) > 0)
               || (row.key === "minors" && !!(league as any).minors_enabled);
             if (!visible) return null;
-            const rowState = positionBreakdown[row.key] || {};
             const rowSum = POSITIONS.reduce((s, p) => {
               const n = parseIntOrNull(rowState[p.key]);
               return s + (n ?? 0);

@@ -1,0 +1,36 @@
+{
+  "summary": "Iter 179 backend + frontend testing complete. All 6 integration tests in test_iter179_roster_override_integration.py pass against live API. All 4 file-content guard tests in test_iter179_manual_roster_spots_override.py pass. Frontend end-to-end persistence verified: manual roster_spots=19 with active row summing to 14 survives save + full page reload (the original bug repro is fixed).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter179_roster_override_integration.py",
+    "/app/backend/tests/test_iter179_manual_roster_spots_override.py",
+    "/app/test_reports/pytest/iter179_integration.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Iter179 guard in /app/backend/routes/leagues.py:1508 correctly uses `body` (from model_dump(exclude_unset=True)) to distinguish explicit-null vs unset for roster_spots. This is the right approach.",
+    "Frontend uses /commissioner/settings (not /commissioner/{league_id}) — review_request hint was misleading; the route is the global commissioner settings page that reads the active league from localStorage/useActiveLeague hook.",
+    "Minor: useActiveLeague defaulted to 'Ice Kings Head-to-Head' even when localStorage.activeLeagueId was set to Frozen Dynasty. Not a bug for iter179 scope, but worth verifying that the hook actually honors a manually set activeLeagueId in localStorage (test data shows it falls back to first league)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter179_roster_override_integration.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (10/10 tests pass: 6 integration + 4 file-content)",
+    "frontend": "100% (smoke + persistence flow verified)"
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (commissioner, owns Frozen Dynasty league 69e46af167999bfb85c3962a)",
+  "seed_data_creation": "None. Test fixture snapshots & restores baseline for Frozen Dynasty league. Frontend test mutated 'Ice Kings Head-to-Head' (69e46af167999bfb85c39628) — cleaned up to roster_spots=20 post-test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Bug fixes #1–#5 from review_request all verified. Backend curl/pytest covers: (a) manual roster_spots=19 with active sum 20 → 19 wins (no derived flag), (b) omitting roster_spots → active sum derives roster_spots=20 with derived:true, (c) minors_spots=95 + taxi_squad_size=100 accepted, (d) minors_spots=101 → 422, (e) taxi_squad_size=101 → 422, (f) GET-after-PUT preserves all 4 breakdown rows including blank {} placeholders. Frontend smoke confirmed: max=100 on prospect pool & taxi inputs, active/bench/bench2 rows render; minors row hidden when minors_enabled=false (correct behaviour — hasExistingData guard would surface it if minors had saved cells). End-to-end persistence: filled active cells C=3 LW=3 RW=3 D=4 G=1 (sum=14), manual roster_spots=19, clicked Save → toast 'Saved 3 roster settings', navigated away + full page reload → all values retained (roster_spots stayed 19, NOT auto-overwritten to 14). The reported 'menu seems to reset' bug is fixed.",
+  "rca of the issue": "Pre-fix: PUT /api/leagues/{id} derivation block always recomputed roster_spots from sum of position_breakdown.active row, overwriting the commissioner's manually typed value. Fix at /app/backend/routes/leagues.py:1508 — guard the derivation with `if ('position_breakdown' in body) and ('roster_spots' not in body)` so manual roster_spots in the same payload wins. Frontend RostersTab.tsx also widened row-visibility predicate to `(rule || hasExistingData)` so rows with saved data stay visible even after toggling bench_spots=0 / minors_enabled=false. Reproduction verified via /app/backend/tests/test_iter179_roster_override_integration.py::test_manual_roster_spots_wins_over_derived_active_sum and via Playwright end-to-end test."
+}

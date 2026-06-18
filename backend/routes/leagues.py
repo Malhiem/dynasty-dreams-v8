@@ -1499,11 +1499,13 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
 
     # ── Iter 176: derive `roster_spots` from `position_breakdown.active`
     # whenever the commissioner has set per-position caps for the
-    # Active Roster section. The breakdown row is the single source of
-    # truth for active roster size — any drift between this and the
-    # explicit `roster_spots` input is reconciled here so direct API
-    # callers behave identically to the UI.
-    if "position_breakdown" in update or "position_breakdown" in body:
+    # Active Roster section AND did NOT explicitly include
+    # `roster_spots` in the same payload. (Iter 176/179: Manual input wins
+    # — without this guard the commissioner's typed value
+    # e.g. 19 with caps summing to 20 was silently overwritten by the
+    # derived sum, which is the root cause of "the Position Breakdown
+    # menu is not changing the sizes of rosters" bug.)
+    if ("position_breakdown" in body) and ("roster_spots" not in body):
         breakdown = (
             update.get("position_breakdown")
             or body.get("position_breakdown")
