@@ -89,3 +89,29 @@ def test_minors_row_visibility_includes_prospect_pool_and_bench():
     assert "!!(league as any).minors_enabled" in src
     assert "(parseIntOrNull(prospectPool) || 0) > 0" in src
     assert "|| benchOn;" in src
+
+
+def test_roster_config_context_provider_wires_subtables():
+    """Iter 180 (fix) — the StatsTable / CapHitTable / etc. are
+    top-level components and therefore can't see the shadowed
+    LEAGUE_ROSTER_SLOTS inside PlayerRoster. The fix is a React
+    Context (`RosterConfigContext`) that the Provider mounts around
+    the entire PlayerRoster render, and that each sub-table consumes
+    via a destructured `useRosterConfig()` call. This is what
+    actually wires the dynamic slot list to the rendered DOM."""
+    src = PLAYER_ROSTER.read_text()
+    # Context + hook defined.
+    assert "const RosterConfigContext = createContext" in src
+    assert "const useRosterConfig = ()" in src
+    # Provider mounted at the top of PlayerRoster's render.
+    assert "<RosterConfigContext.Provider" in src
+    # Each sub-table reads the context with the legacy names so its
+    # body doesn't need to be rewritten.
+    occurrences = src.count(
+        "const { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig } = useRosterConfig();"
+    )
+    # StatsTable + FantasyPointsTable + MatchupScheduleTable + FullScheduleTable
+    # → at least 4 sub-tables pull the context.
+    assert occurrences >= 4, (
+        f"expected ≥ 4 sub-tables to consume RosterConfigContext, found {occurrences}"
+    )

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef, createContext, useContext } from "react";
 import { useLocation } from "react-router-dom";
 import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings, Megaphone, Shield } from "lucide-react";
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
@@ -184,6 +184,28 @@ const buildLeagueRosterSlots = (
   }
   // Empty breakdown after coercion — fall back to default
   return slots.length > 0 ? slots : LEAGUE_ROSTER_SLOTS;
+};
+
+// Iter 180 (fix) — React Context so the StatsTable, StatsTableSeason,
+// StatsTableRange (etc.) sub-components — which live at module scope
+// and therefore can't see the shadowed `LEAGUE_ROSTER_SLOTS` /
+// `sectionConfig` inside PlayerRoster — still pick up the dynamic,
+// league-driven values. The Provider lives at the top of
+// PlayerRoster's render and broadcasts the memoized config. Falls
+// back to module defaults when no Provider is mounted (for callers
+// that render these tables standalone outside the dashboard).
+type RosterConfigShape = {
+  slots: RosterSlot[];
+  sections: Record<RosterSection, { label: string; color: string; borderColor: string; maxSlots: number }>;
+};
+const RosterConfigContext = createContext<RosterConfigShape | null>(null);
+const useRosterConfig = (): RosterConfigShape => {
+  const ctx = useContext(RosterConfigContext);
+  if (ctx) return ctx;
+  // Defaults — only hit when a sub-table is rendered outside the
+  // PlayerRoster provider (rare). Keep behaviour identical to the
+  // legacy hardcoded constants.
+  return { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig as any };
 };
 
 // ── Mock Data ──────────────────────────────────────────
@@ -1393,6 +1415,12 @@ const PlayerRoster = ({
   const showFpts = visibleColumns.has("FPTS");
 
   return (
+    <RosterConfigContext.Provider
+      value={useMemo(
+        () => ({ slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig as any }),
+        [LEAGUE_ROSTER_SLOTS, sectionConfig],
+      )}
+    >
     <>
       <div className="stat-card p-0 overflow-hidden">
         {/* ── Iter 103: Lineup Lock Status Banner ── */}
@@ -1753,6 +1781,7 @@ const PlayerRoster = ({
         />
       )}
     </>
+    </RosterConfigContext.Provider>
   );
 };
 
@@ -1857,6 +1886,11 @@ const StatsTable = ({
   showPositionEligibility?: boolean;
   lineupWarnings?: Record<string, any[]>;
 } & HighlightProps) => {
+  // Iter 180 (fix) — pick up league-driven roster slots from
+  // PlayerRoster's RosterConfigContext. Destructured names match the
+  // legacy module-level constants so the rest of this component's
+  // references just resolve to the dynamic values.
+  const { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig } = useRosterConfig();
   const displayCategories = visibleCategories ?? rosterStatCategories;
   const statCols = displayCategories.length;
   // Columns: POS, Player, Age, Cap [+ FPTS, FP/G when showFpts] + statCols + OWN%? + Actions
@@ -2163,6 +2197,8 @@ const FantasyPointsTable = ({
   showPositionEligibility?: boolean;
   scoringConfig?: any;
 } & HighlightProps) => {
+  // Iter 180 (fix) — see RosterConfigContext comment in StatsTable.
+  const { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig } = useRosterConfig();
   const defaultCategories = ["G", "A", "PPP", "SOG", "HIT", "BLK", "PIM", "+/-"];
   const categories = visibleCategories ?? defaultCategories;
 
@@ -2333,6 +2369,8 @@ const MatchupScheduleTable = ({
   commissionerMode?: boolean;
   showPositionEligibility?: boolean;
 } & HighlightProps) => {
+  // Iter 180 (fix) — see RosterConfigContext comment in StatsTable.
+  const { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig } = useRosterConfig();
   const matchupDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
   return (
@@ -2449,6 +2487,8 @@ const FullScheduleTable = ({
   commissionerMode?: boolean;
   showPositionEligibility?: boolean;
 } & HighlightProps) => {
+  // Iter 180 (fix) — see RosterConfigContext comment in StatsTable.
+  const { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig } = useRosterConfig();
   const allPlayers = Object.values(grouped).flat();
   const scheduleLength = allPlayers[0]?.schedule.length ?? 82;
 
@@ -2617,6 +2657,8 @@ const EmptySlotRow = ({ slot, colSpan }: { slot: RosterSlot; colSpan: number }) 
 // ── Open Slot Row (clickable, appears when player highlighted) ──
 
 const OpenSlotRow = ({ section, colSpan, onMoveToSection }: { section: RosterSection; colSpan: number; onMoveToSection: (section: RosterSection) => void }) => {
+  // Iter 180 (fix) — see RosterConfigContext comment in StatsTable.
+  const { sections: sectionConfig } = useRosterConfig();
   const config = sectionConfig[section];
   const label = section === "bench" ? "BEN" : section === "ir" ? "IR" : "M";
   return (
@@ -2684,6 +2726,8 @@ const PlayerRow = ({
   const ineligibility = checkIneligibility(player);
   const hasWarnings = Array.isArray(warnings) && warnings.length > 0;
   const warningMessages = hasWarnings ? warnings!.map((w: any) => w.message).filter(Boolean) : [];
+  // Iter 180 (fix) — see RosterConfigContext comment in StatsTable.
+  const { sections: sectionConfig } = useRosterConfig();
 
   return (
     <tr

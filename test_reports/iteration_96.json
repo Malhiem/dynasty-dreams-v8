@@ -1,0 +1,44 @@
+{
+  "summary": "Iter180 RETEST after RosterConfigContext fix. Feature #1 dynamic STARTING ROSTER for Ice Kings now CORRECTLY renders 18 skater slots (4C + 4LW + 4RW + 6D) — bug from iter95 is FIXED. Feature #1b league-switch re-derivation works (Frozen Dynasty renders its own 7-slot legacy default, distinct from Ice Kings). FAAB search filter + clear button work. Cancel button + precheck-drop-picker could not be exercised live in this run (see issues).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Waivers My Claims tab — Cancel button visibility",
+        "issue": "Tab header shows 'My Claims (38)' and the list renders 38 rows, but ZERO Cancel buttons render (data-testid='waiver-claim-cancel-{id}' count=0). Code at /app/frontend/src/lovable/pages/Waivers.tsx:590 only renders Cancel when claim.status === 'pending'. Data inspection needed — likely the local claim.status string is not exactly 'pending' (could be capitalised, or backend returns 'Pending'/'PENDING'/'open'). Without a Cancel button, feature #3b (cancel hits DELETE /api/waivers/claims/{id}) cannot be exercised by users. Should normalise status comparison: claim.status?.toLowerCase() === 'pending'.",
+        "affected_selectors": ["[data-testid^='waiver-claim-cancel-']"]
+      },
+      {
+        "flow": "Waivers — Claim modal precheck drop picker",
+        "issue": "Clicked 'Claim' on an Available player while Ice Kings team is in Illegal (23/19 roster) state expected to trigger precheck.requires_drop=true. Modal did not open with [data-testid='precheck-drop-picker'] or [data-testid='precheck-drop-select'] visible in DOM (both count=0). Either (a) modal did not open at all on click, or (b) precheck didn't return requires_drop, or (c) the picker testid is only present on a sub-step that wasn't reached. Could not verify feature #6 end-to-end."
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter180_integration.py",
+    "/app/backend/tests/test_iter180b_faab_polish.py"
+  ],
+  "action_items": [
+    "Normalise claim.status comparison in Waivers.tsx ~L590 to case-insensitive (e.g., String(claim.status).toLowerCase() === 'pending') OR confirm the backend payload uses the exact 'pending' literal. Without this, the Cancel button never renders and feature #3b regresses for users with pending claims.",
+    "Manually exercise the precheck-drop-picker by clicking Claim while team is full — confirm the modal renders the testid and DELETE call fires when proceeding through the drop flow. Optional: add a Playwright deep-path test that opens the claim modal, asserts precheck-drop-select options match user's roster.",
+    "(Optional regression guard) Add a Playwright test that pins iter180 fix: PUT a known position_breakdown.active and assert exact slot label counts in DOM (C, LW, RW, D occurrences) on /team — caught the iter95 regression manually."
+  ],
+  "critical_code_review_comments": [
+    "PlayerRoster.tsx is now 2900+ lines and still growing — split into focused modules (slot-rendering, section-config, lineup-validation, drag-drop, mock-data helpers, sub-tables). The RosterConfigContext workaround is elegant but only papers over the architectural issue of huge file with multiple module-scope components.",
+    "useRosterConfig hook fallback (line 208) silently returns the module default LEAGUE_ROSTER_SLOTS when no provider is mounted. Add a console.warn in dev mode so a missing provider is loud (would have caught iter95 regression earlier).",
+    "Waivers.tsx claim.status equality check is a brittle exact-string compare; consider a Set/enum or lowercased comparison to avoid silent UI regressions when the backend payload shape changes."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (per iter95 — no re-run needed)",
+    "frontend": "Feature #1: PASS (18 skater slots on Ice Kings /team confirmed via DOM scrape: 4C+4LW+4RW+6D+12BEN+2G = 33 rows total). Feature #1b: PASS (Frozen Dynasty re-renders to its own slot config — proves context re-derivation on league switch). Feature #1c: PASS by inference (main /team table on Ice Kings uses the context-derived slot list which is shared with FantasyPointsTable/MatchupScheduleTable/FullScheduleTable per iter180 file-content tests; could not click each sub-tab in time but no regression observed on the default tab). Feature #2: NOT BROWSER-TESTED in this run (/league-administration returns 404; iter95 already visually confirmed Bench Reserve removed + Minors visible). Features #3 (search filter + clear): PASS — 20 shown → 0 shown when typing 'Crosby', clear restores. Feature #4 empty-state testids: NOT EXERCISED (My Claims and History tabs are populated for Chris Zarek; empty-state path could not be triggered). Feature #5 (Cancel button): FAIL — 38 pending-claim rows render but zero Cancel buttons (claim.status string mismatch suspected). Feature #6 (precheck-drop-picker): NOT VERIFIED — picker testid not found in DOM after clicking Claim."
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! — owner of Zarek's Frozen in Ice Kings Head-to-Head (69e46af167999bfb85c39628) and commissioner of Frozen Dynasty (69e46af167999bfb85c3962a). Ice Kings already has position_breakdown.active={C:4,LW:4,RW:4,D:6,G:1} and roster_spots=19 persisted; team is in Illegal status (23 players).",
+  "seed_data_creation": "None this run. Existing test claims (38 in My Claims, several in History) were not modified. No DB writes performed.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter180 feature #1 RosterConfigContext FIX IS CONFIRMED WORKING — Ice Kings /team STARTING ROSTER renders 4C+4LW+4RW+6D = 18 skater slot rows + 12 BEN + 2 G as expected. The shadowed LEAGUE_ROSTER_SLOTS via context is reaching the sub-components at module scope. Frozen Dynasty correctly renders its OWN distinct slot config (7-slot legacy default) — proving the memoised context re-derives on league switch. REMAINING WORK for the main agent: (1) Fix Waivers.tsx ~L590 to handle claim.status case-insensitively so the Cancel button renders for users with pending claims (38 claims show on My Claims tab for Chris Zarek but zero Cancel buttons render). (2) Manually verify the precheck-drop-picker flow on /waivers when team is in Illegal state — automated probe could not find [data-testid='precheck-drop-picker'] after clicking Claim. (3) Optional: split PlayerRoster.tsx (2900+ lines) into smaller modules.",
+  "rca of the issue": "Iter95 RCA (PRE-FIX): module-scope sub-components (StatsTable/CapHitTable/FantasyPointsTable/MatchupScheduleTable/FullScheduleTable/OpenSlotRow/PlayerRow) closed over the module-level LEAGUE_ROSTER_SLOTS constant and could NOT see the shadowed in-component constant declared inside PlayerRoster's function body. ITER180 FIX (CONFIRMED): main agent introduced RosterConfigContext + useRosterConfig hook; provider mounts at top of PlayerRoster render with the memoised dynamic slot list; each sub-component now reads via useRosterConfig() destructure. DOM scrape on /team for Ice Kings confirms the fix works — 18 skater starting slots render in correct (C×4, LW×4, RW×4, D×6) order. NEW FINDING this run: Waivers.tsx Cancel button never renders because claim.status comparison is brittle exact-string ('pending'); 38 rows visible but 0 cancel testids in DOM. This is an unrelated FAAB polish regression that the main agent should address before claiming feature #5 done."
+}
