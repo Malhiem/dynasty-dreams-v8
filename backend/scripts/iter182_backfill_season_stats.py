@@ -64,31 +64,63 @@ async def _fetch_player(client: httpx.AsyncClient, nhl_id: int) -> dict | None:
 
 
 def _rows_from_landing(landing: dict, player_id: str, nhl_id: int) -> list[dict]:
-    """Extract one row per (season, season_type) pair we care about."""
-    rows = []
+    """Extract one row per (season, season_type) pair we care about.
+
+    Iter 182.1 fix — NHL `seasonTotals` may contain multiple rows
+    per (season, gameType) when a player:
+      • Was traded mid-season (one row per team).
+      • Played for a non-NHL league in the off-season (e.g. KHL,
+        IIHF World Championship — these have `leagueAbbrev != "NHL"`).
+    The original last-wins upsert silently overwrote McDavid's real
+    NHL 82-game row with his 4-game international tournament row.
+    Fix: filter to `leagueAbbrev == "NHL"` first, then sum any
+    remaining multi-team rows so a mid-season trade still shows the
+    full year's stats.
+    """
+    bucket: dict[tuple[str, str], dict] = {}
     for st in (landing.get("seasonTotals") or []):
         season_code = st.get("season")
         gt = st.get("gameTypeId")
+        league_abbr = (st.get("leagueAbbrev") or "").upper()
         if season_code not in SEASON_MAP or gt not in GAME_TYPE_MAP:
             continue
-        rows.append({
-            "player_id": player_id,
-            "nhl_id": nhl_id,
-            "season": SEASON_MAP[season_code],
-            "season_type": GAME_TYPE_MAP[gt],
-            "games_played": int(st.get("gamesPlayed") or 0),
-            "goals": int(st.get("goals") or 0),
-            "assists": int(st.get("assists") or 0),
-            "points": int(st.get("points") or 0),
-            "plus_minus": int(st.get("plusMinus") or 0),
-            "sog": int(st.get("shots") or 0),
-            "ppg": int(st.get("powerPlayGoals") or 0),
-            "shg": int(st.get("shorthandedGoals") or 0),
-            "hits": int(st.get("hits") or 0),
-            "blocks": int(st.get("blockedShots") or 0),
-            "synced_at": datetime.now(timezone.utc),
-        })
-    return rows
+        # Only NHL stats count — international / minor-league rows
+        # would otherwise overwrite the canonical NHL row.
+        if league_abbr != "NHL":
+            continue
+        key = (SEASON_MAP[season_code], GAME_TYPE_MAP[gt])
+        row = bucket.get(key)
+        if row is None:
+            row = {
+                "player_id": player_id,
+                "nhl_id": nhl_id,
+                "season": key[0],
+                "season_type": key[1],
+                "games_played": 0,
+                "goals": 0,
+                "assists": 0,
+                "points": 0,
+                "plus_minus": 0,
+                "sog": 0,
+                "ppg": 0,
+                "shg": 0,
+                "hits": 0,
+                "blocks": 0,
+                "synced_at": datetime.now(timezone.utc),
+            }
+            bucket[key] = row
+        # Aggregate (mid-season trade across two NHL teams = 2 rows).
+        row["games_played"] += int(st.get("gamesPlayed") or 0)
+        row["goals"] += int(st.get("goals") or 0)
+        row["assists"] += int(st.get("assists") or 0)
+        row["points"] += int(st.get("points") or 0)
+        row["plus_minus"] += int(st.get("plusMinus") or 0)
+        row["sog"] += int(st.get("shots") or 0)
+        row["ppg"] += int(st.get("powerPlayGoals") or 0)
+        row["shg"] += int(st.get("shorthandedGoals") or 0)
+        row["hits"] += int(st.get("hits") or 0)
+        row["blocks"] += int(st.get("blockedShots") or 0)
+    return list(bucket.values())
 
 
 async def main():

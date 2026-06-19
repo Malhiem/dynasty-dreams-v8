@@ -56,12 +56,23 @@ def test_badge_component_exists_and_is_render_safe_for_falsy_eligible():
 
 def test_badge_imported_by_every_player_surface():
     """The badge must surface wherever a player can appear so the
-    Minors indicator is consistent across the app."""
-    surfaces = [PLAYER_ROSTER, WAIVERS, DEPTH_CHART, TRADE_BLOCK, TRANSACTIONS, PLAYERS_PAGE]
-    for f in surfaces:
-        src = f.read_text()
-        assert "MinorEligibleBadge" in src, f"badge import missing in {f}"
-        assert "<MinorEligibleBadge" in src, f"badge JSX missing in {f}"
+    Minors indicator is consistent across the app.
+
+    Iter 183 — PlayerRoster's PlayerRow component was extracted to
+    `player-roster/sub-components.tsx`. The badge import/usage now
+    lives in EITHER file; we treat them as equivalent for this
+    assertion."""
+    PLAYER_ROSTER_SUB = Path("/app/frontend/src/lovable/components/dashboard/player-roster/sub-components.tsx")
+    surfaces = [(PLAYER_ROSTER, PLAYER_ROSTER_SUB), WAIVERS, DEPTH_CHART, TRADE_BLOCK, TRANSACTIONS, PLAYERS_PAGE]
+    for entry in surfaces:
+        if isinstance(entry, tuple):
+            srcs = [f.read_text() for f in entry]
+            assert any("MinorEligibleBadge" in s for s in srcs), f"badge import missing in {entry}"
+            assert any("<MinorEligibleBadge" in s for s in srcs), f"badge JSX missing in {entry}"
+        else:
+            src = entry.read_text()
+            assert "MinorEligibleBadge" in src, f"badge import missing in {entry}"
+            assert "<MinorEligibleBadge" in src, f"badge JSX missing in {entry}"
 
 
 def test_backend_waivers_available_returns_minor_eligible():

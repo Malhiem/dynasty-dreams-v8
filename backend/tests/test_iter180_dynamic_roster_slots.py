@@ -92,26 +92,39 @@ def test_minors_row_visibility_includes_prospect_pool_and_bench():
 
 
 def test_roster_config_context_provider_wires_subtables():
-    """Iter 180 (fix) — the StatsTable / CapHitTable / etc. are
-    top-level components and therefore can't see the shadowed
-    LEAGUE_ROSTER_SLOTS inside PlayerRoster. The fix is a React
-    Context (`RosterConfigContext`) that the Provider mounts around
-    the entire PlayerRoster render, and that each sub-table consumes
-    via a destructured `useRosterConfig()` call. This is what
-    actually wires the dynamic slot list to the rendered DOM."""
-    src = PLAYER_ROSTER.read_text()
-    # Context + hook defined.
-    assert "const RosterConfigContext = createContext" in src
-    assert "const useRosterConfig = ()" in src
+    """The StatsTable / CapHitTable / etc. cannot see the shadowed
+    LEAGUE_ROSTER_SLOTS inside PlayerRoster directly. The fix is a
+    React Context (`RosterConfigContext`) that the Provider mounts
+    around the entire PlayerRoster render, and that each sub-table
+    consumes via a destructured `useRosterConfig()` call. This is
+    what actually wires the dynamic slot list to the rendered DOM.
+
+    Iter 183 — sub-components moved to
+    `player-roster/sub-components.tsx`; counting consumers across
+    BOTH files."""
+    src_main = PLAYER_ROSTER.read_text()
+    sub_path = Path("/app/frontend/src/lovable/components/dashboard/player-roster/sub-components.tsx")
+    src_sub = sub_path.read_text() if sub_path.exists() else ""
+    # Context + hook defined (either in internals.tsx or PlayerRoster.tsx).
+    internals_path = Path("/app/frontend/src/lovable/components/dashboard/player-roster/internals.tsx")
+    src_internals = internals_path.read_text() if internals_path.exists() else ""
+    assert ("const RosterConfigContext = createContext" in src_main
+            or "export const RosterConfigContext = createContext" in src_internals)
+    assert ("const useRosterConfig = ()" in src_main
+            or "export const useRosterConfig = ()" in src_internals)
     # Provider mounted at the top of PlayerRoster's render.
-    assert "<RosterConfigContext.Provider" in src
+    assert ("<RosterConfigContext.Provider" in src_main
+            or "<SharedRosterConfigContext.Provider" in src_main)
     # Each sub-table reads the context with the legacy names so its
     # body doesn't need to be rewritten.
-    occurrences = src.count(
-        "const { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig } = useRosterConfig();"
+    occurrences = (
+        src_main.count(
+            "const { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig } = useRosterConfig();"
+        )
+        + src_sub.count(
+            "const { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig } = useRosterConfig();"
+        )
     )
-    # StatsTable + FantasyPointsTable + MatchupScheduleTable + FullScheduleTable
-    # → at least 4 sub-tables pull the context.
     assert occurrences >= 4, (
         f"expected ≥ 4 sub-tables to consume RosterConfigContext, found {occurrences}"
     )
