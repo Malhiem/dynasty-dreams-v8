@@ -195,7 +195,7 @@ export const StatsTable = ({
               // Render all slots, with empty rows for unfilled ones
               const filledSlotIds = new Set(sectionPlayers.map(p => p.rosterSlotId));
               return (
-                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length}>
+                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
                   {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (player) {
@@ -220,7 +220,7 @@ export const StatsTable = ({
 
             // Non-starting sections: always show header even if empty
             return (
-              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length}>
+              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
                 {sectionPlayers.length === 0 ? (
                   <>
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -515,7 +515,7 @@ export const FantasyPointsTable = ({
 
             if (section === "starting") {
               return (
-                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length}>
+                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
                   {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (!player) return <EmptySlotRow key={slot.id} slot={slot} colSpan={colSpan} />;
@@ -544,7 +544,7 @@ export const FantasyPointsTable = ({
             }
 
             return (
-              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length}>
+              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
                 {sectionPlayers.length === 0 ? (
                   <>
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -671,7 +671,7 @@ export const MatchupScheduleTable = ({
 
             if (section === "starting") {
               return (
-                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length}>
+                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
                   {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (!player) return <EmptySlotRow key={slot.id} slot={slot} colSpan={colSpan} />;
@@ -682,7 +682,7 @@ export const MatchupScheduleTable = ({
             }
 
             return (
-              <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length}>
+              <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
                 {sectionPlayers.length === 0 ? (
                   <>
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -786,7 +786,7 @@ export const FullScheduleTable = ({
 
               if (section === "starting") {
                 return (
-                  <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length}>
+                  <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
                     {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                       const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                       if (!player) return <EmptySlotRow key={slot.id} slot={slot} colSpan={colSpan} />;
@@ -797,7 +797,7 @@ export const FullScheduleTable = ({
               }
 
               return (
-                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length}>
+                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
                   {sectionPlayers.length === 0 ? (
                     <>
                       {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -835,6 +835,13 @@ export const SectionGroup = ({
   fptsColIndex,
   section,
   playerCount,
+  // Iter 184 — per-section stats summary props. When all three are
+  // provided we render a collapsible summary row beneath the header
+  // showing average fpts/game over the chosen timeframe plus the
+  // top + bottom performer in this section.
+  sectionPlayers,
+  sectionTimeframe,
+  getPlayerPoints,
 }: {
   config: { label: string; color: string; borderColor: string; maxSlots: number };
   children: React.ReactNode;
@@ -843,11 +850,46 @@ export const SectionGroup = ({
   fptsColIndex?: number;
   section?: RosterSection;
   playerCount?: number;
+  sectionPlayers?: Player[];
+  sectionTimeframe?: string;
+  getPlayerPoints?: (p: Player) => number;
 }) => {
   const showCount = section && section !== "starting" && playerCount !== undefined;
   const headerLabel = showCount
     ? `${config.label} - ${playerCount}/${config.maxSlots}`
     : config.label;
+
+  // Iter 184 — Compute summary metrics. Uses `statsByPeriod` (which
+  // backend populates per timeframe) when present, else falls back
+  // to the season points. Only renders when caller supplied props.
+  const summary = useMemo(() => {
+    if (!sectionPlayers || sectionPlayers.length === 0 || !getPlayerPoints) {
+      return null;
+    }
+    const tf = sectionTimeframe || "season";
+    const ptsFor = (p: Player): number => {
+      const periodPts = (p.statsByPeriod && p.statsByPeriod[tf]);
+      if (typeof periodPts === "number" && periodPts > 0) return periodPts;
+      return getPlayerPoints(p);
+    };
+    const ranked = [...sectionPlayers]
+      .map((p) => ({ p, fpts: ptsFor(p), gp: Math.max(1, p.gamesPlayed || 1) }))
+      .sort((a, b) => (b.fpts / b.gp) - (a.fpts / a.gp));
+    if (ranked.length === 0) return null;
+    const avg = ranked.reduce((s, r) => s + (r.fpts / r.gp), 0) / ranked.length;
+    return {
+      avg: avg.toFixed(1),
+      top: ranked[0],
+      bottom: ranked[ranked.length - 1],
+      timeframeLabel: ({
+        "7d": "Last 7 Days", "14d": "Last 14 Days",
+        "30d": "Last 30 Days", "60d": "Last 60 Days",
+        "season": "Season",
+      } as Record<string, string>)[tf] || tf,
+    };
+  }, [sectionPlayers, sectionTimeframe, getPlayerPoints]);
+
+  const [expanded, setExpanded] = useState<boolean>(false);
 
   return (
     <>
@@ -855,9 +897,22 @@ export const SectionGroup = ({
         {fptsColIndex !== undefined && sectionTotal !== undefined ? (
           <>
             <td colSpan={fptsColIndex} className={`px-4 py-2 ${config.color} border-l-4 ${config.borderColor}`}>
-              <span className="text-xs font-bold uppercase tracking-wider text-foreground">
-                {headerLabel}
-              </span>
+              <button
+                type="button"
+                className="flex items-center gap-2 text-left"
+                onClick={() => setExpanded((x) => !x)}
+                data-testid={`section-toggle-${section || "default"}`}
+              >
+                <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                  {headerLabel}
+                </span>
+                {summary && (
+                  <span className="text-[10px] font-normal text-muted-foreground normal-case tracking-normal">
+                    · Avg {summary.avg} fpts/g · {summary.timeframeLabel}
+                    <ChevronRight className={`inline h-3 w-3 ml-1 transition-transform ${expanded ? "rotate-90" : ""}`} />
+                  </span>
+                )}
+              </button>
             </td>
             <td className={`px-2 py-2 text-right ${config.color}`}>
               <span className="text-xs font-semibold text-primary">{sectionTotal} pts</span>
@@ -867,9 +922,22 @@ export const SectionGroup = ({
         ) : (
           <td colSpan={colSpan} className={`px-4 py-2 ${config.color} border-l-4 ${config.borderColor}`}>
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-foreground">
-                {headerLabel}
-              </span>
+              <button
+                type="button"
+                className="flex items-center gap-2 text-left"
+                onClick={() => setExpanded((x) => !x)}
+                data-testid={`section-toggle-${section || "default"}`}
+              >
+                <span className="text-xs font-bold uppercase tracking-wider text-foreground">
+                  {headerLabel}
+                </span>
+                {summary && (
+                  <span className="text-[10px] font-normal text-muted-foreground normal-case tracking-normal">
+                    · Avg {summary.avg} fpts/g · {summary.timeframeLabel}
+                    <ChevronRight className={`inline h-3 w-3 ml-1 transition-transform ${expanded ? "rotate-90" : ""}`} />
+                  </span>
+                )}
+              </button>
               {sectionTotal !== undefined && (
                 <span className="text-xs font-semibold text-primary">{sectionTotal} pts</span>
               )}
@@ -877,6 +945,23 @@ export const SectionGroup = ({
           </td>
         )}
       </tr>
+      {expanded && summary && (
+        <tr data-testid={`section-summary-${section || "default"}`}>
+          <td colSpan={colSpan} className={`px-4 py-2 ${config.color} border-l-4 ${config.borderColor} text-[11px]`}>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-muted-foreground">
+              <span className="font-semibold text-emerald-300">
+                ↑ Top: {summary.top.p.name} — {(summary.top.fpts / summary.top.gp).toFixed(1)} fpts/g
+              </span>
+              <span className="font-semibold text-rose-300">
+                ↓ Low: {summary.bottom.p.name} — {(summary.bottom.fpts / summary.bottom.gp).toFixed(1)} fpts/g
+              </span>
+              <span className="opacity-70">
+                ({sectionPlayers!.length} player{sectionPlayers!.length === 1 ? "" : "s"} · {summary.timeframeLabel})
+              </span>
+            </div>
+          </td>
+        </tr>
+      )}
       {children}
     </>
   );
