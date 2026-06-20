@@ -978,6 +978,13 @@ const PlayerRoster = ({
   const [cardPlayer, setCardPlayer] = useState<Player | null>(null);
   const [cardOpen, setCardOpen] = useState(false);
   const [viewFilter, setViewFilter] = useState<ViewFilter>("season");
+  // Iter 185 — Section-summary timeframe. Powers the per-section
+  // "Avg X fpts/g · {timeframe}" + top/bottom performer pill in
+  // every SectionGroup. Independent from `viewFilter` (which drives
+  // the stat-table column selection) — owners often want to see
+  // Cap-Hit / Season Stats columns while assessing Last 7 Days
+  // trade upside per section.
+  const [sectionTimeframe, setSectionTimeframe] = useState<string>("season");
   const [selectedWeek, setSelectedWeek] = useState<number>(currentWeek);
   const [highlightedPlayerId, setHighlightedPlayerId] = useState<number | null>(null);
   const [visibleColumns, setVisibleColumns] = useState<Set<string>>(() => new Set([...rosterStatCategories, "FPTS"]));
@@ -1663,13 +1670,13 @@ const PlayerRoster = ({
 
         {/* ── Table ── */}
         {effectiveFilter === "full-schedule" ? (
-          <FullScheduleTable grouped={grouped} onTrade={handleOpenTrade} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} showPositionEligibility={showPositionEligibility} />
+          <FullScheduleTable sectionTimeframe={sectionTimeframe} grouped={grouped} onTrade={handleOpenTrade} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} showPositionEligibility={showPositionEligibility} />
         ) : effectiveFilter === "matchup-schedule" ? (
-          <MatchupScheduleTable grouped={grouped} onTrade={handleOpenTrade} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} showPositionEligibility={showPositionEligibility} />
+          <MatchupScheduleTable sectionTimeframe={sectionTimeframe} grouped={grouped} onTrade={handleOpenTrade} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} showPositionEligibility={showPositionEligibility} />
         ) : effectiveFilter === "fantasy-points" ? (
-          <FantasyPointsTable grouped={grouped} onTrade={handleOpenTrade} getSectionTotal={getSectionTotal} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} visibleCategories={filteredStatCategories} showFpts={showFpts} showPositionEligibility={showPositionEligibility} scoringConfig={scoringConfig} />
+          <FantasyPointsTable sectionTimeframe={sectionTimeframe} grouped={grouped} onTrade={handleOpenTrade} getSectionTotal={getSectionTotal} onPlayerClick={handleOpenCard} isOwnTeam={isOwnTeam} commissionerMode={commissionerMode} highlightedPlayerId={highlightedPlayerId} highlightedPositions={highlightedPositions} onToggleHighlight={handleToggleHighlight} onMoveToSection={handleMoveToSection} sectionCounts={currentSectionCounts} visibleCategories={filteredStatCategories} showFpts={showFpts} showPositionEligibility={showPositionEligibility} scoringConfig={scoringConfig} />
         ) : effectiveFilter === "cap-hit" ? (
-          <CapHitTable grouped={grouped} onPlayerClick={handleOpenCard} />
+          <CapHitTable sectionTimeframe={sectionTimeframe} grouped={grouped} onPlayerClick={handleOpenCard} />
         ) : (
           <StatsTable
             grouped={grouped}
