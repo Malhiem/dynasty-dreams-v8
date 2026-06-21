@@ -39,6 +39,9 @@ import { Separator } from "@/components/ui/separator";
 // reference them by name. (The bottom of this file ALSO re-exports
 // them so external consumers of PlayerRoster keep working.)
 import { DailyGoaliePicker } from "./player-roster/DailyGoaliePicker";
+import { LineupLockBanner } from "./player-roster/LineupLockBanner";
+import { EmergencyBudgetChip } from "./player-roster/EmergencyBudgetChip";
+import { RosterColumnSettings } from "./player-roster/RosterColumnSettings";
 import {
   StatsTable,
   CapHitTable,
@@ -878,52 +881,10 @@ const PlayerRoster = ({
     >
     <>
       <div className="stat-card p-0 overflow-hidden">
-        {/* ── Iter 103: Lineup Lock Status Banner ── */}
-        {lockStatus?.locked && (
-          <div
-            className="px-4 py-2.5 border-b border-amber-500/40 bg-amber-500/10 flex items-start gap-2"
-            data-testid="lineup-lock-banner"
-          >
-            <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <div className="text-xs font-semibold text-amber-300">
-                Lineup locked — saves will be rejected
-              </div>
-              <div className="text-[11px] text-amber-200/80 leading-snug">
-                {lockStatus.reason}
-                {lockStatus.next_unlock_iso && (
-                  <span className="ml-1 opacity-80">
-                    Unlocks at {new Date(lockStatus.next_unlock_iso).toLocaleString(undefined, {
-                      weekday: "short",
-                      hour: "numeric",
-                      minute: "2-digit",
-                    })}.
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-        {/* ── Iter 106: Emergency Swaps chip ── */}
-        {emergencyBudget?.enabled && (
-          <div className="px-4 py-2 border-b border-border bg-secondary/20 flex items-center gap-2 flex-wrap"
-               data-testid="emergency-swap-chip">
-            <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-              emergencyBudget.remaining > 0
-                ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
-                : "bg-rose-500/10 text-rose-300 border-rose-500/30"
-            }`}>
-              Used {emergencyBudget.used} / {emergencyBudget.budget} emergency swaps {emergencyBudget.scope_label}
-            </span>
-            {emergencyBudget.remaining > 0 ? (
-              <span className="text-[11px] text-muted-foreground">
-                ({emergencyBudget.remaining} left{emergencyBudget.scope === "per_season" ? " for the season" : ""})
-              </span>
-            ) : (
-              <span className="text-[11px] text-rose-300/80">No swaps remaining — wait for the next reset.</span>
-            )}
-          </div>
-        )}
+        {/* ── Iter 103/187: Lineup Lock Status Banner ── */}
+        <LineupLockBanner lockStatus={lockStatus} />
+        {/* ── Iter 106/187: Emergency Swaps chip ── */}
+        <EmergencyBudgetChip emergencyBudget={emergencyBudget} />
         {/* ── Iter 106: Per-Day Goalie Picker ── */}
         {leagueGoalieCfg?.differentiate_goalie_scoring && leagueGoalieCfg?.goalie_scoring_method === "daily_lock" && (
           <DailyGoaliePicker
@@ -1069,129 +1030,13 @@ const PlayerRoster = ({
                 </TooltipProvider>
               )}
 
-              {/* Column Settings Cog */}
-              <Popover>
-                <PopoverTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-foreground">
-                    <Settings className="h-4 w-4" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[280px] p-0" align="start">
-                  <div className="p-3 border-b border-border">
-                    <p className="text-sm font-semibold">Roster Display Settings</p>
-                    <p className="text-xs text-muted-foreground">Choose which columns to show</p>
-                  </div>
-
-                  {/* Tracked Categories */}
-                  <div className="p-3 space-y-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Tracked Categories</p>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {trackedCategories.map(cat => (
-                        <label key={cat} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-secondary/50 rounded px-1.5 py-1">
-                          <Checkbox
-                            checked={visibleColumns.has(cat)}
-                            onCheckedChange={(checked) => {
-                              setVisibleColumns(prev => {
-                                const next = new Set(prev);
-                                if (checked) next.add(cat); else next.delete(cat);
-                                return next;
-                              });
-                            }}
-                            className="h-3.5 w-3.5"
-                          />
-                          <span className="font-medium">{cat}</span>
-                          <span className="text-muted-foreground ml-auto text-[10px]">{categoryLabels[cat]}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  {/* Untracked Categories */}
-                  <div className="p-3 space-y-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Untracked Categories</p>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {untrackedCategories.map(cat => (
-                        <label key={cat} className="flex items-center gap-2 text-xs cursor-pointer hover:bg-secondary/50 rounded px-1.5 py-1">
-                          <Checkbox
-                            checked={visibleColumns.has(cat)}
-                            onCheckedChange={(checked) => {
-                              setVisibleColumns(prev => {
-                                const next = new Set(prev);
-                                if (checked) next.add(cat); else next.delete(cat);
-                                return next;
-                              });
-                            }}
-                            className="h-3.5 w-3.5"
-                          />
-                          <span className="font-medium">{cat}</span>
-                          <span className="text-muted-foreground ml-auto text-[10px]">{categoryLabels[cat]}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  {/* Fantasy Points & Position Eligibility */}
-                  <div className="p-3 space-y-2">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Display Options</p>
-                    <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-secondary/50 rounded px-1.5 py-1">
-                      <Checkbox
-                        checked={visibleColumns.has("FPTS")}
-                        onCheckedChange={(checked) => {
-                          setVisibleColumns(prev => {
-                            const next = new Set(prev);
-                            if (checked) next.add("FPTS"); else next.delete("FPTS");
-                            return next;
-                          });
-                        }}
-                        className="h-3.5 w-3.5"
-                      />
-                      <span className="font-medium">Fantasy Points</span>
-                    </label>
-                    <label className="flex items-center gap-2 text-xs cursor-pointer hover:bg-secondary/50 rounded px-1.5 py-1">
-                      <Checkbox
-                        checked={showPositionEligibility}
-                        onCheckedChange={(checked) => setShowPositionEligibility(!!checked)}
-                        className="h-3.5 w-3.5"
-                      />
-                      <span className="font-medium">Position Eligibility</span>
-                    </label>
-                  </div>
-
-                  <Separator />
-
-                  {/* Quick toggles */}
-                  <div className="p-3 flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-[10px] h-6 px-2"
-                      onClick={() => setVisibleColumns(new Set([...allStatCategories, "FPTS"]))}
-                    >
-                      Show All
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-[10px] h-6 px-2"
-                      onClick={() => setVisibleColumns(new Set([...trackedCategories, "FPTS"]))}
-                    >
-                      Tracked Only
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-[10px] h-6 px-2"
-                      onClick={() => setVisibleColumns(new Set(["FPTS"]))}
-                    >
-                      Points Only
-                    </Button>
-                  </div>
-                </PopoverContent>
-              </Popover>
+              {/* Iter 187 — Column Settings Cog extracted */}
+              <RosterColumnSettings
+                visibleColumns={visibleColumns}
+                setVisibleColumns={setVisibleColumns}
+                showPositionEligibility={showPositionEligibility}
+                setShowPositionEligibility={setShowPositionEligibility}
+              />
             </div>
             <span className="text-xs text-muted-foreground bg-secondary px-2 py-1 rounded-full">
               {players.length} Players

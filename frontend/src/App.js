@@ -51,6 +51,8 @@ import LovableFranchiseRecords from "@/lovable/pages/FranchiseRecords";
 import LovableAnalytics from "@/lovable/pages/Analytics";
 import LovableChat from "@/lovable/pages/Chat";
 import LovableCommissionerSettings from "@/lovable/pages/CommissionerSettings";
+// Iter 187 — Commissioner Ops Console
+import OpsConsolePage from "@/lovable/pages/commissioner/OpsConsole";
 import LovableLeaguePayments from "@/lovable/pages/LeaguePayments";
 import LovablePlayerNews from "@/lovable/pages/PlayerNews";
 import LovablePlayerPool from "@/lovable/pages/PlayerPool";
@@ -118,6 +120,8 @@ function App() {
           <Route path="/analytics" element={<ProtectedRoute><LovableAnalytics /></ProtectedRoute>} />
           <Route path="/chat" element={<ProtectedRoute><LovableChat /></ProtectedRoute>} />
           <Route path="/commissioner/settings" element={<ProtectedRoute><LovableCommissionerSettings /></ProtectedRoute>} />
+          {/* Iter 187 — Commissioner Ops Console */}
+          <Route path="/commissioner/ops-console" element={<ProtectedRoute><OpsConsolePage /></ProtectedRoute>} />
           <Route path="/league-payments" element={<ProtectedRoute><LovableLeaguePayments /></ProtectedRoute>} />
           <Route path="/player-news" element={<ProtectedRoute><LovablePlayerNews /></ProtectedRoute>} />
           <Route path="/player-pool" element={<ProtectedRoute><LovablePlayerPool /></ProtectedRoute>} />

@@ -29,6 +29,63 @@ async def _log_activity(*a, **kw): return await _deps["log_activity"](*a, **kw)
 async def _broadcast(*a, **kw): return await _deps["broadcast_to_room"](*a, **kw)
 
 
+# ── Iter 187 — Shared cap-hit synthesizer ─────────────────────
+# Mirror of the roster page synthesizer so the precheck + the
+# `place_waiver_claim` endpoint use identical math when deciding
+# whether a claim would put a team over the league salary cap.
+# Returns the synthetic cap hit (USD) for a free-agent / waiver
+# player. Stops the math from drifting across the codebase.
+def _synth_player_cap_hit(player: dict) -> int:
+    p_points = int(player.get("points") or 0)
+    p_fp = float(player.get("fantasy_points") or 0)
+    is_g = (player.get("player_type") == "goalie") or (player.get("position") == "G")
+    if is_g:
+        addition = 9_500_000 if p_fp >= 300 else (
+            6_000_000 if p_fp >= 180 else (3_500_000 if p_fp >= 100 else 1_200_000)
+        )
+    elif p_points >= 100:
+        addition = 11_000_000 + min(2_500_000, (p_points - 100) * 70_000)
+    elif p_points >= 60:
+        addition = 6_000_000 + (p_points - 60) * 100_000
+    elif p_points >= 30:
+        addition = 3_000_000 + (p_points - 30) * 90_000
+    elif p_points >= 10:
+        addition = 1_500_000 + (p_points - 10) * 75_000
+    else:
+        addition = 950_000 + p_points * 40_000
+    return int(min(13_500_000, max(775_000, addition)))
+
+
+def _claim_would_breach_cap(
+    league: dict,
+    team: dict,
+    player: dict,
+    drop_player: dict | None,
+) -> tuple[bool, int, int]:
+    """Returns (would_breach, projected_cap, cap_total).
+
+    `would_breach` is True only when the league enforces a salary cap
+    AND the claim's projected cap (current `salary_used` + claimed
+    player's synthetic cap hit − optional dropped player's cap hit)
+    exceeds the cap. The drop offsets cap so commissioners can keep
+    teams cap-compliant with simultaneous claim+drop transactions.
+    """
+    if not bool(league.get("salary_cap_enabled")):
+        return (False, 0, 0)
+    cap_total = float(league.get("salary_cap") or 0)
+    if cap_total <= 0:
+        return (False, 0, 0)
+    cap_used = float(team.get("salary_used") or 0)
+    addition = _synth_player_cap_hit(player)
+    relief = 0
+    if drop_player is not None:
+        dp_contract = (drop_player.get("contract") or {})
+        # Real contracts have explicit `salary`, mock/free agents may not.
+        relief = int(dp_contract.get("salary") or _synth_player_cap_hit(drop_player))
+    projected = int(cap_used + addition - relief)
+    return (projected > int(cap_total), projected, int(cap_total))
+
+
 @router.get("/waivers/available")
 async def get_waiver_players(
     league_id: Optional[str] = None,
@@ -417,6 +474,32 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     if input.bid_amount > team_budget["remaining"]:
         raise HTTPException(status_code=400, detail=f"Insufficient FAAB budget. Remaining: ${team_budget['remaining']}")
 
+    # ── Iter 187 — Salary cap enforcement ────────────────────────────
+    # When the league has `salary_cap_enabled`, reject the claim if
+    # adding the player (offset by any drop) would exceed the cap. Returns
+    # HTTP 422 (semantic validation error) with a structured payload so
+    # the Waivers claim modal can surface a focused error UI instead of
+    # a generic 400.
+    drop_doc = None
+    if input.drop_player_id:
+        drop_doc = await db.players.find_one({"_id": ObjectId(input.drop_player_id)})
+    breach, projected, cap_total = _claim_would_breach_cap(league, team, player, drop_doc)
+    if breach:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "cap_breach",
+                "message": (
+                    f"Adding {player.get('name', 'this player')} would put you at "
+                    f"${projected / 1_000_000:.2f}M, exceeding the "
+                    f"${cap_total / 1_000_000:.1f}M cap."
+                ),
+                "projected": projected,
+                "cap_total": cap_total,
+                "suggested_action": "drop",
+            },
+        )
+
     existing = await db.waiver_claims.find_one({
         "team_id": str(team["_id"]),
         "player_id": input.player_id,
@@ -467,7 +550,9 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     }
 
     if input.drop_player_id:
-        drop_player = await db.players.find_one({"_id": ObjectId(input.drop_player_id)})
+        # Iter 187 — already fetched above for cap math; reuse to avoid
+        # a second round-trip.
+        drop_player = drop_doc
         if drop_player:
             claim_doc["drop_player_name"] = drop_player["name"]
 
