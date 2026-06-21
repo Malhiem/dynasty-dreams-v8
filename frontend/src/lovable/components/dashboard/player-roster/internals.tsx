@@ -265,6 +265,97 @@ export const shouldShowOpenSlotForSection = (
   return true;
 };
 
+// ── Iter 186 — Contract type pill colour + roster violations ──
+// Extracted from PlayerRoster.tsx so all roster-domain helpers live
+// in one place. The PlayerRoster component re-exports them for any
+// downstream consumer that historically imported off the parent.
+
+export const getContractTypeColor = (type: any) => {
+  switch (type) {
+    case "ELC": return "bg-success/20 text-success";
+    case "RFA": return "bg-accent/20 text-accent";
+    case "UFA": return "bg-destructive/20 text-destructive";
+    case "Signed": return "bg-primary/20 text-primary";
+    default: return "bg-secondary text-secondary-foreground";
+  }
+};
+
+export const getRosterViolations = (
+  playerList: Player[],
+): { player: Player; reason: string }[] => {
+  const violations: { player: Player; reason: string }[] = [];
+  playerList.forEach((p) => {
+    const info = checkIneligibility(p);
+    if (info.isIneligible) {
+      violations.push({ player: p, reason: info.reason });
+    }
+  });
+  // Check section over-limits
+  const sectionCounts: Record<RosterSection, number> = {
+    starting: 0, bench: 0, ir: 0, minors: 0, goalies: 0, goalies_minors: 0,
+  };
+  playerList.forEach((p) => { sectionCounts[p.rosterSection]++; });
+  if (sectionCounts.bench > sectionConfig.bench.maxSlots) {
+    violations.push({
+      player: playerList.find((p) => p.rosterSection === "bench")!,
+      reason: `Bench over limit (${sectionCounts.bench}/${sectionConfig.bench.maxSlots})`,
+    });
+  }
+  if (sectionCounts.ir > sectionConfig.ir.maxSlots) {
+    violations.push({
+      player: playerList.find((p) => p.rosterSection === "ir")!,
+      reason: `IR over limit (${sectionCounts.ir}/${sectionConfig.ir.maxSlots})`,
+    });
+  }
+  if (sectionCounts.minors > sectionConfig.minors.maxSlots) {
+    violations.push({
+      player: playerList.find((p) => p.rosterSection === "minors")!,
+      reason: `Minors over limit (${sectionCounts.minors}/${sectionConfig.minors.maxSlots})`,
+    });
+  }
+  // Check for empty starting roster slots
+  const filledSlotIds = new Set(
+    playerList.filter((p) => p.rosterSection === "starting" && p.rosterSlotId).map((p) => p.rosterSlotId),
+  );
+  LEAGUE_ROSTER_SLOTS.forEach((slot) => {
+    if (!filledSlotIds.has(slot.id)) {
+      const anyPlayer = playerList[0];
+      if (anyPlayer) {
+        violations.push({ player: anyPlayer, reason: `Empty starting position: ${slot.label} (${slot.id})` });
+      }
+    }
+  });
+  return violations;
+};
+
+// Check if any possible swap can reduce violations
+export const canOwnerFixViolations = (playerList: Player[]): boolean => {
+  const currentViolationCount = getRosterViolations(playerList).length;
+  if (currentViolationCount === 0) return true;
+
+  for (let i = 0; i < playerList.length; i++) {
+    for (let j = i + 1; j < playerList.length; j++) {
+      const a = playerList[i];
+      const b = playerList[j];
+      // Simulate swap
+      const simulated = playerList.map((p) => {
+        if (p.id === a.id) return { ...p, rosterSection: b.rosterSection, rosterSlotId: b.rosterSlotId };
+        if (p.id === b.id) return { ...p, rosterSection: a.rosterSection, rosterSlotId: a.rosterSlotId };
+        return p;
+      });
+      // Check slot eligibility
+      const aSlot = b.rosterSlotId ? LEAGUE_ROSTER_SLOTS.find((s) => s.id === b.rosterSlotId) : null;
+      const bSlot = a.rosterSlotId ? LEAGUE_ROSTER_SLOTS.find((s) => s.id === a.rosterSlotId) : null;
+      const aCanFill = aSlot ? aSlot.eligiblePositions.some((ep) => a.eligiblePositions.includes(ep)) : true;
+      const bCanFill = bSlot ? bSlot.eligiblePositions.some((ep) => b.eligiblePositions.includes(ep)) : true;
+      if (!aCanFill || !bCanFill) continue;
+
+      if (getRosterViolations(simulated).length < currentViolationCount) return true;
+    }
+  }
+  return false;
+};
+
 // ── Roster Config Context (iter 180) ──────────────────
 
 export const RosterConfigContext = createContext<RosterConfigShape | null>(null);

@@ -199,7 +199,7 @@ export const StatsTable = ({
               // Render all slots, with empty rows for unfilled ones
               const filledSlotIds = new Set(sectionPlayers.map(p => p.rosterSlotId));
               return (
-                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
+                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                   {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (player) {
@@ -224,7 +224,7 @@ export const StatsTable = ({
 
             // Non-starting sections: always show header even if empty
             return (
-              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
+              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                 {sectionPlayers.length === 0 ? (
                   <>
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -519,7 +519,7 @@ export const FantasyPointsTable = ({
 
             if (section === "starting") {
               return (
-                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
+                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                   {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (!player) return <EmptySlotRow key={slot.id} slot={slot} colSpan={colSpan} />;
@@ -548,7 +548,7 @@ export const FantasyPointsTable = ({
             }
 
             return (
-              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
+              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                 {sectionPlayers.length === 0 ? (
                   <>
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -675,7 +675,7 @@ export const MatchupScheduleTable = ({
 
             if (section === "starting") {
               return (
-                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
+                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                   {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (!player) return <EmptySlotRow key={slot.id} slot={slot} colSpan={colSpan} />;
@@ -686,7 +686,7 @@ export const MatchupScheduleTable = ({
             }
 
             return (
-              <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
+              <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                 {sectionPlayers.length === 0 ? (
                   <>
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -790,7 +790,7 @@ export const FullScheduleTable = ({
 
               if (section === "starting") {
                 return (
-                  <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
+                  <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                     {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                       const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                       if (!player) return <EmptySlotRow key={slot.id} slot={slot} colSpan={colSpan} />;
@@ -801,7 +801,7 @@ export const FullScheduleTable = ({
               }
 
               return (
-                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
+                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                   {sectionPlayers.length === 0 ? (
                     <>
                       {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -846,6 +846,11 @@ export const SectionGroup = ({
   sectionPlayers,
   sectionTimeframe,
   getPlayerPoints,
+  // Iter 186 — open the PlayerTradeModal pre-seeded with the
+  // section's top / bottom performer. Already plumbed through every
+  // stat table; just forwarded here so the summary row can expose
+  // quick-jump buttons.
+  onTrade,
 }: {
   config: { label: string; color: string; borderColor: string; maxSlots: number };
   children: React.ReactNode;
@@ -857,6 +862,7 @@ export const SectionGroup = ({
   sectionPlayers?: Player[];
   sectionTimeframe?: string;
   getPlayerPoints?: (p: Player) => number;
+  onTrade?: (p: Player) => void;
 }) => {
   const showCount = section && section !== "starting" && playerCount !== undefined;
   const headerLabel = showCount
@@ -964,9 +970,31 @@ export const SectionGroup = ({
               <span className="font-semibold text-emerald-300">
                 ↑ Top: {summary.top.p.name} — {(summary.top.fpts / summary.top.gp).toFixed(1)} fpts/g
               </span>
+              {onTrade && (
+                <button
+                  type="button"
+                  data-testid={`section-trade-top-${section || "default"}`}
+                  onClick={(e) => { e.stopPropagation(); onTrade(summary.top.p); }}
+                  className="text-[10px] font-semibold bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-200 border border-emerald-500/40 rounded px-1.5 py-0.5 transition-colors"
+                  title={`Shop ${summary.top.p.name} on the trade block`}
+                >
+                  📈 Trade ↑ Top
+                </button>
+              )}
               <span className="font-semibold text-rose-300">
                 ↓ Low: {summary.bottom.p.name} — {(summary.bottom.fpts / summary.bottom.gp).toFixed(1)} fpts/g
               </span>
+              {onTrade && summary.top.p.id !== summary.bottom.p.id && (
+                <button
+                  type="button"
+                  data-testid={`section-trade-low-${section || "default"}`}
+                  onClick={(e) => { e.stopPropagation(); onTrade(summary.bottom.p); }}
+                  className="text-[10px] font-semibold bg-rose-600/20 hover:bg-rose-600/40 text-rose-200 border border-rose-500/40 rounded px-1.5 py-0.5 transition-colors"
+                  title={`Package ${summary.bottom.p.name} in a trade`}
+                >
+                  🔻 Trade ↓ Low
+                </button>
+              )}
               <span className="opacity-70">
                 ({sectionPlayers!.length} player{sectionPlayers!.length === 1 ? "" : "s"} · {summary.timeframeLabel})
               </span>
