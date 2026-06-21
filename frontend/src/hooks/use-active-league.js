@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useEffect, useState } from 'react';
-import api from '@/lib/api';
+import api, { invalidateApiCache } from '@/lib/api';
 
 const STORAGE_KEY = 'dd_active_league_id';
 
@@ -67,7 +67,7 @@ export function useActiveLeague() {
     init();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [teamsReloadKey]);  // Iter 194 — react to reloadMyLeagues() bumps
 
   useEffect(() => {
     if (!leagueId) { setLeague(null); setLeagueTeams([]); setMyTeam(null); return; }
@@ -100,5 +100,13 @@ export function useActiveLeague() {
   const reloadTeams = () => setTeamsReloadKey(k => k + 1);
   const reloadLeague = () => setTeamsReloadKey(k => k + 1);
 
-  return { loading, myLeagues, myTeamsByLeague, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague };
+  // Iter 194 — Force-refresh the league list (used by the global
+  // league switcher when the dropdown is opened so new memberships
+  // show up immediately instead of waiting for the GET cache TTL).
+  const reloadMyLeagues = () => {
+    invalidateApiCache(/leagues\?my_leagues=true/);
+    setTeamsReloadKey(k => k + 1);
+  };
+
+  return { loading, myLeagues, myTeamsByLeague, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague, reloadMyLeagues };
 }

@@ -24,7 +24,7 @@ import { useActiveLeague } from "@/hooks/use-active-league";
  *          Dashboard" link as the only other way to navigate across leagues.
  */
 export default function CurrentLeagueDropdown() {
-  const { myLeagues, myTeamsByLeague, leagueId, league, myTeam, switchLeague } =
+  const { myLeagues, myTeamsByLeague, leagueId, league, myTeam, switchLeague, reloadMyLeagues } =
     useActiveLeague();
 
   // Render nothing until we have at least one league. Avoids flashing an empty
@@ -34,7 +34,14 @@ export default function CurrentLeagueDropdown() {
   const triggerTeam = myTeam;
 
   return (
-    <DropdownMenu>
+    <DropdownMenu
+      onOpenChange={(open) => {
+        // Iter 194 — Force-refresh the league list every time the
+        // switcher opens so newly-joined / newly-created leagues show
+        // up immediately instead of waiting for the GET-cache TTL.
+        if (open && typeof reloadMyLeagues === "function") reloadMyLeagues();
+      }}
+    >
       <DropdownMenuTrigger asChild>
         <button
           data-testid="current-league-dropdown-trigger"

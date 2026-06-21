@@ -19,6 +19,14 @@ const api = axios.create({
 const INFLIGHT_GETS = new Map();      // key → Promise<AxiosResponse>
 const GET_CACHE = new Map();          // key → { ts, data, status, headers }
 const CACHE_TTL_MS = 30_000;
+// Iter 194 — Some endpoints (the user's own league list) must stay
+// snappy when a new league is created/joined elsewhere; we shorten
+// their TTL aggressively so the dashboard + global league switcher
+// pick up new memberships within 5 s instead of 30 s.
+const SHORT_TTL_PATTERNS = [
+  /\/leagues\?my_leagues=true/,
+];
+const SHORT_TTL_MS = 5_000;
 const DEDUPABLE_PATTERNS = [
   /\/leagues\?my_leagues=true/,
   /\/teams\?league_id=[^&]+$/,
@@ -55,7 +63,8 @@ api.interceptors.request.use((config) => {
 
   // Serve from cache if fresh
   const cached = GET_CACHE.get(key);
-  if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
+  const ttl = SHORT_TTL_PATTERNS.some((re) => re.test(key)) ? SHORT_TTL_MS : CACHE_TTL_MS;
+  if (cached && Date.now() - cached.ts < ttl) {
     // axios adapter that returns the cached response synchronously
     config.adapter = () => Promise.resolve({
       data: cached.data,
