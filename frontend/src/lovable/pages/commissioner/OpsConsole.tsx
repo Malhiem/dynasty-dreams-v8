@@ -19,7 +19,7 @@
  *   3. Counters refresh on mount + after force-process — no polling
  *      yet to keep the page light. Future: SSE / WebSocket fan-out.
  */
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { toast } from "sonner";
-import { Clock, AlertTriangle, ShieldOff, Gavel, Zap, ListChecks, RefreshCw, ScrollText } from "lucide-react";
+import { Clock, AlertTriangle, ShieldOff, Gavel, Zap, ListChecks, RefreshCw, ScrollText, Download } from "lucide-react";
 
 function fmtRemainingMs(ms) {
   if (ms == null) return null;
@@ -60,6 +60,12 @@ export default function OpsConsole() {
   // tied to the global Refresh button to keep payload light.
   const [auditEntries, setAuditEntries] = useState([]);
   const [auditLoading, setAuditLoading] = useState(false);
+
+  // Iter 190 — Event-type filter chips above the audit log. Empty
+  // Set means "show all". We always include every distinct type
+  // observed so the chip strip rebuilds itself as new events appear.
+  const [auditFilter, setAuditFilter] = useState(new Set());
+  const [exportingCsv, setExportingCsv] = useState(false);
 
   const load = async () => {
     if (!leagueId) return;
@@ -105,7 +111,88 @@ export default function OpsConsole() {
     }
   };
 
+  // Iter 190 — Distinct event_types in the current audit window —
+  // drives the chip strip. Sorted alpha so the strip doesn't shuffle
+  // on every refresh.
+  const distinctEventTypes = useMemo(() => {
+    const s = new Set();
+    (auditEntries || []).forEach((e) => e?.event_type && s.add(e.event_type));
+    return [...s].sort();
+  }, [auditEntries]);
+
+  // Iter 190 — Apply chip filter client-side. The server endpoint
+  // also accepts `event_types=`, but filtering here keeps the strip
+  // responsive without an extra round-trip on every chip click.
+  const filteredAuditEntries = useMemo(() => {
+    if (auditFilter.size === 0) return auditEntries;
+    return (auditEntries || []).filter((e) => auditFilter.has(e?.event_type));
+  }, [auditEntries, auditFilter]);
+
+  const toggleAuditFilter = (t) => {
+    setAuditFilter((prev) => {
+      const next = new Set(prev);
+      if (next.has(t)) next.delete(t); else next.add(t);
+      return next;
+    });
+  };
+
+  // Iter 190 — CSV export. Triggers a download via a temporary
+  // anchor; auth header is forwarded by the axios `api` client.
+  // We hit the endpoint with `responseType:"blob"` and assemble the
+  // Object URL on the fly.
+  const exportCsv = async () => {
+    if (!leagueId) return;
+    setExportingCsv(true);
+    try {
+      const r = await api.get(`/leagues/${leagueId}/ops-audit-log`, {
+        params: { format: "csv", limit: 1000 },
+        responseType: "blob",
+      });
+      const blob = new Blob([r.data], { type: "text/csv" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `audit-log-${leagueId}-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success("Audit log exported");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "CSV export failed");
+    } finally {
+      setExportingCsv(false);
+    }
+  };
+
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [leagueId]);
+
+  // ── Iter 190 — 30s polling tied to document.visibilityState ──
+  // We avoid hammering the API when the tab is hidden by skipping
+  // the tick whenever the document isn't `visible`. When the tab
+  // becomes visible again we fire one immediate refresh so the user
+  // doesn't have to wait for the next 30s tick.
+  useEffect(() => {
+    if (!leagueId) return undefined;
+    const tick = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      // Quiet refresh — don't toggle the global "loading" spinner
+      // every 30s; the Refresh button is still the canonical loud
+      // refresh for explicit user intent.
+      api.get(`/leagues/${leagueId}/ops-summary`).then((r) => setSummary(r.data)).catch(() => {});
+      loadAuditLog();
+    };
+    const id = setInterval(tick, 30_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [leagueId]);
 
   const onForceProcess = async () => {
     if (!leagueId) return;
@@ -301,24 +388,75 @@ export default function OpsConsole() {
         </CardContent>
       </Card>
 
-      {/* ── Iter 189 — Audit log card ─────────────────── */}
+      {/* ── Iter 189/190 — Audit log card ─────────────────── */}
       <Card data-testid="ops-audit-log-card">
-        <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardHeader className="flex flex-row items-center justify-between pb-2 flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <ScrollText className="h-4 w-4 text-muted-foreground" />
             <CardTitle className="text-base">Audit log</CardTitle>
             <span className="text-xs text-muted-foreground">last 20</span>
+            {auditLoading && <span className="text-xs text-muted-foreground">Loading…</span>}
           </div>
-          {auditLoading && <span className="text-xs text-muted-foreground">Loading…</span>}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportCsv}
+            disabled={exportingCsv || auditEntries.length === 0}
+            data-testid="ops-audit-export-csv"
+          >
+            <Download className={`h-3.5 w-3.5 mr-1 ${exportingCsv ? "animate-pulse" : ""}`} />
+            {exportingCsv ? "Exporting…" : "Export CSV"}
+          </Button>
         </CardHeader>
-        <CardContent className="pt-2">
-          {auditEntries.length === 0 ? (
+        <CardContent className="pt-2 space-y-3">
+          {/* Iter 190 — Event-type filter chip strip */}
+          {distinctEventTypes.length > 0 && (
+            <div
+              className="flex flex-wrap gap-1.5 pb-2 border-b border-border/40"
+              data-testid="ops-audit-filter-chips"
+            >
+              <button
+                type="button"
+                onClick={() => setAuditFilter(new Set())}
+                className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border transition-colors ${
+                  auditFilter.size === 0
+                    ? "bg-primary/20 text-primary border-primary/40"
+                    : "bg-secondary text-muted-foreground border-border hover:border-primary/40"
+                }`}
+                data-testid="ops-audit-filter-chip-all"
+              >
+                All
+              </button>
+              {distinctEventTypes.map((t) => {
+                const active = auditFilter.has(t);
+                return (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => toggleAuditFilter(t)}
+                    className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border transition-colors ${
+                      active
+                        ? "bg-primary/20 text-primary border-primary/40"
+                        : "bg-secondary text-muted-foreground border-border hover:border-primary/40"
+                    }`}
+                    data-testid={`ops-audit-filter-chip-${t}`}
+                  >
+                    {t}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {filteredAuditEntries.length === 0 ? (
             <p className="text-xs text-muted-foreground py-4 text-center" data-testid="ops-audit-log-empty">
-              No activity recorded yet.
+              {auditEntries.length === 0
+                ? "No activity recorded yet."
+                : "No entries match the selected filters."}
             </p>
           ) : (
             <ul className="divide-y divide-border/50">
-              {auditEntries.map((entry) => (
+              {filteredAuditEntries.map((entry) => (
                 <li
                   key={entry.id}
                   className="py-2 flex items-start gap-3 text-sm"
@@ -329,8 +467,18 @@ export default function OpsConsole() {
                   </Badge>
                   <div className="flex-1">
                     <p className="leading-snug">{entry.message}</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {entry.created_at ? new Date(entry.created_at).toLocaleString() : "—"}
+                    <p className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-2">
+                      <span>{entry.created_at ? new Date(entry.created_at).toLocaleString() : "—"}</span>
+                      {/* Iter 190 — User attribution */}
+                      {entry.user_name && (
+                        <span className="text-foreground/70">· by {entry.user_name}</span>
+                      )}
+                      {!entry.user_name && entry.user_email && (
+                        <span className="text-foreground/60">· by {entry.user_email}</span>
+                      )}
+                      {!entry.user_name && !entry.user_email && entry.user_id && (
+                        <span className="text-muted-foreground/60">· system</span>
+                      )}
                     </p>
                   </div>
                 </li>

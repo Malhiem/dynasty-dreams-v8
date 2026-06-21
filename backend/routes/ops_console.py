@@ -8,11 +8,14 @@ process waivers, cancel trades, etc.) flow through the existing
 endpoints in `routes/waivers.py` + `routes/trades.py` so the audit
 trail stays unified.
 """
+import csv
+import io
 from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 
 router = APIRouter()
 _deps: dict = {}
@@ -220,10 +223,20 @@ async def get_ops_audit_log(
     request: Request,
     limit: int = 50,
     event_types: Optional[str] = None,
+    format: Optional[str] = None,
 ):
     """Returns the most recent `activity_feed` entries for a league,
     optionally filtered by event_type (comma-separated). Used by the
     Ops Console audit log card.
+
+    Iter 190:
+      * Per-entry user attribution — when `user_id` is set we batch-
+        fetch the user docs once and decorate each entry with the
+        owner's display name + email (no extra round-trips per row).
+      * `?format=csv` returns a streaming CSV download instead of
+        JSON so commissioners can archive seasons. CSV columns:
+        created_at, event_type, user_name, user_email, message,
+        metadata_json.
 
     Returns max `limit=50` entries sorted by `created_at` desc.
     """
@@ -235,23 +248,102 @@ async def get_ops_audit_log(
     if not _user_is_commish(league, user):
         raise HTTPException(status_code=403, detail="Commissioner access required")
 
-    limit = max(1, min(int(limit or 50), 100))
+    # For CSV exports allow up to 1000 rows so a whole season fits.
+    is_csv = (format or "").lower() == "csv"
+    cap = 1000 if is_csv else 100
+    limit = max(1, min(int(limit or 50), cap))
+
     q: dict = {"league_id": league_id}
     if event_types:
         types = [t.strip() for t in event_types.split(",") if t.strip()]
         if types:
             q["event_type"] = {"$in": types}
     docs = await db.activity_feed.find(q).sort("created_at", -1).limit(limit).to_list(limit)
+
+    # Iter 190 — Batch user attribution. Collect distinct user_ids
+    # then resolve them in one query so the response is constant-time
+    # regardless of how many entries we render.
+    user_ids = list({d.get("user_id") for d in docs if d.get("user_id")})
+    user_lookup: dict = {}
+    if user_ids:
+        try:
+            # User ids in `activity_feed` are stored as raw `str(ObjectId)`
+            # (see `log_activity` in server.py), so query both forms to
+            # be defensive across collections that diverged historically.
+            object_ids = []
+            for uid in user_ids:
+                try:
+                    object_ids.append(ObjectId(uid))
+                except Exception:
+                    pass
+            users_q = {"$or": [
+                {"_id": {"$in": object_ids}} if object_ids else {"_id": None},
+                {"_id": {"$in": user_ids}},
+            ]}
+            users = await db.users.find(users_q).to_list(len(user_ids) + 5)
+            for u in users:
+                key = str(u.get("_id"))
+                user_lookup[key] = {
+                    "name": (u.get("first_name") or "") + (
+                        " " + u.get("last_name") if u.get("last_name") else ""
+                    ).strip() or u.get("username") or u.get("email") or "—",
+                    "email": u.get("email"),
+                }
+        except Exception:
+            # Attribution is non-essential; degrade gracefully.
+            user_lookup = {}
+
+    def _attribution(uid):
+        if not uid:
+            return {"user_name": None, "user_email": None}
+        hit = user_lookup.get(str(uid)) or {}
+        return {
+            "user_name": (hit.get("name") or "").strip() or None,
+            "user_email": hit.get("email"),
+        }
+
+    if is_csv:
+        # Stream a small CSV so big seasons don't balloon memory.
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow([
+            "created_at", "event_type", "user_name", "user_email", "message", "metadata_json",
+        ])
+        for d in docs:
+            created_at = d.get("created_at")
+            if hasattr(created_at, "isoformat"):
+                created_at = created_at.isoformat()
+            attr = _attribution(d.get("user_id"))
+            import json as _json
+            writer.writerow([
+                created_at or "",
+                d.get("event_type") or "",
+                attr["user_name"] or "",
+                attr["user_email"] or "",
+                d.get("message") or "",
+                _json.dumps(d.get("metadata") or {}, separators=(",", ":"), default=str),
+            ])
+        buf.seek(0)
+        filename = f"audit-log-{league_id}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}.csv"
+        return StreamingResponse(
+            iter([buf.read()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     entries = []
     for d in docs:
         created_at = d.get("created_at")
         if hasattr(created_at, "isoformat"):
             created_at = created_at.isoformat()
+        attr = _attribution(d.get("user_id"))
         entries.append({
             "id": str(d.get("_id")),
             "event_type": d.get("event_type"),
             "message": d.get("message"),
             "user_id": d.get("user_id"),
+            "user_name": attr["user_name"],
+            "user_email": attr["user_email"],
             "metadata": d.get("metadata") or {},
             "created_at": created_at,
         })

@@ -84,7 +84,12 @@ def test_ops_audit_log_endpoint_exists():
     # Pulls from activity_feed sorted desc with a limit
     assert "db.activity_feed.find(q).sort(\"created_at\", -1)" in src
     # Caps the limit so abusive callers can't drain the collection.
-    assert "min(int(limit or 50), 100)" in src
+    # Iter 190 broadened the JSON cap to a CSV/JSON split (1000/100)
+    # but the JSON path still tops out at 100 entries.
+    assert ("min(int(limit or 50), 100)" in src) or (
+        'cap = 1000 if is_csv else 100' in src
+        and "min(int(limit or 50), cap)" in src
+    )
 
 
 def test_ops_console_renders_audit_log_card():
