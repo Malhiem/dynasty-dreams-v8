@@ -128,6 +128,15 @@ class LeagueResponse(BaseModel):
     roster_lock_day: Optional[str] = None
     roster_lock_second_day: Optional[str] = None
     lineup_lock_minutes_before: Optional[int] = None
+    # Iter 194b — In-draft pick trade review settings (iter 191)
+    draft_trade_review_minutes: Optional[int] = None
+    draft_trade_post_delay_action: Optional[str] = None
+    # Iter 195 (Task B) — Per-week playoff matchup length overrides.
+    # Format: { "1": {"length_weeks": 1}, "2": {"length_weeks": 2}, ... }
+    # Keys are playoff round numbers (1=wildcard / quarterfinals,
+    # max=finals). When omitted the bracket falls back to the
+    # league-wide `matchup_length_days`.
+    playoff_week_lengths: Optional[dict] = None
     playoff_roster_lock_override: Optional[bool] = None
     playoff_roster_lock_type: Optional[str] = None
     playoff_roster_lock_day: Optional[str] = None
@@ -286,6 +295,10 @@ def _league_to_response(league: dict) -> LeagueResponse:
         roster_lock_day=league.get("roster_lock_day"),
         roster_lock_second_day=league.get("roster_lock_second_day"),
         lineup_lock_minutes_before=league.get("lineup_lock_minutes_before"),
+        # Iter 194b / 195
+        draft_trade_review_minutes=league.get("draft_trade_review_minutes"),
+        draft_trade_post_delay_action=league.get("draft_trade_post_delay_action"),
+        playoff_week_lengths=league.get("playoff_week_lengths"),
         playoff_roster_lock_override=league.get("playoff_roster_lock_override"),
         playoff_roster_lock_type=league.get("playoff_roster_lock_type"),
         playoff_roster_lock_day=league.get("playoff_roster_lock_day"),
@@ -1390,6 +1403,15 @@ class LeagueUpdate(BaseModel):
     # NHL stats-counting window (commissioner picks an NHL-calendar week range)
     stats_count_start_date: Optional[str] = Field(default=None, max_length=20)
     stats_count_end_date: Optional[str] = Field(default=None, max_length=20)
+    # Iter 194b — In-draft pick trade review configuration (iter 191)
+    draft_trade_review_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
+    draft_trade_post_delay_action: Optional[str] = Field(
+        default=None,
+        pattern=r"^(auto_execute|pause_draft|extend_timer|require_admin|majority_vote)$",
+    )
+    # Iter 195 (Task B) — Per-week playoff matchup-length overrides.
+    # Keys = playoff round number as string; value = `{length_weeks: int}`.
+    playoff_week_lengths: Optional[dict] = None
     # ── Iter 101: Playoff bracket + Consolation bracket configuration ───
     # Playoff format: "h2h_matchup" mirrors regular-season scoring; "playoff_tree" runs
     # an elimination bracket. Seeding methods: high_vs_low (1vN, 2vN-1…), adjacent
