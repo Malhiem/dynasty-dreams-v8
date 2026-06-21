@@ -73,68 +73,10 @@ const generatePickData = (): Record<string, Record<string, Record<number, PickOw
     });
   });
 
-  // 2025 trades
-  data["2025"]["FRST"][1] = {
-    originalTeam: "FRST",
-    currentOwner: "ICE",
-    tradeHistory: [
-      { date: "2024-11-15", from: "FRST", to: "ICE", details: "FRST traded 2025 1st to ICE for Tyler Brooks + 2026 3rd" },
-    ],
-  };
-  data["2025"]["BLZ"][2] = {
-    originalTeam: "BLZ",
-    currentOwner: "NTH",
-    tradeHistory: [
-      { date: "2024-09-20", from: "BLZ", to: "ARC", details: "BLZ traded 2025 2nd to ARC for Jake Miller" },
-      { date: "2025-01-05", from: "ARC", to: "NTH", details: "ARC traded BLZ 2025 2nd to NTH for 2026 2nd" },
-    ],
-  };
-  data["2025"]["POL"][3] = {
-    originalTeam: "POL",
-    currentOwner: "GLC",
-    tradeHistory: [
-      { date: "2025-02-10", from: "POL", to: "GLC", details: "POL traded 2025 3rd to GLC for Ryan Cooper" },
-    ],
-  };
-  data["2025"]["SNW"][1] = {
-    originalTeam: "SNW",
-    currentOwner: "WST",
-    tradeHistory: [
-      { date: "2024-12-01", from: "SNW", to: "WST", details: "SNW traded 2025 1st to WST for Marcus Lee + 2026 4th" },
-    ],
-  };
-  data["2025"]["TND"][4] = {
-    originalTeam: "TND",
-    currentOwner: "ZRO",
-    tradeHistory: [
-      { date: "2025-01-18", from: "TND", to: "ZRO", details: "TND traded 2025 4th to ZRO for prospect David Chen" },
-    ],
-  };
-
-  // 2026 trades
-  data["2026"]["ICE"][2] = {
-    originalTeam: "ICE",
-    currentOwner: "FRST",
-    tradeHistory: [
-      { date: "2025-01-10", from: "ICE", to: "FRST", details: "ICE traded 2026 2nd to FRST for 2025 waiver priority" },
-    ],
-  };
-  data["2026"]["GLC"][1] = {
-    originalTeam: "GLC",
-    currentOwner: "ARC",
-    tradeHistory: [
-      { date: "2024-10-30", from: "GLC", to: "ARC", details: "GLC traded 2026 1st to ARC for Nick Andersen + 2025 5th" },
-    ],
-  };
-
-  // 2027 trade
-  data["2027"]["NTH"][1] = {
-    originalTeam: "NTH",
-    currentOwner: "BLZ",
-    tradeHistory: [
-      { date: "2025-02-01", from: "NTH", to: "BLZ", details: "NTH traded 2027 1st to BLZ for 2025 2nd + prospect" },
-    ],
-  };
+  // Iter 191 — Mock trade injections removed at user request.
+  // All picks return to their original owners with empty
+  // tradeHistory. Live trades will repopulate as draft-day picks
+  // are traded via the new iter191 trade flow.
 
   return data;
 };
@@ -156,6 +98,35 @@ function TradeHistoryPopover({ pick }: { pick: PickOwnership }) {
   const originalTeam = leagueTeams.find((t) => t.abbr === pick.originalTeam);
   const currentOwner = leagueTeams.find((t) => t.abbr === pick.currentOwner);
 
+  // Iter 191 — Year-grouped "via X · MMM D" summary. The user spec
+  // says: if multiple trades land in the same calendar year, don't
+  // repeat the year — clump trades together under one year header.
+  // Example output:
+  //   2025: via FRST (Nov 15) · via ICE (Jan 5)
+  //   2026: via NTH (Feb 10)
+  const groupedSummary = (() => {
+    const byYear: Record<string, string[]> = {};
+    const order: string[] = [];
+    (pick.tradeHistory || []).forEach((t: any) => {
+      const raw = t?.date;
+      if (!raw) return;
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) return;
+      const y = String(d.getFullYear());
+      // "via {from team} (Nov 15)"  — `from` is the team relinquishing
+      // the pick at this step in the chain.
+      const mmd = d.toLocaleString(undefined, { month: "short", day: "numeric" });
+      const fromAbbr = t.from || t.from_team_name || "?";
+      const seg = `via ${fromAbbr} (${mmd})`;
+      if (!(y in byYear)) {
+        byYear[y] = [];
+        order.push(y);
+      }
+      byYear[y].push(seg);
+    });
+    return order.map((y) => ({ year: y, segs: byYear[y] }));
+  })();
+
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -175,6 +146,19 @@ function TradeHistoryPopover({ pick }: { pick: PickOwnership }) {
             {" → "}
             Now: <span className="font-medium text-primary">{currentOwner?.name} ({pick.currentOwner})</span>
           </p>
+          {groupedSummary.length > 0 && (
+            <ul
+              className="mt-2 space-y-0.5 text-[11px]"
+              data-testid="pick-trade-grouped-summary"
+            >
+              {groupedSummary.map((g) => (
+                <li key={g.year} className="leading-snug">
+                  <span className="font-semibold text-foreground">{g.year}:</span>{" "}
+                  <span className="text-muted-foreground">{g.segs.join(" · ")}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
         <div className="p-2 space-y-2 max-h-60 overflow-y-auto">
           {pick.tradeHistory.map((trade: any, idx) => (
@@ -583,6 +567,8 @@ export default function DraftBoardPage() {
         trigger: h.trigger,
       }));
       data[origAbbr][p.round] = {
+        originalTeam: origAbbr,  // Iter 191 fix — was missing,
+                                  //   caused all picks to appear "traded"
         currentOwner: teamIdToAbbr[p.current_team_id] || origAbbr,
         isTraded: p.current_team_id !== p.original_team_id,
         tradeHistory: history,

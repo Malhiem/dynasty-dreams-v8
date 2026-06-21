@@ -111,6 +111,41 @@ export default function OpsConsole() {
     }
   };
 
+  // Iter 191 — Drilldown quick actions
+  const [actionPending, setActionPending] = useState(false);
+  const notifyOwners = async () => {
+    if (!leagueId) return;
+    setActionPending(true);
+    try {
+      const r = await api.post(`/leagues/${leagueId}/ops-violations/notify`);
+      toast.success(`Notified ${r.data?.notified ?? 0} owner(s)`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to send notifications");
+    } finally {
+      setActionPending(false);
+    }
+  };
+  const forceFix = async () => {
+    if (!leagueId) return;
+    if (!window.confirm("Auto-fix all auto-fixable violations (e.g. move healthy players off IR)? Cap-over violations will be left for the owner.")) return;
+    setActionPending(true);
+    try {
+      const r = await api.post(`/leagues/${leagueId}/ops-violations/force-fix`);
+      const fixed = r.data?.fixed_count ?? 0;
+      const skipped = r.data?.skipped_count ?? 0;
+      toast.success(
+        `Fixed ${fixed} violation(s)${skipped ? ` · ${skipped} skipped (owner action required)` : ""}`
+      );
+      // Re-load drilldown + parent counters
+      await loadViolations();
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Force-fix failed");
+    } finally {
+      setActionPending(false);
+    }
+  };
+
   // Iter 190 — Distinct event_types in the current audit window —
   // drives the chip strip. Sorted alpha so the strip doesn't shuffle
   // on every refresh.
@@ -510,6 +545,29 @@ export default function OpsConsole() {
               Per-team rule breaches that need commissioner attention.
             </SheetDescription>
           </SheetHeader>
+          {/* Iter 191 — Drilldown quick actions */}
+          {!violationsLoading && (violationsData?.teams || []).length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2" data-testid="ops-violations-actions">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={notifyOwners}
+                disabled={actionPending}
+                data-testid="ops-violations-notify-btn"
+              >
+                📧 Notify owners
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={forceFix}
+                disabled={actionPending}
+                data-testid="ops-violations-force-fix-btn"
+              >
+                🔧 Force-fix
+              </Button>
+            </div>
+          )}
           <div className="mt-4 space-y-3">
             {violationsLoading && (
               <p className="text-xs text-muted-foreground" data-testid="ops-violations-loading">

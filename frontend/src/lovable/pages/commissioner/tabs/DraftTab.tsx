@@ -75,6 +75,17 @@ export default function DraftTab({ ctx }: DraftTabProps) {
     expandedDraft, setExpandedDraft, expandedDraftResults, setExpandedDraftResults,
     activeLeague, persistDraftType, completedDraftResults, playerCriteriaOptions, scheduledDrafts,
   } = ctx;
+
+  // Iter 191 — In-Draft pick trade review window + post-review action.
+  // Local-only state for now (the existing Draft Format card is a mock
+  // UI without persistence); iter 192 will wire these into the league
+  // schema. Defaults: 30 min + auto-execute matches the user's spec.
+  const [draftTradeReviewMinutes, setDraftTradeReviewMinutes] = useState(
+    String((activeLeague as any)?.draft_trade_review_minutes ?? 30),
+  );
+  const [draftTradePostDelayAction, setDraftTradePostDelayAction] = useState(
+    (activeLeague as any)?.draft_trade_post_delay_action || "auto_execute",
+  );
   return (
     <div className="space-y-6" data-testid="commissioner-draft-tab">
         <Card className="bg-card border-border">
@@ -316,6 +327,65 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                 </div>
               )}
             </div>
+
+            <Separator />
+            {/* Iter 191 — In-Draft Pick Trade Review Window */}
+            <div className="space-y-3" data-testid="draft-trade-review-section">
+              <div>
+                <Label>In-Draft Pick Trade Review</Label>
+                <p className="text-sm text-muted-foreground">
+                  When a pick trade is accepted during the draft, hold the pick for the chosen review window before executing. Lets owners/commissioners catch obviously lopsided deals.
+                </p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <Label className="text-xs">Review Window</Label>
+                  <Select
+                    value={draftTradeReviewMinutes}
+                    onValueChange={setDraftTradeReviewMinutes}
+                  >
+                    <SelectTrigger
+                      className="bg-secondary border-border"
+                      data-testid="draft-trade-review-minutes-select"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">Instant (no review)</SelectItem>
+                      <SelectItem value="5">5 minutes</SelectItem>
+                      <SelectItem value="15">15 minutes</SelectItem>
+                      <SelectItem value="30">30 minutes</SelectItem>
+                      <SelectItem value="60">1 hour</SelectItem>
+                      <SelectItem value="120">2 hours</SelectItem>
+                      <SelectItem value="240">4 hours</SelectItem>
+                      <SelectItem value="480">8 hours</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-xs">When Window Elapses</Label>
+                  <Select
+                    value={draftTradePostDelayAction}
+                    onValueChange={setDraftTradePostDelayAction}
+                  >
+                    <SelectTrigger
+                      className="bg-secondary border-border"
+                      data-testid="draft-trade-post-delay-action-select"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto_execute">Auto-execute trade</SelectItem>
+                      <SelectItem value="pause_draft">Pause draft until reviewed</SelectItem>
+                      <SelectItem value="extend_timer">Extend pick timer</SelectItem>
+                      <SelectItem value="require_admin">Require league-admin approval</SelectItem>
+                      <SelectItem value="majority_vote">Voting only (majority decides)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
             <Separator />
             <div className="space-y-2">
                 <Label>Draft Order</Label>

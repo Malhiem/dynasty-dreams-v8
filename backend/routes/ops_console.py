@@ -216,6 +216,125 @@ async def get_ops_violations(league_id: str, request: Request):
     return {"league_id": league_id, "teams": out}
 
 
+# ── Iter 191 — Violation drilldown actions ──────────────────────
+# `Notify owner` — sends an in-app notification to the team's owner
+# summarising the open violations. Returns the count of notifications
+# created (1 per violating team) so the UI can show a toast like
+# "Notified 3 owners".
+@router.post("/leagues/{league_id}/ops-violations/notify")
+async def notify_violation_owners(league_id: str, request: Request):
+    db = _db()
+    user = await _get_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not _user_is_commish(league, user):
+        raise HTTPException(status_code=403, detail="Commissioner access required")
+
+    create_notification = _deps["create_notification"]
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(50)
+    cap_enabled = bool(league.get("salary_cap_enabled"))
+    cap_total = float(league.get("salary_cap") or 0)
+    notified = 0
+    for team in teams:
+        salary_used = float(team.get("salary_used") or 0)
+        msgs: list[str] = []
+        if cap_enabled and cap_total > 0 and salary_used > cap_total:
+            msgs.append(
+                f"Salary cap over by ${(salary_used - cap_total) / 1_000_000:.2f}M"
+            )
+        lineup = team.get("lineup") or {}
+        for spot_key, spot in lineup.items():
+            if isinstance(spot, dict) and spot.get("flagged"):
+                msgs.append(spot.get("flag_message") or f"Lineup spot {spot_key} flagged")
+        if not msgs or not team.get("owner_id"):
+            continue
+        await create_notification(
+            user_id=team["owner_id"],
+            kind="roster_violation",
+            title=f"Action required for {team.get('name', 'your team')}",
+            body=" · ".join(msgs)[:280],
+            link=f"/team",
+            metadata={"league_id": league_id, "team_id": str(team["_id"])},
+        )
+        notified += 1
+    return {"notified": notified}
+
+
+# `Force-fix` — autonomously moves illegal players to legal sections
+# where possible. Currently handles two cases:
+#   1. Healthy player on IR → move to bench (if bench has room).
+#   2. Cap-over violations are NOT auto-fixable (requires trade) — we
+#      return them as a `skipped` list so the UI can surface why.
+@router.post("/leagues/{league_id}/ops-violations/force-fix")
+async def force_fix_violations(league_id: str, request: Request):
+    db = _db()
+    user = await _get_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not _user_is_commish(league, user):
+        raise HTTPException(status_code=403, detail="Commissioner access required")
+
+    log_activity = _deps["log_activity"]
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(50)
+    fixes: list[dict] = []
+    skipped: list[dict] = []
+    for team in teams:
+        lineup = team.get("lineup") or {}
+        if not isinstance(lineup, dict):
+            continue
+        modified = False
+        for spot_key, spot in list(lineup.items()):
+            if not isinstance(spot, dict) or not spot.get("flagged"):
+                continue
+            code = spot.get("flag_code") or ""
+            if code == "healthy_on_ir":
+                spot["section"] = "bench"
+                spot.pop("flagged", None)
+                spot.pop("flag_code", None)
+                spot.pop("flag_message", None)
+                modified = True
+                fixes.append({
+                    "team_id": str(team["_id"]),
+                    "team_name": team.get("name"),
+                    "spot": spot_key,
+                    "action": "moved_to_bench",
+                })
+            else:
+                skipped.append({
+                    "team_id": str(team["_id"]),
+                    "team_name": team.get("name"),
+                    "code": code or "unknown",
+                    "reason": "Not auto-fixable — owner action required.",
+                })
+        # Cap-over violations — surface but don't fix.
+        cap_enabled = bool(league.get("salary_cap_enabled"))
+        cap_total = float(league.get("salary_cap") or 0)
+        salary_used = float(team.get("salary_used") or 0)
+        if cap_enabled and cap_total > 0 and salary_used > cap_total:
+            skipped.append({
+                "team_id": str(team["_id"]),
+                "team_name": team.get("name"),
+                "code": "cap_over",
+                "reason": "Cap breach can't be auto-fixed — owner must trade or drop.",
+            })
+        if modified:
+            await db.teams.update_one({"_id": team["_id"]}, {"$set": {"lineup": lineup}})
+
+    if fixes:
+        await log_activity(
+            league_id=league_id,
+            event_type="ops_force_fix",
+            message=f"Commissioner auto-fixed {len(fixes)} roster violation(s)",
+            user_id=str(user["_id"]),
+            metadata={"fixes": fixes, "skipped": skipped},
+        )
+    return {"fixed_count": len(fixes), "skipped_count": len(skipped), "fixes": fixes, "skipped": skipped}
+
+
 # ── Iter 189 — Audit log viewer ──────────────────────────────────
 @router.get("/leagues/{league_id}/ops-audit-log")
 async def get_ops_audit_log(
