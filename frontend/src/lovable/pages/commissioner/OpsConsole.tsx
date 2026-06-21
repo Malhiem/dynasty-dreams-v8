@@ -19,15 +19,16 @@
  *   3. Counters refresh on mount + after force-process — no polling
  *      yet to keep the page light. Future: SSE / WebSocket fan-out.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { toast } from "sonner";
-import { Clock, AlertTriangle, ShieldOff, Gavel, Zap, ListChecks, RefreshCw } from "lucide-react";
+import { Clock, AlertTriangle, ShieldOff, Gavel, Zap, ListChecks, RefreshCw, ScrollText } from "lucide-react";
 
 function fmtRemainingMs(ms) {
   if (ms == null) return null;
@@ -50,6 +51,16 @@ export default function OpsConsole() {
   const [errorMsg, setErrorMsg] = useState(null);
   const [processing, setProcessing] = useState(false);
 
+  // Iter 189 — Violations drilldown sheet state
+  const [violationsOpen, setViolationsOpen] = useState(false);
+  const [violationsData, setViolationsData] = useState(null);
+  const [violationsLoading, setViolationsLoading] = useState(false);
+
+  // Iter 189 — Audit log state. Loads lazily on mount; refresh
+  // tied to the global Refresh button to keep payload light.
+  const [auditEntries, setAuditEntries] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+
   const load = async () => {
     if (!leagueId) return;
     setLoading(true);
@@ -62,6 +73,35 @@ export default function OpsConsole() {
       setErrorMsg(typeof msg === "string" ? msg : JSON.stringify(msg));
     } finally {
       setLoading(false);
+    }
+    // Iter 189 — also refresh audit log entries.
+    loadAuditLog();
+  };
+
+  const loadAuditLog = async () => {
+    if (!leagueId) return;
+    setAuditLoading(true);
+    try {
+      const r = await api.get(`/leagues/${leagueId}/ops-audit-log`, { params: { limit: 20 } });
+      setAuditEntries(r.data?.entries || []);
+    } catch {
+      // non-fatal — leave existing entries on screen
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const loadViolations = async () => {
+    if (!leagueId) return;
+    setViolationsOpen(true);
+    setViolationsLoading(true);
+    try {
+      const r = await api.get(`/leagues/${leagueId}/ops-violations`);
+      setViolationsData(r.data);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to load violations");
+    } finally {
+      setViolationsLoading(false);
     }
   };
 
@@ -177,6 +217,8 @@ export default function OpsConsole() {
           icon={<ShieldOff className="h-4 w-4 text-amber-300" />}
           testid="ops-counter-teams-with-violations"
           accent="border-l-amber-500"
+          onClick={loadViolations}
+          clickable
         />
       </div>
 
@@ -259,22 +301,147 @@ export default function OpsConsole() {
         </CardContent>
       </Card>
 
+      {/* ── Iter 189 — Audit log card ─────────────────── */}
+      <Card data-testid="ops-audit-log-card">
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <div className="flex items-center gap-2">
+            <ScrollText className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-base">Audit log</CardTitle>
+            <span className="text-xs text-muted-foreground">last 20</span>
+          </div>
+          {auditLoading && <span className="text-xs text-muted-foreground">Loading…</span>}
+        </CardHeader>
+        <CardContent className="pt-2">
+          {auditEntries.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-4 text-center" data-testid="ops-audit-log-empty">
+              No activity recorded yet.
+            </p>
+          ) : (
+            <ul className="divide-y divide-border/50">
+              {auditEntries.map((entry) => (
+                <li
+                  key={entry.id}
+                  className="py-2 flex items-start gap-3 text-sm"
+                  data-testid={`ops-audit-entry-${entry.event_type}`}
+                >
+                  <Badge variant="outline" className="text-[10px] uppercase tracking-wider shrink-0">
+                    {entry.event_type}
+                  </Badge>
+                  <div className="flex-1">
+                    <p className="leading-snug">{entry.message}</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {entry.created_at ? new Date(entry.created_at).toLocaleString() : "—"}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="pt-2">
         <Link to="/commissioner/settings" className="text-xs text-primary hover:underline">
           Go to Commissioner Settings →
         </Link>
       </div>
+
+      {/* ── Iter 189 — Violations drilldown sheet ───── */}
+      <Sheet open={violationsOpen} onOpenChange={setViolationsOpen}>
+        <SheetContent
+          side="right"
+          className="w-full sm:max-w-[480px] overflow-y-auto"
+          data-testid="ops-violations-sheet"
+        >
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <ShieldOff className="h-4 w-4 text-amber-300" />
+              Roster Violations
+            </SheetTitle>
+            <SheetDescription>
+              Per-team rule breaches that need commissioner attention.
+            </SheetDescription>
+          </SheetHeader>
+          <div className="mt-4 space-y-3">
+            {violationsLoading && (
+              <p className="text-xs text-muted-foreground" data-testid="ops-violations-loading">
+                Loading…
+              </p>
+            )}
+            {!violationsLoading && (violationsData?.teams || []).length === 0 && (
+              <p className="text-xs text-muted-foreground py-6 text-center" data-testid="ops-violations-empty">
+                No teams currently in violation. 🎉
+              </p>
+            )}
+            {!violationsLoading
+              && (violationsData?.teams || []).map((team) => (
+                <div
+                  key={team.team_id}
+                  className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 space-y-2"
+                  data-testid={`ops-violations-team-${team.team_id}`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold">{team.team_name}</span>
+                    {team.cap_total != null && (
+                      <span className="text-[11px] text-muted-foreground">
+                        Cap: ${(team.salary_used / 1_000_000).toFixed(2)}M / $
+                        {(team.cap_total / 1_000_000).toFixed(1)}M
+                      </span>
+                    )}
+                  </div>
+                  <ul className="space-y-1">
+                    {team.violations.map((v, idx) => (
+                      <li
+                        key={`${v.code}-${idx}`}
+                        className="text-xs flex items-start gap-2"
+                      >
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] shrink-0 ${
+                            v.severity === "error"
+                              ? "border-destructive/50 text-destructive"
+                              : "border-amber-500/40 text-amber-300"
+                          }`}
+                        >
+                          {v.code}
+                        </Badge>
+                        <span className="leading-snug">{v.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
 
-function CounterCard({ label, value, icon, testid, accent }) {
+function CounterCard({ label, value, icon, testid, accent, onClick, clickable }) {
   return (
-    <Card className={`border-l-4 ${accent}`} data-testid={testid}>
+    <Card
+      className={`border-l-4 ${accent} ${clickable ? "cursor-pointer hover:bg-secondary/30 transition-colors" : ""}`}
+      data-testid={testid}
+      onClick={clickable ? onClick : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
+    >
       <CardContent className="pt-6 pb-4">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {icon}
           {label}
+          {clickable && <span className="ml-auto text-[10px] text-primary">View →</span>}
         </div>
         <div className="text-3xl font-bold mt-1">{value}</div>
       </CardContent>

@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Clock, DollarSign, Plus, History, TrendingUp, ChevronDown, ChevronUp, AlertTriangle, ArrowRight } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -78,6 +78,17 @@ const Waivers = () => {
   const [precheck, setPrecheck] = useState<any>(null);
   const [prechecking, setPrechecking] = useState(false);
   const [claimSubmitting, setClaimSubmitting] = useState(false);
+  // Iter 189 — Structured cap-breach banner. Backend returns
+  // HTTP 422 with payload `{code:"cap_breach", projected, cap_total,
+  // suggested_action:"drop"}` when adding the player would put the
+  // team over the league salary cap. We surface this prominently so
+  // users immediately understand they must pick a drop.
+  const [capBreachError, setCapBreachError] = useState<
+    | { projected: number; cap_total: number; message: string }
+    | null
+  >(null);
+  // Ref to the drop-picker so we can scroll the user there on 422.
+  const dropPickerRef = useRef<HTMLDivElement | null>(null);
   // Iter 180 — Free-text search filter on the Available Players table.
   // Operates on player name + NHL team abbreviation. Empty string = no
   // filter (full table). Persists across tab switches via component
@@ -148,6 +159,7 @@ const Waivers = () => {
     setBidAmount(1);
     setPrecheck(null);
     setDropPlayerId("");
+    setCapBreachError(null);  // Iter 189 — reset 422 banner on modal open
     setClaimModalOpen(true);
     // Iter 180 — fetch the owner's current roster so the dropdown
     // is ready by the time precheck flips `requires_drop`. Cheap
@@ -195,6 +207,7 @@ const Waivers = () => {
   const handleSubmitClaim = async () => {
     if (!selectedPlayer || !league?.id) return;
     setClaimSubmitting(true);
+    setCapBreachError(null);
     try {
       // Iter 180 — include `drop_player_id` when the precheck flagged
       // a full roster and the user selected a player to drop. Backend
@@ -213,8 +226,31 @@ const Waivers = () => {
       });
       setClaimModalOpen(false);
       await refreshLive();
-    } catch (e) {
-      toast.error(formatApiError(e));
+    } catch (e: any) {
+      // Iter 189 — Structured 422 cap_breach payload. The backend
+      // returns `{detail:{code:"cap_breach", projected, cap_total,
+      // message, suggested_action:"drop"}}`. Surface it as an
+      // inline red banner pointing at the drop picker rather than a
+      // generic toast.
+      const detail = e?.response?.data?.detail;
+      if (
+        e?.response?.status === 422
+        && detail
+        && typeof detail === "object"
+        && detail.code === "cap_breach"
+      ) {
+        setCapBreachError({
+          projected: detail.projected,
+          cap_total: detail.cap_total,
+          message: detail.message || "Salary cap would be exceeded.",
+        });
+        // Auto-scroll to the drop picker if it's rendered.
+        setTimeout(() => {
+          dropPickerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 100);
+      } else {
+        toast.error(formatApiError(e));
+      }
     } finally {
       setClaimSubmitting(false);
     }
@@ -770,6 +806,31 @@ const Waivers = () => {
                   Checking your roster…
                 </p>
               )}
+
+              {/* Iter 189 — Live cap-breach banner from the 422
+                  `cap_breach` payload returned by /waivers/claim. */}
+              {capBreachError && (
+                <div
+                  className="rounded-md border border-destructive/40 bg-destructive/10 p-3 space-y-2"
+                  data-testid="claim-cap-breach-banner"
+                >
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-xs font-semibold text-destructive">
+                        Adding this player would put you at $
+                        {(capBreachError.projected / 1_000_000).toFixed(2)}M,
+                        exceeding the $
+                        {(capBreachError.cap_total / 1_000_000).toFixed(1)}M cap.
+                      </p>
+                      <p className="text-[11px] text-destructive/80 mt-0.5">
+                        Pick a player to drop ↓ to bring the team back under the cap, then re-submit.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {precheck && (
                 <div
                   className="rounded-lg border border-border p-3 space-y-2 bg-background/60"
@@ -820,7 +881,7 @@ const Waivers = () => {
                   })}
 
                   {precheck.requires_drop && (
-                    <div className="space-y-2" data-testid="precheck-drop-picker">
+                    <div className="space-y-2" data-testid="precheck-drop-picker" ref={dropPickerRef}>
                       <label className="text-xs text-muted-foreground">
                         Roster is full — pick a player to drop if this claim wins:
                       </label>

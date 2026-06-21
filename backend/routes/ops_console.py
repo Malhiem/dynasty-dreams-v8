@@ -56,19 +56,9 @@ async def get_ops_summary(league_id: str, request: Request):
         raise HTTPException(status_code=404, detail="League not found")
 
     # Commissioner-only — accept any of the league's commissioner
-    # fields. The schema has drifted across iterations:
-    #   - `commissioner_id` (singular, legacy + still used by main
-    #     leagues collection)
-    #   - `commissioner_ids` (array, set on co-commissioner upgrade)
-    #   - `created_by` (back-compat fallback)
-    commish_set = set()
-    if league.get("commissioner_id"):
-        commish_set.add(str(league["commissioner_id"]))
-    for cid in (league.get("commissioner_ids") or []):
-        commish_set.add(str(cid))
-    if league.get("created_by"):
-        commish_set.add(str(league["created_by"]))
-    if str(user["_id"]) not in commish_set:
+    # fields (see `_user_is_commish` for the canonical check used by
+    # all three ops endpoints).
+    if not _user_is_commish(league, user):
         raise HTTPException(status_code=403, detail="Commissioner access required")
 
     # ── Trade deadline ────────────────────────────────────
@@ -160,3 +150,121 @@ async def get_ops_summary(league_id: str, request: Request):
         "recent_vetoes": recent_vetoes,
         "recent_waivers": recent_waivers,
     }
+
+
+# ── Iter 189 — Per-team violation drilldown ──────────────────────
+@router.get("/leagues/{league_id}/ops-violations")
+async def get_ops_violations(league_id: str, request: Request):
+    """Returns per-team violation detail used by the Ops Console
+    slide-over drilldown. Each entry has the team's identity + a list
+    of violations (cap breach, lineup flags, …). Lightweight enough to
+    re-fetch on every drilldown open."""
+    db = _db()
+    user = await _get_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not _user_is_commish(league, user):
+        raise HTTPException(status_code=403, detail="Commissioner access required")
+
+    cap_enabled = bool(league.get("salary_cap_enabled"))
+    cap_total = float(league.get("salary_cap") or 0)
+    teams = await db.teams.find({"league_id": league_id}).to_list(50)
+
+    out = []
+    for team in teams:
+        violations: list[dict] = []
+        salary_used = float(team.get("salary_used") or 0)
+        # Cap breach
+        if cap_enabled and cap_total > 0 and salary_used > cap_total:
+            violations.append({
+                "code": "cap_over",
+                "severity": "error",
+                "message": (
+                    f"Team is over the cap: "
+                    f"${salary_used / 1_000_000:.2f}M / "
+                    f"${cap_total / 1_000_000:.1f}M."
+                ),
+                "delta": int(salary_used - cap_total),
+            })
+        # Lineup-spot flags raised by other parts of the app (e.g.
+        # roster-rules audit). We bubble them up here verbatim so the
+        # commissioner has a single pane of glass.
+        lineup = team.get("lineup") or {}
+        for spot_key, spot in lineup.items():
+            if not isinstance(spot, dict):
+                continue
+            if spot.get("flagged"):
+                violations.append({
+                    "code": spot.get("flag_code", "lineup_flagged"),
+                    "severity": spot.get("flag_severity", "warning"),
+                    "message": spot.get("flag_message") or f"Lineup spot {spot_key} flagged.",
+                    "spot": spot_key,
+                })
+        if violations:
+            out.append({
+                "team_id": str(team["_id"]),
+                "team_name": team.get("name") or "Team",
+                "owner_id": team.get("owner_id"),
+                "salary_used": int(salary_used),
+                "cap_total": int(cap_total) if cap_enabled else None,
+                "violations": violations,
+            })
+    return {"league_id": league_id, "teams": out}
+
+
+# ── Iter 189 — Audit log viewer ──────────────────────────────────
+@router.get("/leagues/{league_id}/ops-audit-log")
+async def get_ops_audit_log(
+    league_id: str,
+    request: Request,
+    limit: int = 50,
+    event_types: Optional[str] = None,
+):
+    """Returns the most recent `activity_feed` entries for a league,
+    optionally filtered by event_type (comma-separated). Used by the
+    Ops Console audit log card.
+
+    Returns max `limit=50` entries sorted by `created_at` desc.
+    """
+    db = _db()
+    user = await _get_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not _user_is_commish(league, user):
+        raise HTTPException(status_code=403, detail="Commissioner access required")
+
+    limit = max(1, min(int(limit or 50), 100))
+    q: dict = {"league_id": league_id}
+    if event_types:
+        types = [t.strip() for t in event_types.split(",") if t.strip()]
+        if types:
+            q["event_type"] = {"$in": types}
+    docs = await db.activity_feed.find(q).sort("created_at", -1).limit(limit).to_list(limit)
+    entries = []
+    for d in docs:
+        created_at = d.get("created_at")
+        if hasattr(created_at, "isoformat"):
+            created_at = created_at.isoformat()
+        entries.append({
+            "id": str(d.get("_id")),
+            "event_type": d.get("event_type"),
+            "message": d.get("message"),
+            "user_id": d.get("user_id"),
+            "metadata": d.get("metadata") or {},
+            "created_at": created_at,
+        })
+    return {"league_id": league_id, "entries": entries, "limit": limit}
+
+
+# ── Shared commissioner gate (used by all three ops endpoints) ───
+def _user_is_commish(league: dict, user: dict) -> bool:
+    commish_set = set()
+    if league.get("commissioner_id"):
+        commish_set.add(str(league["commissioner_id"]))
+    for cid in (league.get("commissioner_ids") or []):
+        commish_set.add(str(cid))
+    if league.get("created_by"):
+        commish_set.add(str(league["created_by"]))
+    return str(user["_id"]) in commish_set
