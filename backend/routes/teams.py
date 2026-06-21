@@ -43,8 +43,12 @@ class TeamResponse(BaseModel):
     id: str
     name: str
     league_id: str
-    owner_id: str
-    owner_name: str
+    # Iter 194 — Owner fields are now Optional so the dropdown +
+    # League detail page work for pending-invite teams (e.g. 32-team
+    # entry-draft leagues created via iter192 where every team is
+    # awaiting an owner to claim it).
+    owner_id: Optional[str] = None
+    owner_name: Optional[str] = None
     salary_used: float
     wins: int
     losses: int
@@ -61,6 +65,7 @@ class TeamResponse(BaseModel):
     conference_winner_at: Optional[datetime] = None
     playoffs_reached_at: Optional[datetime] = None
     consolation_won_at: Optional[datetime] = None
+    is_pending: bool = False
 
 
 def team_to_response(team: dict) -> TeamResponse:
@@ -83,15 +88,15 @@ def team_to_response(team: dict) -> TeamResponse:
         id=str(team["_id"]),
         name=name,
         league_id=team["league_id"],
-        owner_id=team["owner_id"],
-        owner_name=team["owner_name"],
+        owner_id=team.get("owner_id"),
+        owner_name=team.get("owner_name"),
         salary_used=team.get("salary_used", 0.0),
         wins=team.get("wins", 0),
         losses=team.get("losses", 0),
         ties=team.get("ties", 0),
         points_for=team.get("points_for", 0.0),
         points_against=team.get("points_against", 0.0),
-        created_at=team["created_at"],
+        created_at=team.get("created_at") or datetime.now(timezone.utc),
         roster=team.get("roster", []),
         live_points=round(team.get("live_points", 0.0) or 0.0, 2),
         logo_abbr=abbr,
@@ -101,6 +106,7 @@ def team_to_response(team: dict) -> TeamResponse:
         conference_winner_at=team.get("conference_winner_at"),
         playoffs_reached_at=team.get("playoffs_reached_at"),
         consolation_won_at=team.get("consolation_won_at"),
+        is_pending=bool(team.get("is_pending")),
     )
 
 
