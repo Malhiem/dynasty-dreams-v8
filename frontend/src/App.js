@@ -53,6 +53,8 @@ import LovableChat from "@/lovable/pages/Chat";
 import LovableCommissionerSettings from "@/lovable/pages/CommissionerSettings";
 // Iter 187 — Commissioner Ops Console
 import OpsConsolePage from "@/lovable/pages/commissioner/OpsConsole";
+// Iter 193 — Bulk Owner Invites
+import OwnerInvitesPage from "@/lovable/pages/commissioner/OwnerInvites";
 import LovableLeaguePayments from "@/lovable/pages/LeaguePayments";
 import LovablePlayerNews from "@/lovable/pages/PlayerNews";
 import LovablePlayerPool from "@/lovable/pages/PlayerPool";
@@ -122,6 +124,8 @@ function App() {
           <Route path="/commissioner/settings" element={<ProtectedRoute><LovableCommissionerSettings /></ProtectedRoute>} />
           {/* Iter 187 — Commissioner Ops Console */}
           <Route path="/commissioner/ops-console" element={<ProtectedRoute><OpsConsolePage /></ProtectedRoute>} />
+          {/* Iter 193 — Bulk Owner Invites */}
+          <Route path="/commissioner/owner-invites" element={<ProtectedRoute><OwnerInvitesPage /></ProtectedRoute>} />
           <Route path="/league-payments" element={<ProtectedRoute><LovableLeaguePayments /></ProtectedRoute>} />
           <Route path="/player-news" element={<ProtectedRoute><LovablePlayerNews /></ProtectedRoute>} />
           <Route path="/player-pool" element={<ProtectedRoute><LovablePlayerPool /></ProtectedRoute>} />

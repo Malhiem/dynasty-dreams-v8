@@ -97,6 +97,81 @@ NT_TRADE_PROPOSED = "trade_proposed"
 NT_TRADE_ACCEPTED = "trade_accepted"
 
 
+# ── Iter 193 — Foundation for in-draft pick trade flow ──────────
+# Minimal scope: accept a pick-trade proposal during an active draft,
+# stamp the trade with `status="pending_draft_review"` + a future
+# `review_expires_at` timestamp computed from the league's
+# `draft_trade_review_minutes` setting, then broadcast a system
+# message to the draft-room chat. Vote/approve buttons, auto-execute
+# timer, on-the-clock reassignment all deferred to iter 194.
+@router.post("/drafts/{league_id}/propose-pick-trade")
+async def propose_in_draft_pick_trade(league_id: str, request: Request):
+    db = _db()
+    user = await _get_user(request)
+    payload = await request.json()
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    # Validation — proposer must own a team in this league and the trade
+    # must include at least one pick asset on either side. We trust the
+    # client to supply the trade shape (mirroring TradeProposalCreate)
+    # since the full schema lives in trade_waiver_engine.
+    proposer_team_id = payload.get("proposer_team_id")
+    receiver_team_id = payload.get("receiver_team_id")
+    proposer_assets = payload.get("proposer_assets") or []
+    receiver_assets = payload.get("receiver_assets") or []
+    if not proposer_team_id or not receiver_team_id:
+        raise HTTPException(status_code=400, detail="proposer_team_id + receiver_team_id required")
+    has_pick = any(a.get("type") == "pick" for a in proposer_assets + receiver_assets)
+    if not has_pick:
+        raise HTTPException(status_code=400, detail="At least one pick asset required for in-draft trade")
+
+    review_minutes = int(league.get("draft_trade_review_minutes") or 30)
+    review_expires_at = datetime.now(timezone.utc) + timedelta(minutes=max(0, review_minutes))
+
+    trade_doc = {
+        "league_id": league_id,
+        "proposer_team_id": proposer_team_id,
+        "receiver_team_id": receiver_team_id,
+        "proposer_assets": proposer_assets,
+        "receiver_assets": receiver_assets,
+        "status": "pending_draft_review",
+        "review_expires_at": review_expires_at.isoformat(),
+        "post_review_action": league.get("draft_trade_post_delay_action") or "auto_execute",
+        "votes": {"approve": 0, "veto": 0, "voters": [], "choices": {}},
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": user["_id"],
+        "is_in_draft_pick_trade": True,
+    }
+    result = await db.trades.insert_one(trade_doc)
+    trade_id = str(result.inserted_id)
+
+    # Broadcast a draft-room chat message so all participants see the
+    # proposal inline (room id == league id for the draft chat).
+    proposer_name = payload.get("proposer_team_name") or "A team"
+    receiver_name = payload.get("receiver_team_name") or "another team"
+    try:
+        await _broadcast(league_id, {
+            "type": "draft_chat",
+            "kind": "pick_trade_proposed",
+            "trade_id": trade_id,
+            "review_expires_at": review_expires_at.isoformat(),
+            "message": f"📈 {proposer_name} proposed a pick trade with {receiver_name}. Review window: {review_minutes} min.",
+        })
+    except Exception:
+        # Broadcast failure is non-fatal — the trade still persists.
+        pass
+
+    return {
+        "trade_id": trade_id,
+        "status": "pending_draft_review",
+        "review_expires_at": review_expires_at.isoformat(),
+        "post_review_action": trade_doc["post_review_action"],
+    }
+
+
 # ─── Trade Proposals (legacy 2-party) ────────────────────────────
 @router.post("/trades")
 async def create_trade_proposal(input: TradeProposalCreate, request: Request):

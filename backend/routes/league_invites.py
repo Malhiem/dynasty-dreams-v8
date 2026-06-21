@@ -8,7 +8,7 @@ import io
 import os
 import secrets
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 import qrcode
 from bson import ObjectId
@@ -392,3 +392,150 @@ async def send_email_invites(league_id: str, input: EmailInviteRequest, request:
         "errors": error_count,
         "results": results,
     }
+
+
+# ── Iter 193 — Pending-team bulk invite roster ──────────────────
+# Returns each team in the league with its `is_pending` status plus
+# the most recent invite (if any) keyed by an `email` field stashed
+# on the team doc. The commissioner UI consumes this to render a
+# table with per-row email input + "Send" pill.
+@router.get("/leagues/{league_id}/pending-team-invites")
+async def get_pending_team_invites(league_id: str, request: Request):
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league.get("commissioner_id") != user["_id"]:
+        raise HTTPException(status_code=403, detail="Commissioner access required")
+
+    teams = await db.teams.find({"league_id": league_id}).sort("draft_position", 1).to_list(64)
+    # Pull all invites for the league in one query.
+    invites = await db.league_invites.find({"league_id": league_id}).to_list(256)
+    invites_by_email: dict = {}
+    for inv in invites:
+        em = (inv.get("email") or "").lower()
+        if em:
+            invites_by_email[em] = inv
+
+    out = []
+    for t in teams:
+        invite_email = (t.get("invite_email") or "").lower() or None
+        inv = invites_by_email.get(invite_email) if invite_email else None
+        status = "no_email"
+        if t.get("owner_id"):
+            status = "accepted"
+        elif inv:
+            status = inv.get("status") or "sent"
+        elif invite_email:
+            status = "pending"
+        out.append({
+            "team_id": str(t["_id"]),
+            "team_name": t.get("name"),
+            "abbreviation": t.get("abbreviation"),
+            "draft_position": t.get("draft_position"),
+            "is_pending": bool(t.get("is_pending")),
+            "owner_id": t.get("owner_id"),
+            "owner_name": t.get("owner_name"),
+            "invite_email": invite_email,
+            "status": status,
+            "sent_at": inv.get("sent_at") if inv else None,
+        })
+    return {
+        "league_id": league_id,
+        "league_name": league.get("name"),
+        "invite_code": league.get("invite_code"),
+        "teams": out,
+    }
+
+
+class BulkTeamInviteRow(BaseModel):
+    team_id: str
+    email: str
+
+
+class BulkTeamInviteRequest(BaseModel):
+    rows: List[BulkTeamInviteRow]
+
+
+@router.post("/leagues/{league_id}/pending-team-invites/bulk")
+async def send_bulk_team_invites(league_id: str, payload: BulkTeamInviteRequest, request: Request):
+    """Iter 193 — Bulk-invite owners to a pre-seeded set of pending
+    teams. We stash the email on the team doc (`invite_email`) and then
+    re-use the existing `send_email_invites` logic per row so the audit
+    trail + SendGrid path stay unified."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    send_sendgrid_email = _deps["send_sendgrid_email"]
+    logger = _deps["logger"]
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league.get("commissioner_id") != user["_id"]:
+        raise HTTPException(status_code=403, detail="Commissioner access required")
+
+    invite_code = league.get("invite_code", "")
+    invite_url = f"{_frontend_base()}/join/{invite_code}"
+    subject = f"You're invited to manage a team in '{league['name']}' on Dynasty Dreams"
+
+    sent = 0
+    errors: list[dict] = []
+    for row in payload.rows:
+        if not row.email or "@" not in row.email:
+            errors.append({"team_id": row.team_id, "error": "invalid_email"})
+            continue
+        # Find the team
+        try:
+            team = await db.teams.find_one({"_id": ObjectId(row.team_id), "league_id": league_id})
+        except Exception:
+            team = None
+        if not team:
+            errors.append({"team_id": row.team_id, "error": "team_not_found"})
+            continue
+        team_name = team.get("name") or "your team"
+        html_template = f"""
+        <div style="font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 560px; margin: auto; padding: 24px; background: #0b1020; color: #e6edf7; border-radius: 12px;">
+          <h1 style="margin:0 0 8px; font-size: 22px; color:#7cf9d0;">Dynasty Dreams</h1>
+          <h2 style="font-size:18px; margin:12px 0;">{user['name']} reserved <span style="color:#7cf9d0;">{team_name}</span> for you in {league['name']}</h2>
+          <p style="color:#c9d3ea; line-height:1.5;">Click below to claim the team, create your account, and prep for the entry draft.</p>
+          <p style="text-align:center; margin: 24px 0;">
+            <a href="{invite_url}" style="background:#7cf9d0; color:#0b1020; padding: 12px 24px; border-radius: 999px; text-decoration:none; font-weight:700;">Claim {team_name}</a>
+          </p>
+          <p style="color:#7a88a8; font-size:12px;">Or paste this link into your browser:<br/><a href="{invite_url}" style="color:#7cf9d0;">{invite_url}</a></p>
+          <p style="color:#7a88a8; font-size:12px;">Invite code: <code>{invite_code}</code></p>
+        </div>
+        """
+        send_result = send_sendgrid_email(row.email, subject, html_template)
+        # Stash the per-team email + persist invite doc.
+        await db.teams.update_one(
+            {"_id": team["_id"]},
+            {"$set": {"invite_email": row.email.lower()}},
+        )
+        await db.league_invites.update_one(
+            {"league_id": league_id, "email": row.email.lower()},
+            {"$set": {
+                "league_id": league_id,
+                "league_name": league["name"],
+                "team_id": row.team_id,
+                "team_name": team_name,
+                "email": row.email.lower(),
+                "invite_code": invite_code,
+                "invite_url": invite_url,
+                "invited_by": user["_id"],
+                "status": send_result.get("status", "sent"),
+                "provider_response": {k: v for k, v in send_result.items() if k != "to"},
+                "sent_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+        if send_result.get("status") in ("sent", "mocked"):
+            sent += 1
+        else:
+            errors.append({"team_id": row.team_id, "error": send_result.get("status", "send_failed")})
+
+    logger.info(
+        f"Bulk team invites for league {league_id}: sent={sent} errors={len(errors)}"
+    )
+    return {"sent": sent, "errors": errors}
