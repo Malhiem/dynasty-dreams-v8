@@ -126,10 +126,13 @@ def test_shared_context_alias_in_main_so_provider_matches_consumers():
     sub-components subscribed to internals.tsx's context, the
     Provider would broadcast to nobody. The fix is a deliberate
     alias import so the Provider AND every consumer reference the
-    same context identity."""
+    same context identity.
+
+    Iter 185 — the import is now part of a multi-line barrel from
+    `./player-roster/internals`, so assert on the alias clause +
+    the module path independently.
+    """
     src = PLAYER_ROSTER.read_text()
-    assert (
-        "import { RosterConfigContext as SharedRosterConfigContext } "
-        'from "./player-roster/internals";' in src
-    )
+    assert "RosterConfigContext as SharedRosterConfigContext" in src
+    assert 'from "./player-roster/internals";' in src
     assert "<SharedRosterConfigContext.Provider" in src

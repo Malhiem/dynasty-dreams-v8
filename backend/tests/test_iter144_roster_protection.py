@@ -74,7 +74,12 @@ def owner_team(owner_token, owner_league):
 
 # ── 1. PlayerRoster has ShieldButton + props ───────────────────
 def test_roster_has_shield_button():
-    src = ROSTER.read_text()
+    """Iter 183 — ShieldButton was extracted to
+    `player-roster/sub-components.tsx`. PlayerRoster still owns the
+    props/handlers; the visual component itself lives in the
+    sub-component file."""
+    subs = ROSTER.parent / "player-roster" / "sub-components.tsx"
+    src = ROSTER.read_text() + (subs.read_text() if subs.exists() else "")
     assert "ShieldButton" in src
     assert "roster-protect-btn-" in src
     assert "onToggleProtection" in src

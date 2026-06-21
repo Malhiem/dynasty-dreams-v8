@@ -105,6 +105,9 @@ export const StatsTable = ({
   showOwnership = true,
   showPositionEligibility = true,
   lineupWarnings = {},
+  // Iter 185 — global section timeframe controlling the
+  // per-section "Avg fpts/g" summary rendered by SectionGroup.
+  sectionTimeframe = "season",
 }: {
   grouped: Record<RosterSection, Player[]>;
   onTrade: (p: Player) => void;
@@ -128,6 +131,7 @@ export const StatsTable = ({
   showOwnership?: boolean;
   showPositionEligibility?: boolean;
   lineupWarnings?: Record<string, any[]>;
+  sectionTimeframe?: string;
 } & HighlightProps) => {
   // Iter 180 (fix) — pick up league-driven roster slots from
   // PlayerRoster's RosterConfigContext. Destructured names match the
@@ -195,7 +199,7 @@ export const StatsTable = ({
               // Render all slots, with empty rows for unfilled ones
               const filledSlotIds = new Set(sectionPlayers.map(p => p.rosterSlotId));
               return (
-                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
+                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
                   {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (player) {
@@ -220,7 +224,7 @@ export const StatsTable = ({
 
             // Non-starting sections: always show header even if empty
             return (
-              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
+              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
                 {sectionPlayers.length === 0 ? (
                   <>
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -515,7 +519,7 @@ export const FantasyPointsTable = ({
 
             if (section === "starting") {
               return (
-                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
+                <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
                   {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (!player) return <EmptySlotRow key={slot.id} slot={slot} colSpan={colSpan} />;
@@ -544,7 +548,7 @@ export const FantasyPointsTable = ({
             }
 
             return (
-              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
+              <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
                 {sectionPlayers.length === 0 ? (
                   <>
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -671,7 +675,7 @@ export const MatchupScheduleTable = ({
 
             if (section === "starting") {
               return (
-                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
+                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
                   {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                     const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                     if (!player) return <EmptySlotRow key={slot.id} slot={slot} colSpan={colSpan} />;
@@ -682,7 +686,7 @@ export const MatchupScheduleTable = ({
             }
 
             return (
-              <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
+              <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
                 {sectionPlayers.length === 0 ? (
                   <>
                     {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -786,7 +790,7 @@ export const FullScheduleTable = ({
 
               if (section === "starting") {
                 return (
-                  <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
+                  <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
                     {LEAGUE_ROSTER_SLOTS.map((slot, slotIdx) => {
                       const player = sectionPlayers.find(p => p.rosterSlotId === slot.id);
                       if (!player) return <EmptySlotRow key={slot.id} slot={slot} colSpan={colSpan} />;
@@ -797,7 +801,7 @@ export const FullScheduleTable = ({
               }
 
               return (
-                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe="season" getPlayerPoints={getPlayerPoints}>
+                <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints}>
                   {sectionPlayers.length === 0 ? (
                     <>
                       {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
@@ -859,6 +863,14 @@ export const SectionGroup = ({
     ? `${config.label} - ${playerCount}/${config.maxSlots}`
     : config.label;
 
+  // Iter 185 — per-section timeframe override. Defaults to the
+  // global `sectionTimeframe` flowing down from PlayerRoster but
+  // owners can pick a section-specific timeframe (e.g. last 7 days
+  // for Bench, season for Starting Roster) via the Select inside
+  // the expanded summary row. `null` = inherit from global default.
+  const [localOverride, setLocalOverride] = useState<string | null>(null);
+  const effectiveTimeframe = localOverride ?? sectionTimeframe ?? "season";
+
   // Iter 184 — Compute summary metrics. Uses `statsByPeriod` (which
   // backend populates per timeframe) when present, else falls back
   // to the season points. Only renders when caller supplied props.
@@ -866,7 +878,7 @@ export const SectionGroup = ({
     if (!sectionPlayers || sectionPlayers.length === 0 || !getPlayerPoints) {
       return null;
     }
-    const tf = sectionTimeframe || "season";
+    const tf = effectiveTimeframe;
     const ptsFor = (p: Player): number => {
       const periodPts = (p.statsByPeriod && p.statsByPeriod[tf]);
       if (typeof periodPts === "number" && periodPts > 0) return periodPts;
@@ -887,7 +899,7 @@ export const SectionGroup = ({
         "season": "Season",
       } as Record<string, string>)[tf] || tf,
     };
-  }, [sectionPlayers, sectionTimeframe, getPlayerPoints]);
+  }, [sectionPlayers, effectiveTimeframe, getPlayerPoints]);
 
   const [expanded, setExpanded] = useState<boolean>(false);
 
@@ -958,6 +970,26 @@ export const SectionGroup = ({
               <span className="opacity-70">
                 ({sectionPlayers!.length} player{sectionPlayers!.length === 1 ? "" : "s"} · {summary.timeframeLabel})
               </span>
+              {/* Iter 185 — per-section timeframe override picker */}
+              <select
+                data-testid={`section-timeframe-${section || "default"}`}
+                value={localOverride ?? "__inherit__"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setLocalOverride(v === "__inherit__" ? null : v);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="ml-auto text-[10px] bg-secondary/60 border border-border rounded px-1.5 py-0.5 text-foreground hover:bg-secondary cursor-pointer"
+              >
+                <option value="__inherit__">Inherit ({(({
+                  "7d": "7d", "14d": "14d", "30d": "30d", "60d": "60d", "season": "Season",
+                } as Record<string, string>)[sectionTimeframe ?? "season"]) || "Season"})</option>
+                <option value="season">Season</option>
+                <option value="7d">Last 7 Days</option>
+                <option value="14d">Last 14 Days</option>
+                <option value="30d">Last 30 Days</option>
+                <option value="60d">Last 60 Days</option>
+              </select>
             </div>
           </td>
         </tr>

@@ -34,9 +34,15 @@ def test_player_roster_imports_use_active_league():
 
 def test_build_league_roster_slots_helper_exists():
     """Module-level pure helper that maps a position_breakdown.active
-    dict into an ordered list of RosterSlot objects."""
-    src = PLAYER_ROSTER.read_text()
-    assert "const buildLeagueRosterSlots = (" in src
+    dict into an ordered list of RosterSlot objects.
+
+    Iter 185 — helper relocated to `internals.tsx`; PlayerRoster
+    imports + re-exports it for backwards compat.
+    """
+    internals_path = PLAYER_ROSTER.parent / "player-roster" / "internals.tsx"
+    src = (PLAYER_ROSTER.read_text()
+           + (internals_path.read_text() if internals_path.exists() else ""))
+    assert "const buildLeagueRosterSlots = (" in src or "buildLeagueRosterSlots = (" in src
     # Goalies omitted from the skater grid (rendered in dedicated section).
     assert 'const ORDER: RosterSlotType[] = ["C", "LW", "RW", "W", "F", "SK", "D", "UTIL"];' in src
     # Default fallback when no breakdown configured.
@@ -66,8 +72,13 @@ def test_section_config_max_slots_driven_by_league():
 def test_module_default_roster_slots_retained_as_fallback():
     """When no breakdown is configured (legacy leagues, or before
     the active league has loaded), the module default seven slots
-    keep the team page renderable."""
-    src = PLAYER_ROSTER.read_text()
+    keep the team page renderable.
+
+    Iter 185 — declaration moved to `internals.tsx`.
+    """
+    internals_path = PLAYER_ROSTER.parent / "player-roster" / "internals.tsx"
+    src = (PLAYER_ROSTER.read_text()
+           + (internals_path.read_text() if internals_path.exists() else ""))
     # Module-level default kept for the fallback path.
     assert 'const LEAGUE_ROSTER_SLOTS: RosterSlot[] = [' in src
     assert '{ id: "C1", label: "C", eligiblePositions: slotEligibility.C },' in src

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useMemo, useCallback, useEffect, useRef, createContext, useContext } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings, Megaphone, Shield } from "lucide-react";
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
@@ -60,181 +60,80 @@ import {
 // distinct contexts and sub-tables would silently fall back to the
 // static default 7-slot layout instead of the league's
 // position_breakdown.active.
-import { RosterConfigContext as SharedRosterConfigContext } from "./player-roster/internals";
+// Iter 185 — pull every shared type / constant / helper from
+// internals.tsx so PlayerRoster.tsx stops carrying inline duplicates.
+import {
+  RosterConfigContext as SharedRosterConfigContext,
+  // constants (module-level defaults; shadowed inside the component
+  // by useMemo derivations that pull from the active league config)
+  POSITION_ACQUISITION_THRESHOLD,
+  ALL_POSITIONS,
+  slotEligibility,
+  LEAGUE_ROSTER_SLOTS,
+  sectionConfig,
+  sectionOrder,
+  rosterStatCategories,
+  trackedCategories,
+  untrackedCategories,
+  allStatCategories,
+  filterLabels,
+  categoryLabels,
+  MINORS_MAX_AGE,
+  MINORS_MAX_GAMES,
+  // helpers
+  buildLeagueRosterSlots,
+  checkIneligibility,
+  findHighlightedPlayer,
+  formatSalary,
+  // leaf components (real implementations live here too — iter185)
+  TrendIndicator,
+  PositionBadges,
+  PositionButton,
+  getSlotPositionColor,
+  getPositionColor,
+  getSlotDisplayLabel,
+} from "./player-roster/internals";
+// Re-export public types/constants so external consumers (tests,
+// other dashboard pieces) keep finding them on PlayerRoster.tsx.
+export type {
+  Player,
+  RosterSection,
+  RosterSlot,
+  RosterSlotType,
+  ViewFilter,
+  IneligibilityInfo,
+} from "./player-roster/internals";
+export {
+  POSITION_ACQUISITION_THRESHOLD,
+  ALL_POSITIONS,
+  slotEligibility,
+  LEAGUE_ROSTER_SLOTS,
+  sectionConfig,
+  sectionOrder,
+  rosterStatCategories,
+  trackedCategories,
+  untrackedCategories,
+  allStatCategories,
+  filterLabels,
+  buildLeagueRosterSlots,
+  checkIneligibility,
+} from "./player-roster/internals";
+// Local imports of the actual Player type for use in this file
+import type {
+  Player,
+  RosterSection,
+  RosterSlot,
+} from "./player-roster/internals";
 // ── Types ──────────────────────────────────────────────
+// Iter 185 — Domain types now live in `./player-roster/internals`
+// and are re-exported above for external consumers. The PlayerRoster
+// file used to inline duplicates of Player, Contract, RosterSection,
+// RosterSlot, ViewFilter, etc.; all removed.
 
-interface Contract {
-  salary: number;
-  yearsRemaining: number;
-  type: "RFA" | "UFA" | "ELC" | "Signed";
-}
-
-interface PlayerGame {
-  date: string;
-  opponent: string;
-  played: boolean;
-  goals?: number;
-  assists?: number;
-  pts?: number;
-}
-
-interface PlayerCategoryBreakdown {
-  G: number;
-  A: number;
-  PPP: number;
-  SHP: number;
-  SOG: number;
-  HIT: number;
-  BLK: number;
-  PIM: number;
-  "+/-": number;
-  FOW: number;
-  FOL: number;
-  [key: string]: number;
-}
-
-interface PositionEligibility {
-  position: string;
-  gamesPlayed: number;
-  acquired: boolean; // true if >= threshold games played
-}
-
-export interface Player {
-  id: number;
-  name: string;
-  position: string; // primary position
-  eligiblePositions: string[]; // all positions currently eligible for
-  secondaryPositions: PositionEligibility[]; // progress toward new positions
-  team: string;
-  points: number;
-  gamesPlayed: number;
-  dynastyValue: number;
-  trend: "up" | "down" | "stable";
-  age: number;
-  contract: Contract;
-  rosterSection: RosterSection;
-  rosterSlotId?: string; // links to a LEAGUE_ROSTER_SLOTS id for starting players
-  statsByPeriod: Record<string, number>;
-  categoryBreakdown: PlayerCategoryBreakdown;
-  matchupGames: number;
-  schedule: PlayerGame[];
-}
-
-export type RosterSection = "starting" | "bench" | "ir" | "minors" | "goalies" | "goalies_minors";
-
-export type ViewFilter =
-  | "season"
-  | "cap-hit"
-  | "1d"
-  | "7d"
-  | "14d"
-  | "30d"
-  | "60d"
-  | "100d"
-  | "fantasy-points"
-  | "matchup-schedule"
-  | "full-schedule";
-
-// ── Position Eligibility Config ────────────────────────
-
-export const POSITION_ACQUISITION_THRESHOLD = 20; // default games to acquire new position
-
-export const ALL_POSITIONS = ["C", "LW", "RW", "D", "G"];
-
-// ── League Manager Roster Slot Configuration ──────────
-// These define the fixed starting roster positions and their order.
-// Options: C, LW, RW, W (Wing), F (Forward), D, SK (Skater), UTIL (Utility), G
-export type RosterSlotType = "C" | "LW" | "RW" | "W" | "F" | "D" | "SK" | "UTIL" | "G";
-
-export interface RosterSlot {
-  id: string;       // unique slot id e.g. "C1", "LW1"
-  label: RosterSlotType; // display label
-  eligiblePositions: string[]; // which player positions can fill this slot
-}
-
-// Map slot types to which player positions are eligible
-export const slotEligibility: Record<RosterSlotType, string[]> = {
-  C: ["C"],
-  LW: ["LW"],
-  RW: ["RW"],
-  W: ["LW", "RW"],         // Wing = LW or RW
-  F: ["C", "LW", "RW"],    // Forward = any forward
-  D: ["D"],
-  SK: ["C", "LW", "RW", "D"], // Skater = any skater
-  UTIL: ["C", "LW", "RW", "D", "G"], // Utility = anyone
-  G: ["G"],
-};
-
-// League manager configured starting roster slots (order matters)
-// Iter 180 — DEFAULT shape only. Real leagues drive this from
-// `league.position_breakdown.active` via the `LEAGUE_ROSTER_SLOTS`
-// useMemo inside the PlayerRoster component (which shadows this
-// constant). Used as a fallback when no league config is loaded.
-export const LEAGUE_ROSTER_SLOTS: RosterSlot[] = [
-  { id: "C1", label: "C", eligiblePositions: slotEligibility.C },
-  { id: "C2", label: "C", eligiblePositions: slotEligibility.C },
-  { id: "LW1", label: "LW", eligiblePositions: slotEligibility.LW },
-  { id: "RW1", label: "RW", eligiblePositions: slotEligibility.RW },
-  { id: "W1", label: "W", eligiblePositions: slotEligibility.W },
-  { id: "D1", label: "D", eligiblePositions: slotEligibility.D },
-  { id: "UTIL1", label: "UTIL", eligiblePositions: slotEligibility.UTIL },
-  // Note: G slot intentionally omitted — goalies render in their dedicated
-  // "Goalies" section below, not in the skater Starting Roster grid.
-];
-
-// Iter 180 — Build the dynamic starting-roster slot list from a
-// league's `position_breakdown.active` config. Goalie slots are
-// omitted (rendered in a dedicated section). Returns the default
-// list when the breakdown is empty/unset so the team page still
-// renders before the league config is loaded.
-export const buildLeagueRosterSlots = (
-  active: Record<string, number> | null | undefined,
-): RosterSlot[] => {
-  if (!active || Object.keys(active).length === 0) {
-    return LEAGUE_ROSTER_SLOTS;
-  }
-  // Render slots in a stable, scannable order: C, LW, RW, W, F, SK, D, UTIL.
-  // G is intentionally omitted (goalie section renders separately).
-  const ORDER: RosterSlotType[] = ["C", "LW", "RW", "W", "F", "SK", "D", "UTIL"];
-  const slots: RosterSlot[] = [];
-  for (const pos of ORDER) {
-    const raw = active[pos];
-    const count = typeof raw === "number"
-      ? raw
-      : (raw != null ? parseInt(String(raw), 10) || 0 : 0);
-    for (let i = 0; i < count; i++) {
-      slots.push({
-        id: `${pos}${i + 1}`,
-        label: pos,
-        eligiblePositions: slotEligibility[pos] || [pos],
-      });
-    }
-  }
-  // Empty breakdown after coercion — fall back to default
-  return slots.length > 0 ? slots : LEAGUE_ROSTER_SLOTS;
-};
-
-// Iter 180 (fix) — React Context so the StatsTable, StatsTableSeason,
-// StatsTableRange (etc.) sub-components — which live at module scope
-// and therefore can't see the shadowed `LEAGUE_ROSTER_SLOTS` /
-// `sectionConfig` inside PlayerRoster — still pick up the dynamic,
-// league-driven values. The Provider lives at the top of
-// PlayerRoster's render and broadcasts the memoized config. Falls
-// back to module defaults when no Provider is mounted (for callers
-// that render these tables standalone outside the dashboard).
-export type RosterConfigShape = {
-  slots: RosterSlot[];
-  sections: Record<RosterSection, { label: string; color: string; borderColor: string; maxSlots: number }>;
-};
-export const RosterConfigContext = createContext<RosterConfigShape | null>(null);
-export const useRosterConfig = (): RosterConfigShape => {
-  const ctx = useContext(RosterConfigContext);
-  if (ctx) return ctx;
-  // Defaults — only hit when a sub-table is rendered outside the
-  // PlayerRoster provider (rare). Keep behaviour identical to the
-  // legacy hardcoded constants.
-  return { slots: LEAGUE_ROSTER_SLOTS, sections: sectionConfig as any };
-};
+// Iter 183/185 — RosterConfig context lives in internals.tsx; the
+// Provider in PlayerRoster's render uses the `SharedRosterConfigContext`
+// alias imported above to broadcast the dynamic league-driven config
+// to the sub-tables in `./player-roster/sub-components.tsx`.
 
 // ── Mock Data ──────────────────────────────────────────
 
@@ -394,10 +293,19 @@ const weeklyMatchups: WeekMatchup[] = [
 const currentWeek = 7;
 
 // ── Helpers ────────────────────────────────────────────
+// Iter 185 — `formatSalary`, `TrendIndicator`, `getPositionColor`,
+// `getSlotPositionColor`, `getSlotDisplayLabel`, `PositionBadges`,
+// `PositionButton`, `sectionConfig`, `sectionOrder`,
+// `rosterStatCategories`, `trackedCategories`, `untrackedCategories`,
+// `allStatCategories`, `filterLabels`, `categoryLabels`,
+// `MINORS_MAX_*`, `IneligibilityInfo`, `checkIneligibility` all
+// moved to `./player-roster/internals` so a single source of truth
+// flows through the sub-component tree. The only items kept here
+// are component-local helpers (getContractTypeColor,
+// getRosterViolations, canOwnerFixViolations) that aren't used
+// outside this file.
 
-const formatSalary = (salary: number) => `$${(salary / 1000000).toFixed(1)}M`;
-
-const getContractTypeColor = (type: Contract["type"]) => {
+const getContractTypeColor = (type: any) => {
   switch (type) {
     case "ELC": return "bg-success/20 text-success";
     case "RFA": return "bg-accent/20 text-accent";
@@ -405,65 +313,6 @@ const getContractTypeColor = (type: Contract["type"]) => {
     case "Signed": return "bg-primary/20 text-primary";
     default: return "bg-secondary text-secondary-foreground";
   }
-};
-
-const getPositionColor = (position: string) => {
-  switch (position) {
-    case "C": return "bg-primary/20 text-primary border-primary/30";
-    case "LW":
-    case "RW": return "bg-success/20 text-success border-success/30";
-    case "D": return "bg-accent/20 text-accent border-accent/30";
-    case "G": return "bg-purple-500/20 text-purple-400 border-purple-500/30";
-    default: return "bg-secondary text-secondary-foreground border-border";
-  }
-};
-
-const TrendIndicator = ({ trend }: { trend: "up" | "down" | "stable" }) => {
-  if (trend === "up") return <TrendingUp className="h-4 w-4 text-success mx-auto" />;
-  if (trend === "down") return <TrendingDown className="h-4 w-4 text-destructive mx-auto" />;
-  return <Minus className="h-4 w-4 text-muted-foreground mx-auto" />;
-};
-
-export const sectionConfig: Record<RosterSection, { label: string; color: string; borderColor: string; maxSlots: number }> = {
-  starting: { label: "Starting Roster", color: "bg-primary/10", borderColor: "border-l-primary", maxSlots: LEAGUE_ROSTER_SLOTS.length },
-  bench: { label: "Bench", color: "bg-accent/10", borderColor: "border-l-accent", maxSlots: 4 },
-  ir: { label: "Injury Reserve", color: "bg-destructive/10", borderColor: "border-l-destructive", maxSlots: 3 },
-  minors: { label: "Minors Pool", color: "bg-purple-500/10", borderColor: "border-l-purple-500", maxSlots: 5 },
-  goalies: { label: "Goalies", color: "bg-teal-500/10", borderColor: "border-l-teal-500", maxSlots: 4 },
-  // Goalies minors max defaults to the same value as the skater minors pool
-  // unless the league commissioner configures `goalies_minors_slots` separately
-  // (see useLeagueRosterConfig — overrides applied at runtime via mergedSectionConfig).
-  goalies_minors: { label: "Goalies — Minors Pool", color: "bg-teal-500/5", borderColor: "border-l-teal-700", maxSlots: 5 },
-};
-
-// ── Ineligibility Checks ──────────────────────────────
-const MINORS_MAX_AGE = 23;
-const MINORS_MAX_GAMES = 40; // games played in season before losing minors eligibility
-
-export interface IneligibilityInfo {
-  isIneligible: boolean;
-  reason: string;
-}
-
-export const checkIneligibility = (player: Player): IneligibilityInfo => {
-  if (player.rosterSection === "ir") {
-    // Healthy player on IR — if they have recent stats, they're healthy
-    const hasRecentStats = player.statsByPeriod["7d"] > 0 || player.statsByPeriod["1d"] > 0;
-    if (hasRecentStats) {
-      return { isIneligible: true, reason: `Healthy player on Injury Reserve` };
-    }
-  }
-  if (player.rosterSection === "minors") {
-    if (player.age > MINORS_MAX_AGE) {
-      return { isIneligible: true, reason: `Player has aged out of minors eligibility (age ${player.age}, max ${MINORS_MAX_AGE})` };
-    }
-    // Check games played threshold
-    const gamesPlayed = player.schedule.filter(g => g.played).length;
-    if (gamesPlayed > MINORS_MAX_GAMES) {
-      return { isIneligible: true, reason: `Player has played out of minors eligibility (${gamesPlayed} games, max ${MINORS_MAX_GAMES})` };
-    }
-  }
-  return { isIneligible: false, reason: "" };
 };
 
 // ── Roster Violation Detection ─────────────────────────
@@ -506,7 +355,7 @@ const getRosterViolations = (playerList: Player[]): { player: Player; reason: st
 const canOwnerFixViolations = (playerList: Player[]): boolean => {
   const currentViolationCount = getRosterViolations(playerList).length;
   if (currentViolationCount === 0) return true;
-  
+
   for (let i = 0; i < playerList.length; i++) {
     for (let j = i + 1; j < playerList.length; j++) {
       const a = playerList[i];
@@ -523,148 +372,11 @@ const canOwnerFixViolations = (playerList: Player[]): boolean => {
       const aCanFill = aSlot ? aSlot.eligiblePositions.some(ep => a.eligiblePositions.includes(ep)) : true;
       const bCanFill = bSlot ? bSlot.eligiblePositions.some(ep => b.eligiblePositions.includes(ep)) : true;
       if (!aCanFill || !bCanFill) continue;
-      
+
       if (getRosterViolations(simulated).length < currentViolationCount) return true;
     }
   }
   return false;
-};
-
-export const sectionOrder: RosterSection[] = ["starting", "bench", "ir", "minors", "goalies", "goalies_minors"];
-
-
-
-
-const categoryLabels: Record<string, string> = {
-  G: "Goals", A: "Assists", PPP: "Power Play Pts", SHP: "Shorthanded Pts",
-  SOG: "Shots on Goal", HIT: "Hits", BLK: "Blocked Shots", PIM: "Penalty Min",
-  "+/-": "Plus/Minus", FOW: "Faceoffs Won", FOL: "Faceoffs Lost",
-};
-
-export const rosterStatCategories = ["G", "A", "SOG", "PPP", "SHP", "HIT", "BLK", "FOW", "FOL"];
-
-// Categories the league is actively scoring
-export const trackedCategories = ["G", "A", "+/-", "PPP", "SHP", "SOG", "HIT", "BLK"];
-// Categories not part of league scoring
-export const untrackedCategories = ["PIM", "FOW", "FOL"];
-// All available stat categories
-export const allStatCategories = [...trackedCategories, ...untrackedCategories];
-
-export const filterLabels: Record<ViewFilter, string> = {
-  season: "Season Stats",
-  "cap-hit": "Cap Hit",
-  "1d": "Last 1 Day",
-  "7d": "Last 7 Days",
-  "14d": "Last 14 Days",
-  "30d": "Last 30 Days",
-  "60d": "Last 60 Days",
-  "100d": "Last 100 Days",
-  "fantasy-points": "Fantasy Points",
-  "matchup-schedule": "Matchup Schedule",
-  "full-schedule": "Full Schedule",
-};
-
-// ── Position Eligibility Badge ─────────────────────────
-
-export const PositionBadges = ({ player }: { player: Player }) => {
-  return (
-    <div className="flex items-center gap-0.5 flex-wrap">
-      {player.eligiblePositions.map(pos => (
-        <span
-          key={pos}
-          className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${getPositionColor(pos)}`}
-        >
-          {pos}
-        </span>
-      ))}
-      {player.secondaryPositions
-        .filter(sp => !sp.acquired)
-        .map(sp => (
-          <TooltipProvider key={sp.position}>
-            <Tooltip>
-              <TooltipTrigger>
-                <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground border border-dashed border-muted-foreground/30">
-                  {sp.position}
-                  <span className="ml-0.5 text-[8px]">({sp.gamesPlayed}/{POSITION_ACQUISITION_THRESHOLD})</span>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="text-xs">{sp.gamesPlayed}/{POSITION_ACQUISITION_THRESHOLD} games at {sp.position} to acquire eligibility</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ))}
-    </div>
-  );
-};
-
-// ── Helper: get display label for a player's roster slot ──
-
-const getSlotDisplayLabel = (player: Player): string => {
-  if (player.rosterSection === "bench") return "BEN";
-  if (player.rosterSection === "minors") return "M";
-  if (player.rosterSection === "ir") return "IR";
-  if (player.rosterSection === "starting" && player.rosterSlotId) {
-    const slot = LEAGUE_ROSTER_SLOTS.find(s => s.id === player.rosterSlotId);
-    return slot?.label ?? player.position;
-  }
-  return player.position;
-};
-
-const getSlotPositionColor = (label: string) => {
-  switch (label) {
-    case "C": return "bg-primary/20 text-primary border-primary/30";
-    case "LW":
-    case "RW":
-    case "W":
-    case "F": return "bg-success/20 text-success border-success/30";
-    case "D":
-    case "SK": return "bg-accent/20 text-accent border-accent/30";
-    case "G": return "bg-purple-500/20 text-purple-400 border-purple-500/30";
-    case "UTIL": return "bg-amber-500/20 text-amber-400 border-amber-500/30";
-    case "BEN": return "bg-secondary text-muted-foreground border-border";
-    case "M": return "bg-purple-500/10 text-purple-400/70 border-purple-500/20";
-    case "IR": return "bg-destructive/20 text-destructive border-destructive/30";
-    default: return "bg-secondary text-secondary-foreground border-border";
-  }
-};
-
-// ── Main Position Button (clickable, highlights eligible slots) ──
-
-export const PositionButton = ({
-  player,
-  highlightedPlayerId,
-  onToggleHighlight,
-}: {
-  player: Player;
-  highlightedPlayerId: number | null;
-  onToggleHighlight: (playerId: number) => void;
-}) => {
-  const isActive = highlightedPlayerId === player.id;
-  const slotLabel = getSlotDisplayLabel(player);
-
-  return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            onClick={() => onToggleHighlight(player.id)}
-            className={`
-              text-xs font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer min-w-[40px]
-              ${getSlotPositionColor(slotLabel)}
-              ${isActive ? "ring-2 ring-primary ring-offset-1 ring-offset-card scale-110 shadow-lg" : "hover:scale-105"}
-            `}
-          >
-            {slotLabel}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p className="text-xs">{highlightedPlayerId && highlightedPlayerId !== player.id ? "Click to swap roster spots" : "Click to highlight & swap eligible positions"}</p>
-          <p className="text-[10px] text-muted-foreground">Position: {player.position} · Eligible: {player.eligiblePositions.join(", ")}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
-  );
 };
 
 // ── Component ──────────────────────────────────────────
@@ -1498,6 +1210,28 @@ const PlayerRoster = ({
                 <SelectItem value="full-schedule">Full Schedule</SelectItem>
               </SelectContent>
             </Select>
+
+            {/* Iter 185 — Global timeframe for the per-section
+                "Avg fpts/g" summary. Independent from the table
+                column filter above so owners can mix Cap Hit /
+                Season Stats columns with Last 7 Days section
+                analytics. Per-section overrides live inside each
+                SectionGroup's expanded summary row. */}
+            <Select value={sectionTimeframe} onValueChange={(v) => setSectionTimeframe(v)}>
+              <SelectTrigger
+                className="w-[170px] h-8 text-xs bg-secondary border-border"
+                data-testid="section-summary-timeframe-select"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="season">Summary: Season</SelectItem>
+                <SelectItem value="7d">Summary: Last 7 Days</SelectItem>
+                <SelectItem value="14d">Summary: Last 14 Days</SelectItem>
+                <SelectItem value="30d">Summary: Last 30 Days</SelectItem>
+                <SelectItem value="60d">Summary: Last 60 Days</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -1705,6 +1439,7 @@ const PlayerRoster = ({
             showFpts={showFpts}
             showPositionEligibility={showPositionEligibility}
             lineupWarnings={lineupWarnings}
+            sectionTimeframe={sectionTimeframe}
           />
         )}
       </div>
@@ -1733,50 +1468,14 @@ const PlayerRoster = ({
 
 // ── Highlight props shared across tables ───────────────
 
-export interface HighlightProps {
-  highlightedPlayerId: number | null;
-  highlightedPositions: string[];
-  onToggleHighlight: (playerId: number) => void;
-  onMoveToSection?: (section: RosterSection) => void;
-  sectionCounts?: Record<RosterSection, number>;
-}
-
-// ── Helper: is this player's position highlighted ──────
-
-export const isPositionHighlighted = (player: Player, highlightedPositions: string[], highlightedPlayerId: number | null): boolean => {
-  if (!highlightedPlayerId) return false;
-  if (player.id === highlightedPlayerId) return false; // don't highlight the source player itself
-  return highlightedPositions.includes(player.position);
-};
-
-// Helper: find highlighted player from grouped data
-export const findHighlightedPlayer = (grouped: Record<RosterSection, Player[]>, highlightedPlayerId: number | null): Player | null => {
-  if (!highlightedPlayerId) return null;
-  for (const section of sectionOrder) {
-    const found = grouped[section].find(p => p.id === highlightedPlayerId);
-    if (found) return found;
-  }
-  return null;
-};
-
-// Helper: should we show an open slot for moving highlighted player to this section?
-export const shouldShowOpenSlotForSection = (
-  section: RosterSection,
-  highlightedPlayerId: number | null,
-  onMoveToSection?: (section: RosterSection) => void,
-  sectionCounts?: Record<RosterSection, number>,
-  highlightedPlayer?: Player | null,
-): boolean => {
-  if (!highlightedPlayerId || !onMoveToSection || !sectionCounts) return false;
-  if (section === "starting" || section === "minors") return false;
-  if (sectionCounts[section] >= sectionConfig[section].maxSlots) return false;
-  // Don't show IR open slot if player is healthy (ineligible for IR)
-  if (section === "ir" && highlightedPlayer) {
-    const hasRecentStats = highlightedPlayer.statsByPeriod["7d"] > 0 || highlightedPlayer.statsByPeriod["1d"] > 0;
-    if (hasRecentStats) return false;
-  }
-  return true;
-};
+// ── HighlightProps + helpers moved to internals.tsx ────
+// Iter 185 — `HighlightProps`, `isPositionHighlighted`,
+// `findHighlightedPlayer`, `shouldShowOpenSlotForSection` all live
+// in `./player-roster/internals` now. Re-exported below so any
+// downstream consumer that historically imported them off
+// PlayerRoster.tsx keeps working.
+export type { HighlightProps } from "./player-roster/internals";
+export { isPositionHighlighted, findHighlightedPlayer, shouldShowOpenSlotForSection } from "./player-roster/internals";
 
 // ── Stats Table (default, season, time-range) ──────────
 

@@ -294,6 +294,32 @@ export const getSlotPositionColor = (label: string) => {
   }
 };
 
+// Iter 185 — helpers used by PositionBadges + PositionButton. Both
+// were duplicated inside PlayerRoster.tsx; consolidated here so the
+// sub-components in `./sub-components.tsx` use the same (correct)
+// implementations the parent file does.
+export const getPositionColor = (position: string) => {
+  switch (position) {
+    case "C": return "bg-primary/20 text-primary border-primary/30";
+    case "LW":
+    case "RW": return "bg-success/20 text-success border-success/30";
+    case "D": return "bg-accent/20 text-accent border-accent/30";
+    case "G": return "bg-purple-500/20 text-purple-400 border-purple-500/30";
+    default: return "bg-secondary text-secondary-foreground border-border";
+  }
+};
+
+export const getSlotDisplayLabel = (player: Player): string => {
+  if (player.rosterSection === "bench") return "BEN";
+  if (player.rosterSection === "minors") return "M";
+  if (player.rosterSection === "ir") return "IR";
+  if (player.rosterSection === "starting" && player.rosterSlotId) {
+    const slot = LEAGUE_ROSTER_SLOTS.find((s) => s.id === player.rosterSlotId);
+    return slot?.label ?? player.position;
+  }
+  return player.position;
+};
+
 // ── Small leaf components ─────────────────────────────
 
 export const TrendIndicator = ({ trend }: { trend: "up" | "down" | "stable" }) => {
@@ -306,53 +332,64 @@ export const PositionBadges = ({ player }: { player: Player }) => {
   return (
     <div className="flex items-center gap-0.5 flex-wrap">
       {player.eligiblePositions.map((pos) => (
-        <Badge key={pos} variant="secondary" className="text-[10px] px-1 py-0 h-4">
+        <span
+          key={pos}
+          className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${getPositionColor(pos)}`}
+        >
           {pos}
-        </Badge>
+        </span>
       ))}
+      {player.secondaryPositions
+        .filter((sp) => !sp.acquired)
+        .map((sp) => (
+          <TooltipProvider key={sp.position}>
+            <Tooltip>
+              <TooltipTrigger>
+                <span className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground border border-dashed border-muted-foreground/30">
+                  {sp.position}
+                  <span className="ml-0.5 text-[8px]">({sp.gamesPlayed}/{POSITION_ACQUISITION_THRESHOLD})</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">{sp.gamesPlayed}/{POSITION_ACQUISITION_THRESHOLD} games at {sp.position} to acquire eligibility</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ))}
     </div>
   );
 };
 
 export const PositionButton = ({
   player,
-  position,
-  isOnRoster,
-  onClick,
+  highlightedPlayerId,
+  onToggleHighlight,
 }: {
   player: Player;
-  position: string;
-  isOnRoster: boolean;
-  onClick: () => void;
+  highlightedPlayerId: number | null;
+  onToggleHighlight: (playerId: number) => void;
 }) => {
-  const isEligible = player.eligiblePositions.includes(position);
-  const secondary = player.secondaryPositions.find((sp) => sp.position === position);
-  const progressPct = secondary ? Math.min(100, (secondary.gamesPlayed / POSITION_ACQUISITION_THRESHOLD) * 100) : 0;
+  const isActive = highlightedPlayerId === player.id;
+  const slotLabel = getSlotDisplayLabel(player);
+
   return (
     <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
-            onClick={onClick}
-            className={`relative flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-              isEligible
-                ? isOnRoster
-                  ? "bg-primary/20 text-primary"
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-                : "bg-secondary/20 text-muted-foreground opacity-50"
-            }`}
+            onClick={() => onToggleHighlight(player.id)}
+            className={`
+              text-xs font-bold px-3 py-1.5 rounded-lg border transition-all cursor-pointer min-w-[40px]
+              ${getSlotPositionColor(slotLabel)}
+              ${isActive ? "ring-2 ring-primary ring-offset-1 ring-offset-card scale-110 shadow-lg" : "hover:scale-105"}
+            `}
           >
-            {position}
-            {!isEligible && secondary && (
-              <span className="text-[10px] opacity-70">({secondary.gamesPlayed}/{POSITION_ACQUISITION_THRESHOLD})</span>
-            )}
-            {!isEligible && secondary && progressPct > 0 && (
-              <div className="absolute bottom-0 left-0 h-0.5 bg-primary/60 transition-all" style={{ width: `${progressPct}%` }} />
-            )}
+            {slotLabel}
           </button>
         </TooltipTrigger>
         <TooltipContent>
-          {isEligible ? `Eligible at ${position}` : secondary ? `${secondary.gamesPlayed} of ${POSITION_ACQUISITION_THRESHOLD} games toward ${position}` : `Not eligible at ${position}`}
+          <p className="text-xs">{highlightedPlayerId && highlightedPlayerId !== player.id ? "Click to swap roster spots" : "Click to highlight & swap eligible positions"}</p>
+          <p className="text-[10px] text-muted-foreground">Position: {player.position} · Eligible: {player.eligiblePositions.join(", ")}</p>
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>
