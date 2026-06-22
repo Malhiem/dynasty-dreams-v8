@@ -20,6 +20,7 @@ import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useAuth } from "@/contexts/AuthContext";
 import { useChatUnread } from "@/hooks/use-chat-unread";
+import ReportUserButton from "@/components/ReportUserButton";
 
 const MUTE_OPTIONS = [
   { value: "30m", label: "30 minutes" },
@@ -450,6 +451,15 @@ const Chat = () => {
                             {msg.sender_name}
                           </span>
                           <span className="text-[11px] text-muted-foreground">{fmtTime(msg.created_at)}</span>
+                          {/* Iter 206 — Report this user (hidden for self) */}
+                          {msg.user_id && msg.user_id !== user?.id && (
+                            <ReportUserButton
+                              targetUserId={msg.user_id}
+                              targetUserEmail={msg.sender_name}
+                              leagueId={msg.league_id}
+                              contextUrl={`/chat#msg-${msg._id}`}
+                            />
+                          )}
                         </div>
                         <p className="text-sm text-foreground/90 whitespace-pre-wrap break-words">{msg.content}</p>
                       </div>

@@ -47,6 +47,25 @@ async def register(request: Request, response: Response):
     if await db.users.find_one({"username": username}):
         raise HTTPException(status_code=400, detail="Username already taken")
 
+    # Iter 206 — Content Moderation Phase 3: scan username against
+    # banned keywords. If hit, auto-queue for admin review (but allow
+    # the registration to proceed — admin can rename retroactively).
+    try:
+        from routes import moderation as _mod
+        match = await _mod.scan_text(username)
+        if match:
+            await _mod.queue_for_review(
+                source="username",
+                content=username,
+                author_id=None,
+                author_email=email,
+                matched_word=match["matched_word"],
+                severity=match["severity"],
+                context={"event": "registration"},
+            )
+    except Exception:
+        pass
+
     user_doc = {
         "email": email,
         "password_hash": hash_password(input.password),
@@ -112,6 +131,39 @@ async def login(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     await db.login_attempts.delete_one({"identifier": identifier})
+
+    # Iter 206 — Account Integrity: block banned users + log IP audit.
+    user_status = user.get("status", "active")
+    if user_status == "banned":
+        raise HTTPException(status_code=403, detail="Account banned. Submit an appeal to /api/appeals.")
+    if user_status == "suspended":
+        expires = user.get("ban_expires_at")
+        if expires:
+            try:
+                exp_dt = datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) < exp_dt:
+                    raise HTTPException(status_code=403, detail=f"Account suspended until {expires}. Submit an appeal to /api/appeals.")
+                await db.users.update_one(
+                    {"_id": user["_id"]},
+                    {"$set": {"status": "active"},
+                     "$unset": {"ban_expires_at": "", "ban_reason_code": "", "ban_reason": ""}},
+                )
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(status_code=403, detail="Account suspended.")
+
+    # Record login audit for multi-account detection (best-effort).
+    try:
+        await db.user_login_audit.insert_one({
+            "user_id": str(user["_id"]),
+            "email": user.get("email"),
+            "ip": (request.client.host if request.client else None),
+            "user_agent": request.headers.get("user-agent"),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
 
     user_id = str(user["_id"])
     access_token = create_access_token(user_id, email)

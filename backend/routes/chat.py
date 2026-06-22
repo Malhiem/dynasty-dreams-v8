@@ -285,6 +285,29 @@ async def post_message(channel_id: str, payload: dict, request: Request):
     res = await db.chat_messages.insert_one(msg)
     msg["_id"] = res.inserted_id
 
+    # Iter 206 — Content Moderation Phase 2: scan against banned keywords.
+    try:
+        from routes import moderation as _mod
+        match = await _mod.scan_text(text)
+        if match:
+            await _mod.queue_for_review(
+                source="chat",
+                content=text,
+                author_id=str(user["_id"]),
+                author_email=user.get("email"),
+                context={
+                    "channel_id": channel_id,
+                    "league_id": chan["league_id"],
+                    "message_id": str(res.inserted_id),
+                    "sender_name": sender_name,
+                },
+                matched_word=match["matched_word"],
+                severity=match["severity"],
+            )
+    except Exception:
+        # Non-fatal — chat must never break on moderation errors.
+        pass
+
     # Mark sender as read (don't increment their own unread)
     await db.chat_reads.update_one(
         {"user_id": user["_id"], "channel_id": channel_id},

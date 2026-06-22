@@ -132,6 +132,9 @@ export default function AdminDashboard() {
             <TabsTrigger value="tanking" data-testid="admin-tab-tanking">Tanking</TabsTrigger>
             <TabsTrigger value="lineup" data-testid="admin-tab-lineup">Lineup Audit</TabsTrigger>
             <TabsTrigger value="reports" data-testid="admin-tab-reports">User Reports</TabsTrigger>
+            <TabsTrigger value="moderation" data-testid="admin-tab-moderation">Moderation</TabsTrigger>
+            <TabsTrigger value="integrity" data-testid="admin-tab-integrity">Account Integrity</TabsTrigger>
+            <TabsTrigger value="appeals" data-testid="admin-tab-appeals">Appeals</TabsTrigger>
           </TabsList>
 
           {/* ─── Overview tab ─── */}
@@ -193,6 +196,22 @@ export default function AdminDashboard() {
           {/* ─── User Reports (Iter 205 — Content Moderation Phase 1) ─── */}
           <TabsContent value="reports" className="space-y-3">
             <UserReportsPanel />
+          </TabsContent>
+
+          {/* ─── Moderation Queue + Keyword filters (Iter 206 — Phase 2/3) ─── */}
+          <TabsContent value="moderation" className="space-y-3">
+            <ModerationQueuePanel />
+            <KeywordFiltersPanel />
+          </TabsContent>
+
+          {/* ─── Account Integrity (Iter 206) ─── */}
+          <TabsContent value="integrity" className="space-y-3">
+            <AccountIntegrityPanel />
+          </TabsContent>
+
+          {/* ─── Appeals (Iter 206) ─── */}
+          <TabsContent value="appeals" className="space-y-3">
+            <AppealsPanel />
           </TabsContent>
         </Tabs>
       </div>
@@ -902,3 +921,456 @@ function UserReportsPanel() {
     </section>
   );
 }
+
+/* ─── Iter 206 — Moderation Queue Panel ──────────────────────────────── */
+function ModerationQueuePanel() {
+  const [items, setItems] = useState<any[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [statusFilter, setStatusFilter] = useState<"pending" | "approved" | "deleted" | "all">("pending");
+  const [sourceFilter, setSourceFilter] = useState<string>("all");
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({ status: statusFilter });
+      if (sourceFilter !== "all") params.set("source", sourceFilter);
+      const { data } = await api.get(`/admin/platform/moderation-queue?${params.toString()}`);
+      setItems(data?.items || []);
+      setPendingCount(data?.pending_count || 0);
+    } catch {
+      toast.error("Could not load moderation queue");
+    } finally {
+      setLoading(false);
+    }
+  }, [statusFilter, sourceFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const resolve = async (id: string, action: "approved" | "deleted") => {
+    try {
+      await api.post(`/admin/platform/moderation/${id}/resolve`, { action, note: "" });
+      toast.success(`Item ${action}`);
+      await load();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
+
+  return (
+    <section className="space-y-3" data-testid="moderation-queue-section">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold flex items-center gap-2">
+            Moderation Queue
+            {pendingCount > 0 && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-300" data-testid="moderation-pending-badge">
+                {pendingCount} pending
+              </span>
+            )}
+          </h2>
+          <p className="text-xs text-muted-foreground">
+            Auto-flagged chat messages, usernames, and team names.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={sourceFilter} onValueChange={setSourceFilter}>
+            <SelectTrigger className="w-36" data-testid="moderation-source-filter">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All sources</SelectItem>
+              <SelectItem value="chat">Chat</SelectItem>
+              <SelectItem value="trade_block">Trade block</SelectItem>
+              <SelectItem value="username">Usernames</SelectItem>
+              <SelectItem value="team_name">Team names</SelectItem>
+              <SelectItem value="avatar">Avatars</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={(v: any) => setStatusFilter(v)}>
+            <SelectTrigger className="w-36" data-testid="moderation-status-filter">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="approved">Approved</SelectItem>
+              <SelectItem value="deleted">Deleted</SelectItem>
+              <SelectItem value="all">All</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {loading && <div className="text-sm text-muted-foreground py-4 text-center">Loading…</div>}
+
+      {!loading && items.length === 0 && (
+        <div className="text-sm text-muted-foreground py-6 text-center border border-dashed border-border rounded-lg" data-testid="moderation-empty">
+          No {statusFilter === "all" ? "" : statusFilter} items.
+        </div>
+      )}
+
+      {!loading && items.length > 0 && (
+        <div className="space-y-2" data-testid="moderation-list">
+          {items.map((it: any) => (
+            <div key={it.item_id} className="rounded-lg border border-border bg-muted/20 p-3" data-testid={`mod-item-${it.item_id}`}>
+              <div className="flex items-center justify-between mb-1.5 gap-3">
+                <div className="text-xs text-muted-foreground">
+                  <span className="uppercase tracking-wider font-semibold text-foreground/80">{it.source}</span>
+                  {" · "}
+                  <span className="text-rose-300">{it.matched_word ? `matched "${it.matched_word}"` : "manual"}</span>
+                  {" · "}
+                  <span className="capitalize">severity: {it.severity}</span>
+                </div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                  it.status === "pending"
+                    ? "border-amber-500/40 text-amber-300"
+                    : it.status === "approved"
+                      ? "border-emerald-500/40 text-emerald-300"
+                      : "border-rose-500/40 text-rose-300"
+                }`}>
+                  {it.status}
+                </span>
+              </div>
+              <div className="text-sm bg-secondary/30 rounded p-2 mb-2 break-words" data-testid={`mod-content-${it.item_id}`}>
+                {it.content}
+              </div>
+              <div className="text-[10px] text-muted-foreground mb-2">
+                by {it.author_email || it.author_id || "anonymous"} · {new Date(it.created_at).toLocaleString()}
+              </div>
+              {it.status === "pending" && (
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" onClick={() => resolve(it.item_id, "approved")} data-testid={`mod-approve-${it.item_id}`}>
+                    Approve
+                  </Button>
+                  <Button size="sm" variant="outline" className="border-rose-500/50 text-rose-300 hover:bg-rose-500/10" onClick={() => resolve(it.item_id, "deleted")} data-testid={`mod-delete-${it.item_id}`}>
+                    Delete
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+
+/* ─── Iter 206 — Keyword Filters Manager ─────────────────────────────── */
+function KeywordFiltersPanel() {
+  const [filters, setFilters] = useState<any[]>([]);
+  const [word, setWord] = useState("");
+  const [severity, setSeverity] = useState<"low" | "medium" | "high">("medium");
+
+  const load = useCallback(async () => {
+    try {
+      const { data } = await api.get("/admin/platform/keyword-filters");
+      setFilters(data?.filters || []);
+    } catch { /* noop */ }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    if (!word.trim()) return;
+    try {
+      const { data } = await api.post("/admin/platform/keyword-filters", { word: word.trim(), severity });
+      if (data?.deduped) toast.info("Already filtered");
+      else toast.success("Keyword added");
+      setWord("");
+      await load();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
+
+  const remove = async (id: string) => {
+    try {
+      await api.delete(`/admin/platform/keyword-filters/${id}`);
+      toast.success("Keyword removed");
+      await load();
+    } catch { /* noop */ }
+  };
+
+  return (
+    <section className="space-y-3 mt-6 pt-6 border-t border-border" data-testid="keyword-filters-section">
+      <div>
+        <h2 className="text-lg font-semibold">Keyword Filters</h2>
+        <p className="text-xs text-muted-foreground">
+          Words/phrases that auto-flag content into the moderation queue. Case-insensitive, word-boundary matched.
+        </p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="Banned word or phrase…"
+          value={word}
+          onChange={(e) => setWord(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          className="max-w-xs"
+          data-testid="keyword-add-input"
+        />
+        <Select value={severity} onValueChange={(v: any) => setSeverity(v)}>
+          <SelectTrigger className="w-28" data-testid="keyword-severity-select"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="low">Low</SelectItem>
+            <SelectItem value="medium">Medium</SelectItem>
+            <SelectItem value="high">High</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button onClick={add} data-testid="keyword-add-btn">Add</Button>
+      </div>
+      {filters.length === 0 ? (
+        <div className="text-sm text-muted-foreground py-2">No keywords configured yet.</div>
+      ) : (
+        <div className="flex flex-wrap gap-2" data-testid="keyword-list">
+          {filters.map((f: any) => (
+            <div key={f.filter_id} className="px-2 py-1 rounded border border-border bg-secondary/30 text-xs flex items-center gap-2" data-testid={`keyword-${f.filter_id}`}>
+              <span className="font-mono">{f.word}</span>
+              <span className={`text-[9px] uppercase ${
+                f.severity === "high" ? "text-rose-300" : f.severity === "low" ? "text-emerald-300" : "text-amber-300"
+              }`}>{f.severity}</span>
+              <button onClick={() => remove(f.filter_id)} className="text-rose-400 hover:text-rose-300 text-[10px]" data-testid={`keyword-remove-${f.filter_id}`}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+
+/* ─── Iter 206 — Account Integrity Panel ─────────────────────────────── */
+function AccountIntegrityPanel() {
+  const [groups, setGroups] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [banFor, setBanFor] = useState<{ userId: string; email: string } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/admin/platform/account-integrity");
+      setGroups(data?.groups || []);
+    } catch {
+      toast.error("Failed to load integrity report");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <section className="space-y-3" data-testid="integrity-section">
+      <div>
+        <h2 className="text-lg font-semibold">Account Integrity</h2>
+        <p className="text-xs text-muted-foreground">
+          Distinct users sharing the same IP. Possible signal for multi-account abuse.
+        </p>
+      </div>
+      {loading && <div className="text-sm text-muted-foreground py-4 text-center">Scanning login audit…</div>}
+      {!loading && groups.length === 0 && (
+        <div className="text-sm text-muted-foreground py-6 text-center border border-dashed border-border rounded-lg" data-testid="integrity-empty">
+          No shared-IP groups detected.
+        </div>
+      )}
+      {!loading && groups.length > 0 && (
+        <div className="space-y-3" data-testid="integrity-list">
+          {groups.map((g: any, idx: number) => (
+            <div key={g.ip || idx} className="rounded-lg border border-border bg-muted/20 p-3" data-testid={`integrity-group-${idx}`}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm font-mono">{g.ip}</div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full border border-amber-500/40 text-amber-300">
+                  {g.distinct_users} accounts · {g.login_count} logins
+                </span>
+              </div>
+              <div className="space-y-1">
+                {g.users.map((u: any) => (
+                  <div key={u.user_id} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      <span>{u.email || u.user_id}</span>
+                      <span className={`text-[10px] px-1.5 rounded ${
+                        u.status === "banned" ? "bg-rose-500/20 text-rose-300" :
+                        u.status === "suspended" ? "bg-amber-500/20 text-amber-300" :
+                        "bg-emerald-500/20 text-emerald-300"
+                      }`}>
+                        {u.status || "active"}
+                      </span>
+                    </div>
+                    {u.status !== "banned" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-rose-500/50 text-rose-300 hover:bg-rose-500/10"
+                        onClick={() => setBanFor({ userId: u.user_id, email: u.email })}
+                        data-testid={`integrity-ban-${u.user_id}`}
+                      >
+                        Ban
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {banFor && <BanUserDialog target={banFor} onClose={() => setBanFor(null)} onDone={load} />}
+    </section>
+  );
+}
+
+
+function BanUserDialog({ target, onClose, onDone }: { target: { userId: string; email: string }; onClose: () => void; onDone: () => void }) {
+  const [reasonCode, setReasonCode] = useState("harassment");
+  const [reason, setReason] = useState("");
+  const [durationDays, setDurationDays] = useState<string>("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    setSubmitting(true);
+    try {
+      await api.post(`/admin/platform/users/${target.userId}/ban`, {
+        reason_code: reasonCode,
+        reason,
+        duration_days: durationDays ? Number(durationDays) : null,
+      });
+      toast.success(`${target.email} ${durationDays ? "suspended" : "banned"}`);
+      onClose();
+      onDone();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-background border border-border rounded-lg p-5 max-w-md w-full space-y-3" onClick={(e) => e.stopPropagation()} data-testid="ban-dialog">
+        <h3 className="text-lg font-semibold">Ban {target.email}</h3>
+        <div className="space-y-2">
+          <Select value={reasonCode} onValueChange={setReasonCode}>
+            <SelectTrigger data-testid="ban-reason-code"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="harassment">Harassment</SelectItem>
+              <SelectItem value="fraud">Payment fraud</SelectItem>
+              <SelectItem value="cheating">Cheating</SelectItem>
+              <SelectItem value="collusion">Collusion</SelectItem>
+              <SelectItem value="other">Other</SelectItem>
+            </SelectContent>
+          </Select>
+          <Input
+            placeholder="Reason (visible to user)…"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            data-testid="ban-reason-input"
+          />
+          <Input
+            type="number"
+            placeholder="Duration days (blank = permanent)"
+            value={durationDays}
+            onChange={(e) => setDurationDays(e.target.value)}
+            data-testid="ban-duration-input"
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={submitting || !reason.trim()} className="bg-rose-500/80 hover:bg-rose-500" data-testid="ban-submit-btn">
+            {submitting ? "…" : "Apply"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+/* ─── Iter 206 — Appeals Panel ───────────────────────────────────────── */
+function AppealsPanel() {
+  const [appeals, setAppeals] = useState<any[]>([]);
+  const [statusFilter, setStatusFilter] = useState<"open" | "approved" | "denied" | "all">("open");
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/admin/platform/appeals?status=${statusFilter}`);
+      setAppeals(data?.appeals || []);
+    } catch { /* noop */ }
+    finally { setLoading(false); }
+  }, [statusFilter]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const resolve = async (id: string, action: "approved" | "denied") => {
+    try {
+      await api.post(`/admin/platform/appeals/${id}/resolve`, { action, note: "" });
+      toast.success(action === "approved" ? "Appeal approved · user reinstated" : "Appeal denied");
+      await load();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
+
+  return (
+    <section className="space-y-3" data-testid="appeals-section">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Ban Appeals</h2>
+          <p className="text-xs text-muted-foreground">
+            Banned/suspended users requesting reinstatement.
+          </p>
+        </div>
+        <Select value={statusFilter} onValueChange={(v: any) => setStatusFilter(v)}>
+          <SelectTrigger className="w-32" data-testid="appeals-status-filter"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="open">Open</SelectItem>
+            <SelectItem value="approved">Approved</SelectItem>
+            <SelectItem value="denied">Denied</SelectItem>
+            <SelectItem value="all">All</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {loading && <div className="text-sm text-muted-foreground py-4 text-center">Loading…</div>}
+      {!loading && appeals.length === 0 && (
+        <div className="text-sm text-muted-foreground py-6 text-center border border-dashed border-border rounded-lg" data-testid="appeals-empty">
+          No {statusFilter === "all" ? "" : statusFilter} appeals.
+        </div>
+      )}
+      {!loading && appeals.length > 0 && (
+        <div className="space-y-3" data-testid="appeals-list">
+          {appeals.map((a: any) => (
+            <div key={a.appeal_id} className="rounded-lg border border-border bg-muted/20 p-3" data-testid={`appeal-${a.appeal_id}`}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-sm font-medium">{a.user_email}</div>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                  a.status === "open" ? "border-amber-500/40 text-amber-300" :
+                  a.status === "approved" ? "border-emerald-500/40 text-emerald-300" :
+                  "border-rose-500/40 text-rose-300"
+                }`}>{a.status}</span>
+              </div>
+              <div className="text-[10px] text-muted-foreground mb-2">
+                Original ban: <span className="capitalize">{a.ban_reason_code}</span> — {a.ban_reason}
+              </div>
+              <div className="text-sm bg-secondary/30 rounded p-2 mb-2 break-words">{a.message}</div>
+              {a.status === "open" && (
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="outline" className="border-emerald-500/50 text-emerald-300 hover:bg-emerald-500/10" onClick={() => resolve(a.appeal_id, "approved")} data-testid={`appeal-approve-${a.appeal_id}`}>
+                    Approve · Reinstate
+                  </Button>
+                  <Button size="sm" variant="outline" className="border-rose-500/50 text-rose-300 hover:bg-rose-500/10" onClick={() => resolve(a.appeal_id, "denied")} data-testid={`appeal-deny-${a.appeal_id}`}>
+                    Deny
+                  </Button>
+                </div>
+              )}
+              {a.status !== "open" && a.resolution_note && (
+                <div className="text-xs text-muted-foreground mt-1">{a.resolution_note}</div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
