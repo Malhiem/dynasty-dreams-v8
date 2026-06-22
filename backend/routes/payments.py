@@ -238,6 +238,64 @@ async def stripe_webhook(request: Request):
     db = _db()
     body = await request.body()
     signature = request.headers.get("Stripe-Signature")
+
+    # Iter 208 — Verify Stripe signature when STRIPE_WEBHOOK_SECRET is
+    # configured. Falls back to unverified parsing for sandbox/preview
+    # where no secret is set (Stripe CLI test forwarding).
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+    if webhook_secret:
+        try:
+            import stripe as _stripe
+            _stripe.api_key = os.environ.get("STRIPE_API_KEY") or ""
+            _stripe.Webhook.construct_event(body, signature or "", webhook_secret)
+        except Exception as e:
+            try:
+                _logger().warning(f"Stripe webhook signature verification failed: {e}")
+            except Exception:
+                pass
+            raise HTTPException(status_code=400, detail=f"Invalid webhook signature: {e}")
+
+    # Iter 207 — Also parse raw payload for `charge.dispute.*` events so
+    # we can flag the matching user with a chargeback. The emergent
+    # library's `handle_webhook` covers checkout events; dispute events
+    # are pulled directly from the JSON body.
+    try:
+        import json as _json
+        raw_event = _json.loads(body.decode("utf-8")) if body else {}
+        evt_type = (raw_event.get("type") or "")
+        if evt_type.startswith("charge.dispute."):
+            dispute = (raw_event.get("data") or {}).get("object") or {}
+            customer_id = dispute.get("customer")
+            if customer_id:
+                user = await db.users.find_one({"stripe_customer_id": customer_id})
+                if user:
+                    status = (
+                        "open" if evt_type == "charge.dispute.created"
+                        else "closed" if evt_type == "charge.dispute.closed"
+                        else "updated"
+                    )
+                    flag = {
+                        "flagged_at": datetime.now(timezone.utc).isoformat(),
+                        "flagged_by_email": "stripe-webhook",
+                        "source": "stripe_dispute",
+                        "amount_cents": dispute.get("amount"),
+                        "currency": dispute.get("currency"),
+                        "reason": dispute.get("reason"),
+                        "status": status,
+                        "dispute_status": dispute.get("status"),
+                        "dispute_id": dispute.get("id"),
+                        "stripe_charge_id": dispute.get("charge"),
+                    }
+                    await db.users.update_one(
+                        {"_id": user["_id"]},
+                        {"$push": {"chargeback_flags": flag},
+                         "$set": {"payment_fraud_flag": True}},
+                    )
+            # Disputes don't go through the checkout library; return early.
+            return {"status": "ok", "event_type": evt_type}
+    except Exception as e:
+        _logger().warning(f"Stripe dispute parse failed: {e}")
+
     stripe_checkout = _stripe_client(request)
     try:
         event = await stripe_checkout.handle_webhook(body, signature)

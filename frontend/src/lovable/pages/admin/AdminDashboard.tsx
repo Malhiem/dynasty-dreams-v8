@@ -25,6 +25,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+// Iter 208 — Trust Score pill rendered next to reported users.
+import TrustScoreBadge from "@/components/TrustScoreBadge";
 
 const COMMISH_EVENT_TYPES = [
   "playoff_winner_marked",
@@ -849,8 +851,9 @@ function UserReportsPanel() {
             <div key={r.report_id} className="rounded-lg border border-border bg-muted/20 p-4" data-testid={`report-${r.report_id}`}>
               <div className="flex items-start justify-between mb-2 gap-3">
                 <div className="text-sm">
-                  <div className="font-medium">
-                    {r.reporter_email || r.reporter_id} reported {r.target_user_email || r.target_user_id}
+                  <div className="font-medium flex items-center gap-2 flex-wrap">
+                    <span>{r.reporter_email || r.reporter_id} reported {r.target_user_email || r.target_user_id}</span>
+                    {r.target_user_id && <TrustScoreBadge userId={r.target_user_id} />}
                   </div>
                   <div className="text-xs text-muted-foreground mt-0.5">
                     {new Date(r.created_at).toLocaleString()} · category:{" "}
@@ -1142,14 +1145,20 @@ function KeywordFiltersPanel() {
 /* ─── Iter 206 — Account Integrity Panel ─────────────────────────────── */
 function AccountIntegrityPanel() {
   const [groups, setGroups] = useState<any[]>([]);
+  const [deviceGroups, setDeviceGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [banFor, setBanFor] = useState<{ userId: string; email: string } | null>(null);
+  const [tab, setTab] = useState<"ip" | "device">("ip");
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/admin/platform/account-integrity");
-      setGroups(data?.groups || []);
+      const [ipRes, devRes] = await Promise.all([
+        api.get("/admin/platform/account-integrity"),
+        api.get("/admin/platform/device-integrity"),
+      ]);
+      setGroups(ipRes.data?.groups || []);
+      setDeviceGroups(devRes.data?.groups || []);
     } catch {
       toast.error("Failed to load integrity report");
     } finally {
@@ -1159,26 +1168,62 @@ function AccountIntegrityPanel() {
 
   useEffect(() => { load(); }, [load]);
 
+  const activeGroups = tab === "ip" ? groups : deviceGroups;
+
   return (
     <section className="space-y-3" data-testid="integrity-section">
       <div>
         <h2 className="text-lg font-semibold">Account Integrity</h2>
         <p className="text-xs text-muted-foreground">
-          Distinct users sharing the same IP. Possible signal for multi-account abuse.
+          Distinct users sharing the same IP or device fingerprint. Strong signal for multi-account abuse.
         </p>
       </div>
+      <div className="flex gap-2 border-b border-border">
+        <button
+          type="button"
+          onClick={() => setTab("ip")}
+          className={`px-3 py-1.5 text-sm border-b-2 -mb-px ${
+            tab === "ip"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="integrity-tab-ip"
+        >
+          Shared IP
+          <span className="ml-2 text-[10px] px-1.5 rounded bg-secondary/50">{groups.length}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("device")}
+          className={`px-3 py-1.5 text-sm border-b-2 -mb-px ${
+            tab === "device"
+              ? "border-primary text-foreground"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+          data-testid="integrity-tab-device"
+        >
+          Shared Device
+          <span className="ml-2 text-[10px] px-1.5 rounded bg-secondary/50">{deviceGroups.length}</span>
+        </button>
+      </div>
       {loading && <div className="text-sm text-muted-foreground py-4 text-center">Scanning login audit…</div>}
-      {!loading && groups.length === 0 && (
+      {!loading && activeGroups.length === 0 && (
         <div className="text-sm text-muted-foreground py-6 text-center border border-dashed border-border rounded-lg" data-testid="integrity-empty">
-          No shared-IP groups detected.
+          No shared-{tab === "ip" ? "IP" : "device"} groups detected.
         </div>
       )}
-      {!loading && groups.length > 0 && (
+      {!loading && activeGroups.length > 0 && (
         <div className="space-y-3" data-testid="integrity-list">
-          {groups.map((g: any, idx: number) => (
-            <div key={g.ip || idx} className="rounded-lg border border-border bg-muted/20 p-3" data-testid={`integrity-group-${idx}`}>
+          {activeGroups.map((g: any, idx: number) => (
+            <div key={g.ip || g.device_hash || idx} className="rounded-lg border border-border bg-muted/20 p-3" data-testid={`integrity-group-${idx}`}>
               <div className="flex items-center justify-between mb-2">
-                <div className="text-sm font-mono">{g.ip}</div>
+                <div className="text-sm font-mono break-all">
+                  {tab === "ip" ? g.ip : (
+                    <span title={g.device_hash}>
+                      {String(g.device_hash || "").slice(0, 16)}…
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] px-2 py-0.5 rounded-full border border-amber-500/40 text-amber-300">
                   {g.distinct_users} accounts · {g.login_count} logins
                 </span>

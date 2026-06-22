@@ -154,12 +154,22 @@ async def login(request: Request, response: Response):
                 raise HTTPException(status_code=403, detail="Account suspended.")
 
     # Record login audit for multi-account detection (best-effort).
+    # Iter 207 — also capture a device fingerprint (client-supplied
+    # canvas/UA hash) so we can detect users on different IPs but the
+    # same device.
     try:
+        device_hash = None
+        try:
+            _body = body if isinstance(body, dict) else {}
+            device_hash = _body.get("device_hash")
+        except Exception:
+            device_hash = None
         await db.user_login_audit.insert_one({
             "user_id": str(user["_id"]),
             "email": user.get("email"),
             "ip": (request.client.host if request.client else None),
             "user_agent": request.headers.get("user-agent"),
+            "device_hash": device_hash,
             "ts": datetime.now(timezone.utc).isoformat(),
         })
     except Exception:

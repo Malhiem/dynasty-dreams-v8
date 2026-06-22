@@ -10,6 +10,8 @@ import GlobalTradeBuilder from "@/lovable/components/trade/GlobalTradeBuilder";
 import AppPreferencesMenu from "./AppPreferencesMenu";
 import TradeDeadlineRibbon from "@/lovable/components/TradeDeadlineRibbon";
 import ProtectionListRibbon from "@/lovable/components/ProtectionListRibbon";
+// Iter 207 — surface a sticky banner when user.status is banned/suspended.
+import BannedUserBanner from "@/components/BannedUserBanner";
 
 export function AppLayout({ children, onSettingsClick }) {
   const { user } = useAuth();
@@ -68,6 +70,8 @@ export function AppLayout({ children, onSettingsClick }) {
               )}
             </div>
           </header>
+          {/* Iter 207 — Banned/suspended account banner with appeal form */}
+          <BannedUserBanner />
           {/* Iter 129 — Trade Deadline Countdown Ribbon (auto-hides when unset) */}
           <TradeDeadlineRibbon />
           <ProtectionListRibbon />

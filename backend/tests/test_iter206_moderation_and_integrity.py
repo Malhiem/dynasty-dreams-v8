@@ -207,3 +207,213 @@ async def test_appeal_workflow_with_auto_unban():
     finally:
         await _db().users.delete_one({"_id": target_id})
         await _db().user_appeals.delete_one({"_id": ObjectId(appeal_id)})
+
+
+
+@pytest.mark.asyncio
+async def test_stripe_chargeback_webhook_flags_user():
+    """POST /api/webhook/stripe with a `charge.dispute.created` payload
+    pushes a chargeback_flag entry onto the matching user (matched by
+    stripe_customer_id)."""
+    import json
+    from httpx import AsyncClient, ASGITransport
+    from fastapi import FastAPI
+    from routes import payments as pmt
+
+    user_id = ObjectId()
+    customer_id = f"cus_iter207_{ObjectId()}"
+    await _db().users.insert_one({
+        "_id": user_id,
+        "email": "payer@x.com",
+        "stripe_customer_id": customer_id,
+    })
+
+    app = FastAPI()
+    pmt.setup({"db": _db(), "logger": None, "STRIPE_API_KEY": "sk_test_emergent"})
+    app.include_router(pmt.router, prefix="/api")
+
+    body = json.dumps({
+        "type": "charge.dispute.created",
+        "data": {"object": {
+            "id": "dp_iter207_test",
+            "customer": customer_id,
+            "amount": 1999,
+            "currency": "usd",
+            "reason": "fraudulent",
+            "status": "needs_response",
+            "charge": "ch_iter207",
+        }},
+    }).encode("utf-8")
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            r = await client.post("/api/webhook/stripe", content=body,
+                                  headers={"content-type": "application/json"})
+            assert r.status_code == 200
+            assert r.json()["event_type"] == "charge.dispute.created"
+
+        doc = await _db().users.find_one({"_id": user_id})
+        assert doc["payment_fraud_flag"] is True
+        flags = doc.get("chargeback_flags") or []
+        assert len(flags) == 1
+        assert flags[0]["dispute_id"] == "dp_iter207_test"
+        assert flags[0]["amount_cents"] == 1999
+        assert flags[0]["status"] == "open"
+    finally:
+        await _db().users.delete_one({"_id": user_id})
+
+
+@pytest.mark.asyncio
+async def test_device_integrity_groups_by_device_hash():
+    """`device-integrity` aggregates by device_hash. Catches multi-account
+    abuse across different IPs."""
+    from routes import moderation as mod
+
+    admin_id = ObjectId()
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    mod.setup({"db": _db(), "get_current_user": _admin})
+
+    user_a = ObjectId(); user_b = ObjectId(); user_c = ObjectId()
+    await _db().users.insert_many([
+        {"_id": user_a, "email": "a@x.com"},
+        {"_id": user_b, "email": "b@x.com"},
+        {"_id": user_c, "email": "c@x.com"},
+    ])
+    shared_device = f"dev_iter207_{ObjectId()}"
+    audit_ids = await _db().user_login_audit.insert_many([
+        {"user_id": str(user_a), "ip": "1.1.1.1", "device_hash": shared_device, "ts": "2026-02-22T00:00:00Z"},
+        {"user_id": str(user_b), "ip": "2.2.2.2", "device_hash": shared_device, "ts": "2026-02-22T01:00:00Z"},
+        {"user_id": str(user_c), "ip": "3.3.3.3", "device_hash": "different_device", "ts": "2026-02-22T02:00:00Z"},
+        # null device — must be excluded
+        {"user_id": str(user_a), "ip": "1.1.1.1", "device_hash": None, "ts": "2026-02-22T03:00:00Z"},
+    ])
+    try:
+        result = await mod.device_integrity(_Req(), limit=10)
+        groups = result["groups"]
+        # Only shared_device group qualifies (>= 2 users)
+        shared = next((g for g in groups if g["device_hash"] == shared_device), None)
+        assert shared is not None
+        assert shared["distinct_users"] == 2
+        # different_device has only 1 user → excluded
+        other = next((g for g in groups if g["device_hash"] == "different_device"), None)
+        assert other is None
+    finally:
+        await _db().users.delete_many({"_id": {"$in": [user_a, user_b, user_c]}})
+        await _db().user_login_audit.delete_many({"_id": {"$in": audit_ids.inserted_ids}})
+
+
+# ─── Iter 208 — Trust Score ─────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_trust_score_baseline_clean_user():
+    """A brand-new user with no infractions starts near baseline (70)."""
+    from routes import moderation as mod
+
+    user_id = ObjectId()
+    requester_id = ObjectId()
+    await _db().users.insert_one({
+        "_id": user_id, "email": "clean@x.com", "status": "active",
+    })
+
+    async def _user(_req): return {"_id": str(requester_id), "email": "x@x.com"}
+    mod.setup({"db": _db(), "get_current_user": _user})
+
+    try:
+        result = await mod.get_user_trust_score(str(user_id), _Req())
+        assert 65 <= result["score"] <= 100  # baseline ± age bonus
+        assert result["tier"] in ("trusted", "neutral")
+        # Non-admin requester gets NO breakdown
+        assert "breakdown" not in result
+    finally:
+        await _db().users.delete_one({"_id": user_id})
+
+
+@pytest.mark.asyncio
+async def test_trust_score_drops_for_resolved_reports_and_chargebacks():
+    """Score decreases by 10 per resolved report and 25 per chargeback,
+    floors at 0 if banned, and admin requests get the breakdown."""
+    from routes import moderation as mod
+
+    user_id = ObjectId()
+    admin_id = ObjectId()
+    await _db().users.insert_one({
+        "_id": user_id, "email": "risky@x.com", "status": "suspended",
+        "chargeback_flags": [{"reason": "fraud"}, {"reason": "fraud"}],  # -50
+    })
+
+    # Seed 3 resolved-against reports (-30)
+    seeded_reports = await _db().user_reports.insert_many([
+        {"target_user_id": str(user_id), "status": "resolved",
+         "resolution_action": "warning", "category": "harassment"},
+        {"target_user_id": str(user_id), "status": "resolved",
+         "resolution_action": "ban", "category": "harassment"},
+        {"target_user_id": str(user_id), "status": "resolved",
+         "resolution_action": "timeout", "category": "spam"},
+    ])
+
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    mod.setup({"db": _db(), "get_current_user": _admin})
+    try:
+        result = await mod.get_user_trust_score(str(user_id), _Req())
+        assert result["score"] == 0, f"expected 0, got {result['score']} (heavy infractions + suspension)"
+        assert result["tier"] == "risky"
+        # Admin gets breakdown
+        assert "breakdown" in result
+        bd = result["breakdown"]
+        assert bd["reports_resolved_against"] == 3
+        assert bd["chargeback_flags"] == 2
+        assert bd["status"] == "suspended"
+    finally:
+        await _db().users.delete_one({"_id": user_id})
+        await _db().user_reports.delete_many({"_id": {"$in": seeded_reports.inserted_ids}})
+
+
+@pytest.mark.asyncio
+async def test_trust_score_tier_thresholds():
+    """Verify the tier mapping at boundary values."""
+    from routes.moderation import setup as mod_setup, get_user_trust_score
+    import routes.moderation as mod
+
+    user_id = ObjectId()
+    await _db().users.insert_one({
+        "_id": user_id, "email": "midrange@x.com", "status": "active",
+        "chargeback_flags": [{}],  # -25 → baseline 70 + age0 - 25 = 45 (neutral)
+    })
+    async def _user(_req): return {"_id": str(ObjectId()), "email": "x@x.com"}
+    mod_setup({"db": _db(), "get_current_user": _user})
+    try:
+        r = await mod.get_user_trust_score(str(user_id), _Req())
+        assert 40 <= r["score"] <= 50
+        assert r["tier"] == "neutral"
+    finally:
+        await _db().users.delete_one({"_id": user_id})
+
+
+# ─── Iter 208 — Stripe webhook signature verification ──────────────────
+@pytest.mark.asyncio
+async def test_stripe_webhook_rejects_invalid_signature_when_secret_set(monkeypatch):
+    """When STRIPE_WEBHOOK_SECRET is set, an invalid Stripe-Signature
+    header must return HTTP 400."""
+    import json
+    from httpx import AsyncClient, ASGITransport
+    from fastapi import FastAPI
+    from routes import payments as pmt
+
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_iter208_test_secret_value")
+
+    app = FastAPI()
+    pmt.setup({"db": _db(), "logger": None, "STRIPE_API_KEY": "sk_test_emergent"})
+    app.include_router(pmt.router, prefix="/api")
+
+    body = json.dumps({
+        "type": "charge.dispute.created",
+        "data": {"object": {"id": "dp_x", "customer": "cus_unknown", "amount": 100}},
+    }).encode("utf-8")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        r = await client.post(
+            "/api/webhook/stripe",
+            content=body,
+            headers={"content-type": "application/json", "Stripe-Signature": "invalid_sig"},
+        )
+        assert r.status_code == 400
+        assert "signature" in r.text.lower()
+

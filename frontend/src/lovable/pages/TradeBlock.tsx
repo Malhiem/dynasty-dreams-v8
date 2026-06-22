@@ -33,6 +33,8 @@ import {
 } from "lucide-react";
 import { TradeProposalModal } from "@/lovable/components/trade/TradeProposalModal";
 import TeamLink from "@/lovable/components/TeamLink";
+// Iter 207 — Report this user (flag icon next to owner name)
+import ReportUserButton from "@/components/ReportUserButton";
 
 type ItemType = "player" | "prospect" | "pick";
 
@@ -46,6 +48,7 @@ interface TradeBlockItem {
   dynastyValue: number;
   aav?: number | null;
   owner: string;
+  owner_id?: string;
   ownerAvatar: string;
   lookingFor: string[];
   trend: "up" | "down" | "stable";
@@ -265,6 +268,7 @@ const TradeBlock = () => {
     aav: it.aav || null,
     dynastyValue: Math.round(((it.points || 0) * 80) + 1000),
     owner: ownerNameFor(it.owner_id),
+    owner_id: it.owner_id,
     ownerAvatar: ownerAbbrFor(it.owner_id),
     lookingFor: (it.looking_for || []).length ? it.looking_for : ["Best Offer"],
     trend: "stable" as const,
@@ -750,6 +754,15 @@ const TradeBlockCard = ({
                 {item.ownerAvatar}
               </div>
               <span className="text-sm text-muted-foreground"><TeamLink name={item.owner} /></span>
+              {/* Iter 207 — Report this trade-block owner */}
+              {item.owner_id && (
+                <ReportUserButton
+                  targetUserId={item.owner_id}
+                  targetUserEmail={item.owner}
+                  targetTeamId={item.team_id}
+                  contextUrl={`/trade-block#item-${item.id}`}
+                />
+              )}
               {item.team_id && (
                 <Link
                   to={`/trophy-room/team/${item.team_id}`}

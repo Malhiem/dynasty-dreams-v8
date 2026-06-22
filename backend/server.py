@@ -156,6 +156,10 @@ class UserRegister(BaseModel):
 class UserLogin(BaseModel):
     email: EmailStr
     password: str
+    # Iter 207 — optional client-supplied device fingerprint for
+    # multi-account detection (extra="allow" already accepts it but we
+    # declare it explicitly for documentation).
+    device_hash: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: str

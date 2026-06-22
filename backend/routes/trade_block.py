@@ -253,6 +253,27 @@ async def set_trade_block_note(team_id: str, payload: dict, request: Request):
             "trade_block_note_updated_at": datetime.now(timezone.utc),
         }},
     )
+    # Iter 207 — Content Moderation: scan trade-block notes for banned
+    # keywords. Hits are queued for admin review (non-blocking).
+    if note:
+        try:
+            from routes import moderation as _mod
+            match = await _mod.scan_text(note)
+            if match:
+                await _mod.queue_for_review(
+                    source="trade_block",
+                    content=note,
+                    author_id=str(user["_id"]),
+                    author_email=user.get("email"),
+                    matched_word=match["matched_word"],
+                    severity=match["severity"],
+                    context={
+                        "team_id": team_id,
+                        "league_id": str(team.get("league_id")),
+                    },
+                )
+        except Exception:
+            pass
     return {"team_id": team_id, "note": note}
 
 

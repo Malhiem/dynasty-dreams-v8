@@ -37,8 +37,15 @@ export function AuthProvider({ children }) {
   }, []);
 
   const login = async (email, password) => {
-    const { data } = await axios.post(`${BACKEND_URL}/api/auth/login`, 
-      { email, password },
+    // Iter 207 — include a device fingerprint hash so the backend can
+    // log it into user_login_audit for multi-account detection.
+    let device_hash = null;
+    try {
+      const { getDeviceHash } = await import("@/lib/device-hash");
+      device_hash = await getDeviceHash();
+    } catch { /* non-fatal */ }
+    const { data } = await axios.post(`${BACKEND_URL}/api/auth/login`,
+      { email, password, device_hash },
       { withCredentials: true }
     );
     setUser(data);

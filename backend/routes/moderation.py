@@ -288,7 +288,6 @@ async def account_integrity(request: Request, limit: int = Query(50, ge=1, le=20
     rows = await db.user_login_audit.aggregate(pipeline).to_list(limit)
     out = []
     for r in rows:
-        # Hydrate user emails
         ids = [uid for uid in (r.get("user_ids") or []) if uid]
         emails = []
         for uid in ids:
@@ -306,6 +305,50 @@ async def account_integrity(request: Request, limit: int = Query(50, ge=1, le=20
             "ip": r["_id"],
             "distinct_users": r["distinct_users"],
             "login_count": r["user_count"],
+            "users": emails,
+        })
+    return {"groups": out}
+
+
+@router.get("/device-integrity")
+async def device_integrity(request: Request, limit: int = Query(50, ge=1, le=200)):
+    """Iter 207 — Surface groups of distinct users sharing the same
+    device fingerprint (canvas/UA hash). Catches multi-accounting via
+    VPN/IP rotation. `device_hash=null` rows are excluded."""
+    await _require_admin(request)
+    db = _db()
+    pipeline = [
+        {"$match": {"device_hash": {"$ne": None, "$exists": True}}},
+        {"$group": {
+            "_id": "$device_hash",
+            "user_ids": {"$addToSet": "$user_id"},
+            "login_count": {"$sum": 1},
+        }},
+        {"$addFields": {"distinct_users": {"$size": "$user_ids"}}},
+        {"$match": {"distinct_users": {"$gte": 2}}},
+        {"$sort": {"distinct_users": -1}},
+        {"$limit": limit},
+    ]
+    rows = await db.user_login_audit.aggregate(pipeline).to_list(limit)
+    out = []
+    for r in rows:
+        ids = [uid for uid in (r.get("user_ids") or []) if uid]
+        emails = []
+        for uid in ids:
+            try:
+                u = await db.users.find_one({"_id": ObjectId(uid)}, {"email": 1, "status": 1})
+                if u:
+                    emails.append({
+                        "user_id": str(u["_id"]),
+                        "email": u.get("email"),
+                        "status": u.get("status", "active"),
+                    })
+            except Exception:
+                continue
+        out.append({
+            "device_hash": r["_id"],
+            "distinct_users": r["distinct_users"],
+            "login_count": r["login_count"],
             "users": emails,
         })
     return {"groups": out}
@@ -516,3 +559,121 @@ async def admin_resolve_appeal(appeal_id: str, request: Request):
         except Exception:
             pass
     return {"ok": True, "appeal_id": appeal_id, "status": action}
+
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 208 — Trust Score
+# ─────────────────────────────────────────────────────────────────────
+async def _aliases_for(db, field: str, values: list, exclude_user_id: str):
+    """Async generator yielding user_ids sharing any of `values` on
+    `field` (ip or device_hash), excluding the user themselves."""
+    cursor = db.user_login_audit.find(
+        {field: {"$in": values}, "user_id": {"$ne": exclude_user_id}},
+        {"user_id": 1},
+    )
+    async for row in cursor:
+        if row.get("user_id"):
+            yield row["user_id"]
+
+
+@appeals_router.get("/users/{user_id}/trust-score")
+async def get_user_trust_score(user_id: str, request: Request):
+    """Compute a 0-100 trust score for a user. Available to any
+    authenticated user (returns just score+tier). Admins also get the
+    detailed breakdown.
+
+    Components:
+      - Account age (older = higher trust, capped at +30)
+      - Resolved-against-them reports (each -10)
+      - Mod-queue hits attributed to them (each -5)
+      - Shared IP/device aliases (each unique alias -15)
+      - Active ban (= 0) / suspension (-40)
+      - Chargeback flags (each -25)
+    Final score clamped to [0, 100]."""
+    requester = await _deps["get_current_user"](request)
+    db = _db()
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    user = await db.users.find_one({"_id": oid})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    score = 70
+    breakdown: dict = {}
+
+    # Account age bonus (+1 every 24 days, max +30 at ~2 years)
+    created = user.get("created_at")
+    if created:
+        try:
+            if isinstance(created, str):
+                created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            else:
+                created_dt = created if created.tzinfo else created.replace(tzinfo=timezone.utc)
+            age_days = (datetime.now(timezone.utc) - created_dt).days
+            age_bonus = min(30, max(0, age_days // 24))
+            breakdown["account_age_days"] = age_days
+            breakdown["account_age_bonus"] = age_bonus
+            score += age_bonus
+        except Exception:
+            pass
+
+    reports_against = await db.user_reports.count_documents({
+        "target_user_id": user_id,
+        "status": "resolved",
+        "resolution_action": {"$in": ["warning", "timeout", "ban"]},
+    })
+    breakdown["reports_resolved_against"] = reports_against
+    score -= reports_against * 10
+
+    mod_hits = await db.moderation_queue.count_documents({
+        "author_id": user_id,
+        "status": {"$in": ["pending", "deleted"]},
+    })
+    breakdown["mod_queue_hits"] = mod_hits
+    score -= mod_hits * 5
+
+    aggregated = await db.user_login_audit.aggregate([
+        {"$match": {"user_id": user_id}},
+        {"$group": {"_id": None,
+                    "ips": {"$addToSet": "$ip"},
+                    "devices": {"$addToSet": "$device_hash"}}},
+    ]).to_list(1)
+    ip_count = 0
+    dev_count = 0
+    if aggregated:
+        my_ips = [i for i in (aggregated[0].get("ips") or []) if i]
+        my_devices = [d for d in (aggregated[0].get("devices") or []) if d]
+        if my_ips:
+            ip_count = len({uid async for uid in _aliases_for(db, "ip", my_ips, user_id)})
+        if my_devices:
+            dev_count = len({uid async for uid in _aliases_for(db, "device_hash", my_devices, user_id)})
+    breakdown["ip_aliases"] = ip_count
+    breakdown["device_aliases"] = dev_count
+    score -= (ip_count + dev_count) * 15
+
+    status_val = user.get("status", "active")
+    breakdown["status"] = status_val
+    if status_val == "banned":
+        score = 0
+    elif status_val == "suspended":
+        score -= 40
+
+    chargebacks = len(user.get("chargeback_flags") or [])
+    breakdown["chargeback_flags"] = chargebacks
+    score -= chargebacks * 25
+
+    final = max(0, min(100, score))
+    tier = (
+        "trusted" if final >= 75
+        else "neutral" if final >= 40
+        else "watch" if final >= 15
+        else "risky"
+    )
+
+    payload = {"user_id": user_id, "score": final, "tier": tier}
+    if (requester or {}).get("role") == "admin":
+        payload["breakdown"] = breakdown
+    return payload

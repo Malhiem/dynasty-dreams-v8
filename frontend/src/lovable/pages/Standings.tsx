@@ -14,6 +14,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Settings, ChevronUp, ChevronDown, Minus, Crown } from "lucide-react";
 import TeamLogo from "@/lovable/components/TeamLogo";
+// Iter 207 — Report this team's owner
+import ReportUserButton from "@/components/ReportUserButton";
 import { PlayoffBracketView } from "@/lovable/pages/PlayoffBracket";
 import {
   LineChart,
@@ -711,6 +713,8 @@ const StandingsPage = () => {
         prevRank: displayRank + rankDelta,  // positive delta = moved up, so prev was higher #
         name: t.name,
         teamId: t.id,
+        owner_id: t.owner_id,
+        owner_email: t.owner_email || t.owner_name,
         logo_url: t.logo_url || null,
         logo_abbr: t.logo_abbr || (t.name || "").slice(0,3).toUpperCase(),
         wins: t.wins || 0,
