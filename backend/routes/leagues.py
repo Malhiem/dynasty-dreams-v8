@@ -808,8 +808,6 @@ async def reset_setup_wizard(league_id: str, request: Request):
 
 def _build_consolation_block(league: dict, teams: list, team_to_slot_fn, playoff_size: int) -> dict | None:
     """Iter 196 (Task C) — build a consolation-bracket payload from the
-    non-playoff teams when `league.consolation_enabled` is True. Returns
-    None when disabled or not enough teams.
 
     Output shape mirrors the main bracket (`rounds`, `seeds`) so the
     frontend can reuse the round-rendering component.
@@ -860,6 +858,61 @@ def _annotate_rounds_with_week_lengths(rounds: list, week_lengths: dict | None) 
         except (TypeError, ValueError):
             length = 1
         rd["length_weeks"] = max(1, length)
+
+
+async def _derive_champion_block(rounds_built: list, payout_doc: dict | None, team_lookup: dict) -> dict:
+    """Iter 197 — extract champion + runner-up from the final round's
+    completed matchup (if any) AND merge the persisted prize-distribution
+    payload so the frontend can render the "Award Prizes" CTA + the
+    "Distributed" summary side-by-side.
+    """
+    champion_id = None
+    runner_up_id = None
+    final_mu = None
+    if rounds_built:
+        final_round = rounds_built[-1]
+        if final_round.get("matchups"):
+            final_mu = final_round["matchups"][0]
+            if final_mu.get("status") in ("completed", "final"):
+                hs = final_mu.get("high_seed") or {}
+                ls = final_mu.get("low_seed") or {}
+                winner_id = final_mu.get("projected_winner")
+                if winner_id:
+                    champion_id = winner_id
+                    runner_up_id = ls["team_id"] if winner_id == hs.get("team_id") else hs.get("team_id")
+
+    def _team_summary(tid: str | None) -> dict | None:
+        if not tid:
+            return None
+        t = team_lookup.get(str(tid))
+        if not t:
+            return {"team_id": str(tid)}
+        return {
+            "team_id": str(t["_id"]),
+            "team_name": t.get("name"),
+            "team_abbr": t.get("logo_abbr"),
+            "owner_name": t.get("owner_name"),
+        }
+
+    block = {
+        "decided": champion_id is not None,
+        "champion": _team_summary(champion_id),
+        "runner_up": _team_summary(runner_up_id),
+        "final_matchup_id": final_mu.get("matchup_id") if final_mu else None,
+    }
+    if payout_doc:
+        block["distributed"] = True
+        block["champion_prize"] = payout_doc.get("champion_prize")
+        block["runner_up_prize"] = payout_doc.get("runner_up_prize")
+        block["consolation_prize"] = payout_doc.get("consolation_prize")
+        block["currency"] = payout_doc.get("currency") or "USD"
+        block["distributed_at"] = payout_doc.get("distributed_at")
+        block["note"] = payout_doc.get("note")
+        block["consolation_champion_id"] = payout_doc.get("consolation_champion_team_id")
+        block["consolation_champion"] = _team_summary(payout_doc.get("consolation_champion_team_id"))
+    else:
+        block["distributed"] = False
+    return block
 
 
 def _build_single_elim_rounds(slots: list, seeding_method: str, label_prefix: str = "") -> list:
@@ -996,15 +1049,43 @@ async def get_playoff_bracket(league_id: str):
             rnd = int(m.get("bracket_round") or 1)
             by_round.setdefault(rnd, []).append(m)
 
-        round_names = {
-            1: "Round 1",
-            2: "Quarterfinals",
-            3: "Semifinals",
-            4: "Conference Finals",
-            5: "Championship",
-        }
-        # Adjust last-round name to "Championship" regardless of count
+        # Iter 197 — derive round name from distance-from-final (NOT absolute
+        # round number) so an 8-team / 3-round bracket reads QF → SF → Final
+        # instead of "Round 1 → Quarterfinals → Championship".
+        configured_rounds = int(league.get("playoff_rounds") or 0)
         max_round = max(by_round.keys()) if by_round else 1
+        total_rounds = max(max_round, configured_rounds, 1)
+
+        def _name_for_round(rnd_1based: int) -> str:
+            distance = total_rounds - rnd_1based  # 0=final, 1=semis, 2=QF, 3=R16
+            if distance <= 0:
+                return "Championship"
+            if distance == 1:
+                return "Semifinals"
+            if distance == 2:
+                return "Quarterfinals"
+            if distance == 3:
+                return "Round of 16"
+            return f"Round {rnd_1based}"
+
+        # Iter 197 — synthesize missing TBD matchups so each intermediate round
+        # carries the correct count (2^(total_rounds - rnd)). The iter-107
+        # labelling pass below stamps "Winner of X vs Y" onto the TBD slots.
+        for rnd_idx in range(1, total_rounds + 1):
+            expected = 2 ** (total_rounds - rnd_idx)
+            cur = by_round.get(rnd_idx, [])
+            while len(cur) < expected:
+                cur.append({
+                    "league_id": league_id,
+                    "bracket_round": rnd_idx,
+                    "home_team_tbd": True,
+                    "away_team_tbd": True,
+                    "home_team_id": None,
+                    "away_team_id": None,
+                    "status": "scheduled",
+                    "_synthetic": True,
+                })
+            by_round[rnd_idx] = cur
 
         rounds_built: list = []
         for rnd_idx in sorted(by_round.keys()):
@@ -1024,6 +1105,7 @@ async def get_playoff_bracket(league_id: str):
                 elif hs and ls:
                     projected_winner = hs["team_id"]  # projection = higher seed
                 matchups_out.append({
+                    "matchup_id": str(m["_id"]) if m.get("_id") else None,
                     "high_seed": hs,
                     "low_seed": ls,
                     "projected_winner": projected_winner,
@@ -1031,11 +1113,11 @@ async def get_playoff_bracket(league_id: str):
                     "home_score": home_score,
                     "away_score": away_score,
                     "week": m.get("week"),
+                    "home_team_id": str(m.get("home_team_id")) if m.get("home_team_id") else None,
+                    "away_team_id": str(m.get("away_team_id")) if m.get("away_team_id") else None,
+                    "is_synthetic": bool(m.get("_synthetic")),
                 })
-            label = (
-                "Championship" if rnd_idx == max_round and max_round > 1
-                else round_names.get(rnd_idx, f"Round {rnd_idx}")
-            )
+            label = _name_for_round(rnd_idx)
             rounds_built.append({"name": label, "matchups": matchups_out})
 
         # Compute byes: any seeded team NOT in Round 1 matchups
@@ -1087,6 +1169,11 @@ async def get_playoff_bracket(league_id: str):
         _annotate_rounds_with_week_lengths(rounds_built, league.get("playoff_week_lengths"))
         consolation_block = _build_consolation_block(league, teams, _team_to_slot, playoff_size)
 
+        # Iter 197 — derive champion from the final round's completed matchup
+        # (if any) + attach the persisted prize distribution.
+        payout_doc = await db.payouts.find_one({"league_id": league_id}) if rounds_built else None
+        champion_block = await _derive_champion_block(rounds_built, payout_doc, team_lookup)
+
         return {
             "league_id": league_id,
             "playoff_size": playoff_size,
@@ -1099,6 +1186,7 @@ async def get_playoff_bracket(league_id: str):
             "playoff_week_lengths": league.get("playoff_week_lengths") or {},
             "consolation_enabled": bool(league.get("consolation_enabled")),
             "consolation_bracket": consolation_block,
+            "champion": champion_block,
         }
 
     # Seed by overall rank

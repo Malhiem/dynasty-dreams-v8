@@ -469,6 +469,194 @@ async def get_ops_audit_log(
     return {"league_id": league_id, "entries": entries, "limit": limit}
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Iter 197 — Mark Winner + Distribute Prize (close-out the playoffs)
+# ─────────────────────────────────────────────────────────────────────
+from pydantic import BaseModel, Field  # noqa: E402
+
+
+class MarkWinnerBody(BaseModel):
+    matchup_id: str
+    winner_team_id: str
+    home_score: Optional[float] = None
+    away_score: Optional[float] = None
+
+
+@router.post("/leagues/{league_id}/playoffs/mark-winner")
+async def mark_playoff_winner(league_id: str, body: MarkWinnerBody, request: Request):
+    """Commissioner one-tap: mark `winner_team_id` as the winner of `matchup_id`.
+
+    Updates the playoff matchup (status=completed, scores if provided, default
+    1-0) AND, if the matchup is in a non-final round, propagates the winner
+    into the corresponding TBD slot of the next round's matchup. Idempotent:
+    repeated calls overwrite the prior winner.
+    """
+    db = _db()
+    user = await _get_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not _user_is_commish(league, user):
+        raise HTTPException(status_code=403, detail="Commissioner access required")
+
+    try:
+        mu_oid = ObjectId(body.matchup_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid matchup_id")
+    mu = await db.matchups.find_one({"_id": mu_oid, "league_id": league_id, "is_playoff": True})
+    if not mu:
+        raise HTTPException(status_code=404, detail="Playoff matchup not found")
+
+    home_id = str(mu.get("home_team_id") or "")
+    away_id = str(mu.get("away_team_id") or "")
+    if body.winner_team_id not in (home_id, away_id):
+        raise HTTPException(status_code=400, detail="winner_team_id must match either home or away team")
+
+    # Default scores: 1-0 in favour of the winner, unless caller supplied them.
+    hs = body.home_score if body.home_score is not None else (1.0 if body.winner_team_id == home_id else 0.0)
+    as_ = body.away_score if body.away_score is not None else (1.0 if body.winner_team_id == away_id else 0.0)
+
+    await db.matchups.update_one(
+        {"_id": mu_oid},
+        {"$set": {
+            "status": "completed",
+            "home_score": hs,
+            "away_score": as_,
+            "winner_team_id": body.winner_team_id,
+            "marked_by": str(user["_id"]),
+            "marked_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+
+    # Propagate winner into the next round's TBD slot. Bracket math: matchup
+    # at index j of round R+1 is fed by matchups (2j, 2j+1) in round R.
+    cur_round = int(mu.get("bracket_round") or 1)
+    next_round = cur_round + 1
+    next_matchups = await db.matchups.find({
+        "league_id": league_id,
+        "is_playoff": True,
+        "bracket_round": next_round,
+    }).sort("week", 1).to_list(50)
+    if next_matchups:
+        # Index this matchup within its round (ordering by _id is stable here).
+        sibs = await db.matchups.find({
+            "league_id": league_id, "is_playoff": True, "bracket_round": cur_round,
+        }).sort("_id", 1).to_list(50)
+        try:
+            cur_idx = [str(x["_id"]) for x in sibs].index(str(mu["_id"]))
+            target_idx = cur_idx // 2
+            target = next_matchups[target_idx] if target_idx < len(next_matchups) else None
+            if target:
+                # Empty home slot first, then away.
+                set_fields = {}
+                if not target.get("home_team_id"):
+                    set_fields = {"home_team_id": body.winner_team_id, "home_team_tbd": False}
+                elif not target.get("away_team_id"):
+                    set_fields = {"away_team_id": body.winner_team_id, "away_team_tbd": False}
+                if set_fields:
+                    await db.matchups.update_one({"_id": target["_id"]}, {"$set": set_fields})
+        except (ValueError, IndexError):
+            pass
+
+    # Audit
+    await db.activity_feed.insert_one({
+        "league_id": league_id,
+        "event_type": "playoff_winner_marked",
+        "message": f"Marked playoff winner: team {body.winner_team_id} (round {cur_round})",
+        "user_id": str(user["_id"]),
+        "metadata": {
+            "matchup_id": body.matchup_id,
+            "winner_team_id": body.winner_team_id,
+            "round": cur_round,
+            "home_score": hs,
+            "away_score": as_,
+        },
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+    return {"ok": True, "matchup_id": body.matchup_id, "winner_team_id": body.winner_team_id}
+
+
+class DistributePrizeBody(BaseModel):
+    champion_team_id: Optional[str] = None
+    runner_up_team_id: Optional[str] = None
+    consolation_champion_team_id: Optional[str] = None
+    champion_prize: float = Field(default=0, ge=0)
+    runner_up_prize: float = Field(default=0, ge=0)
+    consolation_prize: float = Field(default=0, ge=0)
+    currency: str = "USD"
+    note: Optional[str] = None
+
+
+@router.post("/leagues/{league_id}/playoffs/distribute-prize")
+async def distribute_prize(league_id: str, body: DistributePrizeBody, request: Request):
+    """Commissioner: persist a prize distribution + stamp the league with the
+    champion/runner-up/consolation champion ids. Writes a `payouts` audit row
+    and an `activity_feed` entry. Idempotent — repeated calls overwrite the
+    prior distribution and log a new audit entry."""
+    db = _db()
+    user = await _get_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not _user_is_commish(league, user):
+        raise HTTPException(status_code=403, detail="Commissioner access required")
+
+    now = datetime.now(timezone.utc).isoformat()
+    payload = {
+        "league_id": league_id,
+        "champion_team_id": body.champion_team_id,
+        "runner_up_team_id": body.runner_up_team_id,
+        "consolation_champion_team_id": body.consolation_champion_team_id,
+        "champion_prize": float(body.champion_prize),
+        "runner_up_prize": float(body.runner_up_prize),
+        "consolation_prize": float(body.consolation_prize),
+        "currency": body.currency,
+        "note": body.note,
+        "distributed_at": now,
+        "distributed_by": str(user["_id"]),
+    }
+    # Upsert into `payouts` collection (one canonical distribution per league;
+    # historical record kept in `activity_feed`).
+    await db.payouts.update_one(
+        {"league_id": league_id},
+        {"$set": payload},
+        upsert=True,
+    )
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {
+            "playoff_champion_id": body.champion_team_id,
+            "playoff_runner_up_id": body.runner_up_team_id,
+            "playoff_consolation_champion_id": body.consolation_champion_team_id,
+            "playoff_distributed_at": now,
+        }},
+    )
+    await db.activity_feed.insert_one({
+        "league_id": league_id,
+        "event_type": "playoff_prize_distributed",
+        "message": f"Playoff prize distributed: champion={body.champion_team_id}",
+        "user_id": str(user["_id"]),
+        "metadata": payload,
+        "created_at": now,
+    })
+    return {"ok": True, **payload}
+
+
+@router.get("/leagues/{league_id}/playoffs/payout")
+async def get_payout(league_id: str, request: Request):
+    """Return the latest persisted prize distribution for the league (or
+    `{distributed: false}` when nothing has been awarded yet). Open to any
+    league member so all owners can see the final results."""
+    db = _db()
+    await _get_user(request)  # auth gate only
+    p = await db.payouts.find_one({"league_id": league_id})
+    if not p:
+        return {"distributed": False, "league_id": league_id}
+    p.pop("_id", None)
+    return {"distributed": True, **p}
+
+
 # ── Shared commissioner gate (used by all three ops endpoints) ───
 def _user_is_commish(league: dict, user: dict) -> bool:
     commish_set = set()

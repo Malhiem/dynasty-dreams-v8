@@ -1,9 +1,16 @@
 // @ts-nocheck
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "@/lib/api";
 import TeamLogo from "@/lovable/components/TeamLogo";
-import { Trophy, Crown, ChevronRight } from "lucide-react";
+import { Trophy, Crown, ChevronRight, Award } from "lucide-react";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { toast } from "sonner";
 
 interface BracketTeam {
   team_id: string;
@@ -20,6 +27,7 @@ interface BracketTeam {
 }
 
 interface Matchup {
+  matchup_id?: string | null;
   high_seed: BracketTeam | null;
   low_seed: BracketTeam | null;
   projected_winner?: string | null;
@@ -27,6 +35,9 @@ interface Matchup {
   home_score?: number;
   away_score?: number;
   week?: number;
+  home_team_id?: string | null;
+  away_team_id?: string | null;
+  is_synthetic?: boolean;
 }
 
 interface Round {
@@ -43,6 +54,21 @@ interface ConsolationBracket {
   rounds: Round[];
 }
 
+interface ChampionBlock {
+  decided: boolean;
+  champion?: { team_id: string; team_name?: string; team_abbr?: string | null; owner_name?: string } | null;
+  runner_up?: { team_id: string; team_name?: string; team_abbr?: string | null; owner_name?: string } | null;
+  final_matchup_id?: string | null;
+  distributed?: boolean;
+  champion_prize?: number;
+  runner_up_prize?: number;
+  consolation_prize?: number;
+  currency?: string;
+  distributed_at?: string;
+  note?: string;
+  consolation_champion?: { team_id: string; team_name?: string; team_abbr?: string | null } | null;
+}
+
 interface BracketData {
   league_id: string;
   playoff_size: number;
@@ -53,6 +79,7 @@ interface BracketData {
   playoff_week_lengths?: Record<string, { length_weeks: number }>;
   consolation_enabled?: boolean;
   consolation_bracket?: ConsolationBracket | null;
+  champion?: ChampionBlock | null;
 }
 
 const SEED_COLOR = [
@@ -109,16 +136,23 @@ const TeamCard = ({ team, isWinner, isLoser, tbdLabel }: { team: BracketTeam | n
   );
 };
 
-const MatchupCard = ({ mu, status }: { mu: Matchup; status: string }) => {
+const MatchupCard = ({ mu, status, canMark, onMarkWinner }: {
+  mu: Matchup;
+  status: string;
+  canMark?: boolean;
+  onMarkWinner?: (matchupId: string, teamId: string) => void;
+}) => {
   const hs = mu.high_seed;
   const ls = mu.low_seed;
   const winnerId = mu.projected_winner;
-  const hsWin = hs && winnerId === hs.team_id && mu.status && mu.status !== "projected";
-  const lsWin = ls && winnerId === ls.team_id && mu.status && mu.status !== "projected";
-  const hasScore = typeof mu.home_score === "number" && typeof mu.away_score === "number";
+  const isFinal = mu.status === "completed" || mu.status === "final";
+  const hsWin = hs && winnerId === hs.team_id && isFinal;
+  const lsWin = ls && winnerId === ls.team_id && isFinal;
+  const hasScore = typeof mu.home_score === "number" && typeof mu.away_score === "number" && (mu.home_score || mu.away_score);
   // Iter 107: surface "Winner of X vs Y" auto-labels for TBD slots
   const hsLabel = (mu as any).high_seed_label;
   const lsLabel = (mu as any).low_seed_label;
+  const showMarkAction = !!canMark && !!mu.matchup_id && hs && ls && !isFinal && !mu.is_synthetic;
   return (
     <div className="stat-card p-2.5 space-y-1.5" data-testid="bracket-matchup">
       <TeamCard
@@ -144,14 +178,39 @@ const MatchupCard = ({ mu, status }: { mu: Matchup; status: string }) => {
           Projected: {hs.team_abbr || hs.team_name.slice(0, 3).toUpperCase()} advances
         </div>
       )}
+      {showMarkAction && (
+        <div
+          className="flex items-center gap-1 pt-1 border-t border-border/40"
+          data-testid={`mark-winner-actions-${mu.matchup_id}`}
+        >
+          <button
+            type="button"
+            onClick={() => onMarkWinner!(mu.matchup_id!, hs!.team_id)}
+            className="flex-1 text-[10px] font-semibold uppercase tracking-wider py-1 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
+            data-testid={`mark-winner-high-${mu.matchup_id}`}
+          >
+            ✓ {hs!.team_abbr || hs!.team_name.slice(0, 6)}
+          </button>
+          <button
+            type="button"
+            onClick={() => onMarkWinner!(mu.matchup_id!, ls!.team_id)}
+            className="flex-1 text-[10px] font-semibold uppercase tracking-wider py-1 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
+            data-testid={`mark-winner-low-${mu.matchup_id}`}
+          >
+            ✓ {ls!.team_abbr || ls!.team_name.slice(0, 6)}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
 
-const RoundsGrid = ({ rounds, status, testidPrefix = "bracket" }: {
+const RoundsGrid = ({ rounds, status, testidPrefix = "bracket", canMark, onMarkWinner }: {
   rounds: Round[];
   status: string;
   testidPrefix?: string;
+  canMark?: boolean;
+  onMarkWinner?: (matchupId: string, teamId: string) => void;
 }) => (
   <div className="overflow-x-auto" data-testid={`${testidPrefix}-rounds`}>
     <div className="flex gap-4 min-w-max items-stretch">
@@ -200,7 +259,13 @@ const RoundsGrid = ({ rounds, status, testidPrefix = "bracket" }: {
             style={{ minHeight: `${120 * (rounds[0]?.matchups.length || 1)}px` }}
           >
             {rd.matchups.map((mu, i) => (
-              <MatchupCard key={i} mu={mu} status={status} />
+              <MatchupCard
+                key={i}
+                mu={mu}
+                status={status}
+                canMark={canMark}
+                onMarkWinner={onMarkWinner}
+              />
             ))}
           </div>
         </div>
@@ -215,8 +280,30 @@ const RoundsGrid = ({ rounds, status, testidPrefix = "bracket" }: {
  */
 export const PlayoffBracketView = ({ leagueId }: { leagueId?: string | null }) => {
   const navigate = useNavigate();
+  const { league: activeLeague } = useActiveLeague();
+  const { user: currentUser } = useAuth();
   const [bracket, setBracket] = useState<BracketData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showPrizeModal, setShowPrizeModal] = useState(false);
+
+  const isCommish = (() => {
+    if (!activeLeague || !currentUser) return false;
+    const uid = String((currentUser as any)?.id || (currentUser as any)?._id || "");
+    const ids = [
+      activeLeague.commissioner_id,
+      activeLeague.created_by,
+      ...(activeLeague.co_commissioners || []),
+      ...(activeLeague.commissioner_ids || []),
+    ].filter(Boolean).map(String);
+    return ids.includes(uid);
+  })();
+
+  const reload = useCallback(() => {
+    if (!leagueId) return;
+    api.get(`/leagues/${leagueId}/playoff-bracket`)
+      .then(({ data }) => setBracket(data))
+      .catch(() => {});
+  }, [leagueId]);
 
   useEffect(() => {
     if (!leagueId) { setLoading(false); return; }
@@ -228,6 +315,19 @@ export const PlayoffBracketView = ({ leagueId }: { leagueId?: string | null }) =
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [leagueId]);
+
+  const onMarkWinner = useCallback(async (matchupId: string, teamId: string) => {
+    try {
+      await api.post(`/leagues/${leagueId}/playoffs/mark-winner`, {
+        matchup_id: matchupId,
+        winner_team_id: teamId,
+      });
+      toast.success("Winner marked");
+      reload();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to mark winner");
+    }
+  }, [leagueId, reload]);
 
   if (loading) {
     return <div className="p-4 text-muted-foreground text-sm">Loading playoff tree...</div>;
@@ -284,7 +384,81 @@ export const PlayoffBracketView = ({ leagueId }: { leagueId?: string | null }) =
         </span>
       </div>
 
-      <RoundsGrid rounds={bracket.rounds} status={bracket.status} testidPrefix="bracket" />
+      <RoundsGrid
+        rounds={bracket.rounds}
+        status={bracket.status}
+        testidPrefix="bracket"
+        canMark={isCommish}
+        onMarkWinner={onMarkWinner}
+      />
+
+      {/* Iter 197 — Champion banner + Distribute Prize CTA */}
+      {bracket.champion?.decided && (
+        <div
+          className="rounded-lg border border-amber-500/40 bg-gradient-to-r from-amber-500/10 via-amber-400/10 to-yellow-500/10 p-4 flex items-center justify-between flex-wrap gap-3"
+          data-testid="playoff-champion-banner"
+        >
+          <div className="flex items-center gap-3">
+            <Crown className="h-8 w-8 text-amber-400" />
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-widest text-amber-300/80">
+                Champion
+              </div>
+              <div className="text-lg font-bold text-foreground" data-testid="playoff-champion-name">
+                {bracket.champion.champion?.team_name}
+              </div>
+              {bracket.champion.runner_up && (
+                <div className="text-xs text-muted-foreground">
+                  Runner-up: <span className="font-medium text-foreground/80" data-testid="playoff-runner-up-name">{bracket.champion.runner_up.team_name}</span>
+                </div>
+              )}
+            </div>
+          </div>
+          {bracket.champion.distributed ? (
+            <div className="text-right" data-testid="playoff-prize-distributed-pill">
+              <div className="text-[10px] uppercase tracking-wider font-semibold text-emerald-300/80">
+                Prizes Distributed
+              </div>
+              <div className="text-sm font-bold text-foreground">
+                {bracket.champion.currency || "USD"} {(bracket.champion.champion_prize || 0).toLocaleString()}
+                {(bracket.champion.runner_up_prize || 0) > 0 && (
+                  <span className="text-muted-foreground"> + {(bracket.champion.runner_up_prize || 0).toLocaleString()}</span>
+                )}
+              </div>
+              {isCommish && (
+                <button
+                  className="text-[10px] underline text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowPrizeModal(true)}
+                  data-testid="playoff-prize-edit-btn"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
+          ) : isCommish ? (
+            <Button
+              onClick={() => setShowPrizeModal(true)}
+              className="bg-amber-500 hover:bg-amber-400 text-amber-950 font-semibold"
+              data-testid="playoff-distribute-prize-btn"
+            >
+              <Award className="h-4 w-4 mr-1.5" />
+              Distribute Prize
+            </Button>
+          ) : null}
+        </div>
+      )}
+
+      {/* Distribute Prize modal */}
+      {showPrizeModal && bracket.champion?.decided && (
+        <DistributePrizeModal
+          leagueId={leagueId!}
+          champion={bracket.champion}
+          consolationEnabled={!!bracket.consolation_enabled}
+          consolationSeeds={bracket.consolation_bracket?.seeds || []}
+          onClose={() => setShowPrizeModal(false)}
+          onSaved={() => { setShowPrizeModal(false); reload(); }}
+        />
+      )}
 
       {bracket.consolation_enabled && bracket.consolation_bracket && bracket.consolation_bracket.rounds?.length > 0 && (
         <div
@@ -361,3 +535,164 @@ export const PlayoffBracketView = ({ leagueId }: { leagueId?: string | null }) =
 };
 
 export default PlayoffBracketView;
+
+/* ────────────────────────────────────────────────────────────────
+ * Iter 197 — DistributePrizeModal
+ * Commissioner one-tap prize distribution: champion + runner-up
+ * + (optional) consolation champion. Persists via POST
+ * /api/leagues/{id}/playoffs/distribute-prize. Idempotent — opening
+ * the modal again pre-fills with the prior values for editing.
+ * ──────────────────────────────────────────────────────────────── */
+function DistributePrizeModal({
+  leagueId, champion, consolationEnabled, consolationSeeds, onClose, onSaved,
+}: {
+  leagueId: string;
+  champion: ChampionBlock;
+  consolationEnabled: boolean;
+  consolationSeeds: BracketTeam[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [championPrize, setChampionPrize] = useState<string>(String(champion.champion_prize ?? 0));
+  const [runnerUpPrize, setRunnerUpPrize] = useState<string>(String(champion.runner_up_prize ?? 0));
+  const [consolationPrize, setConsolationPrize] = useState<string>(String(champion.consolation_prize ?? 0));
+  const [consolationWinnerId, setConsolationWinnerId] = useState<string>(
+    (champion as any)?.consolation_champion?.team_id || "",
+  );
+  const [currency, setCurrency] = useState<string>(champion.currency || "USD");
+  const [note, setNote] = useState<string>(champion.note || "");
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.post(`/leagues/${leagueId}/playoffs/distribute-prize`, {
+        champion_team_id: champion.champion?.team_id,
+        runner_up_team_id: champion.runner_up?.team_id,
+        consolation_champion_team_id: consolationWinnerId || null,
+        champion_prize: parseFloat(championPrize) || 0,
+        runner_up_prize: parseFloat(runnerUpPrize) || 0,
+        consolation_prize: parseFloat(consolationPrize) || 0,
+        currency,
+        note: note || null,
+      });
+      toast.success("Prize distributed");
+      onSaved();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to distribute prize");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-md" data-testid="distribute-prize-modal">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Award className="h-5 w-5 text-amber-400" />
+            Distribute Playoff Prize
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          {/* Champion */}
+          <div className="space-y-1.5">
+            <Label className="text-xs flex items-center gap-1.5">
+              <Crown className="h-3.5 w-3.5 text-amber-400" /> Champion · {champion.champion?.team_name}
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={championPrize}
+                onChange={(e) => setChampionPrize(e.target.value)}
+                className="bg-secondary border-border"
+                data-testid="prize-champion-input"
+              />
+              <Input
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value.toUpperCase().slice(0, 3))}
+                className="bg-secondary border-border w-20"
+                data-testid="prize-currency-input"
+              />
+            </div>
+          </div>
+          {/* Runner-up */}
+          {champion.runner_up && (
+            <div className="space-y-1.5">
+              <Label className="text-xs">Runner-up · {champion.runner_up.team_name}</Label>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                value={runnerUpPrize}
+                onChange={(e) => setRunnerUpPrize(e.target.value)}
+                className="bg-secondary border-border"
+                data-testid="prize-runner-up-input"
+              />
+            </div>
+          )}
+          {/* Consolation winner picker */}
+          {consolationEnabled && consolationSeeds.length > 0 && (
+            <>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Consolation Champion</Label>
+                <select
+                  value={consolationWinnerId}
+                  onChange={(e) => setConsolationWinnerId(e.target.value)}
+                  className="w-full h-9 rounded-md bg-secondary border border-border text-sm px-3"
+                  data-testid="prize-consolation-team-select"
+                >
+                  <option value="">— None —</option>
+                  {consolationSeeds.map((t) => (
+                    <option key={t.team_id} value={t.team_id}>
+                      #{t.seed} {t.team_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Consolation Prize</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={consolationPrize}
+                  onChange={(e) => setConsolationPrize(e.target.value)}
+                  className="bg-secondary border-border"
+                  data-testid="prize-consolation-input"
+                />
+              </div>
+            </>
+          )}
+          {/* Optional note */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">Note (optional)</Label>
+            <Input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="e.g. 'Paid via Venmo Feb 21'"
+              className="bg-secondary border-border"
+              data-testid="prize-note-input"
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving} data-testid="prize-cancel-btn">
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={saving}
+            className="bg-amber-500 hover:bg-amber-400 text-amber-950 font-semibold"
+            data-testid="prize-confirm-btn"
+          >
+            {saving ? "Saving…" : "Confirm & Distribute"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
