@@ -212,6 +212,7 @@ async def test_compute_active_alerts_returns_sync_degraded_when_no_recent_update
     await _db().players.insert_one({
         "_id": test_player,
         "name": "Iter210 Test Player",
+        "nhl_id": int(str(test_player)[-8:], 16) % 999999999,
         "last_synced_at": stale,
     })
     try:
@@ -373,4 +374,84 @@ async def test_feature_usage_parses_log_for_endpoints():
     assert "top_endpoints" in result
     assert "log_tail_size" in result
     assert isinstance(result["top_endpoints"], list)
+
+
+
+# ─── Iter 212 — Revenue + Hockey Insights ────────────────────────────────
+@pytest.mark.asyncio
+async def test_analytics_revenue_aggregates_by_month():
+    """Revenue endpoint groups paid transactions by YYYY-MM month and
+    returns total + MRR (last month) + recent paid list."""
+    from routes import platform_ops as po
+    admin_id = ObjectId()
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    po.setup({"db": _db(), "get_current_user": _admin, "broadcast_to_room": None})
+
+    marker = f"iter212rev_{ObjectId()}"
+    txns = await _db().payment_transactions.insert_many([
+        {"session_id": f"{marker}_a", "amount": 1999, "currency": "usd",
+         "payment_status": "paid", "created_at": "2026-01-15T00:00:00Z",
+         "user_email": "x@x.com"},
+        {"session_id": f"{marker}_b", "amount": 1999, "currency": "usd",
+         "payment_status": "paid", "created_at": "2026-02-15T00:00:00Z",
+         "user_email": "y@y.com"},
+        # unpaid — should NOT count
+        {"session_id": f"{marker}_c", "amount": 9999, "currency": "usd",
+         "payment_status": "pending", "created_at": "2026-02-20T00:00:00Z"},
+    ])
+    try:
+        result = await po.analytics_revenue(_Req(), months=12)
+        assert result["total_paid_txns"] >= 2
+        assert result["total_revenue_cents"] >= 3998
+        months = {m["month"]: m for m in result["by_month"]}
+        assert "2026-01" in months
+        assert "2026-02" in months
+        assert months["2026-01"]["revenue_cents"] >= 1999
+        # MRR = latest month's revenue
+        assert result["mrr_cents"] >= 0
+    finally:
+        await _db().payment_transactions.delete_many({"_id": {"$in": txns.inserted_ids}})
+
+
+@pytest.mark.asyncio
+async def test_hockey_ir_abuse_flags_healthy_players_in_ir_slot():
+    """IR-abuse endpoint flags players slotted to `section=ir` whose
+    player doc has no injury_status."""
+    from routes import platform_ops as po
+    admin_id = ObjectId()
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    po.setup({"db": _db(), "get_current_user": _admin, "broadcast_to_room": None})
+
+    healthy_pid = ObjectId()
+    injured_pid = ObjectId()
+    await _db().players.insert_many([
+        {"_id": healthy_pid, "name": "Healthy Sneak", "team": "TOR",
+         "nhl_id": int(str(healthy_pid)[-8:], 16) % 999999999},
+        {"_id": injured_pid, "name": "Really Hurt", "team": "BOS",
+         "nhl_id": int(str(injured_pid)[-8:], 16) % 999999999,
+         "injury_status": "ir-lt"},
+    ])
+    team_id = str(ObjectId())
+    now_iso = datetime.now(timezone.utc).isoformat()
+    event_id = await _db().activity_feed.insert_one({
+        "event_type": "lineup_set",
+        "team_id": team_id,
+        "ts": now_iso,
+        "lineup": {
+            str(healthy_pid): {"section": "ir", "slot": "IR"},
+            str(injured_pid): {"section": "ir", "slot": "IR"},
+        },
+    })
+    try:
+        result = await po.hockey_ir_abuse(_Req())
+        flagged_pids = [f["player_id"] for f in result["flagged"]]
+        assert str(healthy_pid) in flagged_pids, "Healthy player on IR must be flagged"
+        assert str(injured_pid) not in flagged_pids, "Truly injured player must NOT be flagged"
+        # Healthy entry should have current_status = healthy fallback
+        h = next(f for f in result["flagged"] if f["player_id"] == str(healthy_pid))
+        assert h["current_status"] == "healthy"
+        assert h["player_name"] == "Healthy Sneak"
+    finally:
+        await _db().activity_feed.delete_one({"_id": event_id.inserted_id})
+        await _db().players.delete_many({"_id": {"$in": [healthy_pid, injured_pid]}})
 

@@ -678,3 +678,187 @@ async def analytics_feature_usage(request: Request, days: int = Query(30, ge=1, 
     top = [{"endpoint": k, "hits": v} for k, v in counter.most_common(25)]
     return {"top_endpoints": top, "log_tail_size": log.get("tail_size", 0)}
 
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 212 — Revenue dashboard + Hockey-specific insights
+# ─────────────────────────────────────────────────────────────────────
+@router.get("/analytics/revenue")
+async def analytics_revenue(request: Request, months: int = Query(12, ge=1, le=36)):
+    """Revenue aggregates from `payment_transactions`. Bucket by month."""
+    await _require_admin(request)
+    db = _db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=months * 31)).isoformat()
+    rows = await db.payment_transactions.find(
+        {"created_at": {"$gte": cutoff}}
+    ).sort("created_at", -1).to_list(5000)
+
+    paid_rows = [r for r in rows if r.get("payment_status") in ("paid", "succeeded")]
+    by_month: dict[str, dict] = {}
+    total_cents = 0
+    for r in paid_rows:
+        created = r.get("created_at")
+        if not created:
+            continue
+        try:
+            mkey = str(created)[:7] if isinstance(created, str) else created.strftime("%Y-%m")
+        except Exception:
+            continue
+        amt = int(r.get("amount") or 0)
+        total_cents += amt
+        by_month.setdefault(mkey, {"month": mkey, "revenue_cents": 0, "txn_count": 0})
+        by_month[mkey]["revenue_cents"] += amt
+        by_month[mkey]["txn_count"] += 1
+    series = sorted(by_month.values(), key=lambda r: r["month"])
+
+    # MRR estimate: last full month's revenue
+    mrr_cents = series[-1]["revenue_cents"] if series else 0
+
+    # Top-5 most recent paid transactions
+    recent = [{
+        "session_id": r.get("session_id"),
+        "amount_cents": r.get("amount"),
+        "currency": r.get("currency"),
+        "status": r.get("payment_status"),
+        "created_at": _iso(r.get("created_at")),
+        "user_email": r.get("user_email"),
+    } for r in paid_rows[:10]]
+
+    return {
+        "months": months,
+        "total_revenue_cents": total_cents,
+        "total_paid_txns": len(paid_rows),
+        "mrr_cents": mrr_cents,
+        "by_month": series,
+        "recent_paid_transactions": recent,
+    }
+
+
+@router.get("/hockey/goalie-streaming")
+async def hockey_goalie_streaming(request: Request, days: int = Query(7, ge=1, le=30)):
+    """Detect teams who started >2 distinct goalies in the last N days
+    (possible back-to-back streaming gameplay)."""
+    await _require_admin(request)
+    db = _db()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    pipeline = [
+        {"$match": {"event_type": "lineup_set", "ts": {"$gte": cutoff}}},
+        {"$project": {"team_id": 1, "lineup": 1, "ts": 1}},
+    ]
+    rows = await db.activity_feed.aggregate(pipeline).to_list(5000)
+    team_goalies: dict[str, set] = {}
+    for r in rows:
+        team_id = r.get("team_id")
+        if not team_id:
+            continue
+        lineup = r.get("lineup") or {}
+        for pid, meta in lineup.items():
+            slot = (meta or {}).get("slot", "")
+            if slot == "G":
+                team_goalies.setdefault(team_id, set()).add(pid)
+    flagged = []
+    for team_id, goalies in team_goalies.items():
+        if len(goalies) >= 3:
+            flagged.append({
+                "team_id": team_id,
+                "distinct_goalies_started": len(goalies),
+                "goalie_ids": list(goalies),
+            })
+    flagged.sort(key=lambda x: -x["distinct_goalies_started"])
+    return {"days": days, "flagged_teams": flagged}
+
+
+@router.get("/hockey/category-balance")
+async def hockey_category_balance(request: Request, league_id: str = Query(...)):
+    """Compute coefficient of variation (stddev / mean) per scoring
+    category across teams in a league. High CoV → category is
+    unbalanced (one team or position dominates)."""
+    await _require_admin(request)
+    db = _db()
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+    if not teams:
+        return {"league_id": league_id, "categories": []}
+    # Aggregate roster-level stats per team
+    category_data: dict[str, list[float]] = {}
+    for t in teams:
+        roster_ids = t.get("roster") or []
+        if not roster_ids:
+            continue
+        obj_ids = [ObjectId(pid) for pid in roster_ids if ObjectId.is_valid(str(pid))]
+        if not obj_ids:
+            continue
+        players = await db.players.find({"_id": {"$in": obj_ids}}).to_list(50)
+        team_totals = {"goals": 0, "assists": 0, "points": 0, "shots": 0, "plus_minus": 0,
+                       "wins": 0, "saves": 0, "shutouts": 0}
+        for p in players:
+            for k in team_totals:
+                team_totals[k] += int(p.get(k, 0) or 0)
+        for cat, val in team_totals.items():
+            category_data.setdefault(cat, []).append(float(val))
+    out = []
+    for cat, vals in category_data.items():
+        if not vals:
+            continue
+        mean = sum(vals) / len(vals)
+        if mean == 0:
+            cov = 0.0
+        else:
+            variance = sum((v - mean) ** 2 for v in vals) / len(vals)
+            cov = (variance ** 0.5) / mean
+        out.append({
+            "category": cat,
+            "mean": round(mean, 2),
+            "cov": round(cov, 3),
+            "flagged": cov > 0.5,  # high variance threshold
+        })
+    out.sort(key=lambda r: -r["cov"])
+    return {"league_id": league_id, "categories": out}
+
+
+@router.get("/hockey/ir-abuse")
+async def hockey_ir_abuse(request: Request):
+    """Detect players parked on IR slots who have NO injury_status set.
+    These are likely 'stash slots' (healthy roster expansion via IR)."""
+    await _require_admin(request)
+    db = _db()
+    # Read recent lineup_set events; for each, find IR-slotted players
+    # whose player doc has no injury_status.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    rows = await db.activity_feed.find(
+        {"event_type": "lineup_set", "ts": {"$gte": cutoff}}
+    ).sort("ts", -1).to_list(2000)
+    seen_pairs: set = set()
+    flagged = []
+    for r in rows:
+        team_id = r.get("team_id")
+        lineup = r.get("lineup") or {}
+        for pid, meta in lineup.items():
+            section = (meta or {}).get("section", "")
+            if section != "ir":
+                continue
+            key = (team_id, pid)
+            if key in seen_pairs:
+                continue
+            seen_pairs.add(key)
+            # Check the player's injury status
+            try:
+                p = await db.players.find_one(
+                    {"_id": ObjectId(pid)},
+                    {"name": 1, "injury_status": 1, "status": 1, "team": 1},
+                )
+            except Exception:
+                continue
+            if not p:
+                continue
+            inj = (p.get("injury_status") or p.get("status") or "").lower()
+            if inj not in {"injured", "ir", "ir-lt", "out", "day-to-day", "dtd"}:
+                flagged.append({
+                    "team_id": team_id,
+                    "player_id": str(pid),
+                    "player_name": p.get("name"),
+                    "nhl_team": p.get("team"),
+                    "current_status": p.get("injury_status") or p.get("status") or "healthy",
+                    "last_seen": _iso(r.get("ts")),
+                })
+    return {"flagged_count": len(flagged), "flagged": flagged[:200]}
+
