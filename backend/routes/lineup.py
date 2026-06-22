@@ -292,6 +292,27 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
         except Exception:
             pass
 
+    # Iter 201d — record an IP/UA-stamped lineup_set audit row used by the
+    # platform admin's lineup-audit feed + multi-account detection.
+    try:
+        from routes.admin_platform import record_lineup_event
+        # Identify benched top-salary players for tanking detection.
+        bench_pids = [
+            pid for pid, slot in (lineup or {}).items()
+            if isinstance(slot, dict) and slot.get("section") in ("bench", "ir", "minors")
+        ]
+        await record_lineup_event(
+            db, str(team["league_id"]), str(team["_id"]), str(user["_id"]),
+            request,
+            summary=(
+                f"{team.get('name') or 'Team'} lineup saved "
+                f"({len(starter_ids)} starters, {len(bench_pids)} benched)"
+            ),
+            benched_player_ids=bench_pids,
+        )
+    except Exception:
+        pass
+
     return {
         "team_id": team_id,
         "lineup_size": len(lineup),
