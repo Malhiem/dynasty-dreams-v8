@@ -28,7 +28,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Trophy, CalendarDays, Users as UsersIcon, Hash } from "lucide-react";
+import { Trophy, CalendarDays, Users as UsersIcon, Hash, ArrowRightLeft, ShieldAlert } from "lucide-react";
 import api from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +51,9 @@ export default function DraftHistory() {
   const [drafts, setDrafts] = useState<DraftSummary[]>([]);
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Iter 204 — related trades for the selected completed draft.
+  const [relatedTrades, setRelatedTrades] = useState<any[]>([]);
+  const [tradesLoading, setTradesLoading] = useState(false);
 
   // ── Fetch all drafts for the active league, filter to completed ──
   useEffect(() => {
@@ -88,6 +91,29 @@ export default function DraftHistory() {
     () => drafts.find((d) => d._id === selectedDraftId) || null,
     [drafts, selectedDraftId],
   );
+
+  // Iter 204 — When a draft is selected, fetch related trades.
+  useEffect(() => {
+    if (!selectedDraftId) {
+      setRelatedTrades([]);
+      return;
+    }
+    let cancelled = false;
+    setTradesLoading(true);
+    (async () => {
+      try {
+        const { data } = await api.get(`/drafts/${selectedDraftId}/related-trades`);
+        if (!cancelled) setRelatedTrades(data?.related_trades || []);
+      } catch {
+        if (!cancelled) setRelatedTrades([]);
+      } finally {
+        if (!cancelled) setTradesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedDraftId]);
 
   return (
     <AppLayout>
@@ -261,6 +287,108 @@ export default function DraftHistory() {
                 </>
               )}
             </Card>
+            {/* Iter 204 — Related trades for this draft */}
+            {selected && (
+              <Card data-testid="draft-history-related-trades" className="lg:col-start-2">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <ArrowRightLeft className="h-4 w-4 text-sky-400" />
+                    Related Trades
+                    <Badge variant="outline" className="ml-2 text-[10px]">
+                      {relatedTrades.length}
+                    </Badge>
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Trades that affected players drafted, or any picks
+                    proposed during this draft cycle.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {tradesLoading && (
+                    <div className="text-sm text-muted-foreground py-4" data-testid="related-trades-loading">
+                      Loading trades…
+                    </div>
+                  )}
+                  {!tradesLoading && relatedTrades.length === 0 && (
+                    <div className="text-sm text-muted-foreground py-4" data-testid="related-trades-empty">
+                      No trades affected this draft.
+                    </div>
+                  )}
+                  {!tradesLoading && relatedTrades.length > 0 && (
+                    <div className="space-y-3" data-testid="related-trades-list">
+                      {relatedTrades.map((t: any) => {
+                        const isPickTrade = t.relevance === "pick";
+                        const statusColor = t.status === "executed"
+                          ? "border-emerald-500/40 text-emerald-300"
+                          : t.status === "vetoed"
+                            ? "border-rose-500/40 text-rose-300"
+                            : "border-amber-500/40 text-amber-300";
+                        return (
+                          <div
+                            key={t.trade_id}
+                            className="rounded-lg border border-border bg-muted/20 p-3"
+                            data-testid={`related-trade-${t.trade_id}`}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2 text-sm font-medium">
+                                {isPickTrade ? (
+                                  <ShieldAlert className="h-3.5 w-3.5 text-amber-400" />
+                                ) : (
+                                  <ArrowRightLeft className="h-3.5 w-3.5 text-sky-400" />
+                                )}
+                                <span>{t.proposer_team_name || "Team A"}</span>
+                                <ArrowRightLeft className="h-3 w-3 text-muted-foreground" />
+                                <span>{t.receiver_team_name || "Team B"}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <Badge variant="outline" className={cn("text-[10px]", statusColor)}>
+                                  {t.status}
+                                </Badge>
+                                <Badge variant="outline" className="text-[10px]">
+                                  {isPickTrade ? "Pick trade" : "Player trade"}
+                                </Badge>
+                              </div>
+                            </div>
+                            {t.affected_players?.length > 0 && (
+                              <div className="text-xs space-y-0.5 mt-1.5">
+                                <div className="text-muted-foreground">Affected drafted players:</div>
+                                {t.affected_players.map((p: any) => (
+                                  <div
+                                    key={p.player_id}
+                                    className="ml-2"
+                                    data-testid={`affected-player-${p.player_id}`}
+                                  >
+                                    • <span className="font-medium">{p.name}</span>
+                                    <span className="text-muted-foreground">
+                                      {" "}— picked #{p.drafted_overall} by {p.drafted_by_team}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {t.affected_picks?.length > 0 && (
+                              <div className="text-xs space-y-0.5 mt-1.5">
+                                <div className="text-muted-foreground">Affected picks:</div>
+                                {t.affected_picks.map((p: any, i: number) => (
+                                  <div key={i} className="ml-2">
+                                    • Round {p.round || "?"} · {p.year || "?"}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {t.executed_at && (
+                              <div className="text-[10px] text-muted-foreground mt-2">
+                                Executed {new Date(t.executed_at).toLocaleString()}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </div>
         )}
       </div>

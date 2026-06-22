@@ -185,3 +185,122 @@ async def test_make_draft_pick_flips_status_to_completed_on_final_pick():
         await _db().teams.delete_many({"league_id": league_id})
         await _db().leagues.delete_one({"_id": ObjectId(league_id)})
         await _db().players.delete_one({"_id": ObjectId(player_id)})
+
+
+# ─── Iter 204 — Related trades endpoint ─────────────────────────────────
+@pytest.mark.asyncio
+async def test_related_trades_endpoint_surfaces_player_and_pick_trades():
+    """`GET /api/drafts/{draft_id}/related-trades` returns:
+       - executed PLAYER trades whose asset references a drafted player
+       - all in_draft_pick trades for the league (regardless of status)
+    and skips unrelated trades."""
+    from routes.drafts import setup as drafts_setup, get_draft_related_trades
+
+    drafts_setup({
+        "db": _db(),
+        "logger": None,
+        "get_current_user": None,
+        "broadcast_to_room": None,
+        "create_notification": None,
+    })
+
+    league_id = f"test_iter204_related_{ObjectId()}"
+    team_a = ObjectId()
+    team_b = ObjectId()
+    player_drafted = str(ObjectId())
+    player_other = str(ObjectId())
+
+    await _db().teams.insert_many([
+        {"_id": team_a, "league_id": league_id, "name": "Alpha", "logo_abbr": "ALP"},
+        {"_id": team_b, "league_id": league_id, "name": "Bravo", "logo_abbr": "BRV"},
+    ])
+
+    draft_doc = {
+        "league_id": league_id,
+        "status": "completed",
+        "team_abbrs": ["ALP", "BRV"],
+        "team_map": {"ALP": {"id": str(team_a)}, "BRV": {"id": str(team_b)}},
+        "total_rounds": 1,
+        "snake_draft": False,
+        "picks": [
+            {"round": 1, "pick_in_round": 1, "overall": 1, "team": "ALP",
+             "team_id": str(team_a), "player_id": player_drafted,
+             "player": {"name": "Drafted Star"}},
+        ],
+    }
+    draft_res = await _db().drafts.insert_one(draft_doc)
+    draft_id = str(draft_res.inserted_id)
+
+    # 1) executed player trade involving drafted player — INCLUDED
+    t1 = await _db().trades.insert_one({
+        "league_id": league_id,
+        "proposer_team_id": str(team_a),
+        "receiver_team_id": str(team_b),
+        "proposer_assets": [{"type": "player", "player_id": player_drafted}],
+        "receiver_assets": [],
+        "status": "executed",
+        "executed_at": "2026-02-01T00:00:00Z",
+        "created_at": "2026-01-30T00:00:00Z",
+    })
+    # 2) pick trade in draft (vetoed) — INCLUDED
+    t2 = await _db().trades.insert_one({
+        "league_id": league_id,
+        "proposer_team_id": str(team_a),
+        "receiver_team_id": str(team_b),
+        "proposer_assets": [{"type": "pick", "pick_id": "x", "round": 1, "year": 2026}],
+        "receiver_assets": [],
+        "status": "vetoed",
+        "is_in_draft_pick_trade": True,
+        "created_at": "2026-01-31T00:00:00Z",
+    })
+    # 3) executed player trade for a player NOT in this draft — EXCLUDED
+    await _db().trades.insert_one({
+        "league_id": league_id,
+        "proposer_team_id": str(team_a),
+        "receiver_team_id": str(team_b),
+        "proposer_assets": [{"type": "player", "player_id": player_other}],
+        "receiver_assets": [],
+        "status": "executed",
+        "created_at": "2026-01-29T00:00:00Z",
+    })
+    # 4) pending player trade for drafted player — EXCLUDED (not executed)
+    await _db().trades.insert_one({
+        "league_id": league_id,
+        "proposer_team_id": str(team_a),
+        "receiver_team_id": str(team_b),
+        "proposer_assets": [{"type": "player", "player_id": player_drafted}],
+        "receiver_assets": [],
+        "status": "pending",
+        "created_at": "2026-01-28T00:00:00Z",
+    })
+
+    try:
+        result = await get_draft_related_trades(draft_id)
+        rows = result["related_trades"]
+        ids = [r["trade_id"] for r in rows]
+        assert str(t1.inserted_id) in ids, "executed player trade should be included"
+        assert str(t2.inserted_id) in ids, "in-draft pick trade should be included"
+        assert len(rows) == 2, f"expected 2 related trades, got {len(rows)}: {ids}"
+
+        # Player trade row should surface drafted-player metadata
+        player_row = next(r for r in rows if r["trade_id"] == str(t1.inserted_id))
+        assert player_row["relevance"] == "player"
+        assert player_row["status"] == "executed"
+        assert player_row["proposer_team_name"] == "Alpha"
+        assert player_row["receiver_team_name"] == "Bravo"
+        assert len(player_row["affected_players"]) == 1
+        ap = player_row["affected_players"][0]
+        assert ap["name"] == "Drafted Star"
+        assert ap["drafted_overall"] == 1
+        assert ap["drafted_by_team"] == "ALP"
+
+        # Pick trade row should surface affected pick + vetoed status
+        pick_row = next(r for r in rows if r["trade_id"] == str(t2.inserted_id))
+        assert pick_row["relevance"] == "pick"
+        assert pick_row["status"] == "vetoed"
+        assert pick_row["is_in_draft_pick_trade"] is True
+        assert len(pick_row["affected_picks"]) == 1
+    finally:
+        await _db().drafts.delete_one({"_id": ObjectId(draft_id)})
+        await _db().teams.delete_many({"league_id": league_id})
+        await _db().trades.delete_many({"league_id": league_id})

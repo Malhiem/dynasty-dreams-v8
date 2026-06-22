@@ -125,6 +125,104 @@ async def get_draft_picks(league_id: str, year: Optional[int] = None):
     return {"league_id": league_id, "year": year, "picks": picks}
 
 
+# ─── Iter 204 — Related trades for a completed draft ────────────────────────
+# Surfaces, for a single draft, every executed trade that affected
+# either (a) a drafted player or (b) any pick used in or scheduled for
+# this draft. Powers the "Related Trades" section on the Draft History
+# page so managers can audit how a draft was shaped by trades.
+@router.get("/drafts/{draft_id}/related-trades")
+async def get_draft_related_trades(draft_id: str):
+    db = _deps["db"]
+    if not ObjectId.is_valid(draft_id):
+        raise HTTPException(status_code=400, detail="Invalid draft id")
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league_id = draft.get("league_id")
+    picks = draft.get("picks") or []
+    drafted_player_ids = {str(p.get("player_id")) for p in picks if p.get("player_id")}
+
+    # Player-trade match: any executed trade where a player asset
+    # references a player_id that appears in this draft.
+    # Pick-trade match: any `is_in_draft_pick_trade=true` trade for the
+    # league (these were proposed/executed in the context of this draft
+    # cycle). Status filter is lenient — surface vetoed/expired ones
+    # too so users see "what was attempted".
+    all_trades = await db.trades.find({"league_id": league_id}).sort("created_at", -1).to_list(500)
+
+    out = []
+    for t in all_trades:
+        proposer_assets = t.get("proposer_assets") or []
+        receiver_assets = t.get("receiver_assets") or []
+        is_pick_trade = bool(t.get("is_in_draft_pick_trade"))
+        affected_player_ids: list[str] = []
+        affected_picks: list[dict] = []
+
+        for asset in proposer_assets + receiver_assets:
+            atype = asset.get("type") or asset.get("asset_type")
+            if atype == "player":
+                pid = str(asset.get("player_id") or "")
+                if pid and pid in drafted_player_ids:
+                    affected_player_ids.append(pid)
+            elif atype == "pick":
+                affected_picks.append({
+                    "pick_id": asset.get("pick_id"),
+                    "round": asset.get("round"),
+                    "year": asset.get("year"),
+                    "original_team_id": asset.get("original_team_id"),
+                })
+
+        relevance = None
+        if affected_player_ids and t.get("status") == "executed":
+            relevance = "player"
+        elif is_pick_trade:
+            relevance = "pick"
+
+        if not relevance:
+            continue
+
+        # Hydrate proposer / receiver team display names
+        async def _team_name(tid):
+            if not tid or not ObjectId.is_valid(str(tid)):
+                return None
+            doc = await db.teams.find_one({"_id": ObjectId(str(tid))}, {"name": 1, "logo_abbr": 1})
+            return doc and (doc.get("name") or doc.get("logo_abbr"))
+
+        # Hydrate affected drafted-player names (snapshot lookup from
+        # the draft's picks list to avoid an extra players collection
+        # round-trip).
+        affected_players_meta = []
+        for pid in set(affected_player_ids):
+            match = next((pk for pk in picks if str(pk.get("player_id")) == pid), None)
+            if match:
+                affected_players_meta.append({
+                    "player_id": pid,
+                    "name": (match.get("player") or {}).get("name") or "Unknown",
+                    "drafted_overall": match.get("overall"),
+                    "drafted_by_team": match.get("team"),
+                })
+
+        out.append({
+            "trade_id": str(t["_id"]),
+            "relevance": relevance,
+            "status": t.get("status"),
+            "is_in_draft_pick_trade": is_pick_trade,
+            "created_at": t.get("created_at"),
+            "executed_at": t.get("executed_at"),
+            "proposer_team_id": str(t.get("proposer_team_id") or ""),
+            "receiver_team_id": str(t.get("receiver_team_id") or ""),
+            "proposer_team_name": await _team_name(t.get("proposer_team_id")),
+            "receiver_team_name": await _team_name(t.get("receiver_team_id")),
+            "affected_players": affected_players_meta,
+            "affected_picks": affected_picks,
+            "votes": t.get("votes") or {},
+            "post_review_action": t.get("post_review_action"),
+        })
+
+    return {"draft_id": draft_id, "league_id": league_id, "related_trades": out}
+
+
 # Iter 166 — Per-team draft picks (currently owned). Powers the
 # Roster page's Draft Picks section + the team's pick provenance chips.
 @router.get("/teams/{team_id}/draft-picks")

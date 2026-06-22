@@ -3,6 +3,8 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 // Iter 170h — Socket.IO subscription for live draft updates.
 // Iter 203 — extracted into a dedicated hook.
 import useDraftRoomSocket from "@/hooks/use-draft-room-socket";
+// Iter 204 — pick timer extracted into a dedicated hook.
+import usePickTimer from "@/hooks/use-pick-timer";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -281,7 +283,8 @@ export default function DraftRoom() {
   const [searchQuery, setSearchQuery] = useState("");
   const [positionFilter, setPositionFilter] = useState("all");
   const [countdown, setCountdown] = useState<number>(0);
-  const [pickTimeLeft, setPickTimeLeft] = useState<number>(draftConfig.pickTimerSeconds);
+  // Iter 204 — `pickTimeLeft`/`timerPaused` moved into `usePickTimer`
+  // hook (declared further down after currentDraft is available).
   const [selectedCriteria, setSelectedCriteria] = useState("entry");
 
   // Chat state
@@ -291,7 +294,7 @@ export default function DraftRoom() {
     { id: "c2", type: "chat", sender: "Blizzard Kings", text: "Who's everyone eyeing at #1?", timestamp: new Date(Date.now() - 60000) },
   ]);
   const [chatInput, setChatInput] = useState("");
-  const [timerPaused, setTimerPaused] = useState(false);
+  // Iter 204 — `timerPaused` moved into `usePickTimer` hook.
   // Iter 194c / 203 — `lastChatEvent` is now owned by `useDraftRoomSocket`
   // (declared below). The state declaration here was removed in the
   // iter-203 hook extraction.
@@ -608,39 +611,15 @@ export default function DraftRoom() {
 
   const isClockActive = draftConfig.draftStarted && !draftConfig.earlyStart;
 
-  useEffect(() => {
-    if (!isClockActive) return;
-    setPickTimeLeft(draftConfig.pickTimerSeconds);
-    setTimerPaused(false);
-  }, [isClockActive, draftConfig.currentPick, draftConfig.pickTimerSeconds]);
-
-  // Iter 170j — Auto-pick on timeout. When the pick clock expires
-  // (and there's a backend draft + we're not paused), the frontend
-  // fires `/drafts/{id}/auto-pick` which picks from the on-clock
-  // team's draft_queue (first undrafted) before falling back to the
-  // top-ranked eligible player. We only fire once per pick using a
-  // ref guard keyed by `currentPick`.
-  const lastAutoFireRef = useRef<number | null>(null);
-  useEffect(() => { lastAutoFireRef.current = null; }, [draftConfig.currentPick]);
-  useEffect(() => {
-    if (!isClockActive || timerPaused) return;
-    const interval = setInterval(() => {
-      setPickTimeLeft((prev) => {
-        if (prev <= 1) {
-          // Backend-driven auto-pick when a real draft is active.
-          if (currentDraft?._id && isDraftActive && lastAutoFireRef.current !== draftConfig.currentPick) {
-            lastAutoFireRef.current = draftConfig.currentPick;
-            api.post(`/drafts/${currentDraft._id}/auto-pick`)
-              .then(() => refreshDraftState())
-              .catch(() => {/* ignore — next tick will retry */});
-          }
-          return draftConfig.pickTimerSeconds;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [isClockActive, timerPaused, draftConfig.pickTimerSeconds, draftConfig.currentPick, currentDraft?._id, isDraftActive, refreshDraftState]);
+  // Iter 204 — pick timer extracted to `usePickTimer` hook (-30 lines).
+  const { pickTimeLeft, setPickTimeLeft, timerPaused, setTimerPaused } = usePickTimer({
+    isClockActive,
+    pickTimerSeconds: draftConfig.pickTimerSeconds,
+    currentPick: draftConfig.currentPick,
+    currentDraftId: currentDraft?._id,
+    isDraftActive,
+    refreshDraftState,
+  });
 
   // ─── Draft order ────────────────────────────────────────────────────────────
 
