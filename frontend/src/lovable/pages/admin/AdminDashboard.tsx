@@ -2285,7 +2285,7 @@ function UsersPanel() {
       </div>
 
       <div className="rounded-lg border border-border overflow-x-auto">
-        <table className="w-full text-sm min-w-[860px]" data-testid="users-table">
+        <table className="w-full text-sm" data-testid="users-table">
           <thead className="bg-secondary/40">
             <tr className="text-left">
               <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">User</th>
@@ -2295,19 +2295,25 @@ function UsersPanel() {
               <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">Created</th>
               <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">Last login</th>
               <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">2FA</th>
-              <th className="px-3 py-2"></th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</td></tr>
+              <tr><td colSpan={7} className="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</td></tr>
             )}
             {!loading && rows.length === 0 && (
-              <tr><td colSpan={8} className="px-3 py-6 text-center text-xs text-muted-foreground">No users match</td></tr>
+              <tr><td colSpan={7} className="px-3 py-6 text-center text-xs text-muted-foreground">No users match</td></tr>
             )}
             {!loading && rows.map((u) => (
-              <tr key={u.id} className="border-t border-border/60 hover:bg-secondary/20" data-testid={`users-row-${u.id}`}>
-                <td className="px-3 py-2 font-medium">{u.username || u.name || "—"}</td>
+              <tr
+                key={u.id}
+                className="border-t border-border/60 hover:bg-secondary/30 cursor-pointer transition-colors"
+                onClick={() => openDetail(u.id)}
+                data-testid={`users-row-${u.id}`}
+              >
+                <td className="px-3 py-2 font-medium text-primary hover:underline" data-testid={`users-view-${u.id}`}>
+                  {u.username || u.name || "—"}
+                </td>
                 <td className="px-3 py-2 text-muted-foreground max-w-[240px] truncate" title={u.email}>
                   {u.email}
                   {u.email_verified && <span className="ml-1 text-[10px] text-emerald-300">✓</span>}
@@ -2328,16 +2334,6 @@ function UsersPanel() {
                 </td>
                 <td className="px-3 py-2 text-xs">
                   {u.two_factor_enabled ? <span className="text-emerald-300">ON</span> : <span className="text-muted-foreground">off</span>}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => openDetail(u.id)}
-                    data-testid={`users-view-${u.id}`}
-                  >
-                    View
-                  </Button>
                 </td>
               </tr>
             ))}
@@ -2807,9 +2803,10 @@ const ACTION_CONFIGS = {
   },
   impersonate: {
     title: "Impersonate (view-as)", tone: "warn", path: "/impersonate",
-    description: "Issues a 15-min READ-ONLY JWT. The user is notified.",
+    description: "Issues a 15-min READ-ONLY cookie swap. The user is notified, and a persistent red banner shows across the app while in view-as mode.",
     fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
-    success: "Read-only impersonation token issued",
+    success: "Now viewing as target user · banner will appear",
+    useCookieSwap: true,
   },
   resend_verification: {
     title: "Resend verification email", tone: "default", path: "/resend-verification",
@@ -2855,6 +2852,18 @@ function AdminActionsPanel({ userId, userEmail, userStatus, permissionTier, refr
         const a = document.createElement("a");
         a.href = url; a.download = `user-data-${userId}.json`; a.click();
         window.URL.revokeObjectURL(url);
+      } else if (cfg.useCookieSwap) {
+        // Iter 216b — Impersonation uses cookie-swap endpoint so the
+        // banner can take over the whole app session.
+        res = await api.post("/auth/impersonate-start", {
+          target_user_id: userId, reason: values.reason || "",
+        });
+        // Force the AuthContext to re-check and pick up the impersonation cookie
+        try {
+          const { useAuth } = await import("@/contexts/AuthContext");
+          // We can't useAuth() outside a component, so just trigger a global event.
+          window.dispatchEvent(new Event("auth-impersonation-started"));
+        } catch { /* noop */ }
       } else {
         res = await api.post(`/admin/platform/users/${userId}${cfg.path}`, body);
       }
@@ -2862,6 +2871,11 @@ function AdminActionsPanel({ userId, userEmail, userStatus, permissionTier, refr
       toast.success((cfg.success || "Action complete") + note);
       close();
       refresh?.();
+      // Reload the page on impersonation so the banner appears and the
+      // user is effectively swapped in the UI everywhere.
+      if (cfg.useCookieSwap) {
+        setTimeout(() => { window.location.href = "/dashboard"; }, 400);
+      }
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || "Action failed");
     } finally {

@@ -2,6 +2,7 @@ import "@/App.css";
 import "@/index.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import ImpersonationBanner from "@/components/ImpersonationBanner";
 import { TradeBuilderProvider } from "@/lovable/state/TradeBuilderContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 
@@ -73,6 +74,7 @@ function App() {
     <AuthProvider>
       <Toaster position="top-right" richColors closeButton />
       <BrowserRouter>
+        <ImpersonationBanner />
         <TradeBuilderProvider>
         <Routes>
           {/* Public */}

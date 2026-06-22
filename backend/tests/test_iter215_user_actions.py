@@ -400,3 +400,59 @@ def test_impersonation_token_cannot_perform_admin_actions():
     # Could be 403 from read_only guard OR from non-admin gate (since target user is non-admin)
     assert r.status_code == 403, r.text
     assert "impersonation" in r.text.lower() or "admin" in r.text.lower()
+
+
+# ── Iter 216b — Cookie-swap impersonation + banner ───────────────────
+
+def test_impersonate_start_swaps_cookie_and_me_returns_target():
+    """When admin POSTs /auth/impersonate-start, the access_token cookie
+    is replaced with an impersonation JWT and `admin_token_backup` is
+    set. Subsequent /auth/me reflects the TARGET user, decorated with
+    `_impersonator_email` and `_impersonation_expires_at` so the
+    banner can render the countdown."""
+    uid, target_email, _ = _make_disposable_user()
+    session = requests.Session()
+    # Admin login (cookies stored in session)
+    lr = session.post(f"{API_URL}/api/auth/login",
+                      json={"email": ADMIN_EMAIL, "password": ADMIN_PASS})
+    assert lr.status_code == 200
+    # Verify admin sees themself
+    me1 = session.get(f"{API_URL}/api/auth/me").json()
+    assert me1["email"] == ADMIN_EMAIL
+    # Start impersonation
+    start = session.post(f"{API_URL}/api/auth/impersonate-start",
+                        json={"target_user_id": uid, "reason": "iter216b cookie-swap test"})
+    assert start.status_code == 200, start.text
+    assert start.json()["target_email"] == target_email
+    # /auth/me should now return the TARGET user with impersonation metadata
+    me2 = session.get(f"{API_URL}/api/auth/me").json()
+    assert me2["email"] == target_email
+    assert me2["_impersonation_mode"] == "read_only"
+    assert me2["_impersonator_email"] == ADMIN_EMAIL
+    assert me2["_impersonation_expires_at"]  # populated for the banner countdown
+    # Stop impersonation
+    stop = session.post(f"{API_URL}/api/auth/impersonate-stop")
+    assert stop.status_code == 200
+    # /auth/me should now return the ADMIN again
+    me3 = session.get(f"{API_URL}/api/auth/me").json()
+    assert me3["email"] == ADMIN_EMAIL
+    assert me3.get("_impersonation_mode") is None
+
+
+def test_impersonate_start_non_admin_blocked():
+    _, _, token = _make_disposable_user()
+    session = requests.Session()
+    session.cookies.set("access_token", token, domain="dynasty-preview.preview.emergentagent.com")
+    # The non-admin user (via Bearer) is blocked
+    r = requests.post(f"{API_URL}/api/auth/impersonate-start",
+                      headers={"Authorization": f"Bearer {token}"},
+                      json={"target_user_id": "000000000000000000000000", "reason": "x"})
+    assert r.status_code in (401, 403)
+
+
+def test_impersonate_stop_without_backup_returns_400():
+    session = requests.Session()
+    session.post(f"{API_URL}/api/auth/login",
+                 json={"email": ADMIN_EMAIL, "password": ADMIN_PASS})
+    r = session.post(f"{API_URL}/api/auth/impersonate-stop")
+    assert r.status_code == 400

@@ -219,8 +219,111 @@ async def get_me(request: Request):
         "province_state": user.get("province_state"),
         "country": user.get("country"),
         "avatar_url": user.get("avatar_url"),
+        # Iter 216b — impersonation banner. When the auth cookie carries a
+        # `type=impersonation` JWT, `get_current_user` decorates the user
+        # with these fields; surface them so the frontend can render the
+        # "You are viewing as X — read-only · expires in MM:SS" banner.
+        "_impersonator_id": user.get("_impersonator_id"),
+        "_impersonator_email": user.get("_impersonator_email"),
+        "_impersonation_mode": user.get("_impersonation_mode"),
+        "_impersonation_expires_at": user.get("_impersonation_expires_at"),
     })
     return payload
+
+
+@router.post("/auth/impersonate-start")
+async def impersonate_start(request: Request, response: Response):
+    """Iter 216b — Cookie-swap impersonation.
+
+    Body: { target_user_id: str, reason: str }
+
+    Server validates the caller is admin, mints a `type=impersonation`
+    JWT for the target user, then:
+      * stores the caller's existing access_token in a separate
+        `admin_token_backup` cookie so `/auth/impersonate-stop` can
+        restore it later, AND
+      * replaces the `access_token` cookie with the impersonation token.
+
+    The browser will then see the target user on every subsequent
+    request until impersonate-stop is called or the impersonation
+    token (15 min) expires.
+    """
+    from bson import ObjectId as _OID
+    db = _db()
+    get_current_user = _deps["get_current_user"]
+    create_impersonation_token = _deps["create_impersonation_token"]
+    cookie_secure = _deps["COOKIE_SECURE"]
+    cookie_samesite = _deps["COOKIE_SAMESITE"]
+    admin = await get_current_user(request)
+    if (admin or {}).get("role") != "admin" and (admin or {}).get("permission_tier") not in ("admin", "senior_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    if admin.get("_impersonation_mode"):
+        raise HTTPException(status_code=400, detail="Already impersonating — call /auth/impersonate-stop first")
+    body = await request.json()
+    target_id = (body.get("target_user_id") or "").strip()
+    reason = (body.get("reason") or "").strip()
+    if not target_id:
+        raise HTTPException(status_code=400, detail="target_user_id required")
+    try:
+        target = await db.users.find_one({"_id": _OID(target_id)})
+    except Exception:
+        target = None
+    if not target:
+        raise HTTPException(status_code=404, detail="Target user not found")
+
+    imp_token = create_impersonation_token(
+        target_user_id=str(target["_id"]),
+        target_email=target.get("email") or "",
+        impersonator_id=str(admin["_id"]),
+        impersonator_email=admin.get("email") or "",
+        minutes=15,
+    )
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+    original_token = request.cookies.get("access_token") or ""
+    response.set_cookie(key="admin_token_backup", value=original_token, httponly=True,
+                        secure=cookie_secure, samesite=cookie_samesite, max_age=1800, path="/")
+    response.set_cookie(key="access_token", value=imp_token, httponly=True,
+                        secure=cookie_secure, samesite=cookie_samesite, max_age=900, path="/")
+
+    await db.impersonation_audit.insert_one({
+        "admin_id": str(admin["_id"]), "admin_email": admin.get("email"),
+        "target_user_id": str(target["_id"]), "target_email": target.get("email"),
+        "reason": reason, "started_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": expires_at, "mode": "read_only",
+        "cookie_swap": True,
+    })
+    return {"ok": True, "expires_at": expires_at, "target_email": target.get("email")}
+
+
+@router.post("/auth/impersonate-stop")
+async def impersonate_stop(request: Request, response: Response):
+    """Iter 216b — Restore the admin's original access_token cookie
+    from `admin_token_backup`. Audit the stop event."""
+    db = _db()
+    get_current_user = _deps["get_current_user"]
+    cookie_secure = _deps["COOKIE_SECURE"]
+    cookie_samesite = _deps["COOKIE_SAMESITE"]
+    # We expect to be impersonating right now
+    try:
+        current = await get_current_user(request)
+    except HTTPException:
+        current = None
+    backup = request.cookies.get("admin_token_backup")
+    if not backup:
+        raise HTTPException(status_code=400, detail="Not currently impersonating")
+    response.set_cookie(key="access_token", value=backup, httponly=True,
+                        secure=cookie_secure, samesite=cookie_samesite, max_age=43200, path="/")
+    response.delete_cookie("admin_token_backup", path="/")
+    if current and current.get("_impersonator_id"):
+        await db.impersonation_audit.insert_one({
+            "admin_id": current.get("_impersonator_id"),
+            "admin_email": current.get("_impersonator_email"),
+            "target_user_id": current.get("_id"),
+            "target_email": current.get("email"),
+            "stopped_at": datetime.now(timezone.utc).isoformat(),
+            "mode": "read_only", "event": "stop",
+        })
+    return {"ok": True}
 
 
 @router.post("/auth/refresh")

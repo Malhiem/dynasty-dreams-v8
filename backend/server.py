@@ -157,6 +157,9 @@ async def get_current_user(request: Request) -> dict:
             user["_impersonator_id"] = payload.get("impersonator_id")
             user["_impersonator_email"] = payload.get("impersonator_email")
             user["_impersonation_mode"] = payload.get("mode", "read_only")
+            exp = payload.get("exp")
+            if exp:
+                user["_impersonation_expires_at"] = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
