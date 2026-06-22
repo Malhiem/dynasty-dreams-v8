@@ -53,6 +53,7 @@ import LovableChat from "@/lovable/pages/Chat";
 import LovableCommissionerSettings from "@/lovable/pages/CommissionerSettings";
 // Iter 187 — Commissioner Ops Console
 import OpsConsolePage from "@/lovable/pages/commissioner/OpsConsole";
+import AdminDashboard from "@/lovable/pages/admin/AdminDashboard";
 // Iter 193 — Bulk Owner Invites
 import OwnerInvitesPage from "@/lovable/pages/commissioner/OwnerInvites";
 import LovableLeaguePayments from "@/lovable/pages/LeaguePayments";
@@ -131,6 +132,8 @@ function App() {
           <Route path="/player-pool" element={<ProtectedRoute><LovablePlayerPool /></ProtectedRoute>} />
           <Route path="/prospects" element={<ProtectedRoute><LovableProspects /></ProtectedRoute>} />
           <Route path="/site-admin" element={<ProtectedRoute><LovableSiteAdmin /></ProtectedRoute>} />
+          {/* Iter 201a — Platform admin dashboard (admin role gate is enforced inside the component) */}
+          <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
           <Route path="/teams-owners" element={<ProtectedRoute><LovableTeamsOwners /></ProtectedRoute>} />
 
           {/* 404 */}

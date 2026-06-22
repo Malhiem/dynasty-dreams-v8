@@ -239,9 +239,31 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   // wizard step's save succeeds. Sections start at 0 for new leagues so
   // the Health Score increments naturally as the commissioner walks
   // through the wizard.
+  // Iter 200 — also refresh the floating Health chip so the score bumps
+  // visibly after every save.
+  const [health, setHealth] = useState({ score: 0, sections: [], _bump: 0 });
+  const refreshHealth = async () => {
+    try {
+      const { data } = await api.get(`/leagues/${leagueId}/health-score`);
+      setHealth((prev) => ({
+        score: data?.score ?? 0,
+        sections: data?.sections || [],
+        // bump on every refresh so the chip can flash even when the score
+        // didn't change (re-saving an already-complete step still feels
+        // like progress to the user).
+        _bump: prev._bump + 1,
+      }));
+    } catch (_e) { /* best-effort */ }
+  };
+  // Hydrate on open / league change.
+  useEffect(() => {
+    if (open && leagueId) refreshHealth();
+  }, [open, leagueId]);
+
   const stampProgress = async (sections) => {
     try {
       await api.post(`/leagues/${leagueId}/setup-progress`, { sections });
+      await refreshHealth();
     } catch (_e) { /* best-effort */ }
   };
 
@@ -1050,7 +1072,15 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
             </Button>
             <HelpTooltip text={HELP.skip} testId="help-skip" />
           </div>
-          <div className="text-xs text-muted-foreground">Step {stepIdx + 1} of {STEPS.length}</div>
+          <div className="flex items-center gap-3" data-testid="wizard-footer-progress">
+            <HealthChip
+              score={health.score}
+              done={health.sections.filter((s) => s.complete).length}
+              total={health.sections.length || 6}
+              bump={health._bump}
+            />
+            <div className="text-xs text-muted-foreground whitespace-nowrap">Step {stepIdx + 1} of {STEPS.length}</div>
+          </div>
           {!isLast ? (
             <Button size="sm" onClick={next} disabled={busy} data-testid="wizard-next-btn">
               Next <ChevronRight className="h-4 w-4 ml-1" />
@@ -1081,5 +1111,53 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         </AlertDialogContent>
       </AlertDialog>
     </Dialog>
+  );
+}
+
+/* ────────────────────────────────────────────────────────────────
+ * Iter 200 — HealthChip
+ * Floating progress chip rendered in the wizard footer. Shows the
+ * current `score%` + a `done of total` step counter. Bumps with a
+ * brief scale + amber glow animation each time `bump` increments,
+ * giving the commissioner a small "dopamine hit" after each save.
+ * ──────────────────────────────────────────────────────────────── */
+function HealthChip({ score = 0, done = 0, total = 6, bump = 0 }) {
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (bump === 0) return;
+    setFlash(true);
+    const t = setTimeout(() => setFlash(false), 900);
+    return () => clearTimeout(t);
+  }, [bump]);
+
+  // Color tier — red → amber → emerald as score climbs.
+  const tier =
+    score >= 80 ? "emerald" :
+    score >= 50 ? "cyan" :
+    score >= 25 ? "amber" : "rose";
+  const palette = {
+    emerald: { bg: "bg-emerald-500/15", border: "border-emerald-500/40", text: "text-emerald-300", dot: "bg-emerald-400" },
+    cyan:    { bg: "bg-cyan-500/15",    border: "border-cyan-500/40",    text: "text-cyan-300",    dot: "bg-cyan-400" },
+    amber:   { bg: "bg-amber-500/15",   border: "border-amber-500/40",   text: "text-amber-300",   dot: "bg-amber-400" },
+    rose:    { bg: "bg-rose-500/15",    border: "border-rose-500/40",    text: "text-rose-300",    dot: "bg-rose-400" },
+  }[tier];
+
+  return (
+    <div
+      className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full border ${palette.bg} ${palette.border} ${palette.text} transition-transform duration-300 ${flash ? "scale-110 shadow-[0_0_20px_rgba(245,158,11,0.45)]" : "scale-100"}`}
+      data-testid="wizard-health-chip"
+      title="League setup progress"
+    >
+      <span className={`relative inline-flex h-2 w-2 rounded-full ${palette.dot}`}>
+        {flash && (
+          <span className={`absolute inline-flex h-full w-full rounded-full ${palette.dot} opacity-75 animate-ping`} />
+        )}
+      </span>
+      <span className="text-[11px] font-semibold tracking-wide whitespace-nowrap">
+        League Health: <span data-testid="wizard-health-score">{score}%</span>
+        <span className="opacity-60 mx-1">·</span>
+        <span data-testid="wizard-health-steps">{done} of {total}</span> steps
+      </span>
+    </div>
   );
 }
