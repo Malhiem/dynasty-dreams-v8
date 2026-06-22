@@ -1,0 +1,30 @@
+{
+  "summary": "Iter 194c-frontend backend regression: ran /app/backend/tests/test_iter194c_pick_trade_flow.py (7 tests). ALL 7 PASS in 0.55s. Covers execute helper repointing draft_picks + audit, sweeper policies (auto_execute, extend_timer, majority_vote, pause_draft, require_admin), and the NEW GET /api/drafts/{league_id}/pick-trades/pending hydration endpoint which correctly returns only pending_draft_review pick trades (executed/vetoed excluded) with trade_id, status, post_review_action surfaced for Draft Room mount hydration.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter194c_pick_trade_flow.py",
+    "/app/test_reports/pytest/iter194c_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Sweeper test for extend_timer asserts policy flips to auto_execute after one extension — confirm this single-extension behavior is intentional (prevents infinite extensions, good).",
+    "test_list_pending_pick_trades_endpoint uses isolated_router_app harness — verified the endpoint shape matches frontend expectations (trade_id, status, post_review_action keys present).",
+    "All trade ObjectIds are stringified in API responses (no raw _id leakage observed in passing test assertions)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "not tested (per request)"},
+  "test_credentials": "Not used — tests use direct Motor seeding + isolated router harness, no auth needed.",
+  "seed_data_creation": "Per-test ephemeral seeding via _seed_trade() with full teardown in each test. No persistent test data left in DB.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 194c backend is fully green (7/7). Frontend pill (PickTradeReviewPill.tsx) was intentionally not tested this round — user will visually verify the floating pill, WS hydration, countdown, and Approve/Veto wiring in next session. If frontend testing is requested next iteration, focus on: (1) pill appears on draft_chat WS pick_trade_proposed event, (2) GET /pick-trades/pending hydration on mount, (3) countdown ticks against review_expires_at, (4) approve/veto POST /pick-trade/{trade_id}/vote, (5) dismiss on pick_trade_executed/vetoed/auto_resolved.",
+  "rca of the issue": "N/A — no failures."
+}

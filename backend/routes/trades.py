@@ -393,6 +393,32 @@ async def resolve_pick_trade(league_id: str, trade_id: str, request: Request):
         return {"trade_id": trade_id, "draft_paused": True}
 
 
+@router.get("/drafts/{league_id}/pick-trades/pending")
+async def list_pending_pick_trades(league_id: str, request: Request):
+    """Return any in-flight `pending_draft_review` pick trades for the
+    league. Used by the Draft Room on mount so a manager who refreshes
+    mid-review still sees the floating review pill."""
+    db = _db()
+    await _get_user(request)
+    rows = await db.trades.find({
+        "league_id": league_id,
+        "is_in_draft_pick_trade": True,
+        "status": "pending_draft_review",
+    }).to_list(20)
+    out = []
+    for trade in rows:
+        out.append({
+            "trade_id": str(trade["_id"]),
+            "status": trade.get("status"),
+            "review_expires_at": trade.get("review_expires_at"),
+            "votes": trade.get("votes") or {},
+            "post_review_action": trade.get("post_review_action"),
+            "proposer_team_id": trade.get("proposer_team_id"),
+            "receiver_team_id": trade.get("receiver_team_id"),
+        })
+    return {"pending": out}
+
+
 @router.get("/drafts/{league_id}/pick-trade/{trade_id}")
 async def get_in_draft_pick_trade(league_id: str, trade_id: str, request: Request):
     """Return current state of a single in-draft pick trade for polling

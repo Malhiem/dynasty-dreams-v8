@@ -197,3 +197,47 @@ async def test_sweeper_require_admin_keeps_pending_with_flag():
     await _db().teams.delete_many({"league_id": lid})
     await _db().draft_picks.delete_one({"_id": ObjectId(pick_id)})
     await _db().trades.delete_one({"_id": ObjectId(trade_id)})
+
+
+
+# ─── Iter 194c-frontend — HTTP test for the pending hydration endpoint ──
+@pytest.mark.asyncio
+async def test_list_pending_pick_trades_endpoint_returns_in_flight_review():
+    """`GET /drafts/{league_id}/pick-trades/pending` returns the active
+    pending_draft_review pick trade(s) so the Draft Room can hydrate the
+    floating review pill on mount/refresh."""
+    from routes import trades as trades_routes
+    from router_test_utils import isolated_router_app
+
+    async with isolated_router_app(trades_routes) as ctx:
+        lid = "test_iter194c_hydrate_league"
+        pending = await ctx.db.trades.insert_one({
+            "league_id": lid,
+            "proposer_team_id": "p1",
+            "receiver_team_id": "r1",
+            "proposer_assets": [{"type": "pick", "pick_id": "x", "round": 1, "year": 2026}],
+            "receiver_assets": [],
+            "status": "pending_draft_review",
+            "is_in_draft_pick_trade": True,
+            "review_expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(),
+            "post_review_action": "auto_execute",
+            "votes": {"approve": 0, "veto": 0, "voters": [], "choices": {}},
+        })
+        # Executed trade — should NOT appear
+        await ctx.db.trades.insert_one({
+            "league_id": lid,
+            "proposer_team_id": "p1",
+            "receiver_team_id": "r1",
+            "status": "executed",
+            "is_in_draft_pick_trade": True,
+        })
+
+        r = await ctx.client.get(f"/api/drafts/{lid}/pick-trades/pending")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "pending" in body
+        assert len(body["pending"]) == 1
+        row = body["pending"][0]
+        assert row["trade_id"] == str(pending.inserted_id)
+        assert row["status"] == "pending_draft_review"
+        assert row["post_review_action"] == "auto_execute"

@@ -79,6 +79,8 @@ import useDraftSounds, { useTabTitleAlert } from "@/hooks/use-draft-sounds";
 import useDraftLiveState from "@/hooks/use-draft-live-state";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
+// Iter 194c — floating "Pick Trade Pending" review pill.
+import PickTradeReviewPill from "@/lovable/pages/draftroom/PickTradeReviewPill";
 import api from "@/lib/api";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -289,6 +291,10 @@ export default function DraftRoom() {
   ]);
   const [chatInput, setChatInput] = useState("");
   const [timerPaused, setTimerPaused] = useState(false);
+  // Iter 194c — latest `draft_chat` WS payload forwarded to the
+  // PickTradeReviewPill so it can react to pick-trade events without
+  // taking a hard dependency on the WS hook.
+  const [lastChatEvent, setLastChatEvent] = useState<any>(null);
   // (Iter 170h — isLeagueManager moved down to derive from the active
   // league context; see below.)
 
@@ -414,6 +420,31 @@ export default function DraftRoom() {
         // Non-commissioners get 403 → fall back to mock/local-only flow
         if (!cancelled) setCurrentDraft(null);
       }
+    })();
+    return () => { cancelled = true; };
+  }, [activeLeagueCtx?.id]);
+
+  // Iter 194c — On mount / league change, hydrate any pick trade
+  // already in `pending_draft_review` so a refreshed Draft Room still
+  // shows the floating review pill. Simulates a freshly-received
+  // `pick_trade_proposed` WS event for the pill.
+  useEffect(() => {
+    if (!activeLeagueCtx?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/drafts/${activeLeagueCtx.id}/pick-trades/pending`);
+        const pending = (data?.pending || [])[0];
+        if (!cancelled && pending?.trade_id) {
+          setLastChatEvent({
+            type: "draft_chat",
+            kind: "pick_trade_proposed",
+            trade_id: pending.trade_id,
+            _rxAt: Date.now(),
+            _hydrated: true,
+          });
+        }
+      } catch { /* ignore — non-blocking */ }
     })();
     return () => { cancelled = true; };
   }, [activeLeagueCtx?.id]);
@@ -549,6 +580,10 @@ export default function DraftRoom() {
         });
       },
       draft_chat: (msg: any) => {
+        // Iter 194c — forward every draft_chat payload to the pill so
+        // it can react to pick_trade_* kinds. Use a fresh object ref
+        // each time so the effect dep ([lastChatEvent]) always fires.
+        setLastChatEvent({ ...msg, _rxAt: Date.now() });
         if (!msg?.id) return;
         setChatMessages((prev) =>
           prev.find((m: any) => m.id === msg.id) ? prev : [
@@ -1452,6 +1487,14 @@ export default function DraftRoom() {
                 "60d": 0, "100d": 0, season: expandedPlayer.pts || 0,
               },
             } as any}
+          />
+        )}
+        {/* Iter 194c — floating pick-trade review pill (top-right). */}
+        {activeLeagueCtx?.id && (
+          <PickTradeReviewPill
+            leagueId={activeLeagueCtx.id}
+            lastChatEvent={lastChatEvent}
+            currentUserId={userId}
           />
         )}
       </TooltipProvider>
