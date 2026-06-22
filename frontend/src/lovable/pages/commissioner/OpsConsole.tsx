@@ -19,7 +19,7 @@
  *   3. Counters refresh on mount + after force-process — no polling
  *      yet to keep the page light. Future: SSE / WebSocket fan-out.
  */
-import { useEffect, useState, useRef, useMemo } from "react";
+import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
@@ -200,7 +200,7 @@ export default function OpsConsole() {
     }
   };
 
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [leagueId]);
+  useEffect(() => { load(); }, [leagueId]);
 
   // ── Iter 190 — 30s polling tied to document.visibilityState ──
   // We avoid hammering the API when the tab is hidden by skipping
@@ -226,7 +226,6 @@ export default function OpsConsole() {
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-    /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [leagueId]);
 
   const onForceProcess = async () => {
@@ -620,7 +619,95 @@ export default function OpsConsole() {
           </div>
         </SheetContent>
       </Sheet>
+
+      {/* Iter 213 — Scoring Category Balance check (admin-only data, gated by API) */}
+      <CategoryBalanceCard leagueId={leagueId} />
     </div>
+  );
+}
+
+
+/* ─── Iter 213 — Scoring Category Balance ────────────────────────────── */
+function CategoryBalanceCard({ leagueId }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    if (!leagueId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const { data } = await api.get(`/admin/platform/hockey/category-balance?league_id=${leagueId}`);
+      setData(data);
+    } catch (e) {
+      // 403 expected for non-admins — silently hide the card
+      if (e?.response?.status === 403) {
+        setError("admin_only");
+      } else {
+        setError("load_failed");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [leagueId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Hide entirely for non-admins
+  if (error === "admin_only") return null;
+
+  return (
+    <Card className="mt-6" data-testid="category-balance-card">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center justify-between">
+          <span>Scoring Category Balance</span>
+          {data && (
+            <span className={`text-[10px] px-2 py-0.5 rounded-full border ${
+              data.categories?.some((c) => c.flagged)
+                ? "border-rose-500/40 text-rose-300"
+                : "border-emerald-500/40 text-emerald-300"
+            }`}>
+              {data.categories?.filter((c) => c.flagged).length || 0} unbalanced
+            </span>
+          )}
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Coefficient of variation across teams per scoring category. CoV &gt; 0.5 → likely runaway category.
+        </p>
+      </CardHeader>
+      <CardContent>
+        {loading && <div className="text-sm text-muted-foreground py-2">Computing…</div>}
+        {!loading && error === "load_failed" && (
+          <div className="text-xs text-rose-300">Could not load balance data.</div>
+        )}
+        {!loading && data?.categories?.length > 0 && (
+          <div className="space-y-1.5" data-testid="category-balance-list">
+            {data.categories.map((c) => (
+              <div key={c.category}>
+                <div className="flex items-center justify-between text-xs mb-0.5">
+                  <span className="capitalize">{c.category.replace(/_/g, " ")}</span>
+                  <span className={c.flagged ? "text-rose-300" : "text-muted-foreground"}>
+                    mean {c.mean} · CoV {c.cov} {c.flagged && "⚠"}
+                  </span>
+                </div>
+                <div className="h-1.5 bg-secondary/30 rounded">
+                  <div
+                    className={`h-full rounded ${c.flagged ? "bg-rose-500/60" : "bg-sky-500/60"}`}
+                    style={{ width: `${Math.min(100, c.cov * 100)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {!loading && data?.categories?.length === 0 && (
+          <div className="text-xs text-muted-foreground italic">
+            Not enough roster data to compute balance.
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

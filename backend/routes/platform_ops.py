@@ -772,9 +772,23 @@ async def hockey_goalie_streaming(request: Request, days: int = Query(7, ge=1, l
 async def hockey_category_balance(request: Request, league_id: str = Query(...)):
     """Compute coefficient of variation (stddev / mean) per scoring
     category across teams in a league. High CoV → category is
-    unbalanced (one team or position dominates)."""
-    await _require_admin(request)
+    unbalanced (one team or position dominates).
+
+    Iter 213 — Accessible to platform admins AND to the commissioner
+    of the specified league (so it can power the Commish Ops view)."""
+    user = await _deps["get_current_user"](request)
     db = _db()
+    is_admin = (user or {}).get("role") == "admin"
+    if not is_admin:
+        try:
+            league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+        except Exception:
+            league = None
+        if not league or str(league.get("commissioner_id")) != str(user.get("_id")):
+            raise HTTPException(
+                status_code=403,
+                detail="Platform admin or league commissioner access required",
+            )
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
     if not teams:
         return {"league_id": league_id, "categories": []}

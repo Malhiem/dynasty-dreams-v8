@@ -455,3 +455,115 @@ async def test_hockey_ir_abuse_flags_healthy_players_in_ir_slot():
         await _db().activity_feed.delete_one({"_id": event_id.inserted_id})
         await _db().players.delete_many({"_id": {"$in": [healthy_pid, injured_pid]}})
 
+
+
+# ─── Iter 213 — Category Balance (admin + commissioner access) ──────────
+async def _seed_balance_league(team_count: int = 3):
+    """Create a league with 3 teams whose rosters differ enough for
+    coefficient-of-variation > 0 across categories.
+    Returns (league_id, commissioner_id, cleanup_ids dict)."""
+    commish_id = ObjectId()
+    league_id = ObjectId()
+    # Create a couple of players w/ wildly different goal totals so CoV>0
+    p1, p2, p3 = ObjectId(), ObjectId(), ObjectId()
+    await _db().players.insert_many([
+        {"_id": p1, "name": "Sniper",  "goals": 50, "assists": 20, "points": 70,
+         "shots": 300, "plus_minus": 10,
+         "nhl_id": int(str(p1)[-8:], 16) % 999999999},
+        {"_id": p2, "name": "Average", "goals": 20, "assists": 30, "points": 50,
+         "shots": 150, "plus_minus": 0,
+         "nhl_id": int(str(p2)[-8:], 16) % 999999999},
+        {"_id": p3, "name": "Grinder", "goals":  5, "assists": 10, "points": 15,
+         "shots":  80, "plus_minus": -5,
+         "nhl_id": int(str(p3)[-8:], 16) % 999999999},
+    ])
+    team_ids = []
+    rosters = [[str(p1)], [str(p2)], [str(p3)]][:team_count]
+    for r in rosters:
+        tid = ObjectId()
+        team_ids.append(tid)
+        await _db().teams.insert_one({"_id": tid, "league_id": str(league_id), "roster": r})
+    await _db().leagues.insert_one({
+        "_id": league_id, "name": "Balance Test", "commissioner_id": str(commish_id),
+        "status": "active",
+    })
+    return str(league_id), str(commish_id), {
+        "league_id": league_id, "team_ids": team_ids,
+        "player_ids": [p1, p2, p3],
+    }
+
+
+@pytest.mark.asyncio
+async def test_category_balance_admin_can_view():
+    """Platform admin (role=admin) can call /hockey/category-balance for
+    any league."""
+    from routes import platform_ops as po
+    admin_id = ObjectId()
+
+    async def _admin(_req):
+        return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    po.setup({"db": _db(), "get_current_user": _admin, "broadcast_to_room": None})
+
+    league_id, _commish_id, cleanup = await _seed_balance_league()
+    try:
+        result = await po.hockey_category_balance(_Req(), league_id=league_id)
+        assert result["league_id"] == league_id
+        assert isinstance(result["categories"], list)
+        assert len(result["categories"]) > 0
+        cats = {c["category"] for c in result["categories"]}
+        assert "goals" in cats and "points" in cats
+        # With the wildly-divergent rosters, at least one cat must be
+        # flagged (CoV > 0.5).
+        assert any(c["flagged"] for c in result["categories"])
+    finally:
+        await _db().leagues.delete_one({"_id": cleanup["league_id"]})
+        await _db().teams.delete_many({"_id": {"$in": cleanup["team_ids"]}})
+        await _db().players.delete_many({"_id": {"$in": cleanup["player_ids"]}})
+
+
+@pytest.mark.asyncio
+async def test_category_balance_commissioner_can_view_own_league():
+    """Iter 213 — League commissioner can view category-balance for
+    their OWN league even without platform admin role."""
+    from routes import platform_ops as po
+    league_id, commish_id, cleanup = await _seed_balance_league()
+
+    async def _commish(_req):
+        return {"_id": commish_id, "email": "commish@x.com", "role": "commissioner"}
+    po.setup({"db": _db(), "get_current_user": _commish, "broadcast_to_room": None})
+
+    try:
+        result = await po.hockey_category_balance(_Req(), league_id=league_id)
+        assert result["league_id"] == league_id
+        assert len(result["categories"]) > 0
+    finally:
+        await _db().leagues.delete_one({"_id": cleanup["league_id"]})
+        await _db().teams.delete_many({"_id": {"$in": cleanup["team_ids"]}})
+        await _db().players.delete_many({"_id": {"$in": cleanup["player_ids"]}})
+
+
+@pytest.mark.asyncio
+async def test_category_balance_blocks_non_commissioner_non_admin():
+    """Iter 213 — A regular user (not admin, not the commish of THIS
+    league) must receive a 403."""
+    from fastapi import HTTPException
+    from routes import platform_ops as po
+    league_id, _commish_id, cleanup = await _seed_balance_league()
+    intruder_id = ObjectId()
+
+    async def _intruder(_req):
+        return {"_id": str(intruder_id), "email": "rando@x.com", "role": "user"}
+    po.setup({"db": _db(), "get_current_user": _intruder, "broadcast_to_room": None})
+
+    try:
+        raised = False
+        try:
+            await po.hockey_category_balance(_Req(), league_id=league_id)
+        except HTTPException as exc:
+            raised = True
+            assert exc.status_code == 403
+        assert raised, "Expected HTTPException(403) for non-admin non-commish"
+    finally:
+        await _db().leagues.delete_one({"_id": cleanup["league_id"]})
+        await _db().teams.delete_many({"_id": {"$in": cleanup["team_ids"]}})
+        await _db().players.delete_many({"_id": {"$in": cleanup["player_ids"]}})
