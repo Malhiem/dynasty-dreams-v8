@@ -172,6 +172,296 @@ async def propose_in_draft_pick_trade(league_id: str, request: Request):
     }
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Iter 194c — In-draft pick trade: vote/approve + execute + auto-timer
+# ─────────────────────────────────────────────────────────────────────
+async def _execute_in_draft_pick_trade(db, trade: dict) -> dict:
+    """Repoint each pick asset's `current_team_id` to the new owner +
+    swap any player assets on the rosters. Marks trade.status='executed'
+    and writes an audit row. Used by both manual vote-approve and the
+    auto-execute timer."""
+    league_id = trade["league_id"]
+    proposer_team_id = trade["proposer_team_id"]
+    receiver_team_id = trade["receiver_team_id"]
+
+    proposer = await db.teams.find_one({"_id": ObjectId(proposer_team_id)})
+    receiver = await db.teams.find_one({"_id": ObjectId(receiver_team_id)})
+    if not (proposer and receiver):
+        raise HTTPException(status_code=404, detail="Team(s) not found for trade execution")
+
+    p_roster = list(proposer.get("roster") or [])
+    r_roster = list(receiver.get("roster") or [])
+
+    async def _move_picks(assets, from_team_id, to_team_id, to_team_name):
+        for a in assets or []:
+            if a.get("type") != "pick":
+                continue
+            qry = {"league_id": league_id, "current_team_id": from_team_id}
+            if a.get("pick_id"):
+                try:
+                    qry["_id"] = ObjectId(a["pick_id"])
+                except Exception:
+                    pass
+            if a.get("year"):
+                qry["year"] = int(a["year"])
+            if a.get("round"):
+                try:
+                    qry["round"] = int(str(a["round"]).replace("R", "").strip())
+                except Exception:
+                    pass
+            await db.draft_picks.update_one(
+                qry, {"$set": {"current_team_id": to_team_id, "current_team_name": to_team_name}},
+            )
+
+    await _move_picks(trade.get("proposer_assets"), proposer_team_id, receiver_team_id, receiver.get("name"))
+    await _move_picks(trade.get("receiver_assets"), receiver_team_id, proposer_team_id, proposer.get("name"))
+
+    # Swap player assets (rare in-draft, but supported)
+    for a in trade.get("proposer_assets") or []:
+        if a.get("type") == "player" and a.get("player_id"):
+            pid = a["player_id"]
+            if pid in p_roster:
+                p_roster.remove(pid)
+            if pid not in r_roster:
+                r_roster.append(pid)
+    for a in trade.get("receiver_assets") or []:
+        if a.get("type") == "player" and a.get("player_id"):
+            pid = a["player_id"]
+            if pid in r_roster:
+                r_roster.remove(pid)
+            if pid not in p_roster:
+                p_roster.append(pid)
+    await db.teams.update_one({"_id": proposer["_id"]}, {"$set": {"roster": p_roster}})
+    await db.teams.update_one({"_id": receiver["_id"]}, {"$set": {"roster": r_roster}})
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.trades.update_one(
+        {"_id": trade["_id"]},
+        {"$set": {"status": "executed", "executed_at": now}},
+    )
+
+    # Iter 194c — On-the-clock reassignment: if the *current* draft pick
+    # was traded, force the draft engine to re-broadcast the next picker.
+    draft = await db.drafts.find_one({"league_id": league_id, "status": {"$in": ["in_progress", "active", "paused"]}})
+    if draft:
+        on_clock = await db.draft_picks.find_one({
+            "league_id": league_id, "round": draft.get("current_round"), "pick": draft.get("current_pick"),
+        })
+        if on_clock:
+            await db.activity_feed.insert_one({
+                "league_id": league_id,
+                "event_type": "draft_pick_trade_executed",
+                "message": f"Pick trade executed during draft — on-the-clock reassigned to {on_clock.get('current_team_name')}",
+                "metadata": {
+                    "trade_id": str(trade["_id"]),
+                    "new_on_clock_team_id": on_clock.get("current_team_id"),
+                    "round": draft.get("current_round"),
+                    "pick": draft.get("current_pick"),
+                },
+                "created_at": now,
+            })
+            try:
+                await _broadcast(league_id, {
+                    "type": "draft_on_the_clock",
+                    "round": draft.get("current_round"),
+                    "pick": draft.get("current_pick"),
+                    "team_id": on_clock.get("current_team_id"),
+                    "team_name": on_clock.get("current_team_name"),
+                    "reason": "pick_trade_executed",
+                })
+            except Exception:
+                pass
+
+    await db.activity_feed.insert_one({
+        "league_id": league_id,
+        "event_type": "draft_pick_traded",
+        "message": f"In-draft pick trade executed: {proposer.get('name')} ↔ {receiver.get('name')}",
+        "metadata": {"trade_id": str(trade["_id"])},
+        "created_at": now,
+    })
+    return {"trade_id": str(trade["_id"]), "status": "executed", "executed_at": now}
+
+
+@router.post("/drafts/{league_id}/pick-trade/{trade_id}/vote")
+async def vote_in_draft_pick_trade(league_id: str, trade_id: str, request: Request):
+    """Cast an approve/veto vote on a pending in-draft pick trade. Body:
+    `{choice: "approve"|"veto"}`. Auto-executes / vetoes once the
+    majority threshold is met (depending on `post_review_action`)."""
+    db = _db()
+    user = await _get_user(request)
+    body = await request.json()
+    choice = body.get("choice")
+    if choice not in ("approve", "veto"):
+        raise HTTPException(status_code=400, detail="choice must be 'approve' or 'veto'")
+
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id), "league_id": league_id, "is_in_draft_pick_trade": True})
+    if not trade:
+        raise HTTPException(status_code=404, detail="In-draft pick trade not found")
+    if trade.get("status") != "pending_draft_review":
+        raise HTTPException(status_code=400, detail=f"Trade not pending review (status={trade.get('status')})")
+
+    uid = str(user["_id"])
+    votes = trade.get("votes") or {"approve": 0, "veto": 0, "voters": [], "choices": {}}
+    prev = votes.get("choices", {}).get(uid)
+    if prev == choice:
+        return {"trade_id": trade_id, "votes": votes, "noop": True}
+    if prev:  # flip existing vote
+        votes[prev] = max(0, votes.get(prev, 0) - 1)
+    votes[choice] = votes.get(choice, 0) + 1
+    votes.setdefault("choices", {})[uid] = choice
+    if uid not in (votes.get("voters") or []):
+        votes.setdefault("voters", []).append(uid)
+    await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"votes": votes}})
+
+    # ── Tally & decide ──
+    policy = trade.get("post_review_action") or "auto_execute"
+    total_teams = await db.teams.count_documents({"league_id": league_id})
+    majority = (total_teams // 2) + 1
+
+    decision = None
+    if votes.get("veto", 0) >= majority:
+        decision = "vetoed"
+    elif policy == "majority_vote" and votes.get("approve", 0) >= majority:
+        decision = "approved"
+    elif policy == "require_admin":
+        decision = None  # only admin/commish can resolve
+    # auto_execute / pause_draft / extend_timer let the timer handle it
+    # unless a clear veto majority arrives first
+
+    out = {"trade_id": trade_id, "votes": votes, "decision": decision}
+    if decision == "vetoed":
+        await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"status": "vetoed", "vetoed_at": datetime.now(timezone.utc).isoformat()}})
+        try:
+            await _broadcast(league_id, {"type": "draft_chat", "kind": "pick_trade_vetoed", "trade_id": trade_id})
+        except Exception:
+            pass
+    elif decision == "approved":
+        out["execution"] = await _execute_in_draft_pick_trade(db, trade)
+        try:
+            await _broadcast(league_id, {"type": "draft_chat", "kind": "pick_trade_executed", "trade_id": trade_id})
+        except Exception:
+            pass
+
+    try:
+        await _broadcast(league_id, {
+            "type": "draft_chat", "kind": "pick_trade_vote",
+            "trade_id": trade_id, "votes": {"approve": votes["approve"], "veto": votes["veto"]},
+        })
+    except Exception:
+        pass
+    return out
+
+
+@router.post("/drafts/{league_id}/pick-trade/{trade_id}/resolve")
+async def resolve_pick_trade(league_id: str, trade_id: str, request: Request):
+    """Commissioner / admin override: forces a decision on a
+    pending_draft_review trade regardless of policy. Body:
+    `{decision: "execute"|"veto"|"extend"|"pause"}`."""
+    db = _db()
+    user = await _get_user(request)
+    body = await request.json()
+    decision = body.get("decision")
+    if decision not in ("execute", "veto", "extend", "pause"):
+        raise HTTPException(status_code=400, detail="decision must be one of: execute, veto, extend, pause")
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    uid = str(user["_id"])
+    commish = {str(league.get("commissioner_id") or ""), *(str(x) for x in (league.get("co_commissioners") or []))}
+    if uid not in commish and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Commissioner or admin required")
+
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id), "league_id": league_id, "is_in_draft_pick_trade": True})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    now = datetime.now(timezone.utc)
+
+    if decision == "execute":
+        return await _execute_in_draft_pick_trade(db, trade)
+    if decision == "veto":
+        await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"status": "vetoed", "vetoed_at": now.isoformat(), "vetoed_by": uid}})
+        return {"trade_id": trade_id, "status": "vetoed"}
+    if decision == "extend":
+        extra = int(body.get("extra_minutes") or 15)
+        new_expiry = now + timedelta(minutes=extra)
+        await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"review_expires_at": new_expiry.isoformat()}})
+        return {"trade_id": trade_id, "review_expires_at": new_expiry.isoformat()}
+    if decision == "pause":
+        await db.drafts.update_one({"league_id": league_id, "status": {"$in": ["in_progress", "active"]}},
+                                   {"$set": {"status": "paused", "paused_reason": f"pick_trade_review:{trade_id}"}})
+        return {"trade_id": trade_id, "draft_paused": True}
+
+
+@router.get("/drafts/{league_id}/pick-trade/{trade_id}")
+async def get_in_draft_pick_trade(league_id: str, trade_id: str, request: Request):
+    """Return current state of a single in-draft pick trade for polling
+    fallback when the WebSocket connection drops."""
+    db = _db()
+    await _get_user(request)
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id), "league_id": league_id, "is_in_draft_pick_trade": True})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return {
+        "trade_id": trade_id,
+        "status": trade.get("status"),
+        "review_expires_at": trade.get("review_expires_at"),
+        "votes": trade.get("votes") or {},
+        "post_review_action": trade.get("post_review_action"),
+        "proposer_team_id": trade.get("proposer_team_id"),
+        "receiver_team_id": trade.get("receiver_team_id"),
+    }
+
+
+async def _expire_pending_pick_trades(db) -> int:
+    """Background sweeper. Walks `pending_draft_review` trades whose
+    `review_expires_at` has elapsed and applies the post-review action.
+    Returns count of resolved trades. Called by the worker loop in
+    `server.py` every 30 seconds."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    rows = await db.trades.find({
+        "status": "pending_draft_review",
+        "review_expires_at": {"$lt": now_iso},
+    }).to_list(50)
+    resolved = 0
+    for trade in rows:
+        policy = trade.get("post_review_action") or "auto_execute"
+        votes = trade.get("votes") or {}
+        approve = votes.get("approve", 0)
+        veto = votes.get("veto", 0)
+        league_id = trade["league_id"]
+        if policy == "auto_execute":
+            if veto > approve:
+                await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"status": "vetoed", "vetoed_at": now_iso, "vetoed_reason": "auto_timer_veto_majority"}})
+            else:
+                await _execute_in_draft_pick_trade(db, trade)
+            resolved += 1
+        elif policy == "majority_vote":
+            if approve > veto:
+                await _execute_in_draft_pick_trade(db, trade)
+            else:
+                await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"status": "expired", "expired_at": now_iso}})
+            resolved += 1
+        elif policy == "extend_timer":
+            new_expiry = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+            await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"review_expires_at": new_expiry, "post_review_action": "auto_execute"}})
+            resolved += 1
+        elif policy == "pause_draft":
+            await db.drafts.update_one({"league_id": league_id, "status": {"$in": ["in_progress", "active"]}},
+                                       {"$set": {"status": "paused", "paused_reason": f"pick_trade_review:{trade['_id']}"}})
+            await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"status": "expired", "expired_at": now_iso}})
+            resolved += 1
+        elif policy == "require_admin":
+            # leave it pending — admin must call /resolve
+            await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"flagged_for_admin": True}})
+            resolved += 1
+        try:
+            await _broadcast(league_id, {"type": "draft_chat", "kind": "pick_trade_auto_resolved", "trade_id": str(trade["_id"])})
+        except Exception:
+            pass
+    return resolved
+
+
 # ─── Trade Proposals (legacy 2-party) ────────────────────────────
 @router.post("/trades")
 async def create_trade_proposal(input: TradeProposalCreate, request: Request):

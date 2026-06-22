@@ -56,21 +56,18 @@ export default function Navbar() {
           {/* Right side */}
           <div className="hidden md:flex items-center gap-4">
             {user ? (
-              <>
-                <Link to="/profile" data-testid="nav-profile" className="flex items-center gap-2 text-sm text-[#A1A1AA] hover:text-white">
-                  <User size={18} />
-                  {user.name}
-                </Link>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleLogout}
-                  data-testid="nav-logout"
-                  className="text-[#A1A1AA] hover:text-white hover:bg-white/5"
-                >
-                  <SignOut size={18} />
-                </Button>
-              </>
+              // Iter 202 — User profile/avatar removed from the top navbar
+              // (lives in the sidebar's user card instead). Keep the
+              // logout button here for one-click sign-out from any page.
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleLogout}
+                data-testid="nav-logout"
+                className="text-[#A1A1AA] hover:text-white hover:bg-white/5"
+              >
+                <SignOut size={18} />
+              </Button>
             ) : (
               <>
                 <Link to="/login">

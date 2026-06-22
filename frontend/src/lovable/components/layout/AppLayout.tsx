@@ -7,7 +7,8 @@ import { NotificationDropdown } from "./NotificationDropdown";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { UserLeagueMenu } from "./UserLeagueMenu";
+// Iter 202 — UserLeagueMenu retained as export but no longer mounted in
+// the top header; the sidebar's user card is the canonical entry point.
 import CurrentLeagueDropdown from "./CurrentLeagueDropdown";
 import { useUiScale } from "@/hooks/use-ui-scale";
 import TradeDeadlineRibbon from "@/lovable/components/TradeDeadlineRibbon";
@@ -58,7 +59,9 @@ export function AppLayout({ children, onSettingsClick }: AppLayoutProps) {
                 </TooltipProvider>
               )}
               <NotificationDropdown />
-              <UserLeagueMenu />
+              {/* Iter 202 — User profile menu removed from the top right
+                  per user request; user controls now live in the sidebar
+                  bottom user card to avoid duplicated entry points. */}
             </div>
           </header>
           {/* Iter 129 — Trade Deadline Countdown Ribbon (auto-hides when unset) */}

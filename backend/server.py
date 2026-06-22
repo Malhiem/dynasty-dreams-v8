@@ -760,6 +760,19 @@ async def startup():
         await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
         logger.info("Admin password updated")
     
+    # Iter 194c — background sweeper: auto-resolve expired in-draft pick
+    # trades every 30 seconds. Lightweight (only touches `pending_draft_review`
+    # rows with elapsed `review_expires_at`).
+    async def _pick_trade_sweeper():
+        from routes.trades import _expire_pending_pick_trades
+        while True:
+            try:
+                await _expire_pending_pick_trades(db)
+            except Exception as e:
+                logger.error(f"pick-trade sweeper error: {e}")
+            await asyncio.sleep(30)
+    asyncio.create_task(_pick_trade_sweeper())
+    
     # Write test credentials
     import os as os_module
     os_module.makedirs("/app/memory", exist_ok=True)
