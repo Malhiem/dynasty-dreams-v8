@@ -20,6 +20,8 @@ const userItems = [
   { title: "User Dashboard", url: "/dashboard", icon: UserCircle },
 ];
 
+const adminItem = { title: "Admin Dashboard", url: "/admin", icon: Shield };
+
 // Static items that don't depend on the active league live in this list.
 // Dynamic items (League Home, League Administration) are inserted below.
 const leagueHubStatic = [
@@ -140,7 +142,7 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-2">
-        {renderGroup("User", userItems)}
+        {renderGroup("User", user?.role === "admin" ? [...userItems, adminItem] : userItems)}
         {/* "Current League" switcher — repurposed from the old static
             "Active league" badge that used to live here. Clicking opens
             the league-switch menu; this is the only way to jump between
