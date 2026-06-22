@@ -351,13 +351,14 @@ function TradesPanel() {
               <th className="text-left px-3 py-2">Favored</th>
               <th className="text-left px-3 py-2">Age Δ</th>
               <th className="text-left px-3 py-2">Assets</th>
+              <th className="text-right px-3 py-2">Action</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} className="text-center text-muted-foreground py-6">Loading…</td></tr>
+              <tr><td colSpan={8} className="text-center text-muted-foreground py-6">Loading…</td></tr>
             ) : data.entries.length === 0 ? (
-              <tr><td colSpan={7} className="text-center text-muted-foreground py-6">No trades.</td></tr>
+              <tr><td colSpan={8} className="text-center text-muted-foreground py-6">No trades.</td></tr>
             ) : data.entries.map((e) => (
               <tr key={e.id} className="border-t border-border hover:bg-secondary/20" data-testid={`trade-row-${e.id}`}>
                 <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{(e.created_at || "").slice(0, 19).replace("T", " ")}</td>
@@ -381,6 +382,31 @@ function TradesPanel() {
                 <td className="px-3 py-2 text-xs capitalize text-muted-foreground">{e.fairness.favored_side}</td>
                 <td className="px-3 py-2 text-xs tabular-nums">{e.fairness.age_differential ?? "—"}</td>
                 <td className="px-3 py-2 text-xs text-muted-foreground">{e.asset_counts.offered}↔{e.asset_counts.requested}</td>
+                <td className="px-3 py-2 text-right">
+                  {e.status === "reverted" ? (
+                    <span className="text-[10px] uppercase tracking-wider font-semibold text-rose-300" data-testid={`trade-reverted-pill-${e.id}`}>
+                      Reverted
+                    </span>
+                  ) : (
+                    <Button
+                      size="sm" variant="ghost"
+                      className="text-xs h-7"
+                      onClick={async () => {
+                        if (!confirm(`Revert trade ${e.proposer_team_name} ↔ ${e.target_team_name}?`)) return;
+                        try {
+                          await api.post(`/admin/platform/trades/${e.id}/revert`);
+                          toast.success("Trade reverted");
+                          load();
+                        } catch (err) {
+                          toast.error(err?.response?.data?.detail || "Failed to revert");
+                        }
+                      }}
+                      data-testid={`trade-revert-btn-${e.id}`}
+                    >
+                      <RotateCcw className="h-3 w-3 mr-1" /> Revert
+                    </Button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -393,6 +419,7 @@ function TradesPanel() {
 /* ─── Iter 201c — Collusion panel ──────────────────────────────────── */
 function CollusionPanel() {
   const [data, setData] = useState({ pairs: [] });
+  const [locks, setLocks] = useState([]);
   const [minTrades, setMinTrades] = useState(3);
   const [minNetFavor, setMinNetFavor] = useState(30);
   const [loading, setLoading] = useState(true);
@@ -400,10 +427,12 @@ function CollusionPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get(
-        `/admin/platform/collusion-flags?min_trades=${minTrades}&min_net_favor_pct=${minNetFavor}`,
-      );
-      setData(data);
+      const [pairs, locksRes] = await Promise.all([
+        api.get(`/admin/platform/collusion-flags?min_trades=${minTrades}&min_net_favor_pct=${minNetFavor}`),
+        api.get(`/admin/platform/pairs/locks`),
+      ]);
+      setData(pairs.data);
+      setLocks(locksRes.data?.locks || []);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to load collusion flags");
     } finally { setLoading(false); }
@@ -440,16 +469,16 @@ function CollusionPanel() {
               <th className="text-left px-3 py-2">Trades</th>
               <th className="text-left px-3 py-2">Net Favor</th>
               <th className="text-left px-3 py-2">Favored User</th>
+              <th className="text-right px-3 py-2">Action</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={4} className="text-center text-muted-foreground py-6">Loading…</td></tr>
+              <tr><td colSpan={5} className="text-center text-muted-foreground py-6">Loading…</td></tr>
             ) : data.pairs.length === 0 ? (
-              <tr><td colSpan={4} className="text-center text-muted-foreground py-6">No suspicious pairs flagged.</td></tr>
+              <tr><td colSpan={5} className="text-center text-muted-foreground py-6">No suspicious pairs flagged.</td></tr>
             ) : data.pairs.map((p, idx) => {
               const favEmail = (p.users || {})[p.favored_user_id]?.email || p.favored_user_id;
-              const otherIds = (p.pair || []).filter((x) => x !== p.favored_user_id);
               return (
                 <tr key={idx} className="border-t border-border" data-testid={`collusion-pair-${idx}`}>
                   <td className="px-3 py-2 text-xs">
@@ -460,12 +489,65 @@ function CollusionPanel() {
                     <span className="font-mono text-rose-300">{p.net_favor > 0 ? "+" : ""}{p.net_favor}</span>
                   </td>
                   <td className="px-3 py-2 text-xs">{favEmail}</td>
+                  <td className="px-3 py-2 text-right">
+                    <Button
+                      size="sm" variant="ghost" className="text-xs h-7"
+                      onClick={async () => {
+                        const reason = prompt("Lock reason (optional)?") || "";
+                        try {
+                          await api.post("/admin/platform/pairs/lock", {
+                            user_ids: p.pair, reason,
+                          });
+                          toast.success("Pair locked");
+                          load();
+                        } catch (err) {
+                          toast.error(err?.response?.data?.detail || "Failed to lock");
+                        }
+                      }}
+                      data-testid={`collusion-lock-btn-${idx}`}
+                    >
+                      Lock pair
+                    </Button>
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+
+      {/* Active locks */}
+      {locks.length > 0 && (
+        <div className="rounded-lg border border-rose-500/40 bg-rose-500/5 p-3 space-y-2" data-testid="active-locks-block">
+          <div className="text-xs font-bold uppercase tracking-wider text-rose-300">Active Trade Locks ({locks.length})</div>
+          <ul className="space-y-1">
+            {locks.map((l) => (
+              <li key={l.lock_id} className="flex items-center justify-between text-xs border-t border-rose-500/20 pt-1.5" data-testid={`lock-row-${l.lock_id}`}>
+                <span>
+                  <span className="font-medium">{(l.emails || []).join(" ↔ ")}</span>
+                  {l.reason && <span className="text-muted-foreground"> · &ldquo;{l.reason}&rdquo;</span>}
+                  <span className="text-muted-foreground"> · locked {l.locked_at?.slice(0, 10)}</span>
+                </span>
+                <Button
+                  size="sm" variant="ghost" className="text-xs h-7"
+                  onClick={async () => {
+                    try {
+                      await api.delete(`/admin/platform/pairs/locks/${l.lock_id}`);
+                      toast.success("Lock released");
+                      load();
+                    } catch (e) {
+                      toast.error(e?.response?.data?.detail || "Failed to release");
+                    }
+                  }}
+                  data-testid={`lock-release-btn-${l.lock_id}`}
+                >
+                  Release
+                </Button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

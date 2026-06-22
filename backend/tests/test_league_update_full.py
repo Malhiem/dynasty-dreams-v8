@@ -46,8 +46,9 @@ async def test_league_update_accepts_full_wizard_payload():
             "trade_deadline_week": 16,
             "waiver_faab_budget": 200,
             "waiver_period_days": 2,
-            "playoff_teams": 6,
-            "playoff_start_week": 18,
+            "playoff_teams": 8,
+            "playoff_start_week": 22,
+            "playoff_end_week": 24,
             "playoff_rounds": 3,
             "regular_season_weeks": 21,
             "keepers_allowed": 8,
@@ -94,12 +95,20 @@ async def test_league_update_records_diff_in_audit_log():
     """Every changed field writes to db.audit_log."""
     async with AsyncClient(base_url=BASE, timeout=20) as client:
         token = await _login(client)
-        # Set roster to a unique value to confirm the diff lands
+        # Set roster to a unique value to confirm the diff lands.
+        # Bump to a fresh value first to ensure a real diff regardless of
+        # prior test state, then re-PUT with the same value to verify the
+        # idempotent path produces an empty changeset.
         before = datetime.now(timezone.utc).isoformat()
+        # Read current value
+        cur = await client.get(f"/api/leagues/{LID}",
+                                headers={"Authorization": f"Bearer {token}"})
+        cur_rs = cur.json().get("roster_spots") or 20
+        next_rs = 27 if cur_rs != 27 else 28
         r = await client.put(
             f"/api/leagues/{LID}",
             headers={"Authorization": f"Bearer {token}"},
-            json={"roster_spots": 25},
+            json={"roster_spots": next_rs},
         )
         assert r.status_code == 200
         assert "roster_spots" in r.json()["changes"]
@@ -107,7 +116,7 @@ async def test_league_update_records_diff_in_audit_log():
         r2 = await client.put(
             f"/api/leagues/{LID}",
             headers={"Authorization": f"Bearer {token}"},
-            json={"roster_spots": 25},
+            json={"roster_spots": next_rs},
         )
         assert r2.status_code == 200
         assert r2.json()["changes"] == {}

@@ -695,3 +695,206 @@ async def record_lineup_event(
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 201e — Admin moderation actions
+#   • POST /trades/{trade_id}/revert       — roll back asset/pick moves
+#   • POST /pairs/lock                     — lock trades between user pair
+#   • GET  /pairs/locks                    — list active locks
+#   • DELETE /pairs/locks/{lock_id}        — release a lock
+# ─────────────────────────────────────────────────────────────────────
+from pydantic import BaseModel  # noqa: E402
+
+
+@router.post("/trades/{trade_id}/revert")
+async def admin_revert_trade(trade_id: str, request: Request):
+    """Roll back an EXECUTED trade. Swaps players + picks back to their
+    pre-trade owners, marks `status="reverted"`, writes an audit row, and
+    notifies both team owners. Cap impact is implicit via roster updates —
+    we don't unwind cap-retention pacts (those need manual review)."""
+    user = await _require_admin(request)
+    db = _deps["db"]
+
+    try:
+        tid = ObjectId(trade_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid trade_id")
+    trade = await db.trades.find_one({"_id": tid})
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if trade.get("status") in ("reverted", "vetoed"):
+        raise HTTPException(status_code=400, detail=f"Trade already in terminal state: {trade['status']}")
+    if trade.get("status") != "executed":
+        raise HTTPException(status_code=400, detail="Only executed trades can be reverted")
+
+    proposer = await db.teams.find_one({"_id": ObjectId(trade["proposer_team_id"])})
+    target = await db.teams.find_one({"_id": ObjectId(trade["target_team_id"])})
+    if not (proposer and target):
+        raise HTTPException(status_code=404, detail="Proposer or target team missing")
+
+    proposer_roster = list(proposer.get("roster") or [])
+    target_roster = list(target.get("roster") or [])
+
+    # ── Swap players BACK: offered moves from target → proposer ──
+    for a in trade.get("assets_offered") or []:
+        if a.get("asset_type") == "player" and a.get("player_id"):
+            pid = a["player_id"]
+            if pid in target_roster:
+                target_roster.remove(pid)
+            if pid not in proposer_roster:
+                proposer_roster.append(pid)
+        elif a.get("asset_type") == "pick":
+            # Pick currently with target → back to proposer
+            await db.draft_picks.update_one(
+                {"league_id": trade["league_id"], "current_team_id": trade["target_team_id"],
+                 **({"_id": ObjectId(a["pick_id"])} if a.get("pick_id") else
+                    {**({"year": int(a["pick_year"])} if a.get("pick_year") else {}),
+                     **({"round": int(str(a["pick_round"]).replace("R", "").strip())} if a.get("pick_round") else {})})},
+                {"$set": {"current_team_id": trade["proposer_team_id"], "current_team_name": proposer.get("name")}},
+            )
+
+    # ── Swap players BACK: requested moves from proposer → target ──
+    for a in trade.get("assets_requested") or []:
+        if a.get("asset_type") == "player" and a.get("player_id"):
+            pid = a["player_id"]
+            if pid in proposer_roster:
+                proposer_roster.remove(pid)
+            if pid not in target_roster:
+                target_roster.append(pid)
+        elif a.get("asset_type") == "pick":
+            await db.draft_picks.update_one(
+                {"league_id": trade["league_id"], "current_team_id": trade["proposer_team_id"],
+                 **({"_id": ObjectId(a["pick_id"])} if a.get("pick_id") else
+                    {**({"year": int(a["pick_year"])} if a.get("pick_year") else {}),
+                     **({"round": int(str(a["pick_round"]).replace("R", "").strip())} if a.get("pick_round") else {})})},
+                {"$set": {"current_team_id": trade["target_team_id"], "current_team_name": target.get("name")}},
+            )
+
+    await db.teams.update_one({"_id": proposer["_id"]}, {"$set": {"roster": proposer_roster}})
+    await db.teams.update_one({"_id": target["_id"]}, {"$set": {"roster": target_roster}})
+
+    now = datetime.now(timezone.utc).isoformat()
+    await db.trades.update_one(
+        {"_id": tid},
+        {"$set": {
+            "status": "reverted",
+            "reverted_at": now,
+            "reverted_by": str(user["_id"]),
+            "reverted_by_email": user.get("email"),
+        }},
+    )
+    await db.activity_feed.insert_one({
+        "league_id": trade["league_id"],
+        "event_type": "platform_admin_trade_revert",
+        "message": f"Admin reverted trade {trade_id} ({proposer.get('name')} ↔ {target.get('name')})",
+        "user_id": str(user["_id"]),
+        "metadata": {
+            "trade_id": trade_id,
+            "proposer_team_id": trade["proposer_team_id"],
+            "target_team_id": trade["target_team_id"],
+            "reverted_by_email": user.get("email"),
+        },
+        "created_at": now,
+    })
+    return {"ok": True, "trade_id": trade_id, "reverted_at": now, "reverted_by": user.get("email")}
+
+
+class PairLockBody(BaseModel):
+    user_ids: list[str]
+    league_id: str | None = None
+    reason: str | None = None
+
+
+@router.post("/pairs/lock")
+async def admin_lock_pair(body: PairLockBody, request: Request):
+    """Lock trading between a pair (or group) of user_ids. The trade
+    creation endpoint should consult `trade_locks` and reject any pending
+    trade whose (proposer_id, target_owner_id) intersects with an active
+    lock. Scope optionally narrowed to a single league."""
+    user = await _require_admin(request)
+    db = _deps["db"]
+    if len(body.user_ids) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 user_ids to lock a pair")
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "user_ids": sorted(set(str(u) for u in body.user_ids)),
+        "league_id": body.league_id,  # null = global lock
+        "reason": body.reason,
+        "locked_by": str(user["_id"]),
+        "locked_by_email": user.get("email"),
+        "locked_at": now,
+        "active": True,
+    }
+    res = await db.trade_locks.insert_one(doc)
+    await db.activity_feed.insert_one({
+        "league_id": body.league_id,
+        "event_type": "platform_admin_pair_lock",
+        "message": f"Admin locked trading between {len(body.user_ids)} users",
+        "user_id": str(user["_id"]),
+        "metadata": {"lock_id": str(res.inserted_id), **doc},
+        "created_at": now,
+    })
+    return {"ok": True, "lock_id": str(res.inserted_id), **{k: v for k, v in doc.items() if k != "_id"}}
+
+
+@router.get("/pairs/locks")
+async def list_pair_locks(request: Request, active_only: bool = True):
+    await _require_admin(request)
+    db = _deps["db"]
+    q = {"active": True} if active_only else {}
+    rows = await db.trade_locks.find(q).sort("locked_at", -1).to_list(200)
+    out = []
+    for r in rows:
+        # Hydrate emails
+        emails = []
+        for uid in (r.get("user_ids") or []):
+            try:
+                u = await db.users.find_one({"_id": ObjectId(uid)}, {"email": 1})
+                if u:
+                    emails.append(u.get("email"))
+            except Exception:
+                emails.append(uid)
+        out.append({
+            "lock_id": str(r["_id"]),
+            "user_ids": r.get("user_ids") or [],
+            "emails": emails,
+            "league_id": r.get("league_id"),
+            "reason": r.get("reason"),
+            "locked_by_email": r.get("locked_by_email"),
+            "locked_at": r.get("locked_at"),
+            "active": r.get("active", True),
+        })
+    return {"locks": out}
+
+
+@router.delete("/pairs/locks/{lock_id}")
+async def admin_release_lock(lock_id: str, request: Request):
+    user = await _require_admin(request)
+    db = _deps["db"]
+    try:
+        oid = ObjectId(lock_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid lock_id")
+    res = await db.trade_locks.update_one(
+        {"_id": oid, "active": True},
+        {"$set": {"active": False, "released_at": datetime.now(timezone.utc).isoformat(),
+                  "released_by": str(user["_id"]), "released_by_email": user.get("email")}},
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Lock not found or already released")
+    return {"ok": True, "lock_id": lock_id}
+
+
+async def is_trade_locked(db, league_id: str, proposer_id: str, target_owner_id: str) -> dict | None:
+    """Helper for the trade-create endpoint to gate proposals. Returns the
+    active lock document if the pair is locked (global or league-scoped),
+    else None."""
+    p = str(proposer_id)
+    t = str(target_owner_id)
+    lock = await db.trade_locks.find_one({
+        "active": True,
+        "user_ids": {"$all": [p, t]},
+        "$or": [{"league_id": None}, {"league_id": league_id}],
+    })
+    return lock

@@ -247,6 +247,22 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
     if not target_team:
         raise HTTPException(status_code=404, detail="Target team not found")
 
+    # Iter 201e — platform-admin pair-lock gate. If the (proposer_id,
+    # target_owner_id) pair has an active trade_lock (global or
+    # league-scoped), refuse the proposal.
+    try:
+        from routes.admin_platform import is_trade_locked
+        lock = await is_trade_locked(db, input.league_id, user["_id"], target_team.get("owner_id"))
+        if lock:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Trading is locked between these users by platform admin (reason: {lock.get('reason') or 'n/a'})",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
     offered_details = []
     for asset in input.assets_offered:
         detail = asset.dict()

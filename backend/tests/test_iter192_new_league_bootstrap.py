@@ -5,6 +5,12 @@ Confirms the cloning script created the league with the right shape:
   * 1440 picks (45 rounds × 32 teams)
   * Reverse-serpentine draft order: odd rounds 1..32, even rounds 32..1
   * Cloned settings (scoring/format/sport) from Ice Kings Head-to-Head
+
+NOTE (Iter 195+): This league was intentionally RESET via
+`iter195_reset_32_team_league.py` so the commissioner could re-walk the
+Setup Wizard. Asserting against a populated league no longer makes sense
+— marking the whole module as `skip` until/unless the league is
+re-seeded with iter192-style data.
 """
 from __future__ import annotations
 
@@ -16,6 +22,10 @@ from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv("/app/backend/.env")
+
+pytestmark = pytest.mark.skip(
+    reason="Iter 195 reset wiped this league's teams/picks; restore-and-re-enable when bootstrap is re-run."
+)
 
 
 @pytest.fixture(scope="module")
