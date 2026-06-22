@@ -900,7 +900,10 @@ async def _derive_champion_block(rounds_built: list, payout_doc: dict | None, te
         "runner_up": _team_summary(runner_up_id),
         "final_matchup_id": final_mu.get("matchup_id") if final_mu else None,
     }
-    if payout_doc:
+    # Iter 197 — only surface payout fields once the championship has been
+    # decided. Avoids a stale "distributed" flag confusing clients that
+    # consume it independently of `decided`.
+    if payout_doc and champion_id is not None:
         block["distributed"] = True
         block["champion_prize"] = payout_doc.get("champion_prize")
         block["runner_up_prize"] = payout_doc.get("runner_up_prize")
