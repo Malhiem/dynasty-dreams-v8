@@ -93,6 +93,15 @@ const SEED_COLOR = [
   "text-muted-foreground",
 ];
 
+/**
+ * Iter 198 — Base vertical slot height for round 0 matchups. Subsequent
+ * rounds double this so each higher-round matchup is centered between
+ * the two feeders below it (classic single-elimination bracket layout).
+ * Tuned to comfortably fit a 2-team card (h-[56px] × 2 + gap + scores +
+ * mark-winner buttons ≈ 175px) without forcing visual overlap.
+ */
+const BRACKET_SLOT_H = 180;
+
 const TeamCard = ({ team, isWinner, isLoser, tbdLabel }: { team: BracketTeam | null; isWinner?: boolean; isLoser?: boolean; tbdLabel?: string }) => {
   if (!team) {
     return (
@@ -254,18 +263,22 @@ const RoundsGrid = ({ rounds, status, testidPrefix = "bracket", canMark, onMarkW
               ))}
             </div>
           )}
-          <div
-            className="space-y-4 justify-around flex flex-col"
-            style={{ minHeight: `${120 * (rounds[0]?.matchups.length || 1)}px` }}
-          >
+          <div className="flex flex-col">
             {rd.matchups.map((mu, i) => (
-              <MatchupCard
+              <div
                 key={i}
-                mu={mu}
-                status={status}
-                canMark={canMark}
-                onMarkWinner={onMarkWinner}
-              />
+                className="flex items-center justify-center"
+                style={{ height: `${BRACKET_SLOT_H * Math.pow(2, rdx)}px` }}
+              >
+                <div className="w-full">
+                  <MatchupCard
+                    mu={mu}
+                    status={status}
+                    canMark={canMark}
+                    onMarkWinner={onMarkWinner}
+                  />
+                </div>
+              </div>
             ))}
           </div>
         </div>
