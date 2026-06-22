@@ -80,7 +80,7 @@ class LeagueResponse(BaseModel):
     salary_cap_enabled: bool
     salary_cap: Optional[float]
     draft_type: str
-    roster_spots: int
+    roster_spots: Optional[int] = None
     keepers_allowed: int
     entry_fee: Optional[float]
     is_private: bool
@@ -248,7 +248,7 @@ def _league_to_response(league: dict) -> LeagueResponse:
         salary_cap_enabled=league["salary_cap_enabled"],
         salary_cap=league.get("salary_cap"),
         draft_type=league["draft_type"],
-        roster_spots=league["roster_spots"],
+        roster_spots=league.get("roster_spots"),
         keepers_allowed=league["keepers_allowed"],
         entry_fee=league.get("entry_fee"),
         is_private=league["is_private"],
@@ -806,6 +806,114 @@ async def reset_setup_wizard(league_id: str, request: Request):
     return {"setup_wizard_complete": False}
 
 
+def _build_consolation_block(league: dict, teams: list, team_to_slot_fn, playoff_size: int) -> dict | None:
+    """Iter 196 (Task C) — build a consolation-bracket payload from the
+    non-playoff teams when `league.consolation_enabled` is True. Returns
+    None when disabled or not enough teams.
+
+    Output shape mirrors the main bracket (`rounds`, `seeds`) so the
+    frontend can reuse the round-rendering component.
+    """
+    if not league.get("consolation_enabled"):
+        return None
+    ranked = _rank_teams(teams)
+    if len(ranked) <= playoff_size:
+        return None
+    available = ranked[playoff_size:]
+    requested = league.get("consolation_teams")
+    try:
+        requested = int(requested) if requested is not None else len(available)
+    except (TypeError, ValueError):
+        requested = len(available)
+    consolation_size = max(2, min(requested, len(available)))
+    # Round consolation_size DOWN to nearest power-of-two for clean bracket math.
+    pow2 = 1
+    while pow2 * 2 <= consolation_size:
+        pow2 *= 2
+    consolation_size = pow2
+    if consolation_size < 2:
+        return None
+
+    # Seed within consolation: seed 1 = best record among non-playoff teams
+    cons_teams = available[:consolation_size]
+    slots = [team_to_slot_fn(t, i + 1) for i, t in enumerate(cons_teams)]
+    seeding_method = league.get("consolation_seeding_method") or "high_vs_low"
+    rounds = _build_single_elim_rounds(slots, seeding_method)
+    return {
+        "size": consolation_size,
+        "seeding_method": seeding_method,
+        "seeds": slots,
+        "rounds": rounds,
+    }
+
+
+def _annotate_rounds_with_week_lengths(rounds: list, week_lengths: dict | None) -> None:
+    """Iter 196 (Task B) — stamp `length_weeks` (default 1) onto each round
+    based on `league.playoff_week_lengths` keyed by 1-based round index."""
+    if not rounds:
+        return
+    wl = week_lengths or {}
+    for idx, rd in enumerate(rounds, start=1):
+        entry = wl.get(str(idx)) or wl.get(idx) or {}
+        try:
+            length = int(entry.get("length_weeks", 1)) if isinstance(entry, dict) else int(entry)
+        except (TypeError, ValueError):
+            length = 1
+        rd["length_weeks"] = max(1, length)
+
+
+def _build_single_elim_rounds(slots: list, seeding_method: str, label_prefix: str = "") -> list:
+    """Iter 196 (Task C helper) — generic single-elimination bracket from an
+    already-seeded slot list. `seeding_method` is "high_vs_low" or "adjacent".
+    Used for the consolation bracket. Produces rounds with `projected_winner`
+    set to the higher seed of each matchup. Round names: R1, Semifinals,
+    Championship for ≤8-team brackets; otherwise `Round N`.
+    """
+    n = len(slots)
+    if n < 2:
+        return []
+
+    def _mu(hi: dict, lo: dict) -> dict:
+        return {
+            "high_seed": hi,
+            "low_seed": lo,
+            "projected_winner": hi["team_id"] if hi else None,
+            "status": "projected",
+        }
+
+    # Round 1 matchups by seeding method
+    if seeding_method == "adjacent":
+        r1 = [_mu(slots[i], slots[i + 1]) for i in range(0, n - 1, 2)]
+    else:  # high_vs_low default
+        r1 = [_mu(slots[i], slots[n - 1 - i]) for i in range(n // 2)]
+
+    rounds: list = []
+
+    def round_name_for_count(mucount: int) -> str:
+        if mucount == 1:
+            return "Championship"
+        if mucount == 2:
+            return "Semifinals"
+        if mucount == 4:
+            return "Quarterfinals"
+        return f"Round of {mucount * 2}"
+
+    rounds.append({"name": f"{label_prefix}{round_name_for_count(len(r1))}", "matchups": r1})
+
+    # Subsequent rounds: bracket winners advance — projected winners are the higher seed.
+    advancing = [m["high_seed"] for m in r1]
+    while len(advancing) > 1:
+        nxt = []
+        for i in range(0, len(advancing) - 1, 2):
+            nxt.append(_mu(advancing[i], advancing[i + 1]))
+        rounds.append({
+            "name": f"{label_prefix}{round_name_for_count(len(nxt))}",
+            "matchups": nxt,
+        })
+        advancing = [m["high_seed"] for m in nxt]
+    return rounds
+
+
 @router.get("/leagues/{league_id}/playoff-bracket")
 async def get_playoff_bracket(league_id: str):
     """Projected playoff bracket using current standings.
@@ -975,6 +1083,10 @@ async def get_playoff_bracket(league_id: str):
                             label_str = f"Winner of {ha} vs {la}"
                         mu[f"{'high' if side == 'home' else 'low'}_seed_label"] = label_str
 
+        # Iter 196 — annotate per-round length + emit consolation
+        _annotate_rounds_with_week_lengths(rounds_built, league.get("playoff_week_lengths"))
+        consolation_block = _build_consolation_block(league, teams, _team_to_slot, playoff_size)
+
         return {
             "league_id": league_id,
             "playoff_size": playoff_size,
@@ -984,6 +1096,9 @@ async def get_playoff_bracket(league_id: str):
             "status": "actual",
             "seeding_method": league.get("playoff_seeding_method") or "high_vs_low",
             "playoff_format": league.get("playoff_format") or "h2h_matchup",
+            "playoff_week_lengths": league.get("playoff_week_lengths") or {},
+            "consolation_enabled": bool(league.get("consolation_enabled")),
+            "consolation_bracket": consolation_block,
         }
 
     # Seed by overall rank
@@ -1091,6 +1206,10 @@ async def get_playoff_bracket(league_id: str):
                     elif as_s > hs_s:
                         mu["projected_winner"] = a.get("away_team_id")
 
+    # Iter 196 — annotate per-round length + emit consolation
+    _annotate_rounds_with_week_lengths(rounds, league.get("playoff_week_lengths"))
+    consolation_block = _build_consolation_block(league, teams, _team_to_slot, playoff_size)
+
     return {
         "league_id": league_id,
         "playoff_size": playoff_size,
@@ -1098,6 +1217,11 @@ async def get_playoff_bracket(league_id: str):
         "bye_teams": bye_teams_out,
         "rounds": rounds,
         "status": "actual" if actual_matchups else "projected",
+        "seeding_method": league.get("playoff_seeding_method") or "high_vs_low",
+        "playoff_format": league.get("playoff_format") or "h2h_matchup",
+        "playoff_week_lengths": league.get("playoff_week_lengths") or {},
+        "consolation_enabled": bool(league.get("consolation_enabled")),
+        "consolation_bracket": consolation_block,
     }
 
 
@@ -1471,6 +1595,9 @@ _LEAGUE_UPDATE_ALLOWED = {
     # Iter 101: playoff bracket + consolation bracket configuration
     "playoff_format", "playoff_seeding_method", "playoff_custom_matchups",
     "consolation_teams", "consolation_seeding_method", "consolation_custom_matchups",
+    # Iter 194b / 196: in-draft pick trade review + per-week playoff lengths
+    "draft_trade_review_minutes", "draft_trade_post_delay_action",
+    "playoff_week_lengths",
     # Iter 104: Emergency Roster Changes + Goalie Scoring (moved from League Setup mock UI)
     "emergency_changes_enabled", "emergency_changes_regular",
     "emergency_changes_playoffs", "emergency_eligibility",

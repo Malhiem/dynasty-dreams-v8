@@ -1,0 +1,38 @@
+{
+  "summary": "Iter 196 Playoffs Trio (Tasks A/B/C) — VERIFIED end-to-end. Backend: 9/9 existing unit tests + 5/5 new live integration smokes = 14/14 pytest pass. Live API confirmed: (1) PUT /api/leagues/{id} persists playoff_week_lengths {'3':{'length_weeks':2}}, draft_trade_review_minutes=45, draft_trade_post_delay_action='pause_draft' and surfaces back on GET /api/leagues/{id}; (2) GET /api/leagues/{id}/playoff-bracket returns top-level playoff_week_lengths, consolation_enabled, consolation_bracket; each round has length_weeks>=1 with the configured Final round honoring the 2-week override; (3) consolation_bracket payload contains size (power-of-two), seeding_method, seeds (len==size), rounds with matchups, and final round name='Championship'; (4) when consolation_enabled=False the consolation_bracket is null; (5) GET /api/leagues?my_leagues=true returns 200 (40 leagues including pending-setup ones with roster_spots=null) for chriszarek — no 500. Frontend: Logged in as chriszarek → /standings → Playoffs tab → main bracket renders 3 rounds (bracket-round-0/1/2), bracket-round-2-length pill shows '2 weeks'. Consolation section visible: playoff-consolation-section + playoff-consolation-seeds present, 4 consolation-seed-chip-{1..4} chips, header 'Consolation Bracket · 4-team', consolation-round-0 (SEMIFINALS) and consolation-round-1 (CHAMPIONSHIP) with proper matchups (1v4, 2v3 — high_vs_low). Commissioner Settings → League Structure → Playoffs card: po-week-lengths-block renders 3 rows (po-week-length-row-1 Quarterfinals, -2 Semifinals, -3 Championship) each with Select containing 1 week / 2 weeks / 3 weeks options. UI round-trip save+reload verified: changed Championship Select to '2 weeks' via po-week-length-select-3 → clicked Save → reloaded page → Select still showed '2 weeks'. Cleanup save (1+1+1 weeks) succeeded with 'Playoffs saved' toast.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter196_playoffs_dynamic_tree.py",
+    "/app/backend/tests/test_iter196_live_integration.py",
+    "/app/test_reports/pytest/iter196.xml"
+  ],
+  "action_items": [
+    "Spec/doc mismatch only (NOT a code bug): Review request states the Save button testid is `po-save`, but the actual implementation uses `po-save-btn` (PlayoffsScheduleCards.tsx line 580). Either update the testid to `po-save` for spec alignment, or update the spec/docs to `po-save-btn`. Tests use the actual `po-save-btn`."
+  ],
+  "critical_code_review_comments": [
+    "PlayoffsScheduleCards.tsx Save button uses data-testid `po-save-btn` while iter196 spec requested `po-save` — minor naming inconsistency only; functionality fully works.",
+    "Validation correctly blocks save when summed weekLengths exceed (end_week - start_week + 1). Verified by attempting Semifinals=3 + Championship=2 (total 6) against a 4-week window (Wk 19–22): save no-op'd, no persistence. Tag as expected behavior but ensure user-visible validation errors are clearly surfaced (po-validation-errors block exists and is wired).",
+    "GET /api/leagues?my_leagues=true returned 40 leagues for chriszarek with 35 pending-setup entries and at least one with roster_spots=null — LeagueResponse.roster_spots Optional[int] change confirmed working at scale."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter196_live_integration.py (NEW — 5 live-API integration smokes covering PUT persistence, bracket payload shape, consolation block enabled/disabled, my_leagues no-500)"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14 pytest: 9 unit + 5 live integration)",
+    "frontend": "100% (Task A main bracket + 2-week length pill verified, Task B per-round picker + UI round-trip save verified, Task C consolation section + seeds + rounds + Championship name verified)"
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! — Ice Kings Head-to-Head (id=69e46af167999bfb85c39628)",
+  "seed_data_creation": "None destructive. League playoff_week_lengths was momentarily set to {'3':{'length_weeks':2}} via PUT for the backend test, briefly to '2 weeks' on Championship via UI for the round-trip test, then cleaned up to all 1-week values (Playoffs saved toast confirmed). draft_trade_review_minutes=45 and draft_trade_post_delay_action='pause_draft' were set via the backend persistence test and remain on the league.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 196 Tasks A/B/C ship-ready. Live Ice Kings league (69e46af167999bfb85c39628) confirmed has consolation_enabled=true with 4 consolation teams and a clean playoffs bracket setup (Start Week 19, End Week 22, 3 rounds, 8 playoff teams). The Save button on PlayoffsScheduleCards has actual testid `po-save-btn` (spec said `po-save` — only doc mismatch). Sum-of-weeks validation works: setting per-round lengths whose sum exceeds the playoff window prevents save (no toast, no PUT). Backend integration tests live at /app/backend/tests/test_iter196_live_integration.py (5 tests) — run with `PYTHONPATH=/app/backend pytest tests/test_iter196_*.py` from /app/backend. Note backend tests require PYTHONPATH=/app/backend or running cwd=/app/backend due to `from routes import leagues` import style.",
+  "rca of the issue": "N/A — no bugs found. All acceptance criteria for Tasks A/B/C met. The one doc mismatch (po-save vs po-save-btn) does not block functionality and is called out for the main agent to either align testid or spec."
+}

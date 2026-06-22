@@ -304,6 +304,9 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
   const [format, setFormat] = useState<string>(league?.playoff_format || defaultFormat);
   const [seedingMethod, setSeedingMethod] = useState<string>(league?.playoff_seeding_method || "high_vs_low");
   const [customMatchups, setCustomMatchups] = useState<any[]>(league?.playoff_custom_matchups || []);
+  const [weekLengths, setWeekLengths] = useState<Record<string, { length_weeks: number }>>(
+    league?.playoff_week_lengths || {},
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -314,10 +317,12 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
     setFormat(league?.playoff_format || defaultFormat);
     setSeedingMethod(league?.playoff_seeding_method || "high_vs_low");
     setCustomMatchups(league?.playoff_custom_matchups || []);
+    setWeekLengths(league?.playoff_week_lengths || {});
   }, [
     league?.id, league?.playoff_teams, league?.playoff_start_week,
     league?.playoff_end_week, league?.playoff_rounds, league?.playoff_format,
     league?.playoff_seeding_method, league?.playoff_custom_matchups,
+    league?.playoff_week_lengths,
   ]);
 
   const reg = Number(league?.regular_season_weeks ?? 18);
@@ -335,14 +340,19 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
     const tms = parseInt(playoffTeams, 10) || 0;
     if (ps <= reg) e.push(`Playoffs must start AFTER the regular season ends (week ${reg}).`);
     if (pe < ps) e.push(`Playoff end week (${pe}) cannot be before start week (${ps}).`);
-    if (rounds > 0 && playoffWeeks < rounds) {
-      e.push(`Cannot award a champion: ${rounds} rounds need ≥${rounds} weeks, only ${playoffWeeks} configured.`);
+    // Total weeks consumed by rounds (default 1 week per round, overrides honored)
+    const totalRoundWeeks = Array.from({ length: rounds }, (_, i) => {
+      const wk = weekLengths[String(i + 1)]?.length_weeks ?? 1;
+      return Math.max(1, wk);
+    }).reduce((a, b) => a + b, 0);
+    if (rounds > 0 && playoffWeeks < totalRoundWeeks) {
+      e.push(`Cannot fit ${rounds} rounds (${totalRoundWeeks} weeks total with current per-round lengths) into ${playoffWeeks} configured playoff week${playoffWeeks === 1 ? "" : "s"}.`);
     }
     if (rounds > 0 && tms < 2 ** rounds) {
       e.push(`With ${rounds} round${rounds !== 1 ? "s" : ""}, you need at least ${2 ** rounds} playoff teams.`);
     }
     return e;
-  }, [playoffStart, playoffEnd, playoffRounds, playoffTeams, playoffWeeks, reg]);
+  }, [playoffStart, playoffEnd, playoffRounds, playoffTeams, playoffWeeks, reg, weekLengths]);
 
   const weeksList = useMemo(() => {
     const ps = parseInt(playoffStart, 10);
@@ -365,6 +375,7 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
         playoff_format: format,
         playoff_seeding_method: format === "playoff_tree" ? seedingMethod : null,
         playoff_custom_matchups: format === "playoff_tree" && seedingMethod === "custom" ? customMatchups : null,
+        playoff_week_lengths: weekLengths,
       });
       toast.success("Playoffs saved");
       reloadLeague?.();
@@ -481,6 +492,63 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
               onChange={setCustomMatchups}
               testidPrefix="po-custom"
             />
+          </div>
+        )}
+
+        {/* Iter 196 (Task B) — Per-round matchup length overrides */}
+        {(parseInt(playoffRounds, 10) || 0) > 0 && (
+          <div className="border-l-2 border-cyan-500/40 pl-3 space-y-2" data-testid="po-week-lengths-block">
+            <div className="text-xs font-semibold text-cyan-300 flex items-center gap-2">
+              Per-Round Matchup Length
+              <InfoHint
+                testId="info-po-week-lengths"
+                text="Optionally extend a specific round (e.g. Finals) to span 2 weeks. Default is 1 week per round."
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {Array.from({ length: parseInt(playoffRounds, 10) || 0 }, (_, i) => {
+                const key = String(i + 1);
+                const cur = weekLengths[key]?.length_weeks ?? 1;
+                const rounds = parseInt(playoffRounds, 10) || 0;
+                const label = i === rounds - 1
+                  ? "Championship"
+                  : i === rounds - 2
+                  ? "Semifinals"
+                  : i === rounds - 3
+                  ? "Quarterfinals"
+                  : `Round ${i + 1}`;
+                return (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between gap-2 rounded-md border border-border bg-secondary/30 px-2.5 py-1.5"
+                    data-testid={`po-week-length-row-${i + 1}`}
+                  >
+                    <span className="text-xs font-medium text-foreground">{label}</span>
+                    <Select
+                      value={String(cur)}
+                      onValueChange={(v) =>
+                        setWeekLengths((prev) => ({
+                          ...prev,
+                          [key]: { length_weeks: parseInt(v, 10) || 1 },
+                        }))
+                      }
+                    >
+                      <SelectTrigger
+                        className="h-7 w-[110px] text-xs bg-secondary border-border"
+                        data-testid={`po-week-length-select-${i + 1}`}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover border-border z-50">
+                        <SelectItem value="1">1 week</SelectItem>
+                        <SelectItem value="2">2 weeks</SelectItem>
+                        <SelectItem value="3">3 weeks</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 

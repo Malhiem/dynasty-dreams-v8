@@ -33,6 +33,14 @@ interface Round {
   name: string;
   matchups: Matchup[];
   byes?: BracketTeam[];
+  length_weeks?: number;
+}
+
+interface ConsolationBracket {
+  size: number;
+  seeding_method?: string;
+  seeds: BracketTeam[];
+  rounds: Round[];
 }
 
 interface BracketData {
@@ -42,6 +50,9 @@ interface BracketData {
   bye_teams: BracketTeam[];
   rounds: Round[];
   status: string;
+  playoff_week_lengths?: Record<string, { length_weeks: number }>;
+  consolation_enabled?: boolean;
+  consolation_bracket?: ConsolationBracket | null;
 }
 
 const SEED_COLOR = [
@@ -137,6 +148,67 @@ const MatchupCard = ({ mu, status }: { mu: Matchup; status: string }) => {
   );
 };
 
+const RoundsGrid = ({ rounds, status, testidPrefix = "bracket" }: {
+  rounds: Round[];
+  status: string;
+  testidPrefix?: string;
+}) => (
+  <div className="overflow-x-auto" data-testid={`${testidPrefix}-rounds`}>
+    <div className="flex gap-4 min-w-max items-stretch">
+      {rounds.map((rd, rdx) => (
+        <div
+          key={`${rd.name}-${rdx}`}
+          className="flex-1 min-w-[260px] space-y-3"
+          data-testid={`${testidPrefix}-round-${rdx}`}
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">
+              {rd.name}
+            </h3>
+            {rd.length_weeks && rd.length_weeks > 1 && (
+              <span
+                className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30"
+                data-testid={`${testidPrefix}-round-${rdx}-length`}
+              >
+                {rd.length_weeks} weeks
+              </span>
+            )}
+            {rdx < rounds.length - 1 && (
+              <ChevronRight className="h-4 w-4 text-muted-foreground/40" />
+            )}
+          </div>
+          {rd.byes && rd.byes.length > 0 && (
+            <div className="space-y-1.5">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
+                Byes to Semis
+              </div>
+              {rd.byes.map((t) => (
+                <div
+                  key={t.team_id}
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 bg-accent/10 border border-accent/30"
+                  data-testid={`${testidPrefix}-bye-${t.team_id}`}
+                >
+                  <span className="text-xs font-bold text-accent w-5 text-center">{t.seed}</span>
+                  <TeamLogo logo={t.team_logo_url} name={t.team_name} abbr={t.team_abbr} size="xs" />
+                  <span className="text-xs font-medium truncate">{t.team_name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div
+            className="space-y-4 justify-around flex flex-col"
+            style={{ minHeight: `${120 * (rounds[0]?.matchups.length || 1)}px` }}
+          >
+            {rd.matchups.map((mu, i) => (
+              <MatchupCard key={i} mu={mu} status={status} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
 /**
  * Embeddable playoff tree view (no page chrome).
  * Used inside Standings → Playoffs tab.
@@ -212,52 +284,59 @@ export const PlayoffBracketView = ({ leagueId }: { leagueId?: string | null }) =
         </span>
       </div>
 
-      <div className="overflow-x-auto" data-testid="playoff-bracket-rounds">
-        <div className="flex gap-4 min-w-max items-stretch">
-          {bracket.rounds.map((rd, rdx) => (
-            <div
-              key={rd.name}
-              className="flex-1 min-w-[260px] space-y-3"
-              data-testid={`bracket-round-${rdx}`}
-            >
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-foreground uppercase tracking-wide">
-                  {rd.name}
-                </h3>
-                {rdx < bracket.rounds.length - 1 && (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground/40" />
-                )}
-              </div>
-              {rd.byes && rd.byes.length > 0 && (
-                <div className="space-y-1.5">
-                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
-                    Byes to Semis
-                  </div>
-                  {rd.byes.map(t => (
-                    <div
-                      key={t.team_id}
-                      className="flex items-center gap-2 rounded-md px-2.5 py-1.5 bg-accent/10 border border-accent/30"
-                      data-testid={`bracket-bye-${t.team_id}`}
-                    >
-                      <span className="text-xs font-bold text-accent w-5 text-center">{t.seed}</span>
-                      <TeamLogo logo={t.team_logo_url} name={t.team_name} abbr={t.team_abbr} size="xs" />
-                      <span className="text-xs font-medium truncate">{t.team_name}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div
-                className="space-y-4 justify-around flex flex-col"
-                style={{ minHeight: `${120 * (bracket.rounds[0]?.matchups.length || 1)}px` }}
+      <RoundsGrid rounds={bracket.rounds} status={bracket.status} testidPrefix="bracket" />
+
+      {bracket.consolation_enabled && bracket.consolation_bracket && bracket.consolation_bracket.rounds?.length > 0 && (
+        <div
+          className="pt-4 mt-4 border-t border-border/60 space-y-4"
+          data-testid="playoff-consolation-section"
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <Trophy className="h-4 w-4 text-violet-400" />
+            <h2 className="text-base font-bold text-foreground">
+              Consolation Bracket{" "}
+              <span className="text-xs font-normal text-muted-foreground">
+                · {bracket.consolation_bracket.size}-team
+              </span>
+            </h2>
+            {bracket.consolation_bracket.seeding_method && (
+              <span
+                className="text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full bg-violet-500/15 text-violet-300 border border-violet-500/30"
+                data-testid="playoff-consolation-seeding-badge"
               >
-                {rd.matchups.map((mu, i) => (
-                  <MatchupCard key={i} mu={mu} status={bracket.status} />
-                ))}
-              </div>
+                {bracket.consolation_bracket.seeding_method === "high_vs_low" && "1 vs N seeding"}
+                {bracket.consolation_bracket.seeding_method === "adjacent" && "1 v 2 / 3 v 4 seeding"}
+                {bracket.consolation_bracket.seeding_method === "custom" && "Custom ladder"}
+              </span>
+            )}
+          </div>
+          <RoundsGrid
+            rounds={bracket.consolation_bracket.rounds}
+            status="projected"
+            testidPrefix="consolation"
+          />
+          <div className="stat-card p-3 space-y-2" data-testid="playoff-consolation-seeds">
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wide">
+              Consolation Seeds
+            </h3>
+            <div className="flex flex-wrap gap-2">
+              {bracket.consolation_bracket.seeds.map((t) => (
+                <button
+                  key={t.team_id}
+                  onClick={() => navigate(`/teams/${t.team_id}`)}
+                  className="flex items-center gap-2 rounded-md px-2.5 py-1.5 bg-secondary/30 border border-border hover:bg-secondary/50 transition-colors text-xs"
+                  data-testid={`consolation-seed-chip-${t.seed}`}
+                >
+                  <span className="font-bold text-violet-300">#{t.seed}</span>
+                  <TeamLogo logo={t.team_logo_url} name={t.team_name} abbr={t.team_abbr} size="xs" />
+                  <span className="font-medium">{t.team_name}</span>
+                  <span className="text-muted-foreground">({t.wins}-{t.losses}{t.ties ? `-${t.ties}` : ""})</span>
+                </button>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="stat-card p-4 space-y-2">
         <h3 className="text-sm font-bold text-foreground">Playoff Seeds</h3>
