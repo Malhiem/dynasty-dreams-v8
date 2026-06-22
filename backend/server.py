@@ -789,6 +789,10 @@ async def startup():
                 logger.error(f"pick-trade sweeper error: {e}")
             await asyncio.sleep(30)
     asyncio.create_task(_pick_trade_sweeper())
+
+    # Iter 210 — Critical Alerts sweeper (broadcasts platform-wide alerts
+    # to admins via Socket.IO every 60s).
+    asyncio.create_task(platform_ops_routes.alerts_sweeper_loop())
     
     # Write test credentials
     import os as os_module

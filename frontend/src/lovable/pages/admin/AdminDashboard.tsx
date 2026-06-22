@@ -27,6 +27,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 // Iter 208 — Trust Score pill rendered next to reported users.
 import TrustScoreBadge from "@/components/TrustScoreBadge";
+// Iter 210 — Critical-alert banner pulling from Sync + Server Ops.
+import CriticalAlertBanner from "@/components/CriticalAlertBanner";
 
 const COMMISH_EVENT_TYPES = [
   "playoff_winner_marked",
@@ -124,6 +126,9 @@ export default function AdminDashboard() {
             Refresh
           </Button>
         </div>
+
+        {/* Iter 210 — Real-time critical alerts (Sync + Server Ops + Dead Leagues) */}
+        <CriticalAlertBanner />
 
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList className="bg-secondary/30">

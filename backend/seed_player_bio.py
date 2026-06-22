@@ -12,6 +12,7 @@ when the public API returns new info (e.g., a player's first NHL season).
 """
 import asyncio
 import os
+from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
@@ -60,6 +61,7 @@ async def main():
             "draft_overall": d.get("overallPick"),
             "draft_team_abbr": d.get("teamAbbrev"),
             "nhl_seasons": len({s.get("season") for s in seasons_nhl}),
+            "last_synced_at": datetime.now(timezone.utc).isoformat(),
         }
         await db.players.update_one({"_id": p["_id"]}, {"$set": update})
         updated += 1

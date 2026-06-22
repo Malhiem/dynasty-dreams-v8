@@ -101,6 +101,7 @@ async def _apply_player_updates(db, game_id: int, gm_type: int, game_state: str,
                     "updated_at": now,
                 },
                 "live_updated_at": now,
+                "last_synced_at": now,
             }
         }
         await db.players.update_one({"nhl_id": p["nhl_id"]}, update)

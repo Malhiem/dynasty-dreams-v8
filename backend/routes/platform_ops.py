@@ -316,46 +316,41 @@ _LOG_DIR = Path("/var/log/supervisor")
 _ERR_PATTERN = re.compile(r"(?i)(ERROR|CRITICAL|Traceback|Exception)")
 
 
+def _tail_log_file(service: str, lines: int = 100) -> dict:
+    """Internal helper used by both the public server-logs endpoint and
+    the critical-alert sweeper. Returns the same shape as /server-logs."""
+    candidates = list(_LOG_DIR.glob(f"{service}.err.log*")) + list(
+        _LOG_DIR.glob(f"{service}.out.log*")
+    )
+    if not candidates:
+        return {"service": service, "lines": [], "error_count": 0, "tail_size": 0, "log_file": None}
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    target = candidates[0]
+    try:
+        with open(target, "r", errors="ignore") as f:
+            tail = f.readlines()[-lines:]
+    except Exception:
+        return {"service": service, "lines": [], "error_count": 0, "tail_size": 0, "log_file": target.name}
+    rows = [{"is_error": bool(_ERR_PATTERN.search(line)), "line": line.rstrip("\n")} for line in tail]
+    return {
+        "service": service,
+        "log_file": target.name,
+        "lines": rows,
+        "error_count": sum(1 for x in rows if x["is_error"]),
+        "tail_size": len(rows),
+    }
+
+
 @router.get("/server-logs")
 async def server_logs(
     request: Request,
     service: str = Query("backend", pattern=r"^(backend|frontend)$"),
     lines: int = Query(100, ge=10, le=500),
 ):
-    """Tail recent supervisor log lines, filtering to error-likely
-    entries. Restricts to err and out logs."""
+    """Tail recent supervisor log lines, marking ERROR/CRITICAL/Traceback
+    lines via regex."""
     await _require_admin(request)
-    candidates = list(_LOG_DIR.glob(f"{service}.err.log*")) + list(
-        _LOG_DIR.glob(f"{service}.out.log*")
-    )
-    if not candidates:
-        return {"service": service, "lines": []}
-
-    # Tail the most-recent file (mtime sort)
-    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    target = candidates[0]
-    try:
-        with open(target, "r", errors="ignore") as f:
-            tail = f.readlines()[-lines:]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not read log: {e}")
-
-    # Mark error lines
-    out = []
-    for line in tail:
-        is_err = bool(_ERR_PATTERN.search(line))
-        out.append({
-            "is_error": is_err,
-            "line": line.rstrip("\n"),
-        })
-    error_count = sum(1 for x in out if x["is_error"])
-    return {
-        "service": service,
-        "log_file": target.name,
-        "lines": out,
-        "error_count": error_count,
-        "tail_size": len(out),
-    }
+    return _tail_log_file(service, lines)
 
 
 @router.get("/uptime")
@@ -392,3 +387,118 @@ async def uptime(request: Request):
         "trades_24h": trades_24h,
         "logins_24h": logins_24h,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 210 — Critical Alerts (computed + broadcast via Socket.IO)
+# ─────────────────────────────────────────────────────────────────────
+async def compute_active_alerts() -> list[dict]:
+    """Compute the current set of active critical alerts. Three triggers:
+      (a) sync_degraded: no players updated in last 15 minutes
+      (b) high_error_rate: >50 errors in last 100 backend log lines
+      (c) dead_league_surge: ≥3 dead leagues (active status, no matchup
+          activity in the last 30 days)
+    """
+    db = _db()
+    now = datetime.now(timezone.utc)
+    alerts: list[dict] = []
+
+    # (a) Sync degraded
+    cutoff_15min = (now - timedelta(minutes=15)).isoformat()
+    fresh_players = await db.players.count_documents(
+        {"last_synced_at": {"$gte": cutoff_15min}}
+    )
+    if fresh_players == 0:
+        # Determine whether sync EVER happened — if never, mark "no_sync"
+        # rather than "degraded" (avoids spamming during preview/sandbox).
+        ever_synced = await db.players.count_documents({"last_synced_at": {"$exists": True}})
+        if ever_synced > 0:
+            last = await db.players.find_one(
+                {"last_synced_at": {"$exists": True}},
+                sort=[("last_synced_at", -1)],
+            )
+            alerts.append({
+                "id": "sync_degraded",
+                "severity": "critical",
+                "title": "NHL data sync degraded",
+                "detail": f"No player updates in 15min. Last sync: {(last or {}).get('last_synced_at')}",
+                "since": now.isoformat(),
+            })
+
+    # (b) High error rate in backend logs
+    log = _tail_log_file("backend", lines=100)
+    if log.get("error_count", 0) > 50:
+        alerts.append({
+            "id": "high_error_rate",
+            "severity": "critical",
+            "title": "Backend error rate spike",
+            "detail": f"{log['error_count']} errors in last {log['tail_size']} log lines",
+            "since": now.isoformat(),
+        })
+
+    # (c) Dead league surge — leagues with status=active but no matchup
+    # in 30 days. Threshold ≥ 3.
+    cutoff_30d = (now - timedelta(days=30)).isoformat()
+    leagues = await db.leagues.find({"status": "active"}, {"_id": 1, "name": 1}).to_list(2000)
+    dead_count = 0
+    for lg in leagues:
+        last_matchup = await db.matchups.find_one(
+            {"league_id": str(lg["_id"])}, sort=[("created_at", -1)]
+        )
+        last_activity = (last_matchup or {}).get("created_at")
+        if last_activity and (
+            (isinstance(last_activity, str) and last_activity < cutoff_30d)
+            or (hasattr(last_activity, "isoformat") and last_activity.isoformat() < cutoff_30d)
+        ):
+            dead_count += 1
+    if dead_count >= 3:
+        alerts.append({
+            "id": "dead_league_surge",
+            "severity": "warning",
+            "title": "Dead-league surge",
+            "detail": f"{dead_count} active leagues with no matchup activity in 30+ days",
+            "since": now.isoformat(),
+        })
+
+    return alerts
+
+
+@router.get("/alerts")
+async def get_critical_alerts(request: Request):
+    """Return currently-active critical alerts. Polled by the AdminDashboard
+    on mount; Socket.IO push handles ongoing updates."""
+    await _require_admin(request)
+    alerts = await compute_active_alerts()
+    return {"alerts": alerts, "computed_at": datetime.now(timezone.utc).isoformat()}
+
+
+# Background sweeper — broadcasts when the active-alert set changes.
+_last_alert_ids: set[str] = set()
+
+
+async def alerts_sweeper_loop():
+    """Run every 60s. If the set of active alert ids changes, broadcast
+    the new list to the `platform_admins` Socket.IO room so every
+    open admin dashboard updates in real-time."""
+    import asyncio
+    global _last_alert_ids
+    broadcast = _deps.get("broadcast_to_room")
+    if not broadcast:
+        return
+    while True:
+        try:
+            alerts = await compute_active_alerts()
+            current_ids = {a["id"] for a in alerts}
+            if current_ids != _last_alert_ids:
+                _last_alert_ids = current_ids
+                await broadcast(
+                    "platform_admins",
+                    "critical_alerts",
+                    {"alerts": alerts,
+                     "computed_at": datetime.now(timezone.utc).isoformat()},
+                )
+        except Exception:
+            # Never let a sweeper failure crash the loop.
+            pass
+        await asyncio.sleep(60)
+

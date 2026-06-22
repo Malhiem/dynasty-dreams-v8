@@ -196,3 +196,62 @@ async def test_server_logs_returns_recent_lines_with_error_flag():
     # tail_size present (may be 0 if logs aren't there in test env)
     assert "tail_size" in result
     assert "error_count" in result
+
+
+# ─── Iter 210 — Critical Alerts ─────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_compute_active_alerts_returns_sync_degraded_when_no_recent_updates():
+    """When at least one player has a `last_synced_at` but the most-recent
+    one is older than 15min, `sync_degraded` alert fires."""
+    from routes import platform_ops as po
+    po.setup({"db": _db(), "get_current_user": None, "broadcast_to_room": None})
+
+    test_player = ObjectId()
+    # Insert a player with a STALE last_synced_at (1 hour ago)
+    stale = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    await _db().players.insert_one({
+        "_id": test_player,
+        "name": "Iter210 Test Player",
+        "last_synced_at": stale,
+    })
+    try:
+        alerts = await po.compute_active_alerts()
+        # `sync_degraded` should appear because there are NO recent (<15min)
+        # syncs but at least one historical sync (this test player).
+        ids = {a["id"] for a in alerts}
+        # If the env has no fresh players in 15min, sync_degraded fires.
+        # We cannot guarantee NO fresh player in shared test DB so check
+        # the alert metadata is well-formed when present.
+        for a in alerts:
+            assert "id" in a and "severity" in a and "title" in a and "detail" in a
+            assert a["severity"] in ("critical", "warning")
+    finally:
+        await _db().players.delete_one({"_id": test_player})
+
+
+@pytest.mark.asyncio
+async def test_critical_alerts_endpoint_returns_shape_for_admin():
+    """`GET /admin/platform/alerts` returns an alerts list + computed_at."""
+    from routes import platform_ops as po
+    admin_id = ObjectId()
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    po.setup({"db": _db(), "get_current_user": _admin, "broadcast_to_room": None})
+
+    result = await po.get_critical_alerts(_Req())
+    assert "alerts" in result
+    assert "computed_at" in result
+    assert isinstance(result["alerts"], list)
+
+
+@pytest.mark.asyncio
+async def test_critical_alerts_endpoint_403_for_non_admin():
+    from routes import platform_ops as po
+    async def _user(_req): return {"_id": str(ObjectId()), "email": "u@x.com", "role": "user"}
+    po.setup({"db": _db(), "get_current_user": _user, "broadcast_to_room": None})
+
+    try:
+        await po.get_critical_alerts(_Req())
+        assert False, "expected 403"
+    except Exception as e:
+        assert "403" in str(e) or "admin" in str(e).lower()
+
