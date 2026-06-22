@@ -223,6 +223,169 @@ async def get_draft_related_trades(draft_id: str):
     return {"draft_id": draft_id, "league_id": league_id, "related_trades": out}
 
 
+# ─── Iter 205 — Draft player stats (career totals + medal ranking) ─────────
+# Aggregates career career totals + FP/FP/G for every player picked in
+# a draft so the Draft History page can:
+#   1. Expand a pick row to show stats-to-date
+#   2. Render compact key-stat strips inline in the Pick Log
+#   3. Award gold/silver/bronze medals to the top-3 producers PER
+#      position group (C, W combining LW/RW, D, G), ranked by total
+#      career fantasy points against the league's scoring config.
+@router.get("/drafts/{draft_id}/player-stats")
+async def get_draft_player_stats(draft_id: str):
+    db = _deps["db"]
+    if not ObjectId.is_valid(draft_id):
+        raise HTTPException(status_code=400, detail="Invalid draft id")
+    draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    league_id = draft.get("league_id")
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)}) if ObjectId.is_valid(str(league_id)) else None
+    scoring_format = (league or {}).get("scoring_format", "head_to_head")
+    is_h2h = "head_to_head" in scoring_format or "h2h" in scoring_format
+
+    # Build the player_id → (overall, position, name) map from the
+    # draft's picks list. We use the position recorded at draft time
+    # (rather than re-resolving from /players) so backwards-compat is
+    # preserved for legacy drafts.
+    picks = draft.get("picks") or []
+    rows: list[dict] = []
+    for p in picks:
+        pid = p.get("player_id")
+        if not pid:
+            continue
+        rows.append({
+            "overall": p.get("overall"),
+            "player_id": pid,
+            "drafted_pos": (p.get("player") or {}).get("position") or "—",
+            "name": (p.get("player") or {}).get("name") or "Unknown",
+        })
+
+    # Pull each player's stats directly off the players collection.
+    # On-doc fields (games_played, goals, assists, points, etc.) hold
+    # season-to-date totals populated by the NHL sync. These are the
+    # same fields powering the player browse / live scoring screens,
+    # so a draft's medals stay in lockstep with the rest of the app.
+    # (NHL true career totals are available via `/players/{id}/
+    # historical-stats` but fetching for 60+ players inline would be
+    # too slow — that endpoint stays click-through from a player's
+    # profile.)
+    player_object_ids = [ObjectId(r["player_id"]) for r in rows if ObjectId.is_valid(str(r["player_id"]))]
+    player_docs = {}
+    if player_object_ids:
+        async for doc in db.players.find({"_id": {"$in": player_object_ids}}):
+            player_docs[str(doc["_id"])] = doc
+
+    # Lazy import to share the same fpts calculator the other player
+    # endpoints use against league scoring config.
+    from routes.players import _scoring_cfg_for, _calc_fpts
+    scoring_cfg = await _scoring_cfg_for(league_id)
+
+    out_rows: list[dict] = []
+    for r in rows:
+        pdoc = player_docs.get(str(r["player_id"])) or {}
+        is_goalie = (r["drafted_pos"] or pdoc.get("position") or "") == "G"
+
+        if is_goalie:
+            stats = {
+                "wins": pdoc.get("wins", 0),
+                "losses": pdoc.get("losses", 0),
+                "saves": pdoc.get("saves", 0),
+                "shutouts": pdoc.get("shutouts", 0),
+                "goals_against": pdoc.get("goals_against", 0),
+            }
+            display = {
+                "games_played": pdoc.get("games_played", 0),
+                "wins": pdoc.get("wins", 0),
+                "losses": pdoc.get("losses", 0),
+                "shutouts": pdoc.get("shutouts", 0),
+                "save_pct": pdoc.get("save_pct", 0),
+                "goals_against_avg": pdoc.get("goals_against_avg", 0),
+            }
+        else:
+            stats = {
+                "goals": pdoc.get("goals", 0),
+                "assists": pdoc.get("assists", 0),
+                "points": pdoc.get("points", 0),
+                "plus_minus": pdoc.get("plus_minus", 0),
+                "shots": pdoc.get("shots", 0),
+                "ppg": pdoc.get("power_play_goals", 0),
+                "ppp": pdoc.get("power_play_points", 0),
+                "shg": pdoc.get("short_handed_goals", 0),
+                "pim": pdoc.get("penalty_minutes", 0),
+            }
+            display = {
+                "games_played": pdoc.get("games_played", 0),
+                "goals": pdoc.get("goals", 0),
+                "assists": pdoc.get("assists", 0),
+                "points": pdoc.get("points", 0),
+                "plus_minus": pdoc.get("plus_minus", 0),
+                "shots": pdoc.get("shots", 0),
+                "shooting_pct": pdoc.get("shooting_pct", 0),
+            }
+        gp = pdoc.get("games_played") or 0
+        fpts = _calc_fpts(stats, is_goalie, scoring_cfg) if pdoc else 0.0
+        fpts = round(float(fpts or 0), 2)
+        fpg = round(fpts / gp, 2) if gp else 0.0
+
+        out_rows.append({
+            "overall": r["overall"],
+            "player_id": r["player_id"],
+            "name": r["name"],
+            "position": r["drafted_pos"],
+            "is_goalie": is_goalie,
+            "career_stats": display,
+            "fantasy_points": fpts,
+            "fantasy_points_per_game": fpg,
+            # Filled in below
+            "medal": None,
+            "position_group": None,
+        })
+
+    # Group by position_group (C, W [combines LW/RW], D, G).
+    def _pos_group(pos: str) -> str:
+        p = (pos or "").upper()
+        if p == "C":
+            return "C"
+        if p in ("LW", "RW", "W"):
+            return "W"
+        if p == "D":
+            return "D"
+        if p == "G":
+            return "G"
+        return "OTHER"
+
+    groups: dict[str, list[dict]] = {}
+    for row in out_rows:
+        g = _pos_group(row["position"])
+        row["position_group"] = g
+        groups.setdefault(g, []).append(row)
+
+    # Award medals — top 3 by total fantasy_points in each group.
+    # Ties broken by FP/G then by overall pick (earlier = higher rank).
+    for g, items in groups.items():
+        items.sort(
+            key=lambda x: (
+                -float(x["fantasy_points"] or 0),
+                -float(x["fantasy_points_per_game"] or 0),
+                x["overall"] or 9999,
+            )
+        )
+        for idx, item in enumerate(items[:3]):
+            # Only award if the player actually produced anything (>0 FP).
+            if (item["fantasy_points"] or 0) <= 0:
+                continue
+            item["medal"] = ["gold", "silver", "bronze"][idx]
+
+    return {
+        "draft_id": draft_id,
+        "league_id": league_id,
+        "scoring_format": scoring_format,
+        "is_h2h": is_h2h,
+        "picks": sorted(out_rows, key=lambda x: x.get("overall") or 0),
+    }
+
+
 # Iter 166 — Per-team draft picks (currently owned). Powers the
 # Roster page's Draft Picks section + the team's pick provenance chips.
 @router.get("/teams/{team_id}/draft-picks")

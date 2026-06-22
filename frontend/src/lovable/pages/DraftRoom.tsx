@@ -5,6 +5,9 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import useDraftRoomSocket from "@/hooks/use-draft-room-socket";
 // Iter 204 — pick timer extracted into a dedicated hook.
 import usePickTimer from "@/hooks/use-pick-timer";
+// Iter 205 — localStorage persistence + chat composer extracted.
+import useDraftRoomPersistence from "@/hooks/use-draft-room-persistence";
+import useDraftChat from "@/hooks/use-draft-chat";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -293,79 +296,23 @@ export default function DraftRoom() {
     { id: "c1", type: "chat", sender: "Arctic Wolves", text: "Let's get this draft going 🏒", timestamp: new Date(Date.now() - 90000) },
     { id: "c2", type: "chat", sender: "Blizzard Kings", text: "Who's everyone eyeing at #1?", timestamp: new Date(Date.now() - 60000) },
   ]);
-  const [chatInput, setChatInput] = useState("");
-  // Iter 204 — `timerPaused` moved into `usePickTimer` hook.
-  // Iter 194c / 203 — `lastChatEvent` is now owned by `useDraftRoomSocket`
-  // (declared below). The state declaration here was removed in the
-  // iter-203 hook extraction.
+  // Iter 205 — `chatInput` + `handleSendChat` extracted to useDraftChat
+  // hook (declared further down once currentDraft + myTeam are resolved).
   // (Iter 170h — isLeagueManager moved down to derive from the active
   // league context; see below.)
 
-  // Iter 170f — Persistence. The Draft Room is currently a mock and
-  // the real `POST /api/drafts/{id}/pick` wiring is queued as P3.
-  // Until then, mirror `picks`, `currentPick`, `draftStarted` and
-  // `lastPickedPlayerId` into localStorage keyed by the active league
-  // id so a manager doesn't lose progress on page reload.
-  const draftStorageKey = activeLeagueCtx?.id
-    ? `draftroom-state-v1:${activeLeagueCtx.id}`
-    : null;
-  const hasHydratedRef = useRef(false);
-  useEffect(() => {
-    if (!draftStorageKey || hasHydratedRef.current) return;
-    try {
-      const raw = localStorage.getItem(draftStorageKey);
-      if (!raw) { hasHydratedRef.current = true; return; }
-      const data = JSON.parse(raw);
-      if (Array.isArray(data.picks) && data.picks.length > 0) {
-        setPicks(data.picks);
-        // Mark drafted players so the eligible list reflects history.
-        const draftedIds = new Set(
-          data.picks
-            .map((p: any) => p.player?.id)
-            .filter((id: any) => id !== undefined && id !== null)
-            .map(String),
-        );
-        if (draftedIds.size > 0) {
-          setPlayers((prev) =>
-            prev.map((p) =>
-              draftedIds.has(String(p.id))
-                ? { ...p, drafted: true }
-                : p,
-            ),
-          );
-        }
-      }
-      if (typeof data.currentPick === "number") {
-        setDraftConfig((prev) => ({
-          ...prev,
-          currentPick: data.currentPick,
-          draftStarted: !!data.draftStarted,
-        }));
-      }
-      if (data.lastPickedPlayerId) {
-        setLastPickedPlayerId(String(data.lastPickedPlayerId));
-      }
-    } catch {
-      /* ignore parse errors */
-    }
-    hasHydratedRef.current = true;
-  }, [draftStorageKey]);
-  useEffect(() => {
-    if (!draftStorageKey || !hasHydratedRef.current) return;
-    try {
-      localStorage.setItem(
-        draftStorageKey,
-        JSON.stringify({
-          picks,
-          currentPick: draftConfig.currentPick,
-          draftStarted: draftConfig.draftStarted,
-          lastPickedPlayerId,
-        }),
-      );
-    } catch {
-      /* storage quota — non-fatal */
-    }
-  }, [draftStorageKey, picks, draftConfig.currentPick, draftConfig.draftStarted, lastPickedPlayerId]);
+  // Iter 170f — localStorage persistence (extracted to hook in iter 205).
+  useDraftRoomPersistence({
+    leagueId: activeLeagueCtx?.id,
+    picks,
+    currentPick: draftConfig.currentPick,
+    draftStarted: draftConfig.draftStarted,
+    lastPickedPlayerId,
+    setPicks,
+    setPlayers,
+    setDraftConfig,
+    setLastPickedPlayerId,
+  });
 
   // Iter 170g — Backend draft wiring. On mount with an active league
   // context, auto-init (or fetch) the draft so we can POST picks +
@@ -738,29 +685,6 @@ export default function DraftRoom() {
     setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: false }));
   };
 
-  const handleSendChat = () => {
-    if (!chatInput.trim()) return;
-    const text = chatInput.trim();
-    setChatInput("");
-    // Iter 170n — Persist outbound chat via backend so reload + every
-    // other connected manager see the message. Falls back to a local
-    // optimistic append when no backend draft exists (demo / pre-init).
-    if (currentDraft?._id) {
-      api.post(`/drafts/${currentDraft._id}/chat`, { text })
-        .catch(() => {
-          setChatMessages((prev) => [
-            ...prev,
-            { id: `chat-${Date.now()}`, type: "chat", sender: (myTeam as any)?.name || "You", text, timestamp: new Date() },
-          ]);
-        });
-      return;
-    }
-    setChatMessages((prev) => [
-      ...prev,
-      { id: `chat-${Date.now()}`, type: "chat", sender: (myTeam as any)?.name || "You", text, timestamp: new Date() },
-    ]);
-  };
-
   // Iter 170f — Draft a player. If `chosen` is provided, that player is
   // taken (used when a manager clicks Draft on the SelectedPlayerCard).
   // Otherwise the top-ranked undrafted player is auto-picked (Simulate
@@ -989,6 +913,15 @@ export default function DraftRoom() {
       owner: user.username || user.email,
     };
   }, [user, liveTeams]);
+
+  // Iter 205 — chat composer extracted to `useDraftChat` hook.
+  // Must be called AFTER `myTeam` since it reads `myTeam.name`.
+  const { chatInput, setChatInput, handleSendChat } = useDraftChat({
+    currentDraftId: currentDraft?._id,
+    myTeamName: (myTeam as any)?.name,
+    appendLocalMessage: (msg: any) =>
+      setChatMessages((prev) => [...prev, msg]),
+  });
 
   // Iter 174 — Trade-block state-blob + polling lifted into a hook.
   // Must be called AFTER myTeam is computed since the hook depends on

@@ -898,3 +898,107 @@ async def is_trade_locked(db, league_id: str, proposer_id: str, target_owner_id:
         "$or": [{"league_id": None}, {"league_id": league_id}],
     })
     return lock
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 205 — Content Moderation Phase 1: Report/Flag System
+# ─────────────────────────────────────────────────────────────────────
+# Schema: db.user_reports = {
+#   _id, reporter_id, reporter_email,
+#   target_user_id, target_user_email,
+#   target_team_id?, league_id?,
+#   category, reason, context_url?,
+#   status: "open" | "resolved" | "dismissed",
+#   created_at,
+#   resolved_at?, resolved_by?, resolution_note?, resolution_action?,
+# }
+# `category` is a free-form string from a UI dropdown (e.g. "harassment",
+# "spam", "offensive_username", "trade_collusion", "other").
+
+VALID_REPORT_CATEGORIES = {
+    "harassment",
+    "spam",
+    "offensive_username",
+    "offensive_team_name",
+    "offensive_avatar",
+    "trade_collusion",
+    "cheating",
+    "other",
+}
+
+
+@router.get("/reports")
+async def list_user_reports(
+    request: Request,
+    status: str = Query("open", pattern=r"^(open|resolved|dismissed|all)$"),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """List submitted user reports (admin-only). Default surfaces only
+    `open` tickets so the moderation queue stays focused."""
+    await _require_admin(request)
+    db = _deps["db"]
+    q: dict = {} if status == "all" else {"status": status}
+    rows = await db.user_reports.find(q).sort("created_at", -1).to_list(limit)
+    out = []
+    for r in rows:
+        out.append({
+            "report_id": str(r["_id"]),
+            "reporter_id": r.get("reporter_id"),
+            "reporter_email": r.get("reporter_email"),
+            "target_user_id": r.get("target_user_id"),
+            "target_user_email": r.get("target_user_email"),
+            "target_team_id": r.get("target_team_id"),
+            "league_id": r.get("league_id"),
+            "category": r.get("category"),
+            "reason": r.get("reason"),
+            "context_url": r.get("context_url"),
+            "status": r.get("status"),
+            "created_at": _iso(r.get("created_at")),
+            "resolved_at": _iso(r.get("resolved_at")),
+            "resolved_by": r.get("resolved_by"),
+            "resolution_note": r.get("resolution_note"),
+            "resolution_action": r.get("resolution_action"),
+        })
+    # Counts for the dashboard tab badge
+    open_count = await db.user_reports.count_documents({"status": "open"})
+    return {"reports": out, "open_count": open_count}
+
+
+@router.post("/reports/{report_id}/resolve")
+async def resolve_user_report(report_id: str, request: Request):
+    """Resolve or dismiss a report. Body:
+      { "action": "resolved" | "dismissed", "note": "...", "applied_action": "warning"|"timeout"|"ban"|"none" }
+    """
+    user = await _require_admin(request)
+    db = _deps["db"]
+    try:
+        oid = ObjectId(report_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid report id")
+
+    payload = await request.json()
+    action = payload.get("action") or "resolved"
+    if action not in ("resolved", "dismissed"):
+        raise HTTPException(status_code=400, detail="action must be resolved|dismissed")
+    note = (payload.get("note") or "").strip()[:1000]
+    applied_action = payload.get("applied_action") or "none"
+    if applied_action not in ("warning", "timeout", "ban", "none"):
+        raise HTTPException(status_code=400, detail="invalid applied_action")
+
+    res = await db.user_reports.update_one(
+        {"_id": oid, "status": "open"},
+        {
+            "$set": {
+                "status": action,
+                "resolved_at": datetime.now(timezone.utc).isoformat(),
+                "resolved_by": str(user["_id"]),
+                "resolved_by_email": user.get("email"),
+                "resolution_note": note,
+                "resolution_action": applied_action,
+            }
+        },
+    )
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Report not found or already resolved")
+    return {"ok": True, "report_id": report_id, "status": action}
+
