@@ -751,6 +751,14 @@ async def mark_setup_complete(league_id: str, request: Request):
                 "setup_wizard_complete": True,
                 "setup_wizard_completed_at": datetime.now(timezone.utc),
                 "setup_wizard_completed_by": user.get("email"),
+                # Iter 199 — Finish-wizard backfill: stamp every section
+                # complete so the Health Score hits 100 when the wizard's
+                # explicit "Finish" path completes.
+                "setup_progress": {
+                    "basics": True, "cap": True, "divisions": True,
+                    "schedule": True, "playoffs": True, "draft": True,
+                    "trades": True,
+                },
             },
             "$push": {"audit_log": {
                 "action": "setup_wizard_completed",

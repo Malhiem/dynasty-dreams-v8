@@ -536,27 +536,56 @@ async def mark_playoff_winner(league_id: str, body: MarkWinnerBody, request: Req
         "league_id": league_id,
         "is_playoff": True,
         "bracket_round": next_round,
-    }).sort("week", 1).to_list(50)
-    if next_matchups:
-        # Index this matchup within its round (ordering by _id is stable here).
-        sibs = await db.matchups.find({
-            "league_id": league_id, "is_playoff": True, "bracket_round": cur_round,
-        }).sort("_id", 1).to_list(50)
-        try:
-            cur_idx = [str(x["_id"]) for x in sibs].index(str(mu["_id"]))
-            target_idx = cur_idx // 2
-            target = next_matchups[target_idx] if target_idx < len(next_matchups) else None
-            if target:
-                # Empty home slot first, then away.
-                set_fields = {}
-                if not target.get("home_team_id"):
-                    set_fields = {"home_team_id": body.winner_team_id, "home_team_tbd": False}
-                elif not target.get("away_team_id"):
-                    set_fields = {"away_team_id": body.winner_team_id, "away_team_tbd": False}
-                if set_fields:
-                    await db.matchups.update_one({"_id": target["_id"]}, {"$set": set_fields})
-        except (ValueError, IndexError):
-            pass
+    }).sort("_id", 1).to_list(50)
+    # Determine target index within next round
+    sibs = await db.matchups.find({
+        "league_id": league_id, "is_playoff": True, "bracket_round": cur_round,
+    }).sort("_id", 1).to_list(50)
+    try:
+        cur_idx = [str(x["_id"]) for x in sibs].index(str(mu["_id"]))
+    except ValueError:
+        cur_idx = -1
+    target_idx = cur_idx // 2 if cur_idx >= 0 else -1
+
+    if target_idx >= 0:
+        target = next_matchups[target_idx] if target_idx < len(next_matchups) else None
+        if target:
+            # Existing target — fill the next empty slot (home first, then away).
+            set_fields: dict = {}
+            if not target.get("home_team_id"):
+                set_fields = {"home_team_id": body.winner_team_id, "home_team_tbd": False}
+            elif not target.get("away_team_id"):
+                set_fields = {"away_team_id": body.winner_team_id, "away_team_tbd": False}
+            if set_fields:
+                await db.matchups.update_one({"_id": target["_id"]}, {"$set": set_fields})
+        else:
+            # Iter 199 — the bracket synthesizer pads non-final rounds with
+            # in-memory TBD matchups (no DB row). When a winner needs to
+            # advance into one of those synthetic slots, materialise the
+            # row here so subsequent Mark-Winner clicks have a real
+            # matchup_id to update. Week is inherited from the first
+            # sibling in the next round when present, else computed from
+            # `league.playoff_start_week + (next_round - 1)`.
+            sibling_week = next_matchups[0]["week"] if next_matchups else None
+            if sibling_week is None:
+                start_week = int(league.get("playoff_start_week") or 0)
+                sibling_week = start_week + (next_round - 1) if start_week else None
+            new_doc = {
+                "league_id": league_id,
+                "bracket_round": next_round,
+                "is_playoff": True,
+                "home_team_id": body.winner_team_id,
+                "home_team_tbd": False,
+                "away_team_id": None,
+                "away_team_tbd": True,
+                "status": "scheduled",
+                "home_score": 0,
+                "away_score": 0,
+                "week": sibling_week,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "auto_created": True,
+            }
+            await db.matchups.insert_one(new_doc)
 
     # Audit
     await db.activity_feed.insert_one({

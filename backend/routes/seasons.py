@@ -60,12 +60,31 @@ async def _ensure_commish(request: Request, league: dict):
 
 
 # ─── Health Score ────────────────────────────────────────────
+def _section_complete(league: dict, key: str, data_inferred: bool) -> bool:
+    """Iter 199 — derive section completion from `league.setup_progress[key]`
+    when present. Falls back to `data_inferred` ONLY for legacy leagues
+    that finished setup before `setup_progress` was introduced (so
+    existing 100% leagues don't suddenly drop). New leagues default to
+    incomplete until the commissioner walks the wizard.
+    """
+    sp = league.get("setup_progress")
+    if isinstance(sp, dict) and key in sp:
+        return bool(sp[key])
+    # Legacy fallback: only trust data inference once the wizard's been
+    # acknowledged as complete (otherwise default-on fields like
+    # `playoff_teams=6` or `salary_cap_enabled=false` falsely show 100%).
+    if league.get("setup_wizard_complete"):
+        return data_inferred
+    return False
+
+
 def _compute_health_score(league: dict, teams: list, matchups_by_status: dict) -> dict:
     """Compute a 0-100 score across 6 weighted sections."""
     sections = []
 
     # 1. Basics — name + format + max_teams configured
-    basics_ok = bool(league.get("name")) and bool(league.get("format")) and (league.get("max_teams") or 0) >= 2
+    basics_ok_data = bool(league.get("name")) and bool(league.get("format")) and (league.get("max_teams") or 0) >= 2
+    basics_ok = _section_complete(league, "basics", basics_ok_data)
     sections.append({
         "key": "basics",
         "label": "Basics",
@@ -76,10 +95,11 @@ def _compute_health_score(league: dict, teams: list, matchups_by_status: dict) -
 
     # 2. Salary Cap — explicitly disabled is OK
     cap_explicit = ("salary_cap_enabled" in league)
-    cap_ok = cap_explicit and (
+    cap_ok_data = cap_explicit and (
         not league.get("salary_cap_enabled")
         or (league.get("salary_cap") and league.get("salary_cap") > 0)
     )
+    cap_ok = _section_complete(league, "cap", cap_ok_data)
     sections.append({
         "key": "cap",
         "label": "Salary Cap",
@@ -94,7 +114,8 @@ def _compute_health_score(league: dict, teams: list, matchups_by_status: dict) -
 
     # 3. Divisions — at least 2
     divisions = list({t.get("division") for t in teams if t.get("division")})
-    div_ok = len(divisions) >= 2
+    div_ok_data = len(divisions) >= 2
+    div_ok = _section_complete(league, "divisions", div_ok_data)
     sections.append({
         "key": "divisions",
         "label": "Divisions",
@@ -104,7 +125,8 @@ def _compute_health_score(league: dict, teams: list, matchups_by_status: dict) -
     })
 
     # 4. Schedule generated — at least one matchup exists
-    sched_ok = matchups_by_status.get("total", 0) > 0
+    sched_ok_data = matchups_by_status.get("total", 0) > 0
+    sched_ok = _section_complete(league, "schedule", sched_ok_data)
     sections.append({
         "key": "schedule",
         "label": "Schedule",
@@ -117,7 +139,8 @@ def _compute_health_score(league: dict, teams: list, matchups_by_status: dict) -
     })
 
     # 5. Playoff configured — playoff_teams set
-    playoff_ok = (league.get("playoff_teams") or 0) >= 2
+    playoff_ok_data = (league.get("playoff_teams") or 0) >= 2
+    playoff_ok = _section_complete(league, "playoffs", playoff_ok_data)
     sections.append({
         "key": "playoffs",
         "label": "Playoffs",
@@ -130,7 +153,8 @@ def _compute_health_score(league: dict, teams: list, matchups_by_status: dict) -
     })
 
     # 6. Draft scheduled — at least one draft exists
-    draft_ok = matchups_by_status.get("draft_count", 0) > 0
+    draft_ok_data = matchups_by_status.get("draft_count", 0) > 0
+    draft_ok = _section_complete(league, "draft", draft_ok_data)
     sections.append({
         "key": "draft",
         "label": "Draft",
@@ -169,6 +193,40 @@ async def get_health_score(league_id: str):
         "current_season_status": league.get("current_season_status") or "in_progress",
         **health,
     }
+
+
+@router.post("/leagues/{league_id}/setup-progress")
+async def mark_setup_progress(league_id: str, request: Request):
+    """Iter 199 — stamp one (or more) `setup_progress.<key>` flags as true
+    on the league doc. Used by the Setup Wizard after each step's save.
+    Body: `{"sections": ["basics", "cap"]}` OR `{"section": "basics"}`.
+    Commissioner-only. Idempotent."""
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    league = await _league_or_404(league_id)
+    # Reuse the same commish gate the rest of the file uses.
+    uid = str(user.get("_id") or user.get("id") or "")
+    commish_ids = {str(league.get("commissioner_id") or ""), str(league.get("created_by") or "")}
+    commish_ids.update(str(x) for x in (league.get("co_commissioners") or []))
+    commish_ids.update(str(x) for x in (league.get("commissioner_ids") or []))
+    if uid not in commish_ids:
+        raise HTTPException(status_code=403, detail="Commissioner access required")
+
+    body = await request.json()
+    sections = body.get("sections") or ([body["section"]] if body.get("section") else [])
+    allowed = {"basics", "cap", "divisions", "schedule", "playoffs", "draft", "trades"}
+    sections = [s for s in sections if s in allowed]
+    if not sections:
+        raise HTTPException(status_code=400, detail="No valid sections provided")
+
+    progress = league.get("setup_progress") or {}
+    for s in sections:
+        progress[s] = True
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {"setup_progress": progress}},
+    )
+    return {"league_id": league_id, "setup_progress": progress}
 
 
 @router.get("/leagues/{league_id}/seasons")

@@ -235,6 +235,16 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   };
 
   // ─── Save helpers ─────────────────────────────────────────────
+  // Iter 199 — Stamp the league's setup_progress[<key>] = true after a
+  // wizard step's save succeeds. Sections start at 0 for new leagues so
+  // the Health Score increments naturally as the commissioner walks
+  // through the wizard.
+  const stampProgress = async (sections) => {
+    try {
+      await api.post(`/leagues/${leagueId}/setup-progress`, { sections });
+    } catch (_e) { /* best-effort */ }
+  };
+
   const saveBasicsAndCap = async () => {
     setBusy(true);
     try {
@@ -254,6 +264,8 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         salary_retention_max_pct: retentionMaxPct,
         salary_retention_slots: retentionEnabled ? retentionSlots : 0,
       });
+      // Iter 199 — both Basics + Cap finish on this single save.
+      await stampProgress(["basics", "cap"]);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to save basics");
     } finally {
@@ -270,6 +282,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         conference: divisionAssignments[t.id]?.conference || null,
       }));
       await api.put(`/leagues/${leagueId}/divisions`, { assignments });
+      await stampProgress(["divisions"]);
       toast.success("Divisions saved");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to save divisions");
@@ -301,6 +314,8 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
           ? (consolationAlongPlayoffs ? playoffEndWeek : consolationEndWeek)
           : null,
       });
+      // Iter 199 — Schedule + Playoffs both completed on this single save.
+      await stampProgress(["schedule", "playoffs"]);
       toast.success("Schedule saved");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to save schedule");
@@ -317,6 +332,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         trade_veto_threshold_pct: tradeVetoPct,
         trade_deadline_week: tradeDeadlineWeek,
       });
+      await stampProgress(["trades"]);
       toast.success("Trade settings saved");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to save trade settings");
@@ -330,6 +346,9 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     try {
       const res = await api.post("/matchups/generate-schedule", { league_id: leagueId, num_weeks: numWeeks });
       setScheduleMode(res.data?.mode);
+      // Iter 199 — Generating schedule satisfies the "schedule" health
+      // section even if the user skipped the prior schedule-config save.
+      await stampProgress(["schedule"]);
       toast.success(`Generated ${res.data?.weeks || numWeeks}-week schedule (${res.data?.mode || "round_robin"})`);
     } catch (e) {
       const reason = e?.response?.data?.detail;
