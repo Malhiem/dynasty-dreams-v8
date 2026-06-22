@@ -146,6 +146,7 @@ export default function AdminDashboard() {
             <TabsTrigger value="sync" data-testid="admin-tab-sync">Sync Monitor</TabsTrigger>
             <TabsTrigger value="support" data-testid="admin-tab-support">Support</TabsTrigger>
             <TabsTrigger value="ops" data-testid="admin-tab-ops">Server Ops</TabsTrigger>
+            <TabsTrigger value="analytics" data-testid="admin-tab-analytics">Analytics</TabsTrigger>
           </TabsList>
 
           {/* ─── Overview tab ─── */}
@@ -243,6 +244,11 @@ export default function AdminDashboard() {
           {/* ─── Server Ops (Iter 209) ─── */}
           <TabsContent value="ops" className="space-y-3">
             <ServerOpsPanel />
+          </TabsContent>
+
+          {/* ─── Platform Analytics (Iter 211) ─── */}
+          <TabsContent value="analytics" className="space-y-3">
+            <PlatformAnalyticsPanel />
           </TabsContent>
         </Tabs>
       </div>
@@ -1896,6 +1902,150 @@ export function ModNotesPanel({ userId, userEmail }: { userId: string; userEmail
         </Button>
       </div>
     </div>
+  );
+}
+
+
+
+/* ─── Iter 211 — Platform Analytics Panel ────────────────────────────── */
+function PlatformAnalyticsPanel() {
+  const [engagement, setEngagement] = useState<any>(null);
+  const [survival, setSurvival] = useState<any>(null);
+  const [usage, setUsage] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [e, s, u] = await Promise.all([
+        api.get("/admin/platform/analytics/engagement?days=30"),
+        api.get("/admin/platform/analytics/league-survival"),
+        api.get("/admin/platform/analytics/feature-usage"),
+      ]);
+      setEngagement(e.data);
+      setSurvival(s.data);
+      setUsage(u.data);
+    } catch { toast.error("Could not load analytics"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <section className="space-y-4" data-testid="platform-analytics-section">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Platform Analytics</h2>
+          <p className="text-xs text-muted-foreground">
+            DAU/MAU · Cohort retention · League survival · Top features
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={load} data-testid="analytics-refresh-btn">Refresh</Button>
+      </div>
+      {loading && <div className="text-sm text-muted-foreground py-4 text-center">Loading…</div>}
+
+      {!loading && engagement && (
+        <div className="space-y-3" data-testid="analytics-engagement">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SyncStat label="MAU (30d)" value={engagement.mau} />
+            <SyncStat label="Latest DAU" value={engagement.latest_dau} />
+            <SyncStat label="DAU/MAU" value={
+              <span className={engagement.dau_mau_ratio > 0.2 ? "text-emerald-300" : "text-amber-300"}>
+                {(engagement.dau_mau_ratio * 100).toFixed(1)}%
+              </span>
+            } />
+            <SyncStat label="Days tracked" value={engagement.dau_series?.length || 0} />
+          </div>
+          {engagement.dau_series?.length > 0 && (
+            <div className="rounded-lg border border-border bg-muted/20 p-3" data-testid="dau-series">
+              <div className="text-sm font-semibold mb-2">DAU last {engagement.days} days</div>
+              <div className="flex items-end gap-0.5 h-24">
+                {engagement.dau_series.map((d: any) => {
+                  const max = Math.max(1, ...engagement.dau_series.map((x: any) => x.dau));
+                  const h = (d.dau / max) * 100;
+                  return (
+                    <div
+                      key={d.day}
+                      className="flex-1 bg-sky-500/60 hover:bg-sky-400 rounded-t transition-colors"
+                      style={{ height: `${h}%` }}
+                      title={`${d.day}: ${d.dau} DAU`}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {engagement.cohort_retention?.length > 0 && (
+            <div className="rounded-lg border border-border bg-muted/20 p-3" data-testid="cohort-retention">
+              <div className="text-sm font-semibold mb-2">Monthly cohort retention (active last 30d)</div>
+              <div className="space-y-1.5">
+                {engagement.cohort_retention.map((c: any) => (
+                  <div key={c.cohort}>
+                    <div className="flex items-center justify-between text-xs mb-0.5">
+                      <span>{c.cohort}</span>
+                      <span className="text-muted-foreground">
+                        {c.retained}/{c.total} · {c.retention_pct}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-secondary/30 rounded">
+                      <div className="h-full bg-emerald-500/60 rounded" style={{ width: `${c.retention_pct}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {!loading && survival?.by_year?.length > 0 && (
+        <div className="rounded-lg border border-border bg-muted/20 p-3" data-testid="league-survival">
+          <div className="text-sm font-semibold mb-2">League survival by creation year</div>
+          <div className="space-y-1.5">
+            {survival.by_year.map((y: any) => (
+              <div key={y.year}>
+                <div className="flex items-center justify-between text-xs mb-0.5">
+                  <span>{y.year}</span>
+                  <span className="text-muted-foreground">
+                    {y.still_active}/{y.total} still active · {y.survival_pct}%
+                  </span>
+                </div>
+                <div className="h-1.5 bg-secondary/30 rounded">
+                  <div className="h-full bg-amber-500/60 rounded" style={{ width: `${y.survival_pct}%` }} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!loading && usage?.top_endpoints?.length > 0 && (
+        <div className="rounded-lg border border-border bg-muted/20 p-3" data-testid="feature-usage">
+          <div className="text-sm font-semibold mb-2">
+            Top endpoints (last {usage.log_tail_size} log lines)
+          </div>
+          <div className="space-y-1">
+            {usage.top_endpoints.slice(0, 15).map((e: any) => {
+              const max = Math.max(1, ...usage.top_endpoints.map((x: any) => x.hits));
+              const pct = (e.hits / max) * 100;
+              return (
+                <div key={e.endpoint} className="flex items-center gap-2 text-xs">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-0.5">
+                      <span className="font-mono truncate">{e.endpoint}</span>
+                      <span className="text-muted-foreground shrink-0 ml-2">{e.hits}</span>
+                    </div>
+                    <div className="h-1 bg-secondary/30 rounded">
+                      <div className="h-full bg-sky-500/60 rounded" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

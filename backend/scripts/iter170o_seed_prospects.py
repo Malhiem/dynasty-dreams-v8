@@ -86,6 +86,7 @@ async def main():
             "nhl_id": -(1_000_000 + i),
             "season": "2025-2026",
             "seeded_at": now_iso,
+            "last_synced_at": now_iso,
         }
         res = await db.players.update_one(
             {"name": prospect_name, "player_type": "prospect"},

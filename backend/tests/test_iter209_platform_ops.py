@@ -255,3 +255,122 @@ async def test_critical_alerts_endpoint_403_for_non_admin():
     except Exception as e:
         assert "403" in str(e) or "admin" in str(e).lower()
 
+
+
+# ─── Iter 211 — Alert Acknowledgement + Analytics ────────────────────────
+@pytest.mark.asyncio
+async def test_acknowledge_alert_writes_dedupe_and_filters_active_view():
+    """POST /alerts/{id}/acknowledge upserts an ack with TTL and
+    GET /alerts/active filters it out for the configured duration."""
+    from routes import platform_ops as po
+    admin_id = ObjectId()
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    po.setup({"db": _db(), "get_current_user": _admin, "broadcast_to_room": None})
+
+    alert_id = "sync_degraded"
+    # Clean any prior ack
+    await _db().alert_acknowledgements.delete_many({"alert_id": alert_id})
+
+    try:
+        out = await po.acknowledge_alert(alert_id, _Req({"duration_minutes": 30}))
+        assert out["ok"] is True
+        assert out["alert_id"] == alert_id
+        assert out["expires_at"]
+
+        # The active list filters out silenced ids
+        result = await po.list_active_alerts(_Req())
+        assert alert_id in result["silenced_ids"]
+        assert all(a["id"] != alert_id for a in result["alerts"])
+
+        # Repeated ack should upsert (no duplicate inserts)
+        out2 = await po.acknowledge_alert(alert_id, _Req({"duration_minutes": 5}))
+        assert out2["ok"] is True
+        cnt = await _db().alert_acknowledgements.count_documents({"alert_id": alert_id})
+        assert cnt == 1
+    finally:
+        await _db().alert_acknowledgements.delete_many({"alert_id": alert_id})
+
+
+@pytest.mark.asyncio
+async def test_acknowledge_alert_expires_after_window():
+    """An ack with a past expiry should NOT silence the alert anymore."""
+    from routes import platform_ops as po
+    admin_id = ObjectId()
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    po.setup({"db": _db(), "get_current_user": _admin, "broadcast_to_room": None})
+
+    expired_id = "expired_alert_iter211"
+    await _db().alert_acknowledgements.insert_one({
+        "alert_id": expired_id,
+        "expires_at": (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat(),
+        "acknowledged_at": "2026-02-22T00:00:00Z",
+        "acknowledged_by_email": "admin@x.com",
+    })
+    try:
+        silenced = await po._active_ack_ids()
+        assert expired_id not in silenced
+    finally:
+        await _db().alert_acknowledgements.delete_one({"alert_id": expired_id})
+
+
+@pytest.mark.asyncio
+async def test_engagement_analytics_returns_dau_mau_and_cohorts():
+    """Engagement analytics surfaces DAU series, MAU count, and cohort
+    retention rows."""
+    from routes import platform_ops as po
+    admin_id = ObjectId()
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    po.setup({"db": _db(), "get_current_user": _admin, "broadcast_to_room": None})
+
+    result = await po.analytics_engagement(_Req(), days=30)
+    assert "dau_series" in result
+    assert "mau" in result
+    assert "latest_dau" in result
+    assert "dau_mau_ratio" in result
+    assert "cohort_retention" in result
+    assert isinstance(result["dau_series"], list)
+    assert isinstance(result["cohort_retention"], list)
+
+
+@pytest.mark.asyncio
+async def test_league_survival_aggregates_by_year():
+    """League survival groups leagues by creation year and computes
+    pct still in `active` status."""
+    from routes import platform_ops as po
+    admin_id = ObjectId()
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    po.setup({"db": _db(), "get_current_user": _admin, "broadcast_to_room": None})
+
+    cleanup_marker = f"iter211survival_{ObjectId()}"
+    inserted = await _db().leagues.insert_many([
+        {"_id": ObjectId(), "name": cleanup_marker, "created_at": "2024-01-15T00:00:00Z", "status": "active"},
+        {"_id": ObjectId(), "name": cleanup_marker, "created_at": "2024-06-15T00:00:00Z", "status": "archived"},
+        {"_id": ObjectId(), "name": cleanup_marker, "created_at": "2025-03-15T00:00:00Z", "status": "active"},
+    ])
+    try:
+        result = await po.analytics_league_survival(_Req())
+        years = {r["year"]: r for r in result["by_year"]}
+        # Our test data adds 2 to 2024 (1 active = 50%) and 1 to 2025 (100%)
+        assert "2024" in years
+        assert "2025" in years
+        assert years["2024"]["total"] >= 2
+        assert years["2025"]["total"] >= 1
+        assert 0 <= years["2024"]["survival_pct"] <= 100
+        assert 0 <= years["2025"]["survival_pct"] <= 100
+    finally:
+        await _db().leagues.delete_many({"_id": {"$in": inserted.inserted_ids}})
+
+
+@pytest.mark.asyncio
+async def test_feature_usage_parses_log_for_endpoints():
+    """Endpoint parses the supervisor log and returns top-N endpoints."""
+    from routes import platform_ops as po
+    admin_id = ObjectId()
+    async def _admin(_req): return {"_id": str(admin_id), "email": "admin@x.com", "role": "admin"}
+    po.setup({"db": _db(), "get_current_user": _admin, "broadcast_to_room": None})
+
+    result = await po.analytics_feature_usage(_Req(), days=30)
+    assert "top_endpoints" in result
+    assert "log_tail_size" in result
+    assert isinstance(result["top_endpoints"], list)
+

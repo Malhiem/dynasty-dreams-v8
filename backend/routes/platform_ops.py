@@ -488,6 +488,9 @@ async def alerts_sweeper_loop():
     while True:
         try:
             alerts = await compute_active_alerts()
+            # Iter 211 — filter out admin-acknowledged alerts
+            silenced = await _active_ack_ids()
+            alerts = [a for a in alerts if a["id"] not in silenced]
             current_ids = {a["id"] for a in alerts}
             if current_ids != _last_alert_ids:
                 _last_alert_ids = current_ids
@@ -501,4 +504,177 @@ async def alerts_sweeper_loop():
             # Never let a sweeper failure crash the loop.
             pass
         await asyncio.sleep(60)
+
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 211 — Alert Acknowledgements + Platform Analytics
+# ─────────────────────────────────────────────────────────────────────
+@router.post("/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: str, request: Request):
+    """Silence a critical alert. Body: { "duration_minutes": 60 }
+    Acks are time-bounded — when the window expires the alert can fire
+    again. Filtered out of `compute_active_alerts()` while active."""
+    admin = await _require_admin(request)
+    payload = await request.json()
+    duration_min = int(payload.get("duration_minutes") or 60)
+    expires = (datetime.now(timezone.utc) + timedelta(minutes=duration_min)).isoformat()
+    await _db().alert_acknowledgements.update_one(
+        {"alert_id": alert_id},
+        {"$set": {
+            "alert_id": alert_id,
+            "expires_at": expires,
+            "acknowledged_at": datetime.now(timezone.utc).isoformat(),
+            "acknowledged_by_email": admin.get("email"),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "alert_id": alert_id, "expires_at": expires}
+
+
+async def _active_ack_ids() -> set[str]:
+    """Return alert_ids currently silenced by a non-expired ack."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    rows = await _db().alert_acknowledgements.find(
+        {"expires_at": {"$gt": now_iso}}, {"alert_id": 1}
+    ).to_list(100)
+    return {r["alert_id"] for r in rows if r.get("alert_id")}
+
+
+# Patch `compute_active_alerts` indirectly by wrapping. The original
+# definition above is left intact for the sweeper's diff logic; this
+# is an admin-facing filtered view.
+@router.get("/alerts/active")
+async def list_active_alerts(request: Request):
+    """Like `/alerts` but filters out alerts the admin has silenced."""
+    await _require_admin(request)
+    alerts = await compute_active_alerts()
+    silenced = await _active_ack_ids()
+    visible = [a for a in alerts if a["id"] not in silenced]
+    return {
+        "alerts": visible,
+        "silenced_ids": list(silenced),
+        "computed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+# ─── Platform Analytics ─────────────────────────────────────────────
+@router.get("/analytics/engagement")
+async def analytics_engagement(request: Request, days: int = Query(30, ge=7, le=365)):
+    """DAU / MAU / retention proxy. Buckets `user_login_audit` by day."""
+    await _require_admin(request)
+    db = _db()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=days)).isoformat()
+    mau_cutoff = (now - timedelta(days=30)).isoformat()
+
+    pipeline = [
+        {"$match": {"ts": {"$gte": cutoff}}},
+        {"$addFields": {"day": {"$substr": ["$ts", 0, 10]}}},
+        {"$group": {"_id": "$day", "users": {"$addToSet": "$user_id"}}},
+        {"$project": {"day": "$_id", "dau": {"$size": "$users"}}},
+        {"$sort": {"day": 1}},
+    ]
+    daily = await db.user_login_audit.aggregate(pipeline).to_list(400)
+    dau_series = [{"day": d["day"], "dau": d["dau"]} for d in daily]
+
+    # MAU = distinct users in last 30 days
+    mau_pipeline = [
+        {"$match": {"ts": {"$gte": mau_cutoff}}},
+        {"$group": {"_id": None, "users": {"$addToSet": "$user_id"}}},
+        {"$project": {"mau": {"$size": "$users"}}},
+    ]
+    mau_rows = await db.user_login_audit.aggregate(mau_pipeline).to_list(1)
+    mau = (mau_rows[0]["mau"] if mau_rows else 0)
+
+    # Latest-day DAU
+    latest_dau = dau_series[-1]["dau"] if dau_series else 0
+    dau_mau_ratio = round(latest_dau / mau, 3) if mau else 0
+
+    # Cohort retention proxy: how many users created in months M still
+    # logged in within the trailing 30 days
+    users = await db.users.find({}, {"created_at": 1}).to_list(50000)
+    cohorts: dict[str, dict] = {}
+    for u in users:
+        created = u.get("created_at")
+        if not created:
+            continue
+        try:
+            if isinstance(created, str):
+                cohort = created[:7]  # YYYY-MM
+            else:
+                cohort = created.strftime("%Y-%m")
+        except Exception:
+            continue
+        cohorts.setdefault(cohort, {"cohort": cohort, "total": 0, "retained": 0})
+        cohorts[cohort]["total"] += 1
+    # Who logged in within last 30 days
+    active_users = await db.user_login_audit.distinct("user_id", {"ts": {"$gte": mau_cutoff}})
+    active_set = set(active_users)
+    for u in users:
+        created = u.get("created_at")
+        if not created or str(u["_id"]) not in active_set:
+            continue
+        try:
+            if isinstance(created, str):
+                cohort = created[:7]
+            else:
+                cohort = created.strftime("%Y-%m")
+        except Exception:
+            continue
+        if cohort in cohorts:
+            cohorts[cohort]["retained"] += 1
+    cohort_rows = sorted(cohorts.values(), key=lambda c: c["cohort"])
+    for c in cohort_rows:
+        c["retention_pct"] = round(c["retained"] / c["total"] * 100, 1) if c["total"] else 0
+
+    return {
+        "days": days,
+        "dau_series": dau_series,
+        "mau": mau,
+        "latest_dau": latest_dau,
+        "dau_mau_ratio": dau_mau_ratio,
+        "cohort_retention": cohort_rows[-12:],  # last 12 monthly cohorts
+    }
+
+
+@router.get("/analytics/league-survival")
+async def analytics_league_survival(request: Request):
+    """For each year-of-creation, % of leagues still active today."""
+    await _require_admin(request)
+    db = _db()
+    leagues = await db.leagues.find({}, {"created_at": 1, "status": 1}).to_list(10000)
+    by_year: dict[str, dict] = {}
+    for lg in leagues:
+        created = lg.get("created_at")
+        if not created:
+            continue
+        try:
+            year = str(created)[:4] if isinstance(created, str) else created.strftime("%Y")
+        except Exception:
+            continue
+        by_year.setdefault(year, {"year": year, "total": 0, "still_active": 0})
+        by_year[year]["total"] += 1
+        if lg.get("status") == "active":
+            by_year[year]["still_active"] += 1
+    rows = sorted(by_year.values(), key=lambda r: r["year"])
+    for r in rows:
+        r["survival_pct"] = round(r["still_active"] / r["total"] * 100, 1) if r["total"] else 0
+    return {"by_year": rows}
+
+
+@router.get("/analytics/feature-usage")
+async def analytics_feature_usage(request: Request, days: int = Query(30, ge=1, le=365)):
+    """Top-N most-active routes by hit count from supervisor's out log."""
+    await _require_admin(request)
+    log = _tail_log_file("backend", lines=500)
+    counter: Counter[str] = Counter()
+    # Parse access-log lines like:  "GET /api/players?league_id=... HTTP/1.1"
+    pat = re.compile(r'"(?:GET|POST|PUT|DELETE|PATCH) (/api/[^?\s]+)')
+    for row in log.get("lines", []):
+        m = pat.search(row.get("line", ""))
+        if m:
+            counter[m.group(1)] += 1
+    top = [{"endpoint": k, "hits": v} for k, v in counter.most_common(25)]
+    return {"top_endpoints": top, "log_tail_size": log.get("tail_size", 0)}
 

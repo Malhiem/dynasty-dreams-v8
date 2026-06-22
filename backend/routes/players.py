@@ -619,6 +619,16 @@ async def get_player(player_id: str, league_id: Optional[str] = None, request: R
                 from nhlpy import NHLClient
                 raw = NHLClient().stats.player_career_stats(player_id=int(nhl_id))
                 _career_cache[nhl_id] = (now_ts, raw)
+                # Iter 211 — stamp last_synced_at on the player doc so the
+                # Sync Monitor reflects fresh activity from the live cache
+                # path (not just live_scoring_worker).
+                try:
+                    await _db().players.update_one(
+                        {"nhl_id": nhl_id},
+                        {"$set": {"last_synced_at": datetime.now(timezone.utc).isoformat()}},
+                    )
+                except Exception:
+                    pass
             except Exception:
                 raw = None
         if raw:
