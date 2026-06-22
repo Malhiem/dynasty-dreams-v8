@@ -807,16 +807,27 @@ async def manual_payout(user_id: str, request: Request):
 # ─────────────────────────────────────────────────────────────────────
 @router.post("/{user_id}/impersonate")
 async def impersonate(user_id: str, request: Request):
-    """Create a short-lived (15-min) impersonation token. Heavy audit.
-    Notifies the user that an admin viewed their account (per most
-    privacy regulations). Returns the token so the front-end can swap
-    its auth bearer for the read-only impersonation session."""
+    """Create a short-lived (15-min) impersonation JWT for read-only
+    view-as. Heavy audit + notifies the user (per most privacy regs).
+    Returns the JWT so the front-end can swap its bearer for the
+    read-only impersonation session. `get_current_user` decodes the
+    token and decorates the response with `_impersonator_email` so any
+    write endpoint can block by checking for that field."""
     admin = await _require_admin(request, "impersonate")
     u = await _load_user(user_id)
     payload = await request.json() if request.headers.get("content-length") else {}
     reason = (payload.get("reason") or "").strip()
-    token = secrets.token_urlsafe(32)
     expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+    create_token = _deps.get("create_impersonation_token")
+    if not create_token:
+        raise HTTPException(status_code=500, detail="impersonation token issuer not wired")
+    token = create_token(
+        target_user_id=str(u["_id"]),
+        target_email=u.get("email") or "",
+        impersonator_id=str(admin.get("_id") or admin.get("id")),
+        impersonator_email=admin.get("email") or "",
+        minutes=15,
+    )
     await _db().impersonation_audit.insert_one({
         "admin_id": str(admin.get("_id")),
         "admin_email": admin.get("email"),
@@ -834,8 +845,7 @@ async def impersonate(user_id: str, request: Request):
                        title="An admin viewed your account",
                        body=f"Reason: {reason or 'support investigation'}. Read-only view, expires in 15 minutes.")
     return {"ok": True, "audit_id": aid, "impersonation_token": token,
-            "expires_at": expires, "mode": "read_only", "mocked": True,
-            "note": "Token issuance STUBBED — implement JWT swap on auth layer to complete"}
+            "expires_at": expires, "mode": "read_only"}
 
 
 @router.post("/{user_id}/resend-verification")
@@ -962,6 +972,44 @@ async def gdpr_delete(user_id: str, request: Request):
                        reason=reason, prior_state=prior,
                        metadata={"anon_marker": anon_marker})
     return {"ok": True, "audit_id": aid, "anon_marker": anon_marker}
+
+
+@router.post("/{user_id}/permission-tier")
+async def set_permission_tier(user_id: str, request: Request):
+    """Body: { tier: 'user'|'moderator'|'admin'|'senior_admin', reason: str }
+    Grants or revokes admin permission tiers on a target user. Requires
+    senior_admin (you can only promote up to or below your own tier)."""
+    admin = await _require_admin(request, "set_permission_tier")
+    # Senior admin gate
+    actor_tier = admin.get("permission_tier")
+    if not actor_tier:
+        actor_tier = "senior_admin" if admin.get("role") == "admin" else "user"
+    if actor_tier != "senior_admin":
+        raise HTTPException(status_code=403, detail="Only senior_admin can change permission tiers")
+    u = await _load_user(user_id)
+    payload = await request.json()
+    tier = (payload.get("tier") or "").strip()
+    reason = (payload.get("reason") or "").strip()
+    if tier not in ("user", "moderator", "admin", "senior_admin"):
+        raise HTTPException(status_code=400, detail="invalid tier")
+    # Sync the legacy `role` field too — moderator/admin/senior_admin all
+    # map to `role='admin'` for backward compatibility with existing
+    # admin-gated endpoints; user tier maps to `role='user'`.
+    new_role = "admin" if tier in ("moderator", "admin", "senior_admin") else "user"
+    prior = {"permission_tier": u.get("permission_tier"), "role": u.get("role")}
+    await _db().users.update_one(
+        {"_id": u["_id"]},
+        {"$set": {"permission_tier": tier, "role": new_role,
+                  "tier_set_by_admin": admin.get("email"),
+                  "tier_set_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    aid = await _audit(admin=admin, target_user_id=user_id, action="set_permission_tier",
+                       reason=reason, prior_state=prior,
+                       metadata={"new_tier": tier, "new_role": new_role})
+    await _notify_user(user_id=user_id, action="set_permission_tier",
+                       title=f"Your account permission tier is now '{tier}'",
+                       body=f"Reason: {reason or 'admin action'}.")
+    return {"ok": True, "audit_id": aid, "tier": tier, "role": new_role}
 
 
 # ─────────────────────────────────────────────────────────────────────

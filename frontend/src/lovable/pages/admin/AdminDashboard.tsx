@@ -27,6 +27,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 // Iter 208 — Trust Score pill rendered next to reported users.
 import TrustScoreBadge from "@/components/TrustScoreBadge";
 // Iter 210 — Critical-alert banner pulling from Sync + Server Ops.
@@ -2278,8 +2281,8 @@ function UsersPanel() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-border overflow-hidden">
-        <table className="w-full text-sm" data-testid="users-table">
+      <div className="rounded-lg border border-border overflow-x-auto">
+        <table className="w-full text-sm min-w-[860px]" data-testid="users-table">
           <thead className="bg-secondary/40">
             <tr className="text-left">
               <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">User</th>
@@ -2302,7 +2305,7 @@ function UsersPanel() {
             {!loading && rows.map((u) => (
               <tr key={u.id} className="border-t border-border/60 hover:bg-secondary/20" data-testid={`users-row-${u.id}`}>
                 <td className="px-3 py-2 font-medium">{u.username || u.name || "—"}</td>
-                <td className="px-3 py-2 text-muted-foreground">
+                <td className="px-3 py-2 text-muted-foreground max-w-[240px] truncate" title={u.email}>
                   {u.email}
                   {u.email_verified && <span className="ml-1 text-[10px] text-emerald-300">✓</span>}
                 </td>
@@ -2314,10 +2317,10 @@ function UsersPanel() {
                 <td className="px-3 py-2">
                   <StatusPill status={u.status} />
                 </td>
-                <td className="px-3 py-2 text-xs text-muted-foreground">
+                <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                   {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
                 </td>
-                <td className="px-3 py-2 text-xs text-muted-foreground">
+                <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                   {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}
                 </td>
                 <td className="px-3 py-2 text-xs">
@@ -2515,6 +2518,7 @@ function UserDetailDrawer({ loading, detail, onClose, onRefresh, onRowsRefresh }
               userId={detail.id}
               userEmail={detail.email}
               userStatus={detail.status}
+              permissionTier={detail.permission_tier}
               refresh={() => { onRefresh?.(); onRowsRefresh?.(); }}
             />
 
@@ -2541,311 +2545,567 @@ function DetailRow({ k, v }) {
 }
 
 
-/* ─── Iter 215 — Admin Actions panel ──────────────────────────────── */
-function AdminActionsPanel({ userId, userEmail, userStatus, refresh }) {
-  const [busy, setBusy] = useState<string | null>(null);
+/* ─── Iter 215c — Admin Actions panel (config-driven dialogs) ────── */
+const REASON_CODES = [
+  { value: "harassment", label: "Harassment" },
+  { value: "fraud", label: "Fraud" },
+  { value: "cheating", label: "Cheating" },
+  { value: "collusion", label: "Collusion" },
+  { value: "spam", label: "Spam" },
+  { value: "other", label: "Other" },
+];
 
-  const call = async (path, body, opts: any = {}) => {
-    const { confirmMessage, successMessage } = opts;
-    if (confirmMessage && !window.confirm(confirmMessage)) return;
-    setBusy(path);
+const ACTION_CONFIGS = {
+  suspend: {
+    title: "Suspend account", tone: "warn", path: "/suspend",
+    description: "Temporary suspension. Auto-expires after duration.",
+    fields: [
+      { name: "duration_days", label: "Duration (days)", type: "number", required: true, default: 7 },
+      { name: "reason_code", label: "Reason code", type: "select", options: REASON_CODES, default: "other" },
+      { name: "reason", label: "Reason (visible to user)", type: "textarea", required: true },
+    ],
+    success: "User suspended",
+  },
+  ban_permanent: {
+    title: "Permanent ban", tone: "danger", path: "/ban-permanent",
+    description: "Irreversible. Senior-admin only. We strongly recommend a second-admin sign-off.",
+    requireConfirm: true,
+    fields: [
+      { name: "reason_code", label: "Reason code", type: "select", options: REASON_CODES, default: "other" },
+      { name: "reason", label: "Reason (visible to user)", type: "textarea", required: true },
+      { name: "second_signoff_admin_email", label: "Second admin sign-off email (recommended)", type: "text" },
+    ],
+    extraBody: { confirm: true },
+    success: "User permanently banned",
+  },
+  reinstate: {
+    title: "Reinstate account", tone: "success", path: "/reinstate",
+    description: "Lift any active ban or suspension.",
+    fields: [{ name: "note", label: "Reinstatement note (esp. for appeals)", type: "textarea", required: true }],
+    success: "User reinstated",
+  },
+  force_logout: {
+    title: "Force logout all sessions", tone: "warn", path: "/force-logout",
+    description: "Revokes every active session for this user. JWT token_version is bumped.",
+    fields: [], success: "All sessions revoked",
+  },
+  deactivate: {
+    title: "Deactivate account", tone: "warn", path: "/deactivate",
+    description: "Soft deactivation — account hidden, login blocked. Reversible.",
+    fields: [{ name: "reason", label: "Reason", type: "textarea" }],
+    success: "Account deactivated",
+  },
+  reactivate: {
+    title: "Reactivate account", tone: "success", path: "/reactivate",
+    description: "Restore a deactivated account.",
+    fields: [], success: "Account reactivated",
+  },
+  delete: {
+    title: "Hard delete (anonymise)", tone: "danger", path: "/delete",
+    description: "IRREVERSIBLE. PII anonymised; rare action — usually legal/compliance only.",
+    requireConfirm: true,
+    fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
+    extraBody: { confirm: true },
+    success: "User hard-deleted (anonymised)",
+  },
+  reset_password: {
+    title: "Reset password", tone: "default", path: "/reset-password",
+    description: "Trigger a password-reset email. Admin never sees the new password.",
+    fields: [], success: "Reset email queued",
+  },
+  verify_email: {
+    title: "Verify email", tone: "default", path: "/verify-email",
+    description: "Mark the email as verified (manual override).",
+    fields: [], success: "Email marked verified",
+  },
+  verify_phone: {
+    title: "Verify phone", tone: "default", path: "/verify-phone",
+    description: "Mark the phone number as verified.",
+    fields: [], success: "Phone marked verified",
+  },
+  edit_username: {
+    title: "Edit username", tone: "default", path: "/edit-username",
+    description: "Override the normal change-frequency limits. Recorded in change history.",
+    fields: [
+      { name: "username", label: "New username", type: "text", required: true },
+      { name: "reason", label: "Reason", type: "textarea" },
+    ],
+    success: "Username updated",
+  },
+  merge_accounts: {
+    title: "Merge accounts", tone: "danger", path: "/merge-accounts",
+    description: "STUBBED — audit-only. Source user data merged INTO this target account.",
+    fields: [
+      { name: "source_user_id", label: "Source user id", type: "text", required: true },
+      { name: "reason", label: "Reason", type: "textarea" },
+    ],
+    success: "Merge queued",
+  },
+  unlink_sso: {
+    title: "Unlink SSO provider", tone: "warn", path: "/unlink-sso",
+    fields: [
+      { name: "provider", label: "Provider", type: "select",
+        options: [{ value: "google", label: "Google" }, { value: "apple", label: "Apple" },
+                  { value: "facebook", label: "Facebook" }, { value: "github", label: "GitHub" }],
+        required: true },
+    ],
+    success: "SSO unlinked",
+  },
+  permission_tier: {
+    title: "Set permission tier", tone: "warn", path: "/permission-tier",
+    description: "Grant or revoke admin tooling access. Requires senior_admin to perform.",
+    fields: [
+      { name: "tier", label: "New tier", type: "select", required: true,
+        options: [
+          { value: "user", label: "user (no admin access)" },
+          { value: "moderator", label: "moderator (mute/warn/flag only)" },
+          { value: "admin", label: "admin (most actions)" },
+          { value: "senior_admin", label: "senior_admin (irreversible actions)" },
+        ], default: "moderator" },
+      { name: "reason", label: "Reason", type: "textarea", required: true },
+    ],
+    success: "Permission tier updated",
+  },
+  remove_from_league: {
+    title: "Remove from league", tone: "warn", path: "/remove-from-league",
+    fields: [
+      { name: "league_id", label: "League id", type: "text", required: true },
+      { name: "handover_mode", label: "Handover mode", type: "select", required: true,
+        options: [{ value: "commissioner", label: "Commissioner takes over" },
+                  { value: "ai", label: "AI auto-manages" },
+                  { value: "pause", label: "Pause league" }] },
+      { name: "reason", label: "Reason", type: "textarea" },
+    ],
+    success: "User removed from league",
+  },
+  transfer_commissioner: {
+    title: "Transfer commissioner", tone: "warn", path: "/transfer-commissioner",
+    fields: [
+      { name: "league_id", label: "League id", type: "text", required: true },
+      { name: "new_commissioner_user_id", label: "New commissioner user id", type: "text", required: true },
+      { name: "reason", label: "Reason", type: "textarea" },
+    ],
+    success: "Commissioner transferred",
+  },
+  force_remove_draft: {
+    title: "Force-remove from draft", tone: "warn", path: "/force-remove-from-draft",
+    description: "Autopick takeover; the user is removed from active picking.",
+    fields: [
+      { name: "draft_id", label: "Draft id", type: "text", required: true },
+      { name: "reason", label: "Reason", type: "textarea" },
+    ],
+    success: "Autopick takeover triggered",
+  },
+  reset_team: {
+    title: "Reset team", tone: "danger", path: "/reset-team",
+    description: "STUBBED — versioned snapshot rollback. Audit-only.",
+    fields: [
+      { name: "team_id", label: "Team id", type: "text", required: true },
+      { name: "reason", label: "Reason", type: "textarea" },
+    ],
+    success: "Reset queued",
+  },
+  warning: {
+    title: "Issue warning", tone: "warn", path: "/warning",
+    description: "Tiered. 3rd warning auto-suspends 3 days. User is notified.",
+    fields: [{ name: "reason", label: "Warning reason", type: "textarea", required: true }],
+    success: "Warning issued",
+  },
+  mute: {
+    title: "Mute (chat only)", tone: "warn", path: "/mute",
+    description: "Restricts chat without suspending play.",
+    fields: [
+      { name: "duration_hours", label: "Duration (hours)", type: "number", required: true, default: 24 },
+      { name: "reason", label: "Reason", type: "textarea", required: true },
+    ],
+    success: "User muted",
+  },
+  unmute: {
+    title: "Unmute user", tone: "success", path: "/unmute",
+    fields: [], success: "User unmuted",
+  },
+  flag_review: {
+    title: "Flag for review", tone: "default", path: "/flag-for-review",
+    description: "Adds to admin watchlist. No visible action to the user.",
+    fields: [{ name: "reason", label: "Reason for watchlisting", type: "textarea", required: true }],
+    success: "Added to watchlist",
+  },
+  unflag: {
+    title: "Remove from watchlist", tone: "default", path: "/unflag",
+    fields: [], success: "Removed from watchlist",
+  },
+  delete_content: {
+    title: "Delete content", tone: "warn", path: "/delete-content",
+    description: "STUBBED — delegate to existing moderation-queue flow.",
+    fields: [
+      { name: "content_type", label: "Content type", type: "select", required: true,
+        options: [{ value: "chat_message", label: "Chat message" },
+                  { value: "forum_post", label: "Forum post" },
+                  { value: "team_name", label: "Team name" },
+                  { value: "avatar", label: "Avatar" }] },
+      { name: "content_id", label: "Content id", type: "text", required: true },
+      { name: "reason", label: "Reason", type: "textarea" },
+    ],
+    success: "Content delete queued",
+  },
+  refund: {
+    title: "Issue refund", tone: "warn", path: "/refund",
+    description: "STUBBED — Stripe API call deferred.",
+    fields: [
+      { name: "amount_cents", label: "Amount (cents)", type: "number", required: true, default: 999 },
+      { name: "currency", label: "Currency", type: "text", default: "usd" },
+      { name: "reason", label: "Reason", type: "textarea", required: true },
+      { name: "transaction_id", label: "Transaction id (optional)", type: "text" },
+    ],
+    success: "Refund recorded",
+  },
+  adjust_tier: {
+    title: "Adjust subscription tier", tone: "default", path: "/adjust-tier",
+    fields: [
+      { name: "tier", label: "New tier", type: "select", required: true,
+        options: [{ value: "free", label: "Free" }, { value: "pro", label: "Pro" },
+                  { value: "commish", label: "Commish" }, { value: "premium", label: "Premium" }] },
+      { name: "reason", label: "Reason", type: "textarea" },
+      { name: "comp", label: "Goodwill comp?", type: "checkbox" },
+    ],
+    success: "Tier adjusted",
+  },
+  promo_credit: {
+    title: "Add/remove promo credit", tone: "default", path: "/promo-credit",
+    description: "Negative amount removes credit.",
+    fields: [
+      { name: "amount_cents", label: "Amount (cents, neg=remove)", type: "number", required: true, default: 500 },
+      { name: "currency", label: "Currency", type: "text", default: "usd" },
+      { name: "note", label: "Note", type: "textarea" },
+    ],
+    success: "Promo credit updated",
+  },
+  void_payout: {
+    title: "Void pending payout", tone: "warn", path: "/void-payout",
+    description: "STUBBED.",
+    fields: [
+      { name: "payout_id", label: "Payout id", type: "text", required: true },
+      { name: "reason", label: "Reason", type: "textarea" },
+    ],
+    success: "Payout voided",
+  },
+  manual_payout: {
+    title: "Manual payout", tone: "warn", path: "/manual-payout",
+    description: "STUBBED — for edge cases where automated payout failed.",
+    fields: [
+      { name: "amount_cents", label: "Amount (cents)", type: "number", required: true },
+      { name: "currency", label: "Currency", type: "text", default: "usd" },
+      { name: "reason", label: "Reason", type: "textarea", required: true },
+    ],
+    success: "Manual payout queued",
+  },
+  impersonate: {
+    title: "Impersonate (view-as)", tone: "warn", path: "/impersonate",
+    description: "Issues a 15-min READ-ONLY JWT. The user is notified.",
+    fields: [{ name: "reason", label: "Reason", type: "textarea", required: true }],
+    success: "Read-only impersonation token issued",
+  },
+  resend_verification: {
+    title: "Resend verification email", tone: "default", path: "/resend-verification",
+    fields: [], success: "Verification email resent",
+  },
+  link_ticket: {
+    title: "Link support ticket", tone: "default", path: "/link-support-ticket",
+    fields: [
+      { name: "ticket_id", label: "Ticket id", type: "text", required: true },
+      { name: "ticket_url", label: "Ticket URL (optional)", type: "text" },
+      { name: "note", label: "Note", type: "textarea" },
+    ],
+    success: "Ticket linked",
+  },
+  gdpr_delete: {
+    title: "GDPR / CCPA delete", tone: "danger", path: "/gdpr-delete",
+    description: "Right-to-be-forgotten deletion. PII anonymised; data-retention compliant.",
+    requireConfirm: true,
+    fields: [{ name: "reason", label: "Deletion reason", type: "textarea", required: true,
+               default: "GDPR/CCPA data deletion request" }],
+    extraBody: { confirm: true },
+    success: "GDPR deletion executed",
+  },
+};
+
+function AdminActionsPanel({ userId, userEmail, userStatus, permissionTier, refresh }) {
+  const [active, setActive] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const open = (key) => setActive(key);
+  const close = () => setActive(null);
+
+  const submit = async (cfg, values) => {
+    setBusy(true);
     try {
-      const { data } = await api.post(`/admin/platform/users/${userId}${path}`, body || {});
-      const note = data?.mocked ? " (MOCKED)" : "";
-      toast.success((successMessage || "Action complete") + note);
+      const body = { ...(cfg.extraBody || {}), ...values };
+      let res;
+      if (cfg.path === "/export-data") {
+        res = await api.get(`/admin/platform/users/${userId}${cfg.path}`);
+        // Trigger download
+        const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: "application/json" });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `user-data-${userId}.json`; a.click();
+        window.URL.revokeObjectURL(url);
+      } else {
+        res = await api.post(`/admin/platform/users/${userId}${cfg.path}`, body);
+      }
+      const note = res.data?.mocked ? " (MOCKED)" : "";
+      toast.success((cfg.success || "Action complete") + note);
+      close();
       refresh?.();
-    } catch (e) {
+    } catch (e: any) {
       toast.error(e?.response?.data?.detail || "Action failed");
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
-  const ask = (label, defaultValue = "") => {
-    const v = window.prompt(label, defaultValue);
-    return v === null ? null : (v.trim() || "");
-  };
+  const renderBtn = (k, label, tone?) => (
+    <ActionBtn testid={`action-${k.replace(/_/g, "-")}`} tone={tone} onClick={() => open(k)} key={k}>
+      {label}
+    </ActionBtn>
+  );
 
   return (
     <section className="space-y-3" data-testid="user-actions-panel">
       <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         Admin Actions <span className="text-foreground/60 normal-case font-normal">· every action is logged</span>
+        {permissionTier && (
+          <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full border border-border" data-testid="target-permission-tier">
+            current tier: {permissionTier}
+          </span>
+        )}
       </h4>
 
-      {/* Account Status */}
       <ActionGroup label="Account Status" testid="actions-account-status">
-        <ActionBtn testid="action-suspend" busy={busy === "/suspend"} onClick={async () => {
-          const days = parseInt(ask("Suspension duration in days", "7") || "0", 10);
-          if (!days) return;
-          const reason = ask("Reason for suspension (visible to the user)");
-          if (reason === null) return;
-          await call("/suspend", { duration_days: days, reason_code: "other", reason },
-            { successMessage: `User suspended for ${days} day(s)` });
-        }}>Suspend</ActionBtn>
-
-        <ActionBtn testid="action-ban" tone="danger" busy={busy === "/ban"} onClick={async () => {
-          const reason = ask("Reason for PERMANENT ban (visible to user)");
-          if (reason === null) return;
-          const second = ask("Second admin sign-off email (optional, recommended)") || "";
-          await call("/ban-permanent", { confirm: true, reason_code: "other", reason,
-                                second_signoff_admin_email: second || null },
-            { confirmMessage: `Permanently ban ${userEmail}? This is a heavy action and is logged.`,
-              successMessage: "User permanently banned" });
-        }}>Ban (permanent)</ActionBtn>
-
-        {(userStatus === "banned" || userStatus === "suspended") && (
-          <ActionBtn testid="action-reinstate" tone="success" busy={busy === "/reinstate"} onClick={async () => {
-            const note = ask("Reinstatement note (especially important for appeals)");
-            if (note === null) return;
-            await call("/reinstate", { note }, { successMessage: "User reinstated" });
-          }}>Reinstate</ActionBtn>
-        )}
-
-        <ActionBtn testid="action-force-logout" busy={busy === "/force-logout"} onClick={() =>
-          call("/force-logout", null,
-            { confirmMessage: "Force-logout ALL sessions for this user?",
-              successMessage: "All sessions revoked" })
-        }>Force logout</ActionBtn>
-
-        {userStatus !== "deactivated" && (
-          <ActionBtn testid="action-deactivate" busy={busy === "/deactivate"} onClick={async () => {
-            const reason = ask("Reason for deactivation");
-            if (reason === null) return;
-            await call("/deactivate", { reason },
-              { confirmMessage: "Deactivate (soft) this account?", successMessage: "Account deactivated" });
-          }}>Deactivate</ActionBtn>
-        )}
-
-        {userStatus === "deactivated" && (
-          <ActionBtn testid="action-reactivate" tone="success" busy={busy === "/reactivate"} onClick={() =>
-            call("/reactivate", null, { successMessage: "Account reactivated" })
-          }>Reactivate</ActionBtn>
-        )}
-
-        <ActionBtn testid="action-delete" tone="danger" busy={busy === "/delete"} onClick={async () => {
-          const reason = ask("Reason for HARD delete (rare — usually legal/compliance only)");
-          if (reason === null) return;
-          await call("/delete", { confirm: true, reason },
-            { confirmMessage: `HARD-DELETE ${userEmail}? PII will be anonymised. This action is irreversible.`,
-              successMessage: "User hard-deleted (anonymised)" });
-        }}>Delete</ActionBtn>
+        {renderBtn("suspend", "Suspend")}
+        {renderBtn("ban_permanent", "Ban (permanent)", "danger")}
+        {(userStatus === "banned" || userStatus === "suspended") && renderBtn("reinstate", "Reinstate", "success")}
+        {renderBtn("force_logout", "Force logout")}
+        {userStatus !== "deactivated" && renderBtn("deactivate", "Deactivate")}
+        {userStatus === "deactivated" && renderBtn("reactivate", "Reactivate", "success")}
+        {renderBtn("delete", "Delete", "danger")}
       </ActionGroup>
 
-      {/* Identity & Access */}
       <ActionGroup label="Identity & Access" testid="actions-identity">
-        <ActionBtn testid="action-reset-password" busy={busy === "/reset-password"} onClick={() =>
-          call("/reset-password", null,
-            { confirmMessage: "Trigger password reset email?", successMessage: "Reset email queued" })
-        }>Reset password</ActionBtn>
-
-        <ActionBtn testid="action-verify-email" busy={busy === "/verify-email"} onClick={() =>
-          call("/verify-email", null, { successMessage: "Email marked verified" })
-        }>Verify email</ActionBtn>
-
-        <ActionBtn testid="action-verify-phone" busy={busy === "/verify-phone"} onClick={() =>
-          call("/verify-phone", null, { successMessage: "Phone marked verified" })
-        }>Verify phone</ActionBtn>
-
-        <ActionBtn testid="action-edit-username" busy={busy === "/edit-username"} onClick={async () => {
-          const username = ask("New username", "");
-          if (!username) return;
-          const reason = ask("Reason (admin override of change limits)") || "";
-          await call("/edit-username", { username, reason }, { successMessage: "Username updated" });
-        }}>Edit username</ActionBtn>
-
-        <ActionBtn testid="action-merge-accounts" busy={busy === "/merge-accounts"} onClick={async () => {
-          const src = ask("Source user id to merge INTO this account");
-          if (!src) return;
-          const reason = ask("Reason") || "";
-          await call("/merge-accounts", { source_user_id: src, reason },
-            { confirmMessage: "Merge accounts? (audit-only stub)", successMessage: "Merge queued" });
-        }}>Merge accounts</ActionBtn>
-
-        <ActionBtn testid="action-unlink-sso" busy={busy === "/unlink-sso"} onClick={async () => {
-          const provider = ask("SSO provider to unlink (google, apple, ...)");
-          if (!provider) return;
-          await call("/unlink-sso", { provider }, { successMessage: "SSO unlinked" });
-        }}>Unlink SSO</ActionBtn>
+        {renderBtn("reset_password", "Reset password")}
+        {renderBtn("verify_email", "Verify email")}
+        {renderBtn("verify_phone", "Verify phone")}
+        {renderBtn("edit_username", "Edit username")}
+        {renderBtn("merge_accounts", "Merge accounts")}
+        {renderBtn("unlink_sso", "Unlink SSO")}
+        {renderBtn("permission_tier", "Set permission tier", "warn")}
       </ActionGroup>
 
-      {/* League / Team */}
       <ActionGroup label="League / Team" testid="actions-league">
-        <ActionBtn testid="action-remove-from-league" busy={busy === "/remove-from-league"} onClick={async () => {
-          const league = ask("League id");
-          if (!league) return;
-          const mode = ask("Handover mode (commissioner / ai / pause)", "commissioner");
-          if (!mode) return;
-          const reason = ask("Reason") || "";
-          await call("/remove-from-league", { league_id: league, handover_mode: mode, reason },
-            { successMessage: "User removed from league" });
-        }}>Remove from league</ActionBtn>
-
-        <ActionBtn testid="action-transfer-commissioner" busy={busy === "/transfer-commissioner"} onClick={async () => {
-          const league = ask("League id");
-          if (!league) return;
-          const newC = ask("New commissioner user id");
-          if (!newC) return;
-          const reason = ask("Reason") || "";
-          await call("/transfer-commissioner",
-            { league_id: league, new_commissioner_user_id: newC, reason },
-            { successMessage: "Commissioner transferred" });
-        }}>Transfer commissioner</ActionBtn>
-
-        <ActionBtn testid="action-force-remove-draft" busy={busy === "/force-remove-from-draft"} onClick={async () => {
-          const did = ask("Draft id");
-          if (!did) return;
-          const reason = ask("Reason") || "";
-          await call("/force-remove-from-draft", { draft_id: did, reason },
-            { successMessage: "Autopick takeover triggered" });
-        }}>Force-remove from draft</ActionBtn>
-
-        <ActionBtn testid="action-reset-team" busy={busy === "/reset-team"} onClick={async () => {
-          const tid = ask("Team id");
-          if (!tid) return;
-          const reason = ask("Reason") || "";
-          await call("/reset-team", { team_id: tid, reason },
-            { confirmMessage: "Reset team to prior state? (audit-only stub)",
-              successMessage: "Reset queued" });
-        }}>Reset team</ActionBtn>
+        {renderBtn("remove_from_league", "Remove from league")}
+        {renderBtn("transfer_commissioner", "Transfer commissioner")}
+        {renderBtn("force_remove_draft", "Force-remove from draft")}
+        {renderBtn("reset_team", "Reset team")}
       </ActionGroup>
 
-      {/* Moderation */}
       <ActionGroup label="Moderation" testid="actions-moderation">
-        <ActionBtn testid="action-warning" busy={busy === "/warning"} onClick={async () => {
-          const reason = ask("Warning reason (3rd warning auto-suspends 3 days)");
-          if (!reason) return;
-          await call("/warning", { reason }, { successMessage: "Warning issued" });
-        }}>Issue warning</ActionBtn>
-
-        <ActionBtn testid="action-mute" busy={busy === "/mute"} onClick={async () => {
-          const hours = parseInt(ask("Mute duration in hours", "24") || "0", 10);
-          if (!hours) return;
-          const reason = ask("Reason");
-          if (!reason) return;
-          await call("/mute", { duration_hours: hours, reason },
-            { successMessage: `Muted for ${hours}h` });
-        }}>Mute</ActionBtn>
-
-        <ActionBtn testid="action-unmute" busy={busy === "/unmute"} onClick={() =>
-          call("/unmute", null, { successMessage: "User unmuted" })
-        }>Unmute</ActionBtn>
-
-        <ActionBtn testid="action-flag-review" busy={busy === "/flag-for-review"} onClick={async () => {
-          const reason = ask("Why are you flagging this user for review?");
-          if (!reason) return;
-          await call("/flag-for-review", { reason }, { successMessage: "Flagged for review (watchlist)" });
-        }}>Flag for review</ActionBtn>
-
-        <ActionBtn testid="action-unflag" busy={busy === "/unflag"} onClick={() =>
-          call("/unflag", null, { successMessage: "Removed from watchlist" })
-        }>Unflag</ActionBtn>
-
-        <ActionBtn testid="action-delete-content" busy={busy === "/delete-content"} onClick={async () => {
-          const ct = ask("Content type (chat_message / forum_post / team_name / avatar)");
-          if (!ct) return;
-          const cid = ask("Content id");
-          if (!cid) return;
-          const reason = ask("Reason") || "";
-          await call("/delete-content", { content_type: ct, content_id: cid, reason },
-            { successMessage: "Content delete queued" });
-        }}>Delete content</ActionBtn>
+        {renderBtn("warning", "Issue warning")}
+        {renderBtn("mute", "Mute")}
+        {renderBtn("unmute", "Unmute")}
+        {renderBtn("flag_review", "Flag for review")}
+        {renderBtn("unflag", "Unflag")}
+        {renderBtn("delete_content", "Delete content")}
       </ActionGroup>
 
-      {/* Financial */}
       <ActionGroup label="Financial" testid="actions-financial">
-        <ActionBtn testid="action-refund" busy={busy === "/refund"} onClick={async () => {
-          const amt = parseInt(ask("Refund amount in CENTS", "999") || "0", 10);
-          if (!amt) return;
-          const reason = ask("Reason") || "";
-          const txn = ask("Transaction id (optional)") || "";
-          await call("/refund", { amount_cents: amt, currency: "usd", reason, transaction_id: txn },
-            { confirmMessage: "Issue refund? (Stripe call STUBBED)", successMessage: "Refund recorded" });
-        }}>Refund</ActionBtn>
-
-        <ActionBtn testid="action-adjust-tier" busy={busy === "/adjust-tier"} onClick={async () => {
-          const tier = ask("New tier (free / pro / commish / premium)");
-          if (!tier) return;
-          const reason = ask("Reason") || "";
-          const comp = window.confirm("Mark as goodwill comp?");
-          await call("/adjust-tier", { tier, reason, comp },
-            { successMessage: `Tier set to ${tier}` });
-        }}>Adjust tier</ActionBtn>
-
-        <ActionBtn testid="action-promo-credit" busy={busy === "/promo-credit"} onClick={async () => {
-          const amt = parseInt(ask("Credit amount in CENTS (negative to remove)", "500") || "0", 10);
-          if (!amt) return;
-          const note = ask("Note") || "";
-          await call("/promo-credit", { amount_cents: amt, currency: "usd", note },
-            { successMessage: "Promo credit updated" });
-        }}>Promo credit</ActionBtn>
-
-        <ActionBtn testid="action-void-payout" busy={busy === "/void-payout"} onClick={async () => {
-          const pid = ask("Payout id to void");
-          if (!pid) return;
-          const reason = ask("Reason") || "";
-          await call("/void-payout", { payout_id: pid, reason }, { successMessage: "Payout voided" });
-        }}>Void payout</ActionBtn>
-
-        <ActionBtn testid="action-manual-payout" busy={busy === "/manual-payout"} onClick={async () => {
-          const amt = parseInt(ask("Payout amount in CENTS") || "0", 10);
-          if (!amt) return;
-          const reason = ask("Reason") || "";
-          await call("/manual-payout", { amount_cents: amt, currency: "usd", reason },
-            { successMessage: "Manual payout queued" });
-        }}>Manual payout</ActionBtn>
+        {renderBtn("refund", "Refund")}
+        {renderBtn("adjust_tier", "Adjust tier")}
+        {renderBtn("promo_credit", "Promo credit")}
+        {renderBtn("void_payout", "Void payout")}
+        {renderBtn("manual_payout", "Manual payout")}
       </ActionGroup>
 
-      {/* Support */}
       <ActionGroup label="Support" testid="actions-support">
-        <ActionBtn testid="action-impersonate" busy={busy === "/impersonate"} onClick={async () => {
-          const reason = ask("Reason for view-as / impersonation (the user is notified)");
-          if (!reason) return;
-          await call("/impersonate", { reason },
-            { confirmMessage: `Begin read-only impersonation of ${userEmail}? The user will be notified.`,
-              successMessage: "Read-only impersonation token issued (15-min)" });
-        }}>Impersonate (view-as)</ActionBtn>
-
-        <ActionBtn testid="action-resend-verification" busy={busy === "/resend-verification"} onClick={() =>
-          call("/resend-verification", null, { successMessage: "Verification email resent" })
-        }>Resend verification</ActionBtn>
-
-        <ActionBtn testid="action-link-ticket" busy={busy === "/link-support-ticket"} onClick={async () => {
-          const tid = ask("Support ticket id");
-          if (!tid) return;
-          const url = ask("Ticket URL (optional)") || "";
-          const note = ask("Note") || "";
-          await call("/link-support-ticket", { ticket_id: tid, ticket_url: url, note },
-            { successMessage: "Ticket linked" });
-        }}>Link support ticket</ActionBtn>
-
-        <ActionBtn testid="action-export-data" busy={busy === "/export-data"} onClick={async () => {
-          setBusy("/export-data");
+        {renderBtn("impersonate", "Impersonate (view-as)")}
+        {renderBtn("resend_verification", "Resend verification")}
+        {renderBtn("link_ticket", "Link support ticket")}
+        <ActionBtn testid="action-export-data" onClick={async () => {
+          setBusy(true);
           try {
             const { data } = await api.get(`/admin/platform/users/${userId}/export-data`);
             const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement("a");
-            a.href = url;
-            a.download = `user-data-${userId}.json`;
-            a.click();
+            a.href = url; a.download = `user-data-${userId}.json`; a.click();
             window.URL.revokeObjectURL(url);
             toast.success("Data export downloaded");
-          } catch (e) {
+          } catch (e: any) {
             toast.error(e?.response?.data?.detail || "Export failed");
-          } finally {
-            setBusy(null);
-          }
+          } finally { setBusy(false); }
         }}>Export data (GDPR)</ActionBtn>
-
-        <ActionBtn testid="action-gdpr-delete" tone="danger" busy={busy === "/gdpr-delete"} onClick={async () => {
-          const reason = ask("GDPR / CCPA deletion reason");
-          if (reason === null) return;
-          await call("/gdpr-delete", { confirm: true, reason },
-            { confirmMessage: `GDPR-DELETE ${userEmail}? Irreversible.`,
-              successMessage: "GDPR deletion executed" });
-        }}>GDPR delete</ActionBtn>
+        {renderBtn("gdpr_delete", "GDPR delete", "danger")}
       </ActionGroup>
+
+      {active && (
+        <ActionDialog
+          config={ACTION_CONFIGS[active]}
+          userEmail={userEmail}
+          busy={busy}
+          onClose={close}
+          onSubmit={(values) => submit(ACTION_CONFIGS[active], values)}
+        />
+      )}
     </section>
+  );
+}
+
+function ActionDialog({ config, userEmail, busy, onClose, onSubmit }) {
+  const [values, setValues] = useState<Record<string, any>>(() => {
+    const init: any = {};
+    (config.fields || []).forEach((f) => {
+      init[f.name] = f.default ?? (f.type === "checkbox" ? false : "");
+    });
+    return init;
+  });
+  const [acknowledged, setAcknowledged] = useState(false);
+
+  const update = (name, val) => setValues((prev) => ({ ...prev, [name]: val }));
+
+  const isValid = () => {
+    for (const f of config.fields || []) {
+      if (f.required) {
+        const v = values[f.name];
+        if (v === undefined || v === null || v === "") return false;
+      }
+    }
+    if (config.requireConfirm && !acknowledged) return false;
+    return true;
+  };
+
+  const toneCls = config.tone === "danger" ? "border-rose-500/40"
+    : config.tone === "warn" ? "border-amber-500/40"
+    : config.tone === "success" ? "border-emerald-500/40"
+    : "";
+
+  const submitCls = config.tone === "danger" ? "bg-rose-500 hover:bg-rose-600 text-white"
+    : config.tone === "warn" ? "bg-amber-500 hover:bg-amber-600 text-white"
+    : "bg-primary hover:bg-primary/90 text-primary-foreground";
+
+  return (
+    <Dialog open={true} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent
+        className={`max-w-[520px] ${toneCls}`}
+        data-testid={`action-dialog-${config.path?.replace(/^\//, "")}`}
+      >
+        <DialogHeader>
+          <DialogTitle>{config.title}</DialogTitle>
+          <DialogDescription>
+            Target: <code className="text-foreground">{userEmail}</code>
+            {config.description && <span className="block mt-2 text-xs">{config.description}</span>}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 py-2">
+          {(config.fields || []).map((f) => (
+            <FieldRenderer
+              key={f.name}
+              field={f}
+              value={values[f.name]}
+              onChange={(v) => update(f.name, v)}
+            />
+          ))}
+          {config.requireConfirm && (
+            <label className="flex items-start gap-2 text-xs text-rose-300 mt-2 cursor-pointer" data-testid="dialog-confirm-checkbox">
+              <input
+                type="checkbox"
+                checked={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>I understand this action is irreversible and proceed at my own accountability.</span>
+            </label>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy} data-testid="dialog-cancel-btn">
+            Cancel
+          </Button>
+          <Button
+            onClick={() => onSubmit(values)}
+            disabled={!isValid() || busy}
+            className={submitCls}
+            data-testid="dialog-submit-btn"
+          >
+            {busy ? "Working…" : "Confirm"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FieldRenderer({ field, value, onChange }) {
+  if (field.type === "select") {
+    return (
+      <div className="space-y-1">
+        <Label className="text-xs">{field.label}{field.required && <span className="text-rose-300 ml-0.5">*</span>}</Label>
+        <Select value={value || ""} onValueChange={onChange}>
+          <SelectTrigger className="h-9" data-testid={`field-${field.name}`}>
+            <SelectValue placeholder={field.placeholder || `Select ${field.label.toLowerCase()}`} />
+          </SelectTrigger>
+          <SelectContent>
+            {field.options.map((o) => (<SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>))}
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
+  if (field.type === "textarea") {
+    return (
+      <div className="space-y-1">
+        <Label className="text-xs">{field.label}{field.required && <span className="text-rose-300 ml-0.5">*</span>}</Label>
+        <Textarea
+          value={value || ""}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder}
+          rows={3}
+          data-testid={`field-${field.name}`}
+        />
+      </div>
+    );
+  }
+  if (field.type === "number") {
+    return (
+      <div className="space-y-1">
+        <Label className="text-xs">{field.label}{field.required && <span className="text-rose-300 ml-0.5">*</span>}</Label>
+        <Input
+          type="number"
+          value={value ?? ""}
+          onChange={(e) => onChange(e.target.value === "" ? "" : parseInt(e.target.value, 10))}
+          data-testid={`field-${field.name}`}
+        />
+      </div>
+    );
+  }
+  if (field.type === "checkbox") {
+    return (
+      <label className="flex items-center gap-2 text-sm cursor-pointer">
+        <input type="checkbox" checked={!!value} onChange={(e) => onChange(e.target.checked)} data-testid={`field-${field.name}`} />
+        <span>{field.label}</span>
+      </label>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs">{field.label}{field.required && <span className="text-rose-300 ml-0.5">*</span>}</Label>
+      <Input
+        type="text"
+        value={value || ""}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={field.placeholder}
+        data-testid={`field-${field.name}`}
+      />
+    </div>
   );
 }
 
@@ -2858,24 +3118,26 @@ function ActionGroup({ label, testid, children }) {
   );
 }
 
-function ActionBtn({ children, onClick, busy, tone = "default", testid }: any) {
+function ActionBtn({ children, onClick, tone = "default", testid }: any) {
   const toneCls = tone === "danger"
     ? "border-rose-500/40 text-rose-300 hover:bg-rose-500/10"
-    : tone === "success"
-      ? "border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10"
-      : "border-border text-foreground hover:bg-secondary/40";
+    : tone === "warn"
+      ? "border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+      : tone === "success"
+        ? "border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10"
+        : "border-border text-foreground hover:bg-secondary/40";
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={!!busy}
-      className={`text-xs px-2.5 py-1.5 rounded border transition-colors disabled:opacity-50 ${toneCls}`}
+      className={`text-xs px-2.5 py-1.5 rounded border transition-colors ${toneCls}`}
       data-testid={testid}
     >
-      {busy ? "Working…" : children}
+      {children}
     </button>
   );
 }
+
 
 /* ─── Iter 215 — Action history (audit trail) ──────────────────────── */
 function AdminActionHistorySection({ userId }) {

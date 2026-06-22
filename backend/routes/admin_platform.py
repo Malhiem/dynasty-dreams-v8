@@ -1131,6 +1131,7 @@ async def get_user_detail(user_id: str, request: Request):
         "password_hash_present": bool(u.get("password_hash")),
         "linked_sso_accounts": u.get("linked_sso_accounts") or [],
         "role": u.get("role") or "user",
+        "permission_tier": u.get("permission_tier"),
         "status": u.get("status") or ("active" if u.get("is_active", True) else "deactivated"),
         "ban_reason_code": u.get("ban_reason_code"),
         "ban_reason": u.get("ban_reason"),

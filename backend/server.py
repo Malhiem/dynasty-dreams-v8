@@ -93,12 +93,34 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 # JWT Token Management
-def create_access_token(user_id: str, email: str) -> str:
+def create_access_token(user_id: str, email: str, **extra) -> str:
     payload = {
         "sub": user_id,
         "email": email,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
         "type": "access"
+    }
+    payload.update(extra)
+    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+
+
+def create_impersonation_token(
+    *, target_user_id: str, target_email: str, impersonator_id: str,
+    impersonator_email: str, minutes: int = 15,
+) -> str:
+    """Iter 215c — short-lived read-only impersonation token used by
+    admins doing 'view-as' support investigations. Encoded with
+    `type=impersonation` so `get_current_user` returns the target user
+    decorated with `_impersonator` metadata (audit visibility) and
+    `_impersonation_mode=read_only`."""
+    payload = {
+        "sub": target_user_id,
+        "email": target_email,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes),
+        "type": "impersonation",
+        "mode": "read_only",
+        "impersonator_id": impersonator_id,
+        "impersonator_email": impersonator_email,
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
@@ -121,13 +143,20 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
-        if payload.get("type") != "access":
+        token_type = payload.get("type")
+        if token_type not in ("access", "impersonation"):
             raise HTTPException(status_code=401, detail="Invalid token type")
         user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
         user["_id"] = str(user["_id"])
         user.pop("password_hash", None)
+        # Iter 215c — surface impersonation context so endpoints can
+        # block writes when an admin is in read-only view-as mode.
+        if token_type == "impersonation":
+            user["_impersonator_id"] = payload.get("impersonator_id")
+            user["_impersonator_email"] = payload.get("impersonator_email")
+            user["_impersonation_mode"] = payload.get("mode", "read_only")
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -587,6 +616,7 @@ _router_deps = {
     "hash_password": hash_password,
     "verify_password": verify_password,
     "create_access_token": create_access_token,
+    "create_impersonation_token": create_impersonation_token,
     "create_refresh_token": create_refresh_token,
     "get_jwt_secret": get_jwt_secret,
     "JWT_ALGORITHM": JWT_ALGORITHM,

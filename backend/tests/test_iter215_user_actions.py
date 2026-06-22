@@ -269,3 +269,45 @@ def test_gdpr_delete_anonymises_pii():
     assert detail["email"] != original_email
     assert "@anonymised.local" in detail["email"]
     assert detail["status"] == "deleted"
+
+
+# ── Iter 215c — Permission tier + real JWT impersonation ─────────────
+
+def test_permission_tier_set_and_reflected_in_detail():
+    uid, _, _ = _make_disposable_user()
+    H = _admin_headers()
+    r = requests.post(f"{API_URL}/api/admin/platform/users/{uid}/permission-tier",
+                      headers=H, json={"tier": "moderator", "reason": "Promote to moderator"})
+    assert r.status_code == 200, r.text
+    assert r.json()["tier"] == "moderator"
+    detail = requests.get(f"{API_URL}/api/admin/platform/users/{uid}", headers=H).json()
+    assert detail["permission_tier"] == "moderator"
+
+
+def test_permission_tier_invalid_rejected():
+    uid, _, _ = _make_disposable_user()
+    H = _admin_headers()
+    r = requests.post(f"{API_URL}/api/admin/platform/users/{uid}/permission-tier",
+                      headers=H, json={"tier": "god", "reason": "x"})
+    assert r.status_code == 400
+
+
+def test_impersonation_token_decodes_to_target_user():
+    """Iter 215c — Real JWT issuance. The returned token, when used as
+    an Authorization Bearer header, should authenticate AS the target
+    user (read-only). The response should NOT carry `mocked: true`."""
+    uid, target_email, _ = _make_disposable_user()
+    H = _admin_headers()
+    r = requests.post(f"{API_URL}/api/admin/platform/users/{uid}/impersonate",
+                      headers=H, json={"reason": "Support investigation"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d.get("impersonation_token")
+    assert d.get("mocked") is None or d.get("mocked") is False
+    # Now use the token to call /auth/me — should return the TARGET user
+    token = d["impersonation_token"]
+    me_r = requests.get(f"{API_URL}/api/auth/me",
+                        headers={"Authorization": f"Bearer {token}"})
+    assert me_r.status_code == 200, me_r.text
+    me = me_r.json()
+    assert me["email"] == target_email
