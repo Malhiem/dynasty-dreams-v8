@@ -48,6 +48,8 @@ const managementItems = [
 const draftItems = [
   { title: "Draft Board", url: "/draft-board", icon: ClipboardList },
   { title: "Draft Room", url: "/draft-room", icon: LayoutGrid },
+  // Iter 203 — Past drafts (auto-archived when status flips to `completed`).
+  { title: "Draft History", url: "/draft-history", icon: History },
 ];
 
 export function AppSidebar() {

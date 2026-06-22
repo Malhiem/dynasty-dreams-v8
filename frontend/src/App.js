@@ -44,6 +44,8 @@ import LovableSalaryCap from "@/lovable/pages/SalaryCap";
 import LovableScoring from "@/lovable/pages/Scoring";
 import LovableDraftBoard from "@/lovable/pages/DraftBoard";
 import LovableDraftRoom from "@/lovable/pages/DraftRoom";
+// Iter 203 — Draft History
+import LovableDraftHistory from "@/lovable/pages/DraftHistory";
 import LovableDraftLottery from "@/lovable/pages/DraftLottery";
 import LovableLeagueHistory from "@/lovable/pages/LeagueHistory";
 import LovableTrophyRoom from "@/lovable/pages/TrophyRoom";
@@ -115,6 +117,7 @@ function App() {
           <Route path="/league-info" element={<ProtectedRoute><LovableScoring /></ProtectedRoute>} />
           <Route path="/draft-board" element={<ProtectedRoute><LovableDraftBoard /></ProtectedRoute>} />
           <Route path="/draft-room" element={<ProtectedRoute><LovableDraftRoom /></ProtectedRoute>} />
+          <Route path="/draft-history" element={<ProtectedRoute><LovableDraftHistory /></ProtectedRoute>} />
           <Route path="/draft-lottery" element={<ProtectedRoute><LovableDraftLottery /></ProtectedRoute>} />
           <Route path="/league-history" element={<ProtectedRoute><LovableLeagueHistory /></ProtectedRoute>} />
           <Route path="/trophy-room" element={<ProtectedRoute><LovableTrophyRoom /></ProtectedRoute>} />

@@ -1,7 +1,8 @@
 // @ts-nocheck
 import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 // Iter 170h — Socket.IO subscription for live draft updates.
-import { useSocket } from "@/hooks/use-socket";
+// Iter 203 — extracted into a dedicated hook.
+import useDraftRoomSocket from "@/hooks/use-draft-room-socket";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -291,10 +292,9 @@ export default function DraftRoom() {
   ]);
   const [chatInput, setChatInput] = useState("");
   const [timerPaused, setTimerPaused] = useState(false);
-  // Iter 194c — latest `draft_chat` WS payload forwarded to the
-  // PickTradeReviewPill so it can react to pick-trade events without
-  // taking a hard dependency on the WS hook.
-  const [lastChatEvent, setLastChatEvent] = useState<any>(null);
+  // Iter 194c / 203 — `lastChatEvent` is now owned by `useDraftRoomSocket`
+  // (declared below). The state declaration here was removed in the
+  // iter-203 hook extraction.
   // (Iter 170h — isLeagueManager moved down to derive from the active
   // league context; see below.)
 
@@ -546,55 +546,17 @@ export default function DraftRoom() {
   // lands. We dedupe self-originated events by stamping a
   // `_selfActionId` ref on local actions and skipping the toast for
   // the matching incoming event.
+  // Iter 203 — moved into `useDraftRoomSocket` hook (-45 lines).
   const lastSelfPickRef = useRef<string | null>(null);
   const draftRoomId = currentDraft?._id ? `draft_${currentDraft._id}` : null;
-  useSocket(
-    draftRoomId,
-    {
-      draft_pick: (p: any) => {
-        refreshDraftState();
-        // Skip the toast if this is the echo of OUR pick (we already
-        // toasted locally in handleDraftPlayer).
-        const sig = `${p?.overall}-${p?.player_id}`;
-        if (sig && sig !== lastSelfPickRef.current) {
-          const team = (boardTeams.find((t) => t.abbr === p?.team)?.name) || p?.team || "A team";
-          toast.info(`${team} drafted ${p?.player?.name || "a player"}`, {
-            description: `Pick #${p?.overall} · ${p?.player?.position || ""} ${p?.player?.nhlTeam || ""}`.trim(),
-          });
-        }
-      },
-      draft_undo: (p: any) => {
-        refreshDraftState();
-        const count = p?.count || 1;
-        const onClk = p?.on_the_clock
-          ? (boardTeams.find((t) => t.abbr === p.on_the_clock)?.name || p.on_the_clock)
-          : null;
-        toast.warning(`Commissioner undid ${count} pick${count === 1 ? "" : "s"}`, {
-          description: onClk ? `Now on the clock: ${onClk}` : undefined,
-        });
-      },
-      draft_pick_swapped: (p: any) => {
-        refreshDraftState();
-        toast.warning(`Commissioner swapped pick #${p?.overall}`, {
-          description: p?.pick?.player?.name ? `Now: ${p.pick.player.name}` : undefined,
-        });
-      },
-      draft_chat: (msg: any) => {
-        // Iter 194c — forward every draft_chat payload to the pill so
-        // it can react to pick_trade_* kinds. Use a fresh object ref
-        // each time so the effect dep ([lastChatEvent]) always fires.
-        setLastChatEvent({ ...msg, _rxAt: Date.now() });
-        if (!msg?.id) return;
-        setChatMessages((prev) =>
-          prev.find((m: any) => m.id === msg.id) ? prev : [
-            ...prev,
-            { ...msg, timestamp: new Date(msg.timestamp || Date.now()) },
-          ],
-        );
-      },
-    },
+  const { lastChatEvent, setLastChatEvent } = useDraftRoomSocket({
+    roomId: draftRoomId,
     userId,
-  );
+    refreshDraftState,
+    setChatMessages,
+    boardTeams,
+    lastSelfPickRef,
+  });
 
   // Iter 170h — Commissioner: undo the last N picks.
   const handleUndoPicks = async (count: number = 1) => {
