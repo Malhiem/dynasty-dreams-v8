@@ -19,7 +19,9 @@ import api from "@/lib/api";
 import { toast } from "sonner";
 import {
   Users, ListChecks, TrendingUp, Activity, Shield, RotateCcw, Clock, Filter,
-  ArrowLeftRight, AlertTriangle, UserX, Monitor,
+  ArrowLeftRight, AlertTriangle, UserX, Monitor, BarChart3, Heart, ScrollText,
+  Headphones, ServerCog, DollarSign, Goal, Wrench, Flag, MessageSquare, Gavel,
+  User,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -130,27 +132,35 @@ export default function AdminDashboard() {
         {/* Iter 210 — Real-time critical alerts (Sync + Server Ops + Dead Leagues) */}
         <CriticalAlertBanner />
 
-        <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="bg-secondary/30">
-            <TabsTrigger value="overview" data-testid="admin-tab-overview">Overview</TabsTrigger>
-            <TabsTrigger value="commish" data-testid="admin-tab-commish">Commish Actions</TabsTrigger>
-            <TabsTrigger value="trades" data-testid="admin-tab-trades">Trade Review</TabsTrigger>
-            <TabsTrigger value="collusion" data-testid="admin-tab-collusion">Collusion</TabsTrigger>
-            <TabsTrigger value="tanking" data-testid="admin-tab-tanking">Tanking</TabsTrigger>
-            <TabsTrigger value="lineup" data-testid="admin-tab-lineup">Lineup Audit</TabsTrigger>
-            <TabsTrigger value="reports" data-testid="admin-tab-reports">User Reports</TabsTrigger>
-            <TabsTrigger value="moderation" data-testid="admin-tab-moderation">Moderation</TabsTrigger>
-            <TabsTrigger value="integrity" data-testid="admin-tab-integrity">Account Integrity</TabsTrigger>
-            <TabsTrigger value="appeals" data-testid="admin-tab-appeals">Appeals</TabsTrigger>
-            <TabsTrigger value="health" data-testid="admin-tab-health">League Health</TabsTrigger>
-            <TabsTrigger value="sync" data-testid="admin-tab-sync">Sync Monitor</TabsTrigger>
-            <TabsTrigger value="support" data-testid="admin-tab-support">Support</TabsTrigger>
-            <TabsTrigger value="ops" data-testid="admin-tab-ops">Server Ops</TabsTrigger>
-            <TabsTrigger value="analytics" data-testid="admin-tab-analytics">Analytics</TabsTrigger>
+        <Tabs defaultValue="overview" orientation="vertical" className="flex gap-6" data-testid="admin-tabs-root">
+          {/* Vertical sidebar nav */}
+          <TabsList
+            className="flex flex-col items-stretch h-auto bg-secondary/20 p-2 rounded-lg shrink-0 w-56 sticky top-4 self-start gap-1"
+            data-testid="admin-sidebar-nav"
+          >
+            <SidebarTab value="overview" icon={BarChart3} label="Overview" testid="admin-tab-overview" />
+            <SidebarTab value="users" icon={User} label="Users" testid="admin-tab-users" />
+            <SidebarTab value="commish" icon={Gavel} label="Commish Actions" testid="admin-tab-commish" />
+            <SidebarTab value="trades" icon={ArrowLeftRight} label="Trade Review" testid="admin-tab-trades" />
+            <SidebarTab value="collusion" icon={AlertTriangle} label="Collusion" testid="admin-tab-collusion" />
+            <SidebarTab value="tanking" icon={TrendingUp} label="Tanking" testid="admin-tab-tanking" />
+            <SidebarTab value="lineup" icon={ListChecks} label="Lineup Audit" testid="admin-tab-lineup" />
+            <SidebarTab value="reports" icon={Flag} label="User Reports" testid="admin-tab-reports" />
+            <SidebarTab value="moderation" icon={MessageSquare} label="Moderation" testid="admin-tab-moderation" />
+            <SidebarTab value="integrity" icon={UserX} label="Account Integrity" testid="admin-tab-integrity" />
+            <SidebarTab value="appeals" icon={Shield} label="Appeals" testid="admin-tab-appeals" />
+            <SidebarTab value="health" icon={Heart} label="League Health" testid="admin-tab-health" />
+            <SidebarTab value="sync" icon={Activity} label="Sync Monitor" testid="admin-tab-sync" />
+            <SidebarTab value="support" icon={Headphones} label="Support" testid="admin-tab-support" />
+            <SidebarTab value="ops" icon={ServerCog} label="Server Ops" testid="admin-tab-ops" />
+            <SidebarTab value="analytics" icon={BarChart3} label="Analytics" testid="admin-tab-analytics" />
           </TabsList>
 
+          {/* Right content pane */}
+          <div className="flex-1 min-w-0">
+
           {/* ─── Overview tab ─── */}
-          <TabsContent value="overview" className="space-y-6">
+          <TabsContent value="overview" className="space-y-6 mt-0">
             <section className="space-y-3">
               <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                 Platform Health
@@ -174,7 +184,7 @@ export default function AdminDashboard() {
           </TabsContent>
 
           {/* ─── Commish tab ─── */}
-          <TabsContent value="commish" className="space-y-3">
+          <TabsContent value="commish" className="space-y-3 mt-0">
             <CommishActions
               actions={actions}
               loading={loading}
@@ -186,73 +196,93 @@ export default function AdminDashboard() {
           </TabsContent>
 
           {/* ─── Trade Review (201b) ─── */}
-          <TabsContent value="trades" className="space-y-3">
+          <TabsContent value="trades" className="space-y-3 mt-0">
             <TradesPanel />
           </TabsContent>
 
           {/* ─── Collusion (201c) ─── */}
-          <TabsContent value="collusion" className="space-y-3">
+          <TabsContent value="collusion" className="space-y-3 mt-0">
             <CollusionPanel />
           </TabsContent>
 
           {/* ─── Tanking (201c) ─── */}
-          <TabsContent value="tanking" className="space-y-3">
+          <TabsContent value="tanking" className="space-y-3 mt-0">
             <TankingPanel />
           </TabsContent>
 
           {/* ─── Lineup Audit (201d) ─── */}
-          <TabsContent value="lineup" className="space-y-3">
+          <TabsContent value="lineup" className="space-y-3 mt-0">
             <LineupAuditPanel />
           </TabsContent>
 
           {/* ─── User Reports (Iter 205 — Content Moderation Phase 1) ─── */}
-          <TabsContent value="reports" className="space-y-3">
+          <TabsContent value="reports" className="space-y-3 mt-0">
             <UserReportsPanel />
           </TabsContent>
 
           {/* ─── Moderation Queue + Keyword filters (Iter 206 — Phase 2/3) ─── */}
-          <TabsContent value="moderation" className="space-y-3">
+          <TabsContent value="moderation" className="space-y-3 mt-0">
             <ModerationQueuePanel />
             <KeywordFiltersPanel />
           </TabsContent>
 
           {/* ─── Account Integrity (Iter 206) ─── */}
-          <TabsContent value="integrity" className="space-y-3">
+          <TabsContent value="integrity" className="space-y-3 mt-0">
             <AccountIntegrityPanel />
           </TabsContent>
 
           {/* ─── Appeals (Iter 206) ─── */}
-          <TabsContent value="appeals" className="space-y-3">
+          <TabsContent value="appeals" className="space-y-3 mt-0">
             <AppealsPanel />
           </TabsContent>
 
           {/* ─── League Health (Iter 209) ─── */}
-          <TabsContent value="health" className="space-y-3">
+          <TabsContent value="health" className="space-y-3 mt-0">
             <LeagueHealthPanel />
           </TabsContent>
 
           {/* ─── Sync Monitor (Iter 209) ─── */}
-          <TabsContent value="sync" className="space-y-3">
+          <TabsContent value="sync" className="space-y-3 mt-0">
             <SyncMonitorPanel />
           </TabsContent>
 
           {/* ─── Support Metrics (Iter 209) ─── */}
-          <TabsContent value="support" className="space-y-3">
+          <TabsContent value="support" className="space-y-3 mt-0">
             <SupportMetricsPanel />
           </TabsContent>
 
           {/* ─── Server Ops (Iter 209) ─── */}
-          <TabsContent value="ops" className="space-y-3">
+          <TabsContent value="ops" className="space-y-3 mt-0">
             <ServerOpsPanel />
           </TabsContent>
 
           {/* ─── Platform Analytics (Iter 211) ─── */}
-          <TabsContent value="analytics" className="space-y-3">
+          <TabsContent value="analytics" className="space-y-3 mt-0">
             <PlatformAnalyticsPanel />
           </TabsContent>
+
+          {/* ─── Users (Iter 214) ─── */}
+          <TabsContent value="users" className="space-y-3 mt-0">
+            <UsersPanel />
+          </TabsContent>
+          </div>
         </Tabs>
       </div>
     </div>
+  );
+}
+
+/* ─── SidebarTab — vertical nav button shared by every Tab (Iter 214) ─── */
+function SidebarTab({ value, icon: Icon, label, testid }) {
+  return (
+    <TabsTrigger
+      value={value}
+      data-testid={testid}
+      className="justify-start gap-2 px-3 py-2 text-sm h-9 w-full data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:border-l-2 data-[state=active]:border-primary rounded-md text-left text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-colors"
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="truncate">{label}</span>
+    </TabsTrigger>
   );
 }
 
@@ -2160,6 +2190,340 @@ function PlatformAnalyticsPanel() {
         </div>
       )}
     </section>
+  );
+}
+
+
+/* ──────────────────────────────────────────────────────────────────
+ * Iter 214 — UsersPanel: admin directory + per-user drilldown
+ * ────────────────────────────────────────────────────────────────── */
+function UsersPanel() {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [skip, setSkip] = useState(0);
+  const limit = 25;
+  const [selected, setSelected] = useState(null);
+  const [selectedDetail, setSelectedDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const q = new URLSearchParams();
+      if (query.trim()) q.set("q", query.trim());
+      if (statusFilter) q.set("status", statusFilter);
+      q.set("limit", String(limit));
+      q.set("skip", String(skip));
+      const { data } = await api.get(`/admin/platform/users?${q.toString()}`);
+      setRows(data.users || []);
+      setTotal(data.total || 0);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to load users");
+    } finally {
+      setLoading(false);
+    }
+  }, [query, statusFilter, skip]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const openDetail = async (userId) => {
+    setSelected(userId);
+    setSelectedDetail(null);
+    setDetailLoading(true);
+    try {
+      const { data } = await api.get(`/admin/platform/users/${userId}`);
+      setSelectedDetail(data);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to load user details");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const closeDetail = () => { setSelected(null); setSelectedDetail(null); };
+
+  return (
+    <section className="space-y-4" data-testid="users-section">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          Users <span className="text-foreground/70">· {total.toLocaleString()} total</span>
+        </h2>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Input
+            placeholder="Search email or username"
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setSkip(0); }}
+            className="h-8 w-[240px] text-xs"
+            data-testid="users-search-input"
+          />
+          <Select
+            value={statusFilter || "_all"}
+            onValueChange={(v) => { setStatusFilter(v === "_all" ? "" : v); setSkip(0); }}
+          >
+            <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="users-status-filter">
+              <SelectValue placeholder="All statuses" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_all">All statuses</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="suspended">Suspended</SelectItem>
+              <SelectItem value="banned">Banned</SelectItem>
+              <SelectItem value="deactivated">Deactivated</SelectItem>
+              <SelectItem value="pending_verification">Pending verification</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-border overflow-hidden">
+        <table className="w-full text-sm" data-testid="users-table">
+          <thead className="bg-secondary/40">
+            <tr className="text-left">
+              <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">User</th>
+              <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">Email</th>
+              <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">Role</th>
+              <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">Status</th>
+              <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">Created</th>
+              <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">Last login</th>
+              <th className="px-3 py-2 text-xs font-semibold text-muted-foreground">2FA</th>
+              <th className="px-3 py-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</td></tr>
+            )}
+            {!loading && rows.length === 0 && (
+              <tr><td colSpan={8} className="px-3 py-6 text-center text-xs text-muted-foreground">No users match</td></tr>
+            )}
+            {!loading && rows.map((u) => (
+              <tr key={u.id} className="border-t border-border/60 hover:bg-secondary/20" data-testid={`users-row-${u.id}`}>
+                <td className="px-3 py-2 font-medium">{u.username || u.name || "—"}</td>
+                <td className="px-3 py-2 text-muted-foreground">
+                  {u.email}
+                  {u.email_verified && <span className="ml-1 text-[10px] text-emerald-300">✓</span>}
+                </td>
+                <td className="px-3 py-2">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${
+                    u.role === "admin" ? "border-rose-500/40 text-rose-300" : "border-border text-muted-foreground"
+                  }`}>{u.role}</span>
+                </td>
+                <td className="px-3 py-2">
+                  <StatusPill status={u.status} />
+                </td>
+                <td className="px-3 py-2 text-xs text-muted-foreground">
+                  {u.created_at ? new Date(u.created_at).toLocaleDateString() : "—"}
+                </td>
+                <td className="px-3 py-2 text-xs text-muted-foreground">
+                  {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}
+                </td>
+                <td className="px-3 py-2 text-xs">
+                  {u.two_factor_enabled ? <span className="text-emerald-300">ON</span> : <span className="text-muted-foreground">off</span>}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openDetail(u.id)}
+                    data-testid={`users-view-${u.id}`}
+                  >
+                    View
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>Showing {rows.length ? skip + 1 : 0}–{skip + rows.length} of {total.toLocaleString()}</span>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={skip === 0 || loading}
+            onClick={() => setSkip(Math.max(0, skip - limit))}
+            data-testid="users-prev-btn"
+          >Prev</Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={skip + limit >= total || loading}
+            onClick={() => setSkip(skip + limit)}
+            data-testid="users-next-btn"
+          >Next</Button>
+        </div>
+      </div>
+
+      {/* ── User detail drawer ── */}
+      {selected && (
+        <UserDetailDrawer
+          loading={detailLoading}
+          detail={selectedDetail}
+          onClose={closeDetail}
+        />
+      )}
+    </section>
+  );
+}
+
+function StatusPill({ status }) {
+  const palette: Record<string, string> = {
+    active: "border-emerald-500/40 text-emerald-300",
+    suspended: "border-amber-500/40 text-amber-300",
+    banned: "border-rose-500/40 text-rose-300",
+    deactivated: "border-muted text-muted-foreground",
+    pending_verification: "border-sky-500/40 text-sky-300",
+  };
+  const cls = palette[status] || "border-border text-muted-foreground";
+  return (
+    <span className={`text-[10px] px-1.5 py-0.5 rounded-full border ${cls}`} data-testid={`user-status-${status}`}>
+      {status?.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function UserDetailDrawer({ loading, detail, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-stretch justify-end" onClick={onClose} data-testid="user-detail-drawer">
+      <div
+        className="w-full max-w-[680px] bg-background border-l border-border h-full overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="p-5 border-b border-border flex items-center justify-between sticky top-0 bg-background z-10">
+          <h3 className="text-base font-semibold">User detail</h3>
+          <Button variant="outline" size="sm" onClick={onClose} data-testid="user-detail-close">Close</Button>
+        </div>
+        {loading && <div className="p-6 text-sm text-muted-foreground">Loading user…</div>}
+        {!loading && detail && (
+          <div className="p-5 space-y-6 text-sm">
+            {/* Identity & Account Core */}
+            <section className="space-y-2" data-testid="user-detail-identity">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Identity & Account Core</h4>
+              <DetailGrid>
+                <DetailRow k="User ID" v={<code className="text-xs">{detail.id}</code>} />
+                <DetailRow k="Username" v={detail.username || "—"} />
+                <DetailRow k="Display name" v={detail.name || "—"} />
+                <DetailRow k="Email" v={<span>{detail.email} {detail.email_verified ? <span className="text-emerald-300 text-[10px] ml-1">verified</span> : <span className="text-amber-300 text-[10px] ml-1">unverified</span>}</span>} />
+                <DetailRow k="Phone" v={detail.phone ? <span>{detail.phone} {detail.phone_verified ? <span className="text-emerald-300 text-[10px] ml-1">verified</span> : <span className="text-amber-300 text-[10px] ml-1">unverified</span>}</span> : "—"} />
+                <DetailRow k="Auth method" v={detail.auth_method} />
+                <DetailRow k="Password set" v={detail.password_hash_present ? "yes" : "no (SSO only)"} />
+                <DetailRow k="Role" v={detail.role} />
+                <DetailRow k="Status" v={<StatusPill status={detail.status} />} />
+                <DetailRow k="Created" v={detail.created_at ? new Date(detail.created_at).toLocaleString() : "—"} />
+                {detail.ban_reason_code && <DetailRow k="Ban reason" v={`${detail.ban_reason_code}${detail.ban_reason ? ` — ${detail.ban_reason}` : ""}`} />}
+                {detail.ban_expires_at && <DetailRow k="Ban expires" v={new Date(detail.ban_expires_at).toLocaleString()} />}
+              </DetailGrid>
+              {detail.username_change_history?.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-muted-foreground mb-1">Name / email change history</p>
+                  <ul className="space-y-1 text-xs">
+                    {detail.username_change_history.map((h, i) => (
+                      <li key={i} className="flex items-center gap-2">
+                        <span className="text-muted-foreground">{h.ts ? new Date(h.ts).toLocaleDateString() : "—"}</span>
+                        <span className="text-foreground/80">{h.event_type}:</span>
+                        <code className="text-rose-300">{h.from || "∅"}</code>
+                        <span>→</span>
+                        <code className="text-emerald-300">{h.to || "∅"}</code>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </section>
+
+            {/* Authentication & Security */}
+            <section className="space-y-2" data-testid="user-detail-security">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Authentication & Security</h4>
+              <DetailGrid>
+                <DetailRow k="Last login" v={detail.last_login_at ? new Date(detail.last_login_at).toLocaleString() : "—"} />
+                <DetailRow k="Failed login attempts" v={String(detail.failed_login_attempts || 0)} />
+                {detail.lockout_until && <DetailRow k="Locked out until" v={new Date(detail.lockout_until).toLocaleString()} />}
+                <DetailRow k="2FA" v={detail.two_factor_enabled ? <span className="text-emerald-300">enabled · {detail.two_factor_method || "totp"}</span> : <span className="text-muted-foreground">disabled</span>} />
+                <DetailRow k="Linked SSO" v={detail.linked_sso_accounts?.length ? detail.linked_sso_accounts.join(", ") : "—"} />
+                <DetailRow k="Recovery email" v={detail.recovery_email || "—"} />
+                <DetailRow k="Security questions" v={detail.security_questions_set ? "set" : "not set"} />
+              </DetailGrid>
+
+              {detail.login_history?.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs text-muted-foreground mb-1">Login history (last {detail.login_history.length})</p>
+                  <div className="rounded border border-border max-h-[260px] overflow-y-auto" data-testid="user-detail-login-history">
+                    <table className="w-full text-xs">
+                      <thead className="bg-secondary/40 sticky top-0">
+                        <tr>
+                          <th className="text-left px-2 py-1">When</th>
+                          <th className="text-left px-2 py-1">IP</th>
+                          <th className="text-left px-2 py-1">Device hash</th>
+                          <th className="text-left px-2 py-1">User agent</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detail.login_history.map((h, i) => (
+                          <tr key={i} className="border-t border-border/40">
+                            <td className="px-2 py-1 whitespace-nowrap text-muted-foreground">{h.ts ? new Date(h.ts).toLocaleString() : "—"}</td>
+                            <td className="px-2 py-1 font-mono">{h.ip || "—"}</td>
+                            <td className="px-2 py-1 font-mono">{h.device_hash ? h.device_hash.slice(0, 12) + "…" : "—"}</td>
+                            <td className="px-2 py-1 truncate max-w-[220px]" title={h.user_agent || ""}>{h.user_agent || "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {detail.password_reset_history?.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs text-muted-foreground mb-1">Password reset history</p>
+                  <ul className="space-y-1 text-xs">
+                    {detail.password_reset_history.map((p, i) => (
+                      <li key={i} className="flex items-center gap-2">
+                        <span className="text-muted-foreground">{p.ts ? new Date(p.ts).toLocaleString() : "—"}</span>
+                        <code>{p.ip || "—"}</code>
+                        <span className={p.outcome === "success" ? "text-emerald-300" : "text-amber-300"}>{p.outcome || "—"}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {detail.active_sessions?.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-xs text-muted-foreground mb-1">Active sessions</p>
+                  <ul className="space-y-1 text-xs">
+                    {detail.active_sessions.map((s) => (
+                      <li key={s.session_id} className="flex items-center gap-2">
+                        <code className="text-muted-foreground">{s.session_id.slice(-8)}</code>
+                        <span>issued {s.issued_at ? new Date(s.issued_at).toLocaleString() : "—"}</span>
+                        {s.ip && <code>{s.ip}</code>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DetailGrid({ children }) {
+  return <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1.5">{children}</div>;
+}
+
+function DetailRow({ k, v }) {
+  return (
+    <div className="flex items-baseline gap-2 text-sm">
+      <span className="text-xs text-muted-foreground min-w-[100px]">{k}</span>
+      <span className="flex-1 break-all">{v}</span>
+    </div>
   );
 }
 

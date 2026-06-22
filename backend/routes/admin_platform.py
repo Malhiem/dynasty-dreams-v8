@@ -1002,3 +1002,173 @@ async def resolve_user_report(report_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Report not found or already resolved")
     return {"ok": True, "report_id": report_id, "status": action}
 
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 214 — Users directory + per-user identity / security drilldown
+# ─────────────────────────────────────────────────────────────────────
+@router.get("/users")
+async def list_users(
+    request: Request,
+    q: Optional[str] = Query(None, description="search email or username"),
+    status: Optional[str] = Query(None, pattern=r"^(active|suspended|banned|deactivated|pending_verification)$"),
+    role: Optional[str] = Query(None, pattern=r"^(user|admin|commissioner)$"),
+    limit: int = Query(50, ge=1, le=200),
+    skip: int = Query(0, ge=0),
+):
+    """Paginated user directory for admins. Returns identity + status
+    summary per row; the per-user detail endpoint surfaces login history,
+    devices, etc."""
+    await _require_admin(request)
+    db = _deps["db"]
+    flt: dict = {}
+    if q:
+        flt["$or"] = [
+            {"email": {"$regex": q, "$options": "i"}},
+            {"username": {"$regex": q, "$options": "i"}},
+            {"name": {"$regex": q, "$options": "i"}},
+        ]
+    if status:
+        flt["status"] = status
+    if role:
+        flt["role"] = role
+    total = await db.users.count_documents(flt)
+    cursor = db.users.find(flt, {
+        "email": 1, "username": 1, "name": 1, "role": 1, "status": 1,
+        "is_active": 1, "created_at": 1, "email_verified": 1, "phone": 1,
+        "phone_verified": 1, "auth_method": 1, "two_factor_enabled": 1,
+        "last_login_at": 1, "failed_login_attempts": 1, "lockout_until": 1,
+        "ban_reason_code": 1, "ban_reason": 1, "ban_expires_at": 1,
+    }).sort("created_at", -1).skip(skip).limit(limit)
+    rows = await cursor.to_list(limit)
+    # Latest login timestamp fallback via user_login_audit when last_login_at not set.
+    user_ids = [str(r["_id"]) for r in rows]
+    last_login_by_uid: dict = {}
+    if user_ids:
+        async for a in db.user_login_audit.aggregate([
+            {"$match": {"user_id": {"$in": user_ids}}},
+            {"$sort": {"ts": -1}},
+            {"$group": {"_id": "$user_id", "ts": {"$first": "$ts"}}},
+        ]):
+            last_login_by_uid[a["_id"]] = a["ts"]
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "users": [{
+            "id": str(r["_id"]),
+            "email": r.get("email"),
+            "username": r.get("username"),
+            "name": r.get("name"),
+            "role": r.get("role") or "user",
+            "status": r.get("status") or ("active" if r.get("is_active", True) else "deactivated"),
+            "created_at": _iso(r.get("created_at")),
+            "email_verified": bool(r.get("email_verified", False)),
+            "phone": r.get("phone"),
+            "phone_verified": bool(r.get("phone_verified", False)),
+            "auth_method": r.get("auth_method") or "email",
+            "two_factor_enabled": bool(r.get("two_factor_enabled", False)),
+            "last_login_at": _iso(r.get("last_login_at")) or last_login_by_uid.get(str(r["_id"])),
+            "failed_login_attempts": int(r.get("failed_login_attempts") or 0),
+            "lockout_until": _iso(r.get("lockout_until")),
+            "ban_reason_code": r.get("ban_reason_code"),
+            "ban_reason": r.get("ban_reason"),
+            "ban_expires_at": _iso(r.get("ban_expires_at")),
+        } for r in rows],
+    }
+
+
+@router.get("/users/{user_id}")
+async def get_user_detail(user_id: str, request: Request):
+    """Full per-user identity / authentication / security view for
+    admin moderation. Surfaces:
+      • Identity & account core (username, email, phone, status…)
+      • Username/email change history (from `user_audit_log`)
+      • Authentication & security (last login, login history,
+        2FA, password reset history, linked SSO accounts, active
+        sessions, recovery info)
+    """
+    await _require_admin(request)
+    db = _deps["db"]
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user id")
+    u = await db.users.find_one({"_id": oid})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Login history (last 50)
+    login_history = await db.user_login_audit.find(
+        {"user_id": user_id}
+    ).sort("ts", -1).to_list(50)
+
+    # Username / email change history (if recorded)
+    name_history = await db.user_audit_log.find(
+        {"user_id": user_id, "event_type": {"$in": ["username_changed", "email_changed", "name_changed"]}}
+    ).sort("ts", -1).to_list(50)
+
+    # Password reset history
+    pwd_resets = await db.password_reset_audit.find(
+        {"user_id": user_id}
+    ).sort("ts", -1).to_list(20)
+
+    # Active sessions (jwt issuance audit, if recorded)
+    sessions = await db.user_sessions.find(
+        {"user_id": user_id, "revoked": {"$ne": True}}
+    ).sort("issued_at", -1).to_list(20)
+
+    return {
+        # ── Identity & Account Core ───────────────────────────────
+        "id": str(u["_id"]),
+        "username": u.get("username"),
+        "name": u.get("name"),
+        "email": u.get("email"),
+        "email_verified": bool(u.get("email_verified", False)),
+        "phone": u.get("phone"),
+        "phone_verified": bool(u.get("phone_verified", False)),
+        "auth_method": u.get("auth_method") or "email",
+        "password_hash_present": bool(u.get("password_hash")),
+        "linked_sso_accounts": u.get("linked_sso_accounts") or [],
+        "role": u.get("role") or "user",
+        "status": u.get("status") or ("active" if u.get("is_active", True) else "deactivated"),
+        "ban_reason_code": u.get("ban_reason_code"),
+        "ban_reason": u.get("ban_reason"),
+        "ban_expires_at": _iso(u.get("ban_expires_at")),
+        "created_at": _iso(u.get("created_at")),
+        "username_change_history": [{
+            "ts": _iso(h.get("ts")),
+            "event_type": h.get("event_type"),
+            "from": h.get("from_value"),
+            "to": h.get("to_value"),
+        } for h in name_history],
+        # ── Authentication & Security ─────────────────────────────
+        "last_login_at": _iso(u.get("last_login_at")) or (
+            _iso(login_history[0].get("ts")) if login_history else None
+        ),
+        "login_history": [{
+            "ts": _iso(h.get("ts")),
+            "ip": h.get("ip"),
+            "user_agent": h.get("user_agent"),
+            "device_hash": h.get("device_hash"),
+            "device_fingerprint": h.get("device_fingerprint"),
+        } for h in login_history],
+        "failed_login_attempts": int(u.get("failed_login_attempts") or 0),
+        "lockout_until": _iso(u.get("lockout_until")),
+        "two_factor_enabled": bool(u.get("two_factor_enabled", False)),
+        "two_factor_method": u.get("two_factor_method"),
+        "password_reset_history": [{
+            "ts": _iso(p.get("ts")),
+            "ip": p.get("ip"),
+            "outcome": p.get("outcome"),
+        } for p in pwd_resets],
+        "active_sessions": [{
+            "session_id": str(s.get("_id")),
+            "issued_at": _iso(s.get("issued_at")),
+            "expires_at": _iso(s.get("expires_at")),
+            "ip": s.get("ip"),
+            "user_agent": s.get("user_agent"),
+        } for s in sessions],
+        "recovery_email": u.get("recovery_email"),
+        "security_questions_set": bool(u.get("security_questions")),
+    }
