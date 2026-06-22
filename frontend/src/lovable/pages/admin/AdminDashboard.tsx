@@ -137,6 +137,10 @@ export default function AdminDashboard() {
             <TabsTrigger value="moderation" data-testid="admin-tab-moderation">Moderation</TabsTrigger>
             <TabsTrigger value="integrity" data-testid="admin-tab-integrity">Account Integrity</TabsTrigger>
             <TabsTrigger value="appeals" data-testid="admin-tab-appeals">Appeals</TabsTrigger>
+            <TabsTrigger value="health" data-testid="admin-tab-health">League Health</TabsTrigger>
+            <TabsTrigger value="sync" data-testid="admin-tab-sync">Sync Monitor</TabsTrigger>
+            <TabsTrigger value="support" data-testid="admin-tab-support">Support</TabsTrigger>
+            <TabsTrigger value="ops" data-testid="admin-tab-ops">Server Ops</TabsTrigger>
           </TabsList>
 
           {/* ─── Overview tab ─── */}
@@ -214,6 +218,26 @@ export default function AdminDashboard() {
           {/* ─── Appeals (Iter 206) ─── */}
           <TabsContent value="appeals" className="space-y-3">
             <AppealsPanel />
+          </TabsContent>
+
+          {/* ─── League Health (Iter 209) ─── */}
+          <TabsContent value="health" className="space-y-3">
+            <LeagueHealthPanel />
+          </TabsContent>
+
+          {/* ─── Sync Monitor (Iter 209) ─── */}
+          <TabsContent value="sync" className="space-y-3">
+            <SyncMonitorPanel />
+          </TabsContent>
+
+          {/* ─── Support Metrics (Iter 209) ─── */}
+          <TabsContent value="support" className="space-y-3">
+            <SupportMetricsPanel />
+          </TabsContent>
+
+          {/* ─── Server Ops (Iter 209) ─── */}
+          <TabsContent value="ops" className="space-y-3">
+            <ServerOpsPanel />
           </TabsContent>
         </Tabs>
       </div>
@@ -917,6 +941,13 @@ function UserReportsPanel() {
                   <strong>Resolution:</strong> {r.resolution_action} — {r.resolution_note}
                 </div>
               )}
+              {/* Iter 209 — Mod notes thread per target user */}
+              {r.target_user_id && (
+                <ModNotesPanel
+                  userId={r.target_user_id}
+                  userEmail={r.target_user_email}
+                />
+              )}
             </div>
           ))}
         </div>
@@ -1416,6 +1447,450 @@ function AppealsPanel() {
         </div>
       )}
     </section>
+  );
+}
+
+
+
+/* ─── Iter 209 — League Health Panel ─────────────────────────────────── */
+function LeagueHealthPanel() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/admin/platform/league-health");
+      setData(data);
+    } catch {
+      toast.error("Could not load league health");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <section className="space-y-3" data-testid="league-health-section">
+      <div>
+        <h2 className="text-lg font-semibold">League Health</h2>
+        <p className="text-xs text-muted-foreground">
+          Auto-detected league issues — inactive commissioners, orphaned teams, dead-mid-season, capacity gaps.
+        </p>
+      </div>
+      {loading && <div className="text-sm text-muted-foreground py-4 text-center">Scanning…</div>}
+      {!loading && data && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="league-health-grid">
+          <HealthCard
+            title={`Inactive commissioners (${data.inactive_commissioners.length})`}
+            description={`No login in ${data.days_inactive}+ days`}
+            tone="amber"
+            items={data.inactive_commissioners.map((x: any) => ({
+              key: x.league_id,
+              primary: x.league_name,
+              secondary: `Commish ${x.commissioner_email} · last login ${x.last_login || "never"}`,
+            }))}
+            testId="health-inactive-commish"
+          />
+          <HealthCard
+            title={`Orphaned teams (${data.orphaned_teams.length})`}
+            description="Teams missing owner_id"
+            tone="rose"
+            items={data.orphaned_teams.map((x: any) => ({
+              key: x.league_id,
+              primary: x.league_name,
+              secondary: `${x.orphaned_team_count}/${x.total_teams} teams unowned`,
+            }))}
+            testId="health-orphaned"
+          />
+          <HealthCard
+            title={`Dead-mid-season (${data.dead_leagues.length})`}
+            description="Status=active but no recent matchups"
+            tone="rose"
+            items={data.dead_leagues.map((x: any) => ({
+              key: x.league_id,
+              primary: x.league_name,
+              secondary: `Last matchup: ${x.last_matchup_at}`,
+            }))}
+            testId="health-dead"
+          />
+          <HealthCard
+            title={`Capacity gaps (${data.capacity_issues.length})`}
+            description="Fewer teams than expected"
+            tone="sky"
+            items={data.capacity_issues.map((x: any) => ({
+              key: x.league_id,
+              primary: x.league_name,
+              secondary: `${x.current_teams} of ${x.expected_teams} teams`,
+            }))}
+            testId="health-capacity"
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function HealthCard({ title, description, tone, items, testId }: any) {
+  const toneClass: Record<string, string> = {
+    amber: "border-amber-500/40",
+    rose: "border-rose-500/40",
+    sky: "border-sky-500/40",
+    emerald: "border-emerald-500/40",
+  };
+  return (
+    <div className={`rounded-lg border bg-muted/20 p-3 ${toneClass[tone] || ""}`} data-testid={testId}>
+      <div className="text-sm font-semibold">{title}</div>
+      <div className="text-xs text-muted-foreground mb-2">{description}</div>
+      {items.length === 0 ? (
+        <div className="text-xs text-muted-foreground italic py-1">All clear.</div>
+      ) : (
+        <div className="space-y-1 max-h-48 overflow-y-auto">
+          {items.map((it: any) => (
+            <div key={it.key} className="text-xs border-l-2 border-border pl-2 py-0.5">
+              <div>{it.primary}</div>
+              <div className="text-[10px] text-muted-foreground">{it.secondary}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/* ─── Iter 209 — Sync Monitor Panel ──────────────────────────────────── */
+function SyncMonitorPanel() {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/admin/platform/sync-status");
+      setData(data);
+    } catch { toast.error("Could not load sync status"); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <section className="space-y-3" data-testid="sync-monitor-section">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Sync / Data Status</h2>
+          <p className="text-xs text-muted-foreground">
+            NHL stats feed health — critical for live scoring during games.
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={load} data-testid="sync-refresh-btn">
+          Refresh
+        </Button>
+      </div>
+      {loading && <div className="text-sm text-muted-foreground py-4 text-center">Loading…</div>}
+      {!loading && data && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="sync-stats-grid">
+          <SyncStat label="Status" value={
+            <span className={data.healthy ? "text-emerald-300" : "text-rose-300"}>
+              {data.healthy ? "Healthy" : "Degraded"}
+            </span>
+          } />
+          <SyncStat label="Players Total" value={data.players_total} />
+          <SyncStat label="With NHL ID" value={data.players_with_nhl_id} />
+          <SyncStat label="Stale (24h)" value={
+            <span className={data.players_stale_24h > 100 ? "text-amber-300" : "text-foreground"}>
+              {data.players_stale_24h}
+            </span>
+          } />
+          <SyncStat label="Cache Size" value={data.career_cache_size} />
+          <SyncStat label="Last Sync" value={
+            <span className="text-xs">{data.last_sync_at || "Never"}</span>
+          } />
+        </div>
+      )}
+      {!loading && data?.recent_errors?.length > 0 && (
+        <div className="rounded-lg border border-rose-500/40 bg-muted/20 p-3" data-testid="sync-errors">
+          <div className="text-sm font-semibold mb-2 text-rose-300">Recent sync errors</div>
+          <div className="space-y-1">
+            {data.recent_errors.map((e: any, i: number) => (
+              <div key={i} className="text-xs">
+                <span className="text-muted-foreground">{e.ts}</span> · <span className="font-mono">{e.source}</span>: {e.message}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SyncStat({ label, value }: { label: string; value: any }) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/20 p-3">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="text-lg font-semibold">{value ?? "—"}</div>
+    </div>
+  );
+}
+
+
+/* ─── Iter 209 — Support Metrics Panel ───────────────────────────────── */
+function SupportMetricsPanel() {
+  const [data, setData] = useState<any>(null);
+  const [days, setDays] = useState(30);
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/admin/platform/support-metrics?days=${days}`);
+      setData(data);
+    } catch { toast.error("Could not load support metrics"); }
+    finally { setLoading(false); }
+  }, [days]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <section className="space-y-3" data-testid="support-metrics-section">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Support Tickets</h2>
+          <p className="text-xs text-muted-foreground">
+            Volume, response time, top categories over the last {days} days.
+          </p>
+        </div>
+        <Select value={String(days)} onValueChange={(v: any) => setDays(Number(v))}>
+          <SelectTrigger className="w-32" data-testid="support-days-select"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="7">Last 7 days</SelectItem>
+            <SelectItem value="30">Last 30 days</SelectItem>
+            <SelectItem value="90">Last 90 days</SelectItem>
+            <SelectItem value="365">Last year</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {loading && <div className="text-sm text-muted-foreground py-4 text-center">Loading…</div>}
+      {!loading && data && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <SyncStat label="Total" value={data.total_reports} />
+            <SyncStat label="Open" value={
+              <span className="text-amber-300">{data.open}</span>
+            } />
+            <SyncStat label="Resolved" value={
+              <span className="text-emerald-300">{data.resolved}</span>
+            } />
+            <SyncStat label="Dismissed" value={data.dismissed} />
+            <SyncStat label="Avg response (hrs)" value={data.avg_response_hours ?? "—"} />
+          </div>
+          {data.by_category?.length > 0 && (
+            <div className="rounded-lg border border-border bg-muted/20 p-3" data-testid="support-categories">
+              <div className="text-sm font-semibold mb-2">By Category</div>
+              <div className="space-y-1.5">
+                {data.by_category.map((c: any) => {
+                  const pct = data.total_reports > 0 ? (c.count / data.total_reports) * 100 : 0;
+                  return (
+                    <div key={c.category}>
+                      <div className="flex items-center justify-between text-xs mb-0.5">
+                        <span className="capitalize">{c.category.replace(/_/g, " ")}</span>
+                        <span className="text-muted-foreground">{c.count} · {pct.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-1.5 bg-secondary/30 rounded">
+                        <div className="h-full bg-sky-500/60 rounded" style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+
+/* ─── Iter 209 — Server Ops / Error Logs Panel ───────────────────────── */
+function ServerOpsPanel() {
+  const [uptime, setUptime] = useState<any>(null);
+  const [logs, setLogs] = useState<any>(null);
+  const [service, setService] = useState<"backend" | "frontend">("backend");
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [u, l] = await Promise.all([
+        api.get("/admin/platform/uptime"),
+        api.get(`/admin/platform/server-logs?service=${service}&lines=120`),
+      ]);
+      setUptime(u.data);
+      setLogs(l.data);
+    } catch { toast.error("Could not load server data"); }
+    finally { setLoading(false); }
+  }, [service]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <section className="space-y-3" data-testid="server-ops-section">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Server Ops</h2>
+          <p className="text-xs text-muted-foreground">
+            Uptime, throughput counters, and recent log lines.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Select value={service} onValueChange={(v: any) => setService(v)}>
+            <SelectTrigger className="w-32" data-testid="ops-service-select"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="backend">Backend</SelectItem>
+              <SelectItem value="frontend">Frontend</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button size="sm" variant="outline" onClick={load} data-testid="ops-refresh-btn">Refresh</Button>
+        </div>
+      </div>
+
+      {loading && <div className="text-sm text-muted-foreground py-4 text-center">Loading…</div>}
+
+      {!loading && uptime && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="ops-stats-grid">
+          <SyncStat label="Logins (24h)" value={uptime.logins_24h} />
+          <SyncStat label="Trades (24h)" value={uptime.trades_24h} />
+          <SyncStat label="Waiver runs (24h)" value={uptime.waivers_24h} />
+          <SyncStat label="Backend log mtime" value={
+            <span className="text-xs">{uptime.backend_log_mtime}</span>
+          } />
+        </div>
+      )}
+
+      {!loading && logs && (
+        <div className="rounded-lg border border-border bg-black/60 p-3 font-mono text-[11px]" data-testid="ops-log-tail">
+          <div className="text-xs text-muted-foreground mb-2">
+            {logs.log_file} · {logs.tail_size} lines · {" "}
+            <span className={logs.error_count > 0 ? "text-rose-300" : "text-emerald-300"}>
+              {logs.error_count} errors
+            </span>
+          </div>
+          <div className="max-h-[400px] overflow-y-auto space-y-0.5">
+            {logs.lines.map((row: any, i: number) => (
+              <div
+                key={i}
+                className={row.is_error ? "text-rose-300" : "text-foreground/80"}
+                data-testid={row.is_error ? `ops-log-error-${i}` : undefined}
+              >
+                {row.line || "\u00A0"}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+
+/* ─── Iter 209 — Mod Notes side-panel (lives inside the Reports tab) ──── */
+export function ModNotesPanel({ userId, userEmail }: { userId: string; userEmail?: string }) {
+  const [notes, setNotes] = useState<any[]>([]);
+  const [body, setBody] = useState("");
+  const [category, setCategory] = useState<"general" | "warning" | "positive" | "other">("general");
+
+  const load = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const { data } = await api.get(`/admin/platform/users/${userId}/mod-notes`);
+      setNotes(data?.notes || []);
+    } catch { /* noop */ }
+  }, [userId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    if (!body.trim()) return;
+    try {
+      await api.post(`/admin/platform/users/${userId}/mod-notes`, { body: body.trim(), category });
+      setBody("");
+      toast.success("Note added");
+      await load();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed");
+    }
+  };
+
+  const remove = async (id: string) => {
+    try {
+      await api.delete(`/admin/platform/users/${userId}/mod-notes/${id}`);
+      await load();
+    } catch { /* noop */ }
+  };
+
+  return (
+    <div className="mt-3 border-t border-border pt-3" data-testid={`mod-notes-${userId}`}>
+      <div className="text-xs font-semibold mb-2 flex items-center gap-2">
+        Mod notes
+        <span className="text-[10px] px-1.5 rounded bg-secondary/50 text-muted-foreground">
+          {notes.length}
+        </span>
+        <span className="text-[10px] text-muted-foreground font-normal">
+          for {userEmail || userId}
+        </span>
+      </div>
+      <div className="space-y-1 mb-2 max-h-40 overflow-y-auto">
+        {notes.length === 0 && (
+          <div className="text-[11px] text-muted-foreground italic">No notes yet.</div>
+        )}
+        {notes.map((n: any) => (
+          <div key={n.note_id} className="text-xs flex items-start gap-2 border-l-2 border-border pl-2 py-0.5">
+            <span className={`text-[9px] uppercase shrink-0 mt-0.5 ${
+              n.category === "warning" ? "text-amber-300" :
+              n.category === "positive" ? "text-emerald-300" :
+              "text-muted-foreground"
+            }`}>{n.category}</span>
+            <div className="flex-1 min-w-0">
+              <div className="break-words">{n.body}</div>
+              <div className="text-[10px] text-muted-foreground">
+                {n.author_email} · {new Date(n.created_at).toLocaleString()}
+              </div>
+            </div>
+            <button
+              onClick={() => remove(n.note_id)}
+              className="text-rose-400 hover:text-rose-300 text-[10px] shrink-0"
+              data-testid={`mod-note-remove-${n.note_id}`}
+            >✕</button>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <Input
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder="Add a moderator note…"
+          onKeyDown={(e) => e.key === "Enter" && add()}
+          maxLength={2000}
+          className="text-xs h-8"
+          data-testid={`mod-note-input-${userId}`}
+        />
+        <Select value={category} onValueChange={(v: any) => setCategory(v)}>
+          <SelectTrigger className="w-24 h-8 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="general">General</SelectItem>
+            <SelectItem value="warning">Warning</SelectItem>
+            <SelectItem value="positive">Positive</SelectItem>
+            <SelectItem value="other">Other</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button size="sm" onClick={add} disabled={!body.trim()} data-testid={`mod-note-add-${userId}`}>
+          Add
+        </Button>
+      </div>
+    </div>
   );
 }
 
