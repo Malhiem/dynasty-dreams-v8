@@ -1172,4 +1172,236 @@ async def get_user_detail(user_id: str, request: Request):
         } for s in sessions],
         "recovery_email": u.get("recovery_email"),
         "security_questions_set": bool(u.get("security_questions")),
+        # ── Iter 216 — extended sections ──────────────────────────
+        **(await _build_user_extensions(db, user_id, u)),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 216 — extended user detail sections
+# ─────────────────────────────────────────────────────────────────────
+async def _build_user_extensions(db, user_id: str, u: dict) -> dict:
+    """Gather all extended sections (league/team, behavioral, financial,
+    support, compliance) needed by the User Detail Drawer."""
+    # League & Team Relationships
+    teams = await db.teams.find({"owner_id": user_id}).to_list(500)
+    historical_teams = await db.teams.find({
+        "owner_history": {"$elemMatch": {"user_id": user_id}}
+    }).to_list(200)
+    league_ids = list({t.get("league_id") for t in teams + historical_teams if t.get("league_id")})
+    league_docs: dict = {}
+    if league_ids:
+        async for lg in db.leagues.find({"_id": {"$in": [
+            ObjectId(lid) for lid in league_ids if ObjectId.is_valid(str(lid))
+        ]}}, {"name": 1, "commissioner_id": 1, "co_commissioners": 1, "status": 1, "created_at": 1}):
+            league_docs[str(lg["_id"])] = lg
+    leagues_joined = []
+    for lid in league_ids:
+        lg = league_docs.get(str(lid)) or {}
+        role = "manager"
+        if str(lg.get("commissioner_id")) == user_id:
+            role = "commissioner"
+        elif user_id in (lg.get("co_commissioners") or []):
+            role = "co_commissioner"
+        leagues_joined.append({
+            "league_id": str(lid), "league_name": lg.get("name"),
+            "role": role, "league_status": lg.get("status"),
+            "joined_at": _iso(lg.get("created_at")),
+        })
+    invitations_sent = await db.league_invites.find({"sender_id": user_id}).sort("created_at", -1).to_list(50)
+    invitations_received = await db.league_invites.find({
+        "$or": [{"recipient_user_id": user_id}, {"recipient_email": u.get("email")}]
+    }).sort("created_at", -1).to_list(50)
+
+    # Behavioral & Moderation
+    reports_against = await db.user_reports.count_documents({"target_user_id": user_id})
+    reports_filed = await db.user_reports.count_documents({"reporter_id": user_id})
+    moderation_history = await db.admin_user_actions.find(
+        {"target_user_id": user_id,
+         "action": {"$in": ["suspend", "ban_permanent", "reinstate", "warning",
+                            "mute", "unmute", "flag_for_review", "unflag",
+                            "delete_hard", "gdpr_delete"]}}
+    ).sort("ts", -1).to_list(100)
+    appeals = await db.user_appeals.find({"user_id": user_id}).sort("created_at", -1).to_list(50)
+    trade_flags = await db.trades.count_documents({
+        "$or": [{"proposer_team_owner_id": user_id}, {"target_team_owner_id": user_id}],
+        "flagged_for_admin": True,
+    })
+    chat_violations = await db.moderation_queue.count_documents({
+        "user_id": user_id, "source": {"$in": ["chat", "username", "team_name", "trade_block"]}
+    })
+    multi_account_links = await db.user_login_audit.aggregate([
+        {"$match": {"user_id": user_id, "device_hash": {"$ne": None}}},
+        {"$group": {"_id": "$device_hash"}},
+        {"$lookup": {
+            "from": "user_login_audit",
+            "let": {"dh": "$_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$and": [
+                    {"$eq": ["$device_hash", "$$dh"]},
+                    {"$ne": ["$user_id", user_id]},
+                ]}}},
+                {"$group": {"_id": "$user_id"}},
+            ],
+            "as": "other_users",
+        }},
+        {"$match": {"other_users.0": {"$exists": True}}},
+        {"$project": {"device_hash": "$_id", "linked_user_ids": "$other_users._id"}},
+    ]).to_list(50)
+
+    # Financial / Billing
+    payment_methods = u.get("payment_methods") or []  # tokenized only
+    billing_history = await db.payment_transactions.find(
+        {"user_id": user_id}
+    ).sort("created_at", -1).to_list(20)
+    league_fees = await db.league_fees.find({"user_id": user_id}).sort("due_at", -1).to_list(50)
+    referrals_used = u.get("referral_codes_used") or []
+
+    # Support & Engagement
+    support_tickets = await db.user_support_links.find({"user_id": user_id}).sort("ts", -1).to_list(50)
+    feature_flags = u.get("feature_flags") or []
+    sessions_lifetime = await db.user_login_audit.count_documents({"user_id": user_id})
+    last_active = await db.user_login_audit.find_one({"user_id": user_id}, sort=[("ts", -1)])
+
+    return {
+        # League & Team Relationships
+        "leagues_joined": leagues_joined,
+        "teams_owned": [{
+            "team_id": str(t["_id"]), "team_name": t.get("name"),
+            "league_id": t.get("league_id"),
+            "league_name": (league_docs.get(str(t.get("league_id"))) or {}).get("name"),
+            "current": True,
+        } for t in teams],
+        "teams_owned_history": [{
+            "team_id": str(t["_id"]), "team_name": t.get("name"),
+            "league_id": t.get("league_id"),
+            "league_name": (league_docs.get(str(t.get("league_id"))) or {}).get("name"),
+            "current": False,
+        } for t in historical_teams],
+        "invitations_sent": [{
+            "id": str(i["_id"]), "league_id": i.get("league_id"),
+            "recipient_email": i.get("recipient_email"),
+            "status": i.get("status"), "created_at": _iso(i.get("created_at")),
+        } for i in invitations_sent],
+        "invitations_received": [{
+            "id": str(i["_id"]), "league_id": i.get("league_id"),
+            "sender_id": i.get("sender_id"),
+            "status": i.get("status"), "created_at": _iso(i.get("created_at")),
+        } for i in invitations_received],
+
+        # Behavioral & Moderation
+        "reports_against_count": reports_against,
+        "reports_filed_count": reports_filed,
+        "moderation_action_history": [{
+            "id": str(m["_id"]), "action": m.get("action"),
+            "reason": m.get("reason"), "admin_email": m.get("admin_email"),
+            "ts": _iso(m.get("ts")), "metadata": m.get("metadata"),
+            "appealed": any(a.get("action_id") == str(m["_id"]) for a in appeals),
+        } for m in moderation_history],
+        "appeals": [{
+            "id": str(a["_id"]), "status": a.get("status"),
+            "message": a.get("message"), "created_at": _iso(a.get("created_at")),
+            "resolved_at": _iso(a.get("resolved_at")),
+        } for a in appeals],
+        "trade_flags_count": trade_flags,
+        "chat_violations_count": chat_violations,
+        "multi_account_links": [{
+            "device_hash": (link.get("device_hash") or "")[:12] + "…" if link.get("device_hash") else None,
+            "linked_user_ids": link.get("linked_user_ids", []),
+        } for link in multi_account_links],
+        "trust_score": u.get("trust_score"),
+        "watchlist": bool(u.get("watchlist")),
+        "watchlist_reason": u.get("watchlist_reason"),
+
+        # Financial / Billing
+        "subscription_tier": u.get("subscription_tier") or ("pro" if u.get("is_pro") else "free"),
+        "subscription_status": u.get("subscription_status") or "active",
+        "payment_methods": [{
+            "id": pm.get("id") or pm.get("stripe_payment_method_id"),
+            "brand": pm.get("brand"), "last4": pm.get("last4"),
+            "exp_month": pm.get("exp_month"), "exp_year": pm.get("exp_year"),
+        } for pm in payment_methods],
+        "billing_history": [{
+            "id": str(b["_id"]) if b.get("_id") else b.get("session_id"),
+            "amount_cents": b.get("amount"), "currency": b.get("currency"),
+            "status": b.get("payment_status"),
+            "created_at": _iso(b.get("created_at")),
+            "description": b.get("description"),
+        } for b in billing_history],
+        "league_fees": [{
+            "id": str(f["_id"]), "league_id": f.get("league_id"),
+            "amount_cents": f.get("amount_cents"), "status": f.get("status"),
+            "due_at": _iso(f.get("due_at")), "paid_at": _iso(f.get("paid_at")),
+        } for f in league_fees],
+        "payout_info": {
+            "method": u.get("payout_method"),  # bank|paypal|stripe
+            "destination_token": u.get("payout_destination_token"),
+            "tax_form_status": u.get("tax_form_status"),  # w9_filed|1099_issued|none
+        },
+        "promo_credits_cents": u.get("promo_credits_cents") or 0,
+        "referrals_used": referrals_used,
+        "chargeback_flags": u.get("chargeback_flags") or [],
+
+        # Support & Engagement
+        "support_tickets": [{
+            "id": str(t["_id"]), "ticket_id": t.get("ticket_id"),
+            "ticket_url": t.get("ticket_url"), "note": t.get("note"),
+            "ts": _iso(t.get("ts")),
+        } for t in support_tickets],
+        "feature_flags": feature_flags,
+        "engagement": {
+            "lifetime_sessions": sessions_lifetime,
+            "last_active_at": _iso((last_active or {}).get("ts")),
+        },
+        "onboarding_completed": bool(u.get("onboarding_completed", False)),
+        "onboarding_steps": u.get("onboarding_steps") or {},
+
+        # Compliance & Legal
+        "compliance": {
+            "date_of_birth": _iso(u.get("date_of_birth")),
+            "age_verified": bool(u.get("age_verified", False)),
+            "tos_version_accepted": u.get("tos_version_accepted"),
+            "tos_accepted_at": _iso(u.get("tos_accepted_at")),
+            "privacy_consents": u.get("privacy_consents") or {},
+            "marketing_email_consent": bool(u.get("marketing_email_consent", False)),
+            "region": u.get("region") or u.get("country"),
+            "jurisdiction_block": u.get("jurisdiction_block"),  # 'AZ','IA','LA','MT','WA'…
+            "data_deletion_requested_at": _iso(u.get("data_deletion_requested_at")),
+            "data_deletion_completed_at": _iso(u.get("gdpr_deleted_at")),
+        },
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 216 — Recent admin actions feed (Overview tab)
+# ─────────────────────────────────────────────────────────────────────
+@router.get("/recent-admin-actions")
+async def recent_admin_actions(request: Request, limit: int = Query(20, ge=1, le=100)):
+    """Cross-user feed of the latest admin actions taken anywhere on
+    the platform. Each row hydrated with the target user's email."""
+    await _require_admin(request)
+    db = _deps["db"]
+    rows = await db.admin_user_actions.find({}).sort("ts", -1).to_list(limit)
+    # Hydrate target_user emails
+    target_ids = list({r.get("target_user_id") for r in rows if r.get("target_user_id")})
+    targets: dict = {}
+    if target_ids:
+        try:
+            obj_ids = [ObjectId(t) for t in target_ids if ObjectId.is_valid(str(t))]
+            async for u in db.users.find({"_id": {"$in": obj_ids}}, {"email": 1, "username": 1}):
+                targets[str(u["_id"])] = {"email": u.get("email"), "username": u.get("username")}
+        except Exception:
+            pass
+    return {
+        "actions": [{
+            "id": str(r["_id"]),
+            "action": r.get("action"),
+            "admin_email": r.get("admin_email"),
+            "admin_tier": r.get("admin_tier"),
+            "target_user_id": r.get("target_user_id"),
+            "target_email": (targets.get(r.get("target_user_id") or "") or {}).get("email"),
+            "reason": r.get("reason"),
+            "mocked": bool(r.get("mocked", False)),
+            "ts": _iso(r.get("ts")),
+        } for r in rows],
     }

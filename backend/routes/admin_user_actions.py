@@ -81,10 +81,20 @@ async def _require_admin(request: Request, action: str) -> dict:
     """Tiered permission resolver. The user's `permission_tier` field
     can be one of {moderator, admin, senior_admin}. If absent, we fall
     back to the legacy `role` field where `role=admin` ≡ senior_admin.
+
+    Iter 216 — Impersonation write-guard: if the caller's JWT is a
+    `type=impersonation` token (read-only view-as), every action endpoint
+    is blocked. The admin must exit impersonation mode before taking
+    real action.
     """
     user = await _deps["get_current_user"](request)
     if not user:
         raise HTTPException(status_code=401, detail="Authentication required")
+    if user.get("_impersonation_mode") == "read_only":
+        raise HTTPException(
+            status_code=403,
+            detail="Read-only impersonation mode is active — exit view-as to perform admin actions",
+        )
     role = (user or {}).get("role")
     tier = (user or {}).get("permission_tier")
     if not tier:

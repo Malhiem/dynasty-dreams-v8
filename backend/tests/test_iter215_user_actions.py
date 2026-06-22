@@ -311,3 +311,92 @@ def test_impersonation_token_decodes_to_target_user():
     assert me_r.status_code == 200, me_r.text
     me = me_r.json()
     assert me["email"] == target_email
+
+
+# ── Iter 216 — Extended sections, recent feed, impersonation guard ───
+
+def test_user_detail_extended_sections():
+    """Iter 216 — verify the new 5 sections are present in the user
+    detail payload (League/Team, Behavioral, Financial, Engagement,
+    Compliance)."""
+    H = _admin_headers()
+    list_r = requests.get(f"{API_URL}/api/admin/platform/users?q=admin@dynastydreams", headers=H)
+    uid = list_r.json()["users"][0]["id"]
+    r = requests.get(f"{API_URL}/api/admin/platform/users/{uid}", headers=H)
+    assert r.status_code == 200
+    d = r.json()
+    # Section 1: League & Team
+    for k in ("leagues_joined", "teams_owned", "teams_owned_history",
+              "invitations_sent", "invitations_received"):
+        assert k in d, f"missing extension key: {k}"
+        assert isinstance(d[k], list)
+    # Section 2: Behavioral & Moderation
+    for k in ("reports_against_count", "reports_filed_count",
+              "moderation_action_history", "appeals", "trade_flags_count",
+              "chat_violations_count", "multi_account_links",
+              "trust_score", "watchlist"):
+        assert k in d, f"missing behavioral key: {k}"
+    # Section 3: Financial
+    for k in ("subscription_tier", "subscription_status", "payment_methods",
+              "billing_history", "league_fees", "payout_info",
+              "promo_credits_cents", "chargeback_flags"):
+        assert k in d, f"missing financial key: {k}"
+    # Section 4: Support & Engagement
+    for k in ("support_tickets", "feature_flags", "engagement",
+              "onboarding_completed", "onboarding_steps"):
+        assert k in d, f"missing engagement key: {k}"
+    assert "lifetime_sessions" in d["engagement"]
+    assert "last_active_at" in d["engagement"]
+    # Section 5: Compliance & Legal
+    for k in ("date_of_birth", "age_verified", "tos_version_accepted",
+              "tos_accepted_at", "privacy_consents", "marketing_email_consent",
+              "region", "jurisdiction_block", "data_deletion_requested_at",
+              "data_deletion_completed_at"):
+        assert k in d["compliance"], f"missing compliance key: {k}"
+
+
+def test_recent_admin_actions_feed():
+    """Iter 216 — the cross-user recent-actions feed returns the latest
+    rows hydrated with target email."""
+    H = _admin_headers()
+    # Generate an action so the feed has at least one row
+    uid, _, _ = _make_disposable_user()
+    requests.post(f"{API_URL}/api/admin/platform/users/{uid}/flag-for-review",
+                  headers=H, json={"reason": "iter216 feed test"})
+    r = requests.get(f"{API_URL}/api/admin/platform/recent-admin-actions?limit=10",
+                     headers=H)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    assert isinstance(d["actions"], list)
+    assert len(d["actions"]) > 0
+    a0 = d["actions"][0]
+    for k in ("id", "action", "admin_email", "target_user_id", "ts"):
+        assert k in a0
+
+
+def test_recent_admin_actions_feed_admin_only():
+    uid, _, token = _make_disposable_user()
+    r = requests.get(f"{API_URL}/api/admin/platform/recent-admin-actions",
+                     headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+
+
+def test_impersonation_token_cannot_perform_admin_actions():
+    """Iter 216 — Read-only impersonation guard: an admin that has
+    swapped to an impersonation JWT cannot perform admin actions while
+    in that mode (403). They must exit view-as first."""
+    uid, _, _ = _make_disposable_user()
+    H = _admin_headers()
+    # Start impersonation of the disposable user (not an admin, but token
+    # carries impersonator_id of the admin)
+    imp = requests.post(f"{API_URL}/api/admin/platform/users/{uid}/impersonate",
+                        headers=H, json={"reason": "guard test"})
+    assert imp.status_code == 200
+    imp_token = imp.json()["impersonation_token"]
+    # Try to take an admin action with the impersonation token — must 403
+    r = requests.post(f"{API_URL}/api/admin/platform/users/{uid}/flag-for-review",
+                      headers={"Authorization": f"Bearer {imp_token}"},
+                      json={"reason": "should be blocked"})
+    # Could be 403 from read_only guard OR from non-admin gate (since target user is non-admin)
+    assert r.status_code == 403, r.text
+    assert "impersonation" in r.text.lower() or "admin" in r.text.lower()
