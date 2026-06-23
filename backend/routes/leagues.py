@@ -368,7 +368,18 @@ def _league_to_response(league: dict) -> LeagueResponse:
 
 
 @router.get("/leagues", response_model=List[LeagueResponse])
-async def get_leagues(request: Request, my_leagues: bool = False):
+async def get_leagues(
+    request: Request,
+    my_leagues: bool = False,  # kept for backward compat (same as default)
+    discover: bool = False,
+    all: bool = False,
+):
+    """Iter 221 — Privacy hardening. By default the endpoint only returns
+    leagues the current user is a member of (team owner or commissioner).
+    `discover=true` returns public leagues the user has NOT joined (for the
+    "browse" experience). `all=true` returns every league but is gated to
+    platform admins. Unauthenticated callers get an empty list.
+    """
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
     user = None
@@ -377,16 +388,54 @@ async def get_leagues(request: Request, my_leagues: bool = False):
     except Exception:
         pass
 
-    query: dict = {}
-    if my_leagues and user:
-        user_teams = await db.teams.find({"owner_id": user["_id"]}, {"league_id": 1}).to_list(100)
-        league_ids = [t["league_id"] for t in user_teams]
-        query = {"$or": [{"commissioner_id": user["_id"]},
-                         {"_id": {"$in": [ObjectId(lid) for lid in league_ids]}}]}
-    elif not my_leagues:
-        query = {"is_private": False}
+    if not user:
+        # Anonymous: only allow public discovery
+        if discover or not my_leagues:
+            leagues = await db.leagues.find({"is_private": False}).to_list(100)
+            return [_league_to_response(league) for league in leagues]
+        return []
 
-    leagues = await db.leagues.find(query).to_list(100)
+    is_admin = (user.get("role") == "admin") or (
+        user.get("permission_tier") in ("admin", "senior_admin", "owner")
+    )
+
+    # Resolve the user's own league ids (team membership + commissioner roles)
+    user_teams = await db.teams.find({"owner_id": user["_id"]}, {"league_id": 1}).to_list(500)
+    member_league_ids = list({t["league_id"] for t in user_teams})
+    member_object_ids = []
+    for lid in member_league_ids:
+        try:
+            member_object_ids.append(ObjectId(lid))
+        except Exception:
+            continue
+
+    if all and is_admin:
+        leagues = await db.leagues.find({}).to_list(500)
+        return [_league_to_response(league) for league in leagues]
+
+    if discover:
+        # Public leagues the user is NOT already a member/commissioner of.
+        # Sort newest-first so freshly created leagues are immediately visible.
+        query = {
+            "is_private": False,
+            "_id": {"$nin": member_object_ids},
+            "commissioner_id": {"$ne": user["_id"]},
+        }
+        leagues = (
+            await db.leagues.find(query)
+            .sort("created_at", -1)
+            .to_list(200)
+        )
+        return [_league_to_response(league) for league in leagues]
+
+    # Default + my_leagues=true → membership-scoped results only
+    query = {
+        "$or": [
+            {"commissioner_id": user["_id"]},
+            {"_id": {"$in": member_object_ids}},
+        ]
+    }
+    leagues = await db.leagues.find(query).to_list(200)
     return [_league_to_response(league) for league in leagues]
 
 

@@ -419,6 +419,64 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
     }
 
 
+class PreviewScheduleRequest(BaseModel):
+    """Iter 221 — Dry-run preview, NO DB writes. Used by Create-League page so
+    commissioners can see the first few weeks of their schedule before finalising.
+    """
+    max_teams: int = Field(default=10, ge=2, le=32)
+    matchups_per_week: int = Field(default=1, ge=1, le=31)
+    num_weeks: int = Field(default=4, ge=1, le=18)
+
+
+@router.post("/matchups/preview")
+async def preview_schedule(input: PreviewScheduleRequest):
+    """Return a hypothetical round-robin schedule. No DB reads or writes.
+
+    Uses placeholder team names ("Team 1".."Team N") so the create-league wizard
+    can render an at-a-glance grid of who plays whom in each week. Honours
+    `matchups_per_week` by stacking copies of the base round-robin (capped at
+    `max_teams - 1` opponents per period).
+    """
+    n = input.max_teams
+    team_ids = [f"team_{i + 1}" for i in range(n)]
+    team_map = {tid: f"Team {i + 1}" for i, tid in enumerate(team_ids)}
+
+    max_opponents = max(1, n - 1)
+    opponents_per_period = max(1, min(input.matchups_per_week, max_opponents))
+
+    base_schedule = generate_round_robin(team_ids)
+    preview: list = []
+    for pass_idx in range(opponents_per_period):
+        week = 1
+        cycle = itertools.cycle(base_schedule)
+        for _ in range(pass_idx):
+            next(cycle)
+        while week <= input.num_weeks:
+            round_matchups = next(cycle)
+            for home_id, away_id in round_matchups:
+                preview.append({
+                    "week": week,
+                    "home_team_id": home_id,
+                    "home_team_name": team_map[home_id],
+                    "away_team_id": away_id,
+                    "away_team_name": team_map[away_id],
+                })
+            week += 1
+    # Bucket by week for easy UI rendering
+    by_week: dict[int, list] = {w: [] for w in range(1, input.num_weeks + 1)}
+    for m in preview:
+        by_week[m["week"]].append(m)
+    return {
+        "weeks": [
+            {"week": w, "matchups": by_week[w]}
+            for w in range(1, input.num_weeks + 1)
+        ],
+        "matchups_per_week": opponents_per_period,
+        "team_count": n,
+        "total_matchups": len(preview),
+    }
+
+
 @router.get("/matchups/{league_id}")
 async def get_matchups(league_id: str, week: Optional[int] = None):
     db = _deps["db"]

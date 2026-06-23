@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Trophy, ArrowLeft } from '@phosphor-icons/react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Trophy, ArrowLeft, Calendar } from '@phosphor-icons/react';
 
 const LEAGUE_FORMATS = [
   { value: 'redraft', label: 'Redraft', desc: 'Draft new team every season' },
@@ -35,6 +36,10 @@ export default function CreateLeaguePage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
+  const [previewError, setPreviewError] = useState('');
   const [form, setForm] = useState({
     name: '',
     format: 'dynasty',
@@ -71,6 +76,25 @@ export default function CreateLeaguePage() {
       setError(formatApiError(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handlePreview = async () => {
+    setPreviewError('');
+    setPreviewLoading(true);
+    setPreviewOpen(true);
+    try {
+      const { data } = await api.post('/matchups/preview', {
+        max_teams: form.max_teams,
+        matchups_per_week: form.matchups_per_week,
+        num_weeks: 4,
+      });
+      setPreviewData(data);
+    } catch (err) {
+      setPreviewError(formatApiError(err));
+      setPreviewData(null);
+    } finally {
+      setPreviewLoading(false);
     }
   };
 
@@ -312,16 +336,79 @@ export default function CreateLeaguePage() {
             </div>
           </div>
 
-          {/* Submit */}
-          <Button
-            type="submit"
-            disabled={loading || !form.name}
-            data-testid="create-league-submit"
-            className="w-full bg-[#00D2FF] text-black font-semibold hover:bg-[#33DBFF] disabled:opacity-50 py-6 text-lg"
-          >
-            {loading ? 'Creating League...' : 'Create League'}
-          </Button>
+          {/* Preview + Submit */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Button
+              type="button"
+              onClick={handlePreview}
+              disabled={!form.scoring_format.startsWith('head_to_head')}
+              data-testid="preview-schedule-btn"
+              variant="outline"
+              className="sm:w-1/3 border-white/20 text-white hover:bg-white/5 py-6 text-base disabled:opacity-40"
+              title={!form.scoring_format.startsWith('head_to_head')
+                ? 'Schedule preview is available for head-to-head leagues only'
+                : 'See the first 4 weeks of matchups based on your current settings'}
+            >
+              <Calendar size={18} className="mr-2" />
+              Preview schedule
+            </Button>
+            <Button
+              type="submit"
+              disabled={loading || !form.name}
+              data-testid="create-league-submit"
+              className="flex-1 bg-[#00D2FF] text-black font-semibold hover:bg-[#33DBFF] disabled:opacity-50 py-6 text-lg"
+            >
+              {loading ? 'Creating League...' : 'Create League'}
+            </Button>
+          </div>
         </form>
+
+        {/* Iter 221 — Schedule Preview Dialog */}
+        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+          <DialogContent className="bg-[#0A0A0A] border-white/10 text-white max-w-2xl max-h-[80vh] overflow-y-auto" data-testid="preview-schedule-dialog">
+            <DialogHeader>
+              <DialogTitle className="text-white">Schedule Preview — first 4 weeks</DialogTitle>
+              <DialogDescription className="text-[#A1A1AA]">
+                {form.max_teams} teams · {form.matchups_per_week} matchup{form.matchups_per_week > 1 ? 's' : ''}/week · placeholder team names
+              </DialogDescription>
+            </DialogHeader>
+            {previewLoading && (
+              <div className="p-8 text-center text-[#A1A1AA]" data-testid="preview-loading">
+                Building schedule…
+              </div>
+            )}
+            {previewError && (
+              <div className="bg-[#FF3B30]/20 border border-[#FF3B30]/50 text-[#FF3B30] px-4 py-3 rounded" data-testid="preview-error">
+                {previewError}
+              </div>
+            )}
+            {!previewLoading && !previewError && previewData && (
+              <div className="space-y-4" data-testid="preview-weeks">
+                {previewData.weeks.map((wk) => (
+                  <div key={wk.week} className="surface p-4" data-testid={`preview-week-${wk.week}`}>
+                    <h4 className="font-heading text-sm font-bold text-[#00D2FF] mb-2">WEEK {wk.week}</h4>
+                    {wk.matchups.length === 0 ? (
+                      <p className="text-xs text-[#A1A1AA]">— bye week —</p>
+                    ) : (
+                      <ul className="space-y-1 text-sm">
+                        {wk.matchups.map((m, idx) => (
+                          <li key={idx} className="flex items-center justify-between text-white/90">
+                            <span>{m.home_team_name}</span>
+                            <span className="text-[#A1A1AA]">vs</span>
+                            <span>{m.away_team_name}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+                <p className="text-xs text-[#A1A1AA] text-center pt-2">
+                  Total of {previewData.total_matchups} matchups across {previewData.weeks.length} weeks
+                </p>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
     </AppLayout>

@@ -11,13 +11,13 @@ export default function LeaguesPage() {
   const [leagues, setLeagues] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('all'); // all, public, my
+  const [filter, setFilter] = useState('my'); // my, discover
   const navigate = useNavigate();
 
   useEffect(() => {
     const fetchLeagues = async () => {
       try {
-        const params = filter === 'my' ? '?my_leagues=true' : '';
+        const params = filter === 'discover' ? '?discover=true' : '?my_leagues=true';
         const { data } = await api.get(`/leagues${params}`);
         setLeagues(data);
       } catch (err) {
@@ -91,7 +91,7 @@ export default function LeaguesPage() {
             />
           </div>
           <div className="flex gap-2">
-            {['all', 'public', 'my'].map((f) => (
+            {['my', 'discover'].map((f) => (
               <Button
                 key={f}
                 variant={filter === f ? 'default' : 'outline'}
@@ -102,7 +102,7 @@ export default function LeaguesPage() {
                   : 'border-white/10 text-white hover:bg-white/5'
                 }
               >
-                {f === 'all' ? 'All Leagues' : f === 'public' ? 'Public' : 'My Leagues'}
+                {f === 'my' ? 'My Leagues' : 'Browse Public'}
               </Button>
             ))}
           </div>

@@ -1705,19 +1705,12 @@ async def pause_draft(draft_id: str, request: Request):
 # ─── Iter 170j — Auto-pick on Timeout ─────────────────────────────────
 
 
-@router.post("/drafts/{draft_id}/auto-pick")
-async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
-    """Auto-pick for whoever is on the clock when their timer expires.
-
-    Resolution order:
-      1. The on-clock team's `team.draft_queue` (first undrafted entry)
-      2. The top-ranked undrafted player (eligible-players ordering)
-
-    Anyone (manager) can fire this — the backend resolves the right
-    team via the stored `team_map` so a missed pick can be skipped
-    even when the absent manager isn't logged in.
+async def _perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> dict:
+    """Iter 221 — Shared core for auto-picking the team currently on the clock.
+    Returns the recorded pick document. Raises HTTPException on bad state.
+    `source` is stamped into the pick doc / broadcast for audit (timeout,
+    eviction, commissioner_skip, etc.).
     """
-    await _get_user(request)  # auth required, but no role check
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -1748,9 +1741,6 @@ async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
             break
 
     if chosen_player is None:
-        # Top eligible — same ordering as `get_draft_eligible_players`,
-        # honouring the same criteria filter so an entry draft auto-picks
-        # a prospect even when the manager has no queue set.
         criteria = (draft.get("player_criteria") or "open").lower()
         q = {"player_type": "prospect"} if criteria == "entry" else {"player_type": {"$ne": "prospect"}}
         async for p in _db().players.find(q).sort([("points", -1), ("name", 1)]):
@@ -1792,6 +1782,7 @@ async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
         },
         "auto_picked": True,
         "auto_pick_via": via,
+        "auto_pick_source": source,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     next_pick = current_pick + 1
@@ -1808,16 +1799,18 @@ async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
             "$pull": {"draft_queue": str(chosen_player["_id"])},
         },
     )
+    label = "Auto-pick" if source != "eviction" else "Eviction auto-pick"
     msg = {
         "id": f"autopick-{datetime.now(timezone.utc).timestamp()}",
         "type": "pick",
         "sender": "System",
         "text": (
-            f"⏱ Auto-pick — {on_clock} took {chosen_player['name']} ({chosen_player['position']}) "
+            f"⏱ {label} — {on_clock} took {chosen_player['name']} ({chosen_player['position']}) "
             f"at #{current_pick} (via {'queue' if via == 'queue' else 'top eligible'})"
         ),
         "auto_picked": True,
         "auto_pick_via": via,
+        "auto_pick_source": source,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})
@@ -1828,7 +1821,24 @@ async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
         "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"]) if new_status == "active" else None,
         "draft_complete": new_status == "completed",
     })
-    return {"pick": pick_doc, "via": via}
+    return pick_doc
+
+
+@router.post("/drafts/{draft_id}/auto-pick")
+async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
+    """Auto-pick for whoever is on the clock when their timer expires.
+
+    Resolution order:
+      1. The on-clock team's `team.draft_queue` (first undrafted entry)
+      2. The top-ranked undrafted player (eligible-players ordering)
+
+    Anyone (manager) can fire this — the backend resolves the right
+    team via the stored `team_map` so a missed pick can be skipped
+    even when the absent manager isn't logged in.
+    """
+    await _get_user(request)  # auth required, but no role check
+    pick_doc = await _perform_one_auto_pick(draft_id, source="timeout")
+    return {"pick": pick_doc, "via": pick_doc.get("auto_pick_via")}
 
 
 # ─── Iter 170j — Draft Queue persistence (per-team) ───────────────────

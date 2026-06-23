@@ -2697,12 +2697,12 @@ const ACTION_CONFIGS = {
   },
   force_remove_draft: {
     title: "Force-remove from draft", tone: "warn", path: "/force-remove-from-draft",
-    description: "Autopick takeover; the user is removed from active picking.",
+    description: "Flips the user's team to autopick AND drains any picks they currently owe on the clock. Live.",
     fields: [
       { name: "draft_id", label: "Draft id", type: "text", required: true },
       { name: "reason", label: "Reason", type: "textarea" },
     ],
-    success: "Autopick takeover triggered",
+    success: "User evicted from draft",
   },
   reset_team: {
     title: "Reset team", tone: "danger", path: "/reset-team",

@@ -678,30 +678,85 @@ async def transfer_commissioner(user_id: str, request: Request):
 
 @router.post("/{user_id}/force-remove-from-draft")
 async def force_remove_from_draft(user_id: str, request: Request):
-    """STUB: audit-only. Wires up to draft autopick takeover in a
-    follow-up. Body: { draft_id, reason }."""
+    """Iter 221 — Real eviction (was stub). Flips the user's team(s) to
+    autopick mode AND, if their team is currently on the clock, drains
+    every consecutive pick they owe via the shared auto-pick helper.
+    Body: { draft_id, reason }.
+    """
     admin = await _require_admin(request, "force_remove_from_draft")
     payload = await request.json()
-    draft_id = payload.get("draft_id")
+    draft_id = (payload.get("draft_id") or "").strip()
     reason = (payload.get("reason") or "").strip()
     if not draft_id:
         raise HTTPException(status_code=400, detail="draft_id required")
-    # Best-effort: flip the team's autopick flag if we can find it
+
     try:
         oid = ObjectId(draft_id)
     except Exception:
-        oid = None
-    if oid:
-        draft = await _db().drafts.find_one({"_id": oid})
-        if draft:
-            await _db().teams.update_many(
-                {"league_id": draft.get("league_id"), "owner_id": user_id},
-                {"$set": {"autopick_enabled": True, "autopick_forced_at": datetime.now(timezone.utc).isoformat()}},
-            )
-    aid = await _audit(admin=admin, target_user_id=user_id, action="force_remove_from_draft",
-                       reason=reason, metadata={"draft_id": draft_id}, mocked=True)
-    return {"ok": True, "audit_id": aid, "mocked": True,
-            "note": "Autopick flag set on team(s); active-draft eviction TBD"}
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+
+    draft = await _db().drafts.find_one({"_id": oid})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    # Flag the user's team(s) in this league for autopick going forward.
+    update_res = await _db().teams.update_many(
+        {"league_id": draft.get("league_id"), "owner_id": user_id},
+        {"$set": {
+            "autopick_enabled": True,
+            "autopick_forced_at": datetime.now(timezone.utc).isoformat(),
+            "autopick_forced_by_admin": admin["_id"],
+        }},
+    )
+    if update_res.matched_count == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=f"User has no team in league {draft.get('league_id')}",
+        )
+
+    # Drain on-clock picks: while the draft is active and the next on-clock
+    # team belongs to the evicted user, execute auto-pick. Bounded by total
+    # picks to be safe.
+    from routes.drafts import _perform_one_auto_pick  # local import to avoid cycle
+    from draft_engine import get_team_for_pick
+
+    drained: list = []
+    max_iters = max(1, int(draft.get("total_rounds", 1)) * len(draft.get("team_abbrs", []) or []))
+    for _ in range(max_iters):
+        cur = await _db().drafts.find_one({"_id": oid})
+        if not cur or cur.get("status") != "active":
+            break
+        on_clock = get_team_for_pick(cur["team_abbrs"], cur["current_pick"], cur["snake_draft"])
+        on_clock_team_id = (cur.get("team_map") or {}).get(on_clock, {}).get("id")
+        if not on_clock_team_id:
+            break
+        on_clock_team = await _db().teams.find_one({"_id": ObjectId(on_clock_team_id)})
+        if not on_clock_team or on_clock_team.get("owner_id") != user_id:
+            break
+        pick = await _perform_one_auto_pick(draft_id, source="eviction")
+        drained.append(pick)
+
+    aid = await _audit(
+        admin=admin, target_user_id=user_id, action="force_remove_from_draft",
+        reason=reason,
+        metadata={
+            "draft_id": draft_id,
+            "teams_flagged": update_res.matched_count,
+            "picks_drained": len(drained),
+        },
+    )
+    await _notify_user(
+        user_id=user_id, action="force_remove_from_draft",
+        title="Removed from draft",
+        body=(f"You were removed from the active draft by an admin. "
+              f"Your team is now on auto-pick. {len(drained)} pick(s) were drained."),
+    )
+    return {
+        "ok": True,
+        "audit_id": aid,
+        "teams_flagged": update_res.matched_count,
+        "picks_drained": len(drained),
+    }
 
 
 @router.post("/{user_id}/reset-team")
