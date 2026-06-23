@@ -63,6 +63,7 @@ export function AuthProvider({ children }) {
 
   const logout = async () => {
     await axios.post(`${BACKEND_URL}/api/auth/logout`, {}, { withCredentials: true });
+    try { localStorage.removeItem('auth_remember'); } catch { /* noop */ }
     setUser(false);
   };
 

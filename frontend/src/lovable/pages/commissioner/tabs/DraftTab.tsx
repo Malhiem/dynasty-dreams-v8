@@ -23,6 +23,7 @@ import {
   Table, TableHeader, TableRow, TableHead, TableBody, TableCell,
 } from "@/components/ui/table";
 import { ChevronDown, ChevronRight, Trophy, Calendar, Users, Plus, X } from "lucide-react";
+import api from "@/lib/api";
 import { useNavigate } from "react-router-dom";
 import TransactionsConfigCards, { TransactionsDraftRulesCard } from "@/lovable/pages/commissioner/TransactionsConfigCards";
 import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigCard";
@@ -59,6 +60,7 @@ export interface DraftTabContext {
   completedDraftResults: any[];
   playerCriteriaOptions: any[];
   scheduledDrafts: any[];
+  onReloadScheduledDrafts?: () => void | Promise<void>;
 }
 
 interface DraftTabProps {
@@ -74,7 +76,43 @@ export default function DraftTab({ ctx }: DraftTabProps) {
     createDraftPickTrading, setCreateDraftPickTrading,
     expandedDraft, setExpandedDraft, expandedDraftResults, setExpandedDraftResults,
     activeLeague, persistDraftType, completedDraftResults, playerCriteriaOptions, scheduledDrafts,
+    onReloadScheduledDrafts,
   } = ctx;
+
+  // Iter 227 — Real Create Draft handler (was a toast-only stub).
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const handleCreateDraft = async () => {
+    if (!activeLeague?.id) {
+      toast.error("Select a league before creating a draft.");
+      return;
+    }
+    setCreatingDraft(true);
+    try {
+      // Pick the SECOND-ROUND timer as the default "time per pick" persisted
+      // on the draft document (the per-round map can still differ — backend
+      // honours it during the live draft).
+      const defaultTime = Math.min(21600, parseInt(roundTimes[1] || roundTimes[2] || "300", 10));
+      const body = {
+        league_id: activeLeague.id,
+        draft_type: draftType || "entry",
+        scheduled_time: null,
+        total_rounds: draftRounds,
+        time_per_pick: defaultTime,
+        snake_draft: true,
+        player_criteria: Array.isArray(selectedPlayerCriteria)
+          ? selectedPlayerCriteria
+          : [selectedPlayerCriteria || "all"],
+        missed_pick_action: "auto-select",
+      };
+      await api.post(`/drafts`, body);
+      toast.success("Draft created and added to Scheduled Drafts");
+      await onReloadScheduledDrafts?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to create draft");
+    } finally {
+      setCreatingDraft(false);
+    }
+  };
 
   // Iter 191 — In-Draft pick trade review window + post-review action.
   // Local-only state for now (the existing Draft Format card is a mock
@@ -258,8 +296,20 @@ export default function DraftTab({ ctx }: DraftTabProps) {
 
             <Separator />
             <div className="space-y-3">
-              <Label>Time Per Pick by Round</Label>
-              <p className="text-sm text-muted-foreground">Customize the pick timer for each round individually</p>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div>
+                  <Label>Time Per Pick by Round</Label>
+                  <p className="text-sm text-muted-foreground">Customize the pick timer for each round individually</p>
+                </div>
+                {/* Iter 227 — Range bulk-apply. Pick a round span + a single
+                    duration, and stamp every round in [from..to] with that
+                    value. Saves clicking 12 dropdowns. */}
+                <RoundTimeRangeApply draftRounds={draftRounds} onApply={(from, to, val) => {
+                  const next = { ...roundTimes };
+                  for (let r = from; r <= to; r++) next[r] = val;
+                  setRoundTimes(next);
+                }} />
+              </div>
               <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
                 {Array.from({ length: draftRounds }, (_, i) => i + 1).map((round) => (
                   <div key={round} className="flex items-center gap-2">
@@ -389,26 +439,70 @@ export default function DraftTab({ ctx }: DraftTabProps) {
             <Separator />
             <div className="space-y-2">
                 <Label>Draft Order</Label>
-                <Select defaultValue="reverse-standings">
-                  <SelectTrigger className="bg-secondary border-border">
+                <Select defaultValue={firstDraftCompleted ? "reverse-standings" : "manual"}>
+                  <SelectTrigger className="bg-secondary border-border" data-testid="draft-order-trigger">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="nhl-lottery">NHL Draft Lottery Representation</SelectItem>
-                    <SelectItem value="lottery-generator">Draft Lottery Generator</SelectItem>
+                    {/* Iter 227 — NHL lottery only makes sense for the NHL
+                        Entry Draft (held in May). Grey it out for inaugural /
+                        startup drafts and label why. */}
+                    <SelectItem
+                      value="nhl-lottery"
+                      disabled={!firstDraftCompleted}
+                      data-testid="draft-order-nhl-lottery"
+                    >
+                      NHL Draft Lottery Representation
+                      {!firstDraftCompleted && (
+                        <span className="ml-2 text-[10px] italic text-muted-foreground">
+                          — best for the NHL Entry Draft
+                        </span>
+                      )}
+                    </SelectItem>
+                    <SelectItem value="lottery-generator" data-testid="draft-order-lottery-generator">
+                      Draft Lottery Generator
+                      {!firstDraftCompleted && (
+                        <span className="ml-2 text-[10px] italic text-muted-foreground">
+                          — picks teams 24 → 1 step-by-step
+                        </span>
+                      )}
+                    </SelectItem>
                     <SelectItem value="manual">Manual Entry</SelectItem>
-                    <SelectItem value="reverse-standings">Reverse Order of Standings</SelectItem>
+                    <SelectItem
+                      value="reverse-standings"
+                      disabled={!firstDraftCompleted}
+                      data-testid="draft-order-reverse-standings"
+                    >
+                      Reverse Order of Standings
+                      {!firstDraftCompleted && (
+                        <span className="ml-2 text-[10px] italic text-muted-foreground">
+                          — needs a previous season
+                        </span>
+                      )}
+                    </SelectItem>
                   </SelectContent>
                 </Select>
+                {!firstDraftCompleted && (
+                  <p className="text-[11px] text-amber-300/90" data-testid="draft-order-inaugural-hint">
+                    Inaugural draft — pick order can be set manually or generated step-by-step (24 → 1) via the Lottery Generator.
+                  </p>
+                )}
             </div>
             <Separator />
-            <div className="space-y-4">
+            <div
+              className={`space-y-4 ${!firstDraftCompleted ? "opacity-50" : ""}`}
+              data-testid="draft-tiebreakers-section"
+              aria-disabled={!firstDraftCompleted}
+            >
               <div>
                 <Label>Draft Order Tiebreakers</Label>
                 <p className="text-sm text-muted-foreground">
-                  Determine draft lottery positioning when two or more teams finish with identical records
+                  {firstDraftCompleted
+                    ? "Determine draft lottery positioning when two or more teams finish with identical records"
+                    : "No previous season — tiebreakers can't apply yet. Use Manual Entry or the Lottery Generator above for the inaugural draft."}
                 </p>
               </div>
+              <fieldset disabled={!firstDraftCompleted} className="contents">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label className="text-xs text-muted-foreground">1st Tiebreaker</Label>
@@ -444,6 +538,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                   <p className="text-xs text-muted-foreground">Determined by the League Administrator outside the system</p>
                 </div>
               </div>
+              </fieldset>
             </div>
             <Separator />
             <div className="space-y-2">
@@ -497,9 +592,14 @@ export default function DraftTab({ ctx }: DraftTabProps) {
         </Card>
 
         <div className="flex justify-end">
-          <Button onClick={() => toast.success("Draft created successfully! It has been added to your scheduled drafts.")} className="gap-2">
+          <Button
+            onClick={handleCreateDraft}
+            disabled={creatingDraft || !activeLeague?.id}
+            className="gap-2"
+            data-testid="create-draft-btn"
+          >
             <Plus className="h-4 w-4" />
-            Create Draft
+            {creatingDraft ? "Creating…" : "Create Draft"}
           </Button>
         </div>
 
@@ -512,6 +612,14 @@ export default function DraftTab({ ctx }: DraftTabProps) {
             <CardDescription>View and manage drafts that have been created or are upcoming</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {scheduledDrafts.length === 0 && (
+              <p
+                className="text-sm text-muted-foreground italic text-center py-6"
+                data-testid="scheduled-drafts-empty"
+              >
+                No drafts planned at this time
+              </p>
+            )}
             {scheduledDrafts.map((draft) => (
               <div key={draft.id} className="border border-border rounded-lg overflow-hidden">
                 <button
@@ -662,6 +770,64 @@ export default function DraftTab({ ctx }: DraftTabProps) {
         </div>
 
         <TransactionsDraftRulesCard leagueId={activeLeague?.id} />
+    </div>
+  );
+}
+
+/* Iter 227 — Round-time range bulk-apply helper. Pick rounds [from..to]
+   + one duration, and stamp the chosen value across that span. */
+function RoundTimeRangeApply({ draftRounds, onApply }: { draftRounds: number; onApply: (from: number, to: number, val: string) => void }) {
+  const [from, setFrom] = useState(2);
+  const [to, setTo] = useState(Math.min(5, draftRounds));
+  const [val, setVal] = useState("7200"); // default 2h
+  const options: Array<[string, string]> = [
+    ["300", "5 min"], ["600", "10 min"], ["900", "15 min"], ["1800", "30 min"],
+    ["3600", "1 hr"], ["7200", "2 hr"], ["10800", "3 hr"], ["14400", "4 hr"],
+    ["21600", "6 hr"], ["43200", "12 hr"], ["86400", "24 hr"],
+  ];
+  return (
+    <div className="flex items-end gap-2 flex-wrap text-xs" data-testid="round-time-range-apply">
+      <div>
+        <Label className="text-[10px] text-muted-foreground">Round from</Label>
+        <Input
+          type="number"
+          min={1}
+          max={draftRounds}
+          value={from}
+          onChange={(e) => setFrom(Math.max(1, Math.min(draftRounds, parseInt(e.target.value || "0", 10))))}
+          className="h-8 w-16"
+          data-testid="round-range-from"
+        />
+      </div>
+      <div>
+        <Label className="text-[10px] text-muted-foreground">to</Label>
+        <Input
+          type="number"
+          min={1}
+          max={draftRounds}
+          value={to}
+          onChange={(e) => setTo(Math.max(1, Math.min(draftRounds, parseInt(e.target.value || "0", 10))))}
+          className="h-8 w-16"
+          data-testid="round-range-to"
+        />
+      </div>
+      <div>
+        <Label className="text-[10px] text-muted-foreground">duration</Label>
+        <Select value={val} onValueChange={setVal}>
+          <SelectTrigger className="h-8 w-24 text-xs" data-testid="round-range-duration"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {options.map(([v, l]) => <SelectItem key={v} value={v}>{l}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => onApply(Math.min(from, to), Math.max(from, to), val)}
+        data-testid="round-range-apply-btn"
+      >
+        Apply
+      </Button>
     </div>
   );
 }

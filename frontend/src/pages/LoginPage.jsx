@@ -14,19 +14,31 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [cleared, setCleared] = useState(false);
-  const { login, user } = useAuth();
+  const { login, user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
   const from = location.state?.from?.pathname || '/dashboard';
 
-  // If the user already has a valid session, jump straight to the app.
+  // Iter 227 — "Remember me" governs whether a returning visitor with a
+  // live session is auto-bounced to the dashboard. If the user did NOT
+  // check Remember-me on their last sign-in, we proactively log them out
+  // when they land on /login so the form is always clean for the next
+  // person on a shared device.
   useEffect(() => {
-    if (user) navigate(from, { replace: true });
-  }, [user, from, navigate]);
+    if (!user) return;
+    const stored = (typeof window !== 'undefined' && localStorage.getItem('auth_remember')) || 'false';
+    if (stored === 'true') {
+      navigate(from, { replace: true });
+    } else {
+      // Auto-clear the lingering session so the next visitor starts fresh
+      logout().catch(() => { /* noop — UI still shows logged-out state */ });
+    }
+  }, [user, from, navigate, logout]);
 
   const handleClearSession = async () => {
     try {
@@ -54,6 +66,10 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await login(email, password);
+      // Iter 227 — Persist the remember-me preference for next visit.
+      try {
+        localStorage.setItem('auth_remember', remember ? 'true' : 'false');
+      } catch { /* noop */ }
       navigate(from, { replace: true });
     } catch (err) {
       setError(formatApiError(err));
@@ -136,8 +152,14 @@ export default function LoginPage() {
             </div>
 
             <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2 text-sm text-[#A1A1AA]">
-                <input type="checkbox" className="rounded border-white/10 bg-[#141414]" />
+              <label className="flex items-center gap-2 text-sm text-[#A1A1AA] cursor-pointer">
+                <input
+                  type="checkbox"
+                  className="rounded border-white/10 bg-[#141414]"
+                  checked={remember}
+                  onChange={(e) => setRemember(e.target.checked)}
+                  data-testid="login-remember-me"
+                />
                 Remember me
               </label>
               <Link to="/forgot-password" className="text-sm text-[#00D2FF] hover:underline">
@@ -156,7 +178,7 @@ export default function LoginPage() {
           </form>
 
           <p className="mt-8 text-center text-[#A1A1AA]">
-            Don't have an account?{' '}
+            Don&apos;t have an account?{' '}
             <Link to="/register" className="text-[#00D2FF] hover:underline" data-testid="login-register-link">
               Create one
             </Link>

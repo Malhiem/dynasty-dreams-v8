@@ -1,64 +1,89 @@
 // @ts-nocheck
-interface DraftPick {
-  year: number;
-  round: number;
-  original: string;
-  projected: string;
-}
-
-const mockDraftPicks: DraftPick[] = [
-  { year: 2025, round: 1, original: "Own", projected: "8-12" },
-  { year: 2025, round: 1, original: "via Ice Breakers", projected: "1-5" },
-  { year: 2025, round: 2, original: "Own", projected: "20-24" },
-  { year: 2025, round: 3, original: "Own", projected: "32-36" },
-  { year: 2026, round: 1, original: "Own", projected: "TBD" },
-  { year: 2026, round: 2, original: "Own", projected: "TBD" },
-];
+/**
+ * DraftPicks — Iter 227 hooked up to live data.
+ *
+ * Was rendering hardcoded mock picks before. Now fetches the league's
+ * scheduled drafts via `/api/drafts?league_id=...`; if none exist, shows
+ * the "No drafts planned at this time" empty-state per the iter-227 spec.
+ *
+ * Future: when the upcoming-pick API surfaces traded picks + projections,
+ * map them onto the same `DraftPick` shape and render the legacy grid.
+ */
+import { useEffect, useState } from "react";
+import api from "@/lib/api";
+import { useActiveLeague } from "@/hooks/use-active-league";
 
 const DraftPicks = () => {
-  const groupedPicks = mockDraftPicks.reduce((acc, pick) => {
-    if (!acc[pick.year]) acc[pick.year] = [];
-    acc[pick.year].push(pick);
-    return acc;
-  }, {} as Record<number, DraftPick[]>);
+  const { activeLeagueId } = useActiveLeague();
+  const [drafts, setDrafts] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!activeLeagueId) { setLoading(false); return; }
+      try {
+        const { data } = await api.get(`/drafts`, { params: { league_id: activeLeagueId } });
+        if (!cancelled) {
+          setDrafts(Array.isArray(data) ? data : (data?.drafts || []));
+        }
+      } catch {
+        if (!cancelled) setDrafts([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeLeagueId]);
+
+  if (loading) {
+    return (
+      <div className="stat-card p-6" data-testid="draft-picks-loading">
+        <h3 className="text-lg font-semibold mb-2">Draft Capital</h3>
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
+
+  if (drafts.length === 0) {
+    return (
+      <div className="stat-card p-6" data-testid="draft-picks-empty">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-semibold">Draft Capital</h3>
+          <span className="text-xs bg-secondary/40 text-muted-foreground font-medium px-2 py-1 rounded-full">
+            0 Picks
+          </span>
+        </div>
+        <p className="text-sm text-muted-foreground italic text-center py-4">
+          No drafts planned at this time
+        </p>
+      </div>
+    );
+  }
 
   return (
-    <div className="stat-card p-0 overflow-hidden">
+    <div className="stat-card p-0 overflow-hidden" data-testid="draft-picks-list">
       <div className="p-6 border-b border-border">
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold">Draft Capital</h3>
           <span className="text-xs bg-accent/20 text-accent font-medium px-2 py-1 rounded-full">
-            {mockDraftPicks.length} Picks
+            {drafts.length} Scheduled
           </span>
         </div>
       </div>
-      
-      <div className="p-6 space-y-6">
-        {Object.entries(groupedPicks).map(([year, picks], yearIndex) => (
-          <div key={year} className="animate-slide-up" style={{ animationDelay: `${yearIndex * 100}ms` }}>
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-sm font-semibold text-foreground">{year}</span>
-              <div className="flex-1 h-px bg-border" />
+      <div className="p-6 space-y-3">
+        {drafts.map((d) => (
+          <div
+            key={d.id || d._id}
+            className="p-3 rounded-lg border border-border bg-secondary/30 flex items-center justify-between"
+          >
+            <div>
+              <p className="text-sm font-semibold">{d.name || d.title || "Untitled draft"}</p>
+              <p className="text-[11px] text-muted-foreground">
+                {(d.draft_type || d.type || "Snake").toString()} · {d.total_rounds || d.rounds || 0} rounds
+              </p>
             </div>
-            
-            <div className="grid grid-cols-2 gap-2">
-              {picks.map((pick, pickIndex) => (
-                <div 
-                  key={`${pick.year}-${pick.round}-${pickIndex}`}
-                  className={`p-3 rounded-lg border transition-all hover:border-primary/30 ${
-                    pick.round === 1 ? 'bg-accent/10 border-accent/30' : 'bg-secondary/50 border-border'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className={`text-xs font-bold ${pick.round === 1 ? 'text-accent' : 'text-muted-foreground'}`}>
-                      Round {pick.round}
-                    </span>
-                    <span className="text-xs text-primary font-medium">#{pick.projected}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground truncate">{pick.original}</p>
-                </div>
-              ))}
-            </div>
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{d.status || "scheduled"}</span>
           </div>
         ))}
       </div>

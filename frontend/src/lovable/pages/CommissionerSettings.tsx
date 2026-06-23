@@ -288,56 +288,44 @@ const CommissionerSettings = () => {
     { draftId: "draft-3", pick: 10, round: 2, team: "Ice Crushers", player: "Oliver Moore", position: "C" },
   ];
 
-  const scheduledDrafts: Array<{ id: string; name: string; type: string; format: string; rounds: number; timePerPick: string; playerCriteria: string; missedPickAction: string; scheduledDate: string; scheduledTime: string; status: "scheduled" | "in-progress" | "completed"; completedDate: string | null; pickTradingEnabled: boolean; tradingWindowOpens: string | null }> = [
-    {
-      id: "draft-1",
-      name: "2026 NHL Entry Draft",
-      type: "NHL Entry Draft",
-      format: "Snake Draft",
-      rounds: 5,
-      timePerPick: "5 minutes",
-      playerCriteria: "Rookies Only, Prospects Only",
-      missedPickAction: "Auto-select best available",
-      scheduledDate: "June 15, 2026",
-      scheduledTime: "7:00 PM EST",
-      status: "scheduled" as const,
-      completedDate: null,
-      pickTradingEnabled: true,
-      tradingWindowOpens: "2-weeks",
-    },
-    {
-      id: "draft-2",
-      name: "2026 Supplemental Draft",
-      type: "Supplemental Draft",
-      format: "Linear Draft",
-      rounds: 3,
-      timePerPick: "2 minutes",
-      playerCriteria: "Unsigned / Draft Eligible",
-      missedPickAction: "Allow pick anytime when they return",
-      scheduledDate: "July 10, 2026",
-      scheduledTime: "8:00 PM EST",
-      status: "scheduled" as const,
-      completedDate: null,
-      pickTradingEnabled: false,
-      tradingWindowOpens: null,
-    },
-    {
-      id: "draft-3",
-      name: "2025 NHL Entry Draft",
-      type: "NHL Entry Draft",
-      format: "Snake Draft",
-      rounds: 5,
-      timePerPick: "10 minutes",
-      playerCriteria: "All Players",
-      missedPickAction: "Auto-select best available",
-      scheduledDate: "June 20, 2025",
-      scheduledTime: "7:00 PM EST",
-      status: "completed" as const,
-      completedDate: "June 20, 2025",
-      pickTradingEnabled: true,
-      tradingWindowOpens: "immediately",
-    },
-  ];
+  // Iter 227 — Replace the previous hardcoded `scheduledDrafts` mock with a
+  // live fetch from `/api/drafts?league_id=...`. New leagues start empty
+  // (the TFHL "3 saved drafts" bug). Re-fetched after the Create Draft
+  // wire-up below persists a new draft.
+  const [scheduledDrafts, setScheduledDrafts] = useState([]);
+
+  const reloadScheduledDrafts = async () => {
+    if (!activeLeague?.id) {
+      setScheduledDrafts([]);
+      return;
+    }
+    try {
+      const { data } = await api.get(`/drafts`, { params: { league_id: activeLeague.id } });
+      const rows = (Array.isArray(data) ? data : data?.drafts || []).map((d) => ({
+        id: d.id || d._id,
+        name: d.name || d.title || "Untitled draft",
+        type: d.type || d.draft_type || "Snake Draft",
+        format: d.format || (d.snake_draft ? "Snake Draft" : "Linear Draft"),
+        rounds: d.rounds || d.total_rounds || 0,
+        timePerPick: d.time_per_pick || d.timePerPick || "—",
+        playerCriteria: d.player_criteria || "All Players",
+        missedPickAction: d.missed_pick_action || "Auto-select best available",
+        scheduledDate: d.scheduled_date || d.scheduledDate || "—",
+        scheduledTime: d.scheduled_time || d.scheduledTime || "—",
+        status: (d.status || "scheduled"),
+        completedDate: d.completed_at || d.completedDate || null,
+        pickTradingEnabled: !!d.pick_trading_enabled,
+        tradingWindowOpens: d.trading_window_opens || null,
+      }));
+      setScheduledDrafts(rows);
+    } catch {
+      setScheduledDrafts([]);
+    }
+  };
+
+  useEffect(() => {
+    reloadScheduledDrafts();
+  }, [activeLeague?.id]);
 
   const playerCriteriaOptions = [
     { value: "all", label: "All Players" },
@@ -599,6 +587,7 @@ const CommissionerSettings = () => {
                 expandedDraftResults, setExpandedDraftResults,
                 activeLeague, persistDraftType, completedDraftResults,
                 playerCriteriaOptions, scheduledDrafts,
+                onReloadScheduledDrafts: reloadScheduledDrafts,
               }}
             />
           </TabsContent>
