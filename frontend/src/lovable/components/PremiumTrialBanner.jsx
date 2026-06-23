@@ -104,7 +104,7 @@ export default function PremiumTrialBanner({ leagueId, isCommissioner = false })
               className="bg-white text-black hover:bg-white/90"
               data-testid={`premium-trial-pay-${leagueId}`}
             >
-              <Link to={`/leagues/${leagueId}/billing`}>
+              <Link to={`/payment/setup?league_id=${leagueId}`}>
                 Set up payment
               </Link>
             </Button>

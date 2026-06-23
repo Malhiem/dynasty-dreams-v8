@@ -21,6 +21,25 @@ import PremiumTrialBanner from "@/lovable/components/PremiumTrialBanner";
 import CBABadge from "@/lovable/components/CBABadge";
 import VetoThresholdPreview from "@/lovable/components/VetoThresholdPreview";
 
+// Iter 225 — Robust extractor for the assorted `detail` shapes the
+// backend returns (string, Pydantic-422 list, or our custom
+// `{code, message, missing|errors}` objects). Always yields a string so
+// `toast.error(...)` never receives a raw object (which would crash React).
+function formatErrDetail(detail, fallback = "Something went wrong") {
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => d?.msg || d?.message || String(d)).join(" · ") || fallback;
+  }
+  if (typeof detail === "object") {
+    const base = detail.message || detail.detail || fallback;
+    const errs = detail.errors;
+    if (Array.isArray(errs) && errs.length) return `${base} — ${errs.join(" · ")}`;
+    return base;
+  }
+  return String(detail);
+}
+
 const STEPS = [
   { id: "basics", label: "Basics", icon: Wand2 },
   { id: "cap", label: "Salary Cap", icon: DollarSign },
@@ -76,6 +95,9 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   const [benchSpots, setBenchSpots] = useState(5);
   const [minorsSpots, setMinorsSpots] = useState(5);
   const [minorsEnabled, setMinorsEnabled] = useState(false);
+  // Iter 225 — Editable team slots so the commissioner can size the league
+  // before invitees join. Pads the generated schedule with placeholder slots.
+  const [maxTeams, setMaxTeams] = useState(12);
 
   // Salary cap + retention
   const [capEnabled, setCapEnabled] = useState(false);
@@ -107,8 +129,16 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
 
   // Trades
   const [tradeReviewHours, setTradeReviewHours] = useState(72);
-  const [tradeVetoPct, setTradeVetoPct] = useState(50);
+  // Iter 225 — Veto by COUNT (was %). UI shows "N of M teams". State stores
+  // the absolute number; we still POST the legacy `trade_veto_threshold_pct`
+  // computed on save.
+  const [tradeVetoCount, setTradeVetoCount] = useState(6);
   const [tradeDeadlineWeek, setTradeDeadlineWeek] = useState(16);
+  // Iter 225 — Optional day-of-week (0=Sunday … 6=Saturday) + time-of-day
+  // (HH:MM in 24h) that bind the trade deadline to a precise moment instead
+  // of "anytime during week N". Backend assembles `trade_deadline_at`.
+  const [tradeDeadlineDow, setTradeDeadlineDow] = useState(5); // Friday
+  const [tradeDeadlineTime, setTradeDeadlineTime] = useState("15:00");
 
   // Load everything once when wizard opens
   useEffect(() => {
@@ -136,11 +166,24 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         setRosterSpots(lgR.data?.roster_spots ?? 20);
         setBenchSpots(lgR.data?.bench_spots ?? 5);
         setMinorsSpots(lgR.data?.minors_spots ?? 5);
+        setMaxTeams(lgR.data?.max_teams ?? 12);
         setTeams(teamsR.data || []);
         // Trade defaults from league
         setTradeReviewHours(lgR.data?.trade_review_period_hours ?? 72);
-        setTradeVetoPct(lgR.data?.trade_veto_threshold_pct ?? 50);
+        const teamsForVeto = (teamsR.data || []).length || lgR.data?.max_teams || 12;
+        const storedPct = lgR.data?.trade_veto_threshold_pct ?? 50;
+        setTradeVetoCount(Math.max(1, Math.round((storedPct / 100) * teamsForVeto)));
         setTradeDeadlineWeek(lgR.data?.trade_deadline_week ?? 16);
+        // Iter 225 — Reverse-parse `trade_deadline_at` (ISO) into dow + time
+        // so the wizard re-opens with the previously-saved precise moment.
+        const tdAt = lgR.data?.trade_deadline_at;
+        if (tdAt) {
+          try {
+            const d = new Date(tdAt);
+            setTradeDeadlineDow(d.getDay());
+            setTradeDeadlineTime(d.toTimeString().slice(0, 5));
+          } catch (_e) { /* ignore parse errors */ }
+        }
         // Schedule defaults
         setSeasonStart(lgR.data?.season_start_date ?? "");
         setSeasonEnd(lgR.data?.season_end_date ?? "");
@@ -282,6 +325,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         roster_spots: rosterSpots,
         bench_spots: benchSpots,
         minors_spots: minorsEnabled ? minorsSpots : 0,
+        max_teams: maxTeams,
         salary_retention_enabled: retentionEnabled,
         salary_retention_max_pct: retentionMaxPct,
         salary_retention_slots: retentionEnabled ? retentionSlots : 0,
@@ -289,7 +333,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
       // Iter 199 — both Basics + Cap finish on this single save.
       await stampProgress(["basics", "cap"]);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Failed to save basics");
+      toast.error(formatErrDetail(e?.response?.data?.detail, "Failed to save basics"));
     } finally {
       setBusy(false);
     }
@@ -307,7 +351,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
       await stampProgress(["divisions"]);
       toast.success("Divisions saved");
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Failed to save divisions");
+      toast.error(formatErrDetail(e?.response?.data?.detail, "Failed to save divisions"));
     } finally {
       setBusy(false);
     }
@@ -340,7 +384,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
       await stampProgress(["schedule", "playoffs"]);
       toast.success("Schedule saved");
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Failed to save schedule");
+      toast.error(formatErrDetail(e?.response?.data?.detail, "Failed to save schedule"));
     } finally {
       setBusy(false);
     }
@@ -349,36 +393,70 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   const saveTrades = async () => {
     setBusy(true);
     try {
+      // Iter 225 — Convert veto-by-count → legacy % for the backend store.
+      const denom = Math.max(1, teams.length || maxTeams || 12);
+      const vetoPct = Math.max(0, Math.min(100, Math.round((tradeVetoCount / denom) * 100)));
+      // Iter 225 — Build a precise trade_deadline_at from dow + time, anchored
+      // to the upcoming N-th week of the season (caller will refine; here we
+      // just persist the next occurrence of the configured day+time so the
+      // commissioner sees something coherent).
+      const now = new Date();
+      const targetDow = Math.max(0, Math.min(6, tradeDeadlineDow));
+      const [hh, mm] = (tradeDeadlineTime || "15:00").split(":").map((x) => parseInt(x, 10) || 0);
+      const daysAhead = (targetDow - now.getDay() + 7) % 7 || 7;
+      const target = new Date(now);
+      target.setDate(now.getDate() + daysAhead + Math.max(0, (tradeDeadlineWeek - 1)) * 7);
+      target.setHours(hh, mm, 0, 0);
+      const tradeDeadlineAt = target.toISOString();
+
       await api.put(`/leagues/${leagueId}`, {
         trade_review_period_hours: tradeReviewHours,
-        trade_veto_threshold_pct: tradeVetoPct,
+        trade_veto_threshold_pct: vetoPct,
         trade_deadline_week: tradeDeadlineWeek,
+        trade_deadline_at: tradeDeadlineAt,
       });
       await stampProgress(["trades"]);
       toast.success("Trade settings saved");
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Failed to save trade settings");
+      toast.error(formatErrDetail(e?.response?.data?.detail, "Failed to save trade settings"));
     } finally {
       setBusy(false);
     }
   };
 
+  const [scheduleWarnings, setScheduleWarnings] = useState([]);
+
   const generateSchedule = async () => {
     setBusy(true);
+    setScheduleWarnings([]);
     try {
       const res = await api.post("/matchups/generate-schedule", { league_id: leagueId, num_weeks: numWeeks });
       setScheduleMode(res.data?.mode);
+      setScheduleWarnings(res.data?.warnings || []);
       // Iter 199 — Generating schedule satisfies the "schedule" health
       // section even if the user skipped the prior schedule-config save.
       await stampProgress(["schedule"]);
-      toast.success(`Generated ${res.data?.weeks || numWeeks}-week schedule (${res.data?.mode || "round_robin"})`);
+      const placeholders = res.data?.placeholder_team_slots || 0;
+      const placeholderNote = placeholders > 0 ? ` · ${placeholders} placeholder slot${placeholders === 1 ? "" : "s"}` : "";
+      toast.success(
+        `Generated ${res.data?.weeks || numWeeks}-week schedule (${res.data?.mode || "round_robin"})${placeholderNote}`,
+      );
     } catch (e) {
       const reason = e?.response?.data?.detail;
       const status = e?.response?.status;
       let prefix = "Failed to generate schedule";
       if (status === 403) prefix = "Can't generate schedule";
       else if (status === 400) prefix = "Couldn't generate schedule";
-      toast.error(`${prefix}${reason ? ` — ${reason}` : ""}`, { duration: 8000 });
+      // Iter 225 — Backend returns {message, errors:[]} for the calendar-fit
+      // check. Surface the structured errors in the toast.
+      let msg = "";
+      if (reason && typeof reason === "object") {
+        const errs = (reason.errors || []).join(" · ");
+        msg = `${reason.message || prefix}${errs ? ` — ${errs}` : ""}`;
+      } else {
+        msg = `${prefix}${reason ? ` — ${reason}` : ""}`;
+      }
+      toast.error(msg, { duration: 10000 });
     } finally {
       setBusy(false);
     }
@@ -514,7 +592,21 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
 
             <div className="space-y-3 border-t border-border pt-3">
               <h3 className="text-sm font-semibold text-white">Roster Shape</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <Label className="text-xs flex items-center" htmlFor="wiz-max-teams">
+                    Team slots
+                    <HelpTooltip text="How many teams will be in this league. Unfilled slots become 'Open Slot N' placeholders in the generated schedule." testId="help-max-teams" />
+                  </Label>
+                  <Input id="wiz-max-teams" type="number" min={2} max={32} value={maxTeams}
+                    onChange={(e) => setMaxTeams(Math.max(2, Math.min(32, parseInt(e.target.value || "0", 10))))}
+                    data-testid="wizard-max-teams" />
+                  {teams.length < maxTeams && (
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      {maxTeams - teams.length} placeholder slot{maxTeams - teams.length === 1 ? "" : "s"} until filled.
+                    </p>
+                  )}
+                </div>
                 <div>
                   <Label className="text-xs flex items-center" htmlFor="wiz-roster">
                     Roster spots
@@ -539,8 +631,8 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
                       Minors spots
                       <HelpTooltip text={HELP.minors} testId="help-minors-spots" />
                     </Label>
-                    <Input id="wiz-minors" type="number" min={0} max={20} value={minorsSpots}
-                      onChange={(e) => setMinorsSpots(Math.max(0, Math.min(20, parseInt(e.target.value || "0", 10))))}
+                    <Input id="wiz-minors" type="number" min={0} max={100} value={minorsSpots}
+                      onChange={(e) => setMinorsSpots(Math.max(0, Math.min(100, parseInt(e.target.value || "0", 10))))}
                       data-testid="wizard-minors-spots" />
                   </div>
                 )}
@@ -988,20 +1080,18 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
               </div>
               <div>
                 <Label className="text-xs flex items-center">
-                  Veto threshold (%)
-                  <HelpTooltip text={HELP.tradeVeto} testId="help-trade-veto" />
+                  Veto threshold (# teams)
+                  <HelpTooltip text="How many managers must vote VETO for a trade to be blocked. 0 disables vetoes." testId="help-trade-veto" />
                 </Label>
-                <Input type="number" min={0} max={100}
-                  value={tradeVetoPct}
-                  onChange={(e) => setTradeVetoPct(Math.max(0, Math.min(100, parseInt(e.target.value || "0", 10))))}
-                  data-testid="wizard-trade-veto-pct" />
-                <div className="mt-2">
-                  <VetoThresholdPreview
-                    leagueId={leagueId}
-                    pct={tradeVetoPct}
-                    testId="wizard-veto-threshold-preview"
-                  />
-                </div>
+                <Input type="number" min={0} max={Math.max(1, maxTeams)}
+                  value={tradeVetoCount}
+                  onChange={(e) => setTradeVetoCount(Math.max(0, Math.min(maxTeams, parseInt(e.target.value || "0", 10))))}
+                  data-testid="wizard-trade-veto-count" />
+                <p className="text-[10px] text-muted-foreground mt-1" data-testid="wizard-veto-preview">
+                  {tradeVetoCount === 0
+                    ? "Vetoes disabled."
+                    : `Trade is blocked when ${tradeVetoCount} of ${maxTeams} team${maxTeams === 1 ? "" : "s"} vote VETO.`}
+                </p>
               </div>
               <div>
                 <Label className="text-xs flex items-center">
@@ -1012,6 +1102,34 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
                   value={tradeDeadlineWeek}
                   onChange={(e) => setTradeDeadlineWeek(Math.max(1, Math.min(30, parseInt(e.target.value || "0", 10))))}
                   data-testid="wizard-trade-deadline-week" />
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div>
+                    <Label className="text-[10px] text-muted-foreground">Day of week</Label>
+                    <select
+                      value={tradeDeadlineDow}
+                      onChange={(e) => setTradeDeadlineDow(parseInt(e.target.value, 10))}
+                      className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                      data-testid="wizard-trade-deadline-dow"
+                    >
+                      <option value={0}>Sunday</option>
+                      <option value={1}>Monday</option>
+                      <option value={2}>Tuesday</option>
+                      <option value={3}>Wednesday</option>
+                      <option value={4}>Thursday</option>
+                      <option value={5}>Friday</option>
+                      <option value={6}>Saturday</option>
+                    </select>
+                  </div>
+                  <div>
+                    <Label className="text-[10px] text-muted-foreground">Time of day</Label>
+                    <Input
+                      type="time"
+                      value={tradeDeadlineTime}
+                      onChange={(e) => setTradeDeadlineTime(e.target.value)}
+                      data-testid="wizard-trade-deadline-time"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -1045,7 +1163,15 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
                 </Button>
               </div>
               {scheduleMode && (
-                <p className="text-xs text-success">✓ Schedule generated ({scheduleMode}). Click Finish to complete setup.</p>
+                <p className="text-xs text-success" data-testid="wizard-schedule-success">✓ Schedule generated ({scheduleMode}). Click Finish to complete setup.</p>
+              )}
+              {scheduleWarnings.length > 0 && (
+                <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 space-y-1" data-testid="wizard-schedule-warnings">
+                  <p className="text-xs font-semibold text-amber-200">Schedule generated with warnings:</p>
+                  <ul className="text-xs text-amber-100 list-disc list-inside space-y-0.5">
+                    {scheduleWarnings.map((w, i) => <li key={i}>{w}</li>)}
+                  </ul>
+                </div>
               )}
             </div>
           </div>

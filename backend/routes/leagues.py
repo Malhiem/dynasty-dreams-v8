@@ -867,11 +867,25 @@ async def validate_setup_prerequisites(league_id: str, request: Request):
     # Roster shape sanity
     if not league.get("roster_spots"):
         issues.append("Roster size isn't set — pick a non-zero number on the Basics step.")
-    # Teams present
+    # Iter 225 — Allow finishing the wizard with placeholder slots.
+    # The schedule generator now pads up to `max_teams` with "Open Slot N"
+    # placeholders so an empty league can still ship a working schedule;
+    # we only block when there's nothing meaningful to schedule at all.
     teams_count = await db.teams.count_documents({"league_id": league_id})
-    if teams_count < 2:
-        issues.append(f"Only {teams_count} team{'s' if teams_count != 1 else ''} in the league — you need at least 2 before generating a schedule.")
-    return {"ok": len(issues) == 0, "issues": issues, "teams_count": teams_count}
+    max_teams = int(league.get("max_teams") or 0)
+    effective_slots = max(teams_count, max_teams)
+    if effective_slots < 2:
+        issues.append(
+            "Set `max teams` to at least 2 (Basics step) or invite a second manager "
+            "before finishing — even an all-placeholder league needs ≥2 slots."
+        )
+    return {
+        "ok": len(issues) == 0,
+        "issues": issues,
+        "teams_count": teams_count,
+        "max_teams": max_teams,
+        "open_slot_count": max(0, max_teams - teams_count),
+    }
 
 
 @router.post("/leagues/{league_id}/setup-reset")
@@ -1576,17 +1590,18 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
         updates["cap_floor_year_plus_1_tentative"] = False
         updates["cap_floor_year_plus_2_tentative"] = False
 
-    # Start the trial clock if any premium feature is now enabled and the
-    # league hasn't paid yet. Idempotent — won't reset an existing clock.
+    # Start the trial clock the first time any premium feature is enabled
+    # AND the league hasn't paid yet. Iter 225 — STICKY once started: we no
+    # longer wipe `premium_trial_started_at` when features are toggled off.
+    # Previously each toggle off/on in the setup wizard reset the 14-day
+    # window, so the banner appeared to "rewind" to 13 days left on later
+    # wizard steps. Trial is anchored to its first activation and only
+    # cleared when the league pays.
     new_cap = updates.get("salary_cap_enabled", league.get("salary_cap_enabled"))
     new_min = updates.get("minors_enabled", league.get("minors_enabled"))
     any_premium = bool(new_cap or new_min)
     if any_premium and not league.get("premium") and not league.get("premium_trial_started_at"):
         updates["premium_trial_started_at"] = datetime.now(timezone.utc)
-    # When all premium features are off, clear the trial timer so re-enabling
-    # later gives a fresh 14-day window.
-    if not any_premium and league.get("premium_trial_started_at"):
-        updates["premium_trial_started_at"] = None
 
     if updates:
         await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$set": updates})
@@ -1639,7 +1654,7 @@ class LeagueUpdate(BaseModel):
     minors_spots: Optional[int] = Field(default=None, ge=0, le=100)
     # Format + scoring
     scoring_format: Optional[str] = None
-    max_teams: Optional[int] = Field(default=None, ge=4, le=32)
+    max_teams: Optional[int] = Field(default=None, ge=2, le=32)
     keepers_allowed: Optional[int] = Field(default=None, ge=0, le=30)
     entry_fee: Optional[float] = Field(default=None, ge=0)
     # Trade settings

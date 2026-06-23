@@ -33,6 +33,73 @@ class SimulateWeekRequest(BaseModel):
 
 
 # ─── Helpers ─────────────────────────────────────────────────
+
+# Iter 225 — NHL regular season window for the 2025-2026 season (used for
+# the schedule-fit sanity check that surfaces in /matchups/generate-schedule
+# and /matchups/preview). Update annually when the NHL schedule changes.
+NHL_REGULAR_SEASON_START = (10, 7)   # Oct 7
+NHL_REGULAR_SEASON_END = (4, 18)     # Apr 18 (typical end-of-RS Saturday)
+
+
+def _season_schedule_warnings(
+    *,
+    season_start: Optional[str],
+    season_end: Optional[str],
+    matchup_length_days: int,
+    num_weeks: int,
+) -> tuple[list[str], list[str]]:
+    """Return (errors, warnings) for the configured schedule vs the calendar.
+
+    • Errors block generation when the configured season window cannot fit
+      the requested number of weeks given the matchup length.
+    • Warnings are informational: schedule extends past the typical NHL
+      regular-season window (so points won't accumulate after the real
+      season ends).
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    def parse(d):
+        if not d:
+            return None
+        try:
+            return datetime.fromisoformat(str(d).split("T", 1)[0])
+        except Exception:
+            return None
+
+    start = parse(season_start)
+    end = parse(season_end)
+    if start and end:
+        if end < start:
+            errors.append("Season end date is before the season start date.")
+        else:
+            days_available = (end - start).days + 1
+            days_required = max(1, matchup_length_days) * max(1, num_weeks)
+            if days_required > days_available:
+                errors.append(
+                    f"Season window has {days_available} days but the schedule needs "
+                    f"{days_required} days ({num_weeks} weeks × {matchup_length_days}d). "
+                    "Lengthen the season or shorten the matchup period."
+                )
+
+    if start:
+        nhl_start = datetime(start.year, *NHL_REGULAR_SEASON_START)
+        if start < nhl_start - timedelta(days=14):
+            warnings.append(
+                f"Season starts {start.date()} — that's well before the NHL regular season "
+                f"({nhl_start.date()}). Player stats won't accumulate until games begin."
+            )
+    if end:
+        nhl_end_yr = end.year if end.month >= 7 else end.year
+        nhl_end = datetime(nhl_end_yr, *NHL_REGULAR_SEASON_END)
+        if end > nhl_end + timedelta(days=14):
+            warnings.append(
+                f"Season ends {end.date()} — that's past the NHL regular season "
+                f"({nhl_end.date()}). Points won't accumulate after the NHL season ends."
+            )
+    return errors, warnings
+
+
 def generate_round_robin(team_ids):
     """Generate a full round-robin schedule. Returns list of rounds, each a list of (home, away) tuples."""
     teams = list(team_ids)
@@ -298,12 +365,34 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
         )
 
     teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
+    # Iter 225 — Allow generating with empty placeholder slots.
+    # Previously we required ≥2 teams which blocked commissioners from
+    # finishing the setup wizard before all invitees joined. Now we pad
+    # with virtual "Open Slot N" teams up to `league.max_teams`. The
+    # placeholders are NOT stored in the `teams` collection — they only
+    # appear in matchup rows with a synthetic team_id (`open_slot_{n}`)
+    # that the UI treats as "TBD" / "Open Slot" until a real team fills it.
+    max_teams_target = int(league.get("max_teams") or 0)
+    actual_team_count = len(teams)
+
+    placeholder_count = 0
+    if max_teams_target > actual_team_count:
+        placeholder_count = max_teams_target - actual_team_count
+        for i in range(placeholder_count):
+            slot_num = actual_team_count + i + 1
+            teams.append({
+                "_id": f"open_slot_{slot_num}",
+                "name": f"Open Slot {slot_num}",
+                "is_open_slot": True,
+            })
+
     if len(teams) < 2:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Need at least 2 teams to generate a schedule — this league has {len(teams)} team{'s' if len(teams) != 1 else ''}. "
-                "Invite or seed more teams first, then retry."
+                f"Need at least 2 teams to generate a schedule — this league has {actual_team_count} team{'s' if actual_team_count != 1 else ''} "
+                f"and max_teams={max_teams_target or 'unset'}. "
+                "Bump `max_teams` to at least 2 or invite more managers first."
             ),
         )
 
@@ -316,6 +405,21 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
     num_weeks = input.num_weeks
     if num_weeks is None:
         num_weeks = int(league.get("regular_season_weeks") or 18)
+
+    # Iter 225 — Season-window + NHL-window sanity check. Errors block,
+    # warnings are returned to the UI so the commissioner can choose to
+    # proceed anyway (warnings don't fail; errors do).
+    s_errors, s_warnings = _season_schedule_warnings(
+        season_start=league.get("season_start_date"),
+        season_end=league.get("season_end_date"),
+        matchup_length_days=int(league.get("matchup_length_days") or 7),
+        num_weeks=num_weeks,
+    )
+    if s_errors:
+        raise HTTPException(
+            status_code=400,
+            detail={"message": "Schedule doesn't fit the configured season.", "errors": s_errors},
+        )
 
     # ── Iter 100: opponents_per_matchup_period (1..N-1) ───────────────
     # When > 1, each team plays N opponents per scoring period. We achieve
@@ -416,16 +520,24 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
         "opponents_per_period": 1 if use_divisional else opponents_per_period,
         "playoff_matchups": len([m for m in bracket_matchups if m.get("is_playoff")]),
         "consolation_matchups": len([m for m in bracket_matchups if m.get("is_consolation")]),
+        "placeholder_team_slots": placeholder_count,
+        "warnings": s_warnings,
     }
 
 
 class PreviewScheduleRequest(BaseModel):
     """Iter 221 — Dry-run preview, NO DB writes. Used by Create-League page so
     commissioners can see the first few weeks of their schedule before finalising.
+    Iter 225 — Optionally accepts `season_start`, `season_end`, and
+    `matchup_length_days` so we can surface the same calendar+NHL-window
+    sanity warnings the wizard's "Generate" step uses.
     """
     max_teams: int = Field(default=10, ge=2, le=32)
     matchups_per_week: int = Field(default=1, ge=1, le=31)
     num_weeks: int = Field(default=4, ge=1, le=18)
+    season_start: Optional[str] = None
+    season_end: Optional[str] = None
+    matchup_length_days: int = Field(default=7, ge=1, le=14)
 
 
 @router.post("/matchups/preview")
@@ -474,6 +586,12 @@ async def preview_schedule(input: PreviewScheduleRequest):
         "matchups_per_week": opponents_per_period,
         "team_count": n,
         "total_matchups": len(preview),
+        "warnings": _season_schedule_warnings(
+            season_start=input.season_start,
+            season_end=input.season_end,
+            matchup_length_days=input.matchup_length_days,
+            num_weeks=input.num_weeks,
+        )[1],
     }
 
 
