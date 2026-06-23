@@ -322,7 +322,14 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
     # this by stacking the base schedule N times (each pass adds a fresh
     # opponent for every team in every week). Bounded to N-1 (can't play
     # more unique opponents than exist).
-    opponents_per_period = int(league.get("opponents_per_matchup_period") or 1)
+    # Iter 219 — Honour `matchups_per_week` (set on league creation) as
+    # the primary source; fall back to legacy `opponents_per_matchup_period`
+    # for backward compat with previously-created leagues.
+    opponents_per_period = int(
+        league.get("matchups_per_week")
+        or league.get("opponents_per_matchup_period")
+        or 1
+    )
     max_opponents = max(1, len(teams) - 1)
     opponents_per_period = max(1, min(opponents_per_period, max_opponents))
 

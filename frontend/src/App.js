@@ -13,6 +13,7 @@ import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
 import JoinLeaguePage from "@/pages/JoinLeaguePage";
 import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
+import PaymentSetupPage from "@/pages/PaymentSetupPage";
 import PaymentCancelPage from "@/pages/PaymentCancelPage";
 import ProfilePage from "@/pages/ProfilePage";
 import EditProfilePage from "@/pages/EditProfilePage";
@@ -111,6 +112,7 @@ function App() {
           <Route path="/live" element={<ProtectedRoute><LiveScoringPage /></ProtectedRoute>} />
           <Route path="/teams/:id" element={<ProtectedRoute><TeamDetailPage /></ProtectedRoute>} />
           <Route path="/payment/success" element={<ProtectedRoute><PaymentSuccessPage /></ProtectedRoute>} />
+          <Route path="/payment/setup" element={<ProtectedRoute><PaymentSetupPage /></ProtectedRoute>} />
           <Route path="/payment/cancel" element={<ProtectedRoute><PaymentCancelPage /></ProtectedRoute>} />
 
           {/* Lovable-ported design pages */}
