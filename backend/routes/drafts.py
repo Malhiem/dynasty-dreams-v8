@@ -1699,7 +1699,21 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
 
 @router.post("/drafts/{draft_id}/pause")
 async def pause_draft(draft_id: str, request: Request):
+    """Toggle the draft timer pause. Commissioner-only."""
     user = await _get_user(request)
+    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if league["commissioner_id"] != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only commissioner can pause draft")
+
+    paused = not draft.get("timer_paused", False)
+    await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$set": {"timer_paused": paused}})
+
+    await _broadcast(f"draft_{draft_id}", "draft_timer_toggle", {"paused": paused})
+    return {"paused": paused}
 
 
 # ─── Iter 170j — Auto-pick on Timeout ─────────────────────────────────
@@ -1933,19 +1947,6 @@ async def get_team_shortlist(team_id: str, request: Request):
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     return {"team_id": team_id, "shortlist": list(team.get("shortlist") or [])}
-    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
-    if not draft:
-        raise HTTPException(status_code=404, detail="Draft not found")
-
-    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can pause draft")
-
-    paused = not draft.get("timer_paused", False)
-    await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$set": {"timer_paused": paused}})
-
-    await _broadcast(f"draft_{draft_id}", "draft_timer_toggle", {"paused": paused})
-    return {"paused": paused}
 
 @router.post("/drafts/{draft_id}/chat")
 async def send_draft_chat(draft_id: str, input: DraftChatRequest, request: Request):
