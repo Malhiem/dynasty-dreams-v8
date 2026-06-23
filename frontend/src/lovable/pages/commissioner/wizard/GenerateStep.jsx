@@ -24,6 +24,11 @@ export default function GenerateStep({ ctx }) {
     scheduleWarnings,
   } = ctx;
 
+  // Iter 228c — defensive: parent should always pass an array, but
+  // guard for safety so a future refactor that omits this key doesn't
+  // crash the entire wizard on render.
+  const warnings = scheduleWarnings || [];
+
   return (
     <div className="space-y-4" data-testid="wizard-body-generate">
       <div className="stat-card p-4 space-y-3">
@@ -53,11 +58,11 @@ export default function GenerateStep({ ctx }) {
         {scheduleMode && (
           <p className="text-xs text-success" data-testid="wizard-schedule-success">✓ Schedule generated ({scheduleMode}). Click Finish to complete setup.</p>
         )}
-        {scheduleWarnings.length > 0 && (
+        {warnings.length > 0 && (
           <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2 space-y-1" data-testid="wizard-schedule-warnings">
             <p className="text-xs font-semibold text-amber-200">Schedule generated with warnings:</p>
             <ul className="text-xs text-amber-100 list-disc list-inside space-y-0.5">
-              {scheduleWarnings.map((w, i) => <li key={i}>{w}</li>)}
+              {warnings.map((w, i) => <li key={i}>{w}</li>)}
             </ul>
           </div>
         )}
