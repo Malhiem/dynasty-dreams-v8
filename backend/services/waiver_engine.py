@@ -118,6 +118,132 @@ async def _check_position_blocked(
 # ─── Core engine ───────────────────────────────────────────────
 
 
+async def _finalize_winner(
+    db, league_id: str, winner: dict, system_type: str, now_iso: str,
+) -> bool:
+    """Atomically applies the four winner-side writes:
+      (1) claim.status="won" + processed_at
+      (2) FAAB budget debit (if system_type=="faab" and bid>0)
+      (3) optional drop_player_id removed from roster
+      (4) player_id added to roster
+
+    Tries a real MongoDB transaction first (replica-set required); when
+    transactions are unavailable in this deployment, falls back to a
+    compensating-write pattern: any later step's failure rolls back the
+    earlier steps so the engine never leaves a half-applied state.
+
+    Returns True on success, False on abort (caller leaves the claim
+    pending for the next pass + writes a `waiver_processing_errors` row).
+    """
+    bid = float(winner.get("bid_amount") or 0) if system_type == "faab" else 0.0
+    team_id = winner["team_id"]
+    player_id = winner["player_id"]
+    drop_player_id = winner.get("drop_player_id")
+
+    # ── Path A: real MongoDB transaction (production replica set) ──
+    client = getattr(db, "client", None)
+    if client is not None:
+        try:
+            async with await client.start_session() as session:
+                async with session.start_transaction():
+                    await db.waiver_claims.update_one(
+                        {"_id": winner["_id"]},
+                        {"$set": {"status": "won", "processed_at": now_iso}},
+                        session=session,
+                    )
+                    if bid > 0:
+                        await db.waiver_budgets.update_one(
+                            {"team_id": team_id, "league_id": league_id},
+                            {"$inc": {"spent": bid, "remaining": -bid}},
+                            session=session,
+                        )
+                    if drop_player_id:
+                        await db.teams.update_one(
+                            {"_id": ObjectId(team_id)},
+                            {"$pull": {"roster": drop_player_id}},
+                            session=session,
+                        )
+                    await db.teams.update_one(
+                        {"_id": ObjectId(team_id)},
+                        {"$addToSet": {"roster": player_id}},
+                        session=session,
+                    )
+            return True
+        except Exception as tx_err:
+            err_msg = str(tx_err).lower()
+            # Single-node / standalone mongo → transactions unsupported.
+            # Fall through to the compensating-write path.
+            if "replica set" not in err_msg and "transaction" not in err_msg \
+                    and "session" not in err_msg and "not supported" not in err_msg:
+                log.warning(f"waiver finalize transaction error: {tx_err}")
+                # Unknown failure — abort the finalize.
+                return False
+
+    # ── Path B: compensating-write fallback ──
+    applied: list[Callable] = []
+    try:
+        # (1) claim status
+        await db.waiver_claims.update_one(
+            {"_id": winner["_id"]},
+            {"$set": {"status": "won", "processed_at": now_iso}},
+        )
+
+        async def _undo_claim():
+            await db.waiver_claims.update_one(
+                {"_id": winner["_id"]},
+                {"$set": {"status": "pending"}, "$unset": {"processed_at": ""}},
+            )
+        applied.append(_undo_claim)
+
+        # (2) FAAB debit
+        if bid > 0:
+            await db.waiver_budgets.update_one(
+                {"team_id": team_id, "league_id": league_id},
+                {"$inc": {"spent": bid, "remaining": -bid}},
+            )
+
+            async def _undo_faab():
+                await db.waiver_budgets.update_one(
+                    {"team_id": team_id, "league_id": league_id},
+                    {"$inc": {"spent": -bid, "remaining": bid}},
+                )
+            applied.append(_undo_faab)
+
+        # (3) drop (if requested) — track whether the player was actually
+        # removed so we can re-add on rollback.
+        drop_undo_needed = False
+        if drop_player_id:
+            res = await db.teams.update_one(
+                {"_id": ObjectId(team_id)},
+                {"$pull": {"roster": drop_player_id}},
+            )
+            drop_undo_needed = (res.modified_count or 0) > 0
+
+            async def _undo_drop():
+                if drop_undo_needed:
+                    await db.teams.update_one(
+                        {"_id": ObjectId(team_id)},
+                        {"$addToSet": {"roster": drop_player_id}},
+                    )
+            applied.append(_undo_drop)
+
+        # (4) add winning player to roster
+        await db.teams.update_one(
+            {"_id": ObjectId(team_id)},
+            {"$addToSet": {"roster": player_id}},
+        )
+        return True
+    except Exception as ex:
+        log.warning(f"waiver finalize fallback failed for claim {winner.get('_id')}: {ex}")
+        # Compensate in reverse order
+        for undo in reversed(applied):
+            try:
+                await undo()
+            except Exception as undo_err:
+                log.error(f"compensating-write failed: {undo_err}")
+        return False
+
+
 async def process_pending_claims(
     db,
     league_id: str,
@@ -275,19 +401,30 @@ async def process_pending_claims(
                   and c not in [d[0] for d in denied]
                   and c not in skipped_this_pass]
 
-        # Mark winner
-        await db.waiver_claims.update_one(
-            {"_id": winner["_id"]},
-            {"$set": {"status": "won", "processed_at": now_iso}},
+        # ── Iter 228c — Transaction-guarded winner finalization ──
+        # The four winner-side writes (claim status, FAAB debit, roster
+        # add, optional roster drop) must either ALL apply or NONE apply.
+        # Try a real MongoDB session first; fall back to a compensating-
+        # write pattern when transactions are unavailable (single-node
+        # mongo dev environment).
+        winner_finalized = await _finalize_winner(
+            db, league_id, winner, system_type, now_iso,
         )
-        # Decrement FAAB only for faab system
-        if system_type == "faab":
-            bid = float(winner.get("bid_amount") or 0)
-            if bid > 0:
-                await db.waiver_budgets.update_one(
-                    {"team_id": winner["team_id"], "league_id": league_id},
-                    {"$inc": {"spent": bid, "remaining": -bid}},
-                )
+        if not winner_finalized:
+            # Engine could not finalize → leave the claim pending so the
+            # next scheduler pass retries. Record the failure for audit.
+            try:
+                await db.waiver_processing_errors.insert_one({
+                    "league_id": league_id,
+                    "claim_id": str(winner["_id"]),
+                    "player_id": winner.get("player_id"),
+                    "team_id": winner.get("team_id"),
+                    "failed_at": now_iso,
+                    "reason": "winner_finalize_aborted",
+                })
+            except Exception:
+                pass
+            continue
 
         # Mark losers
         for loser in losers:
@@ -318,10 +455,9 @@ async def process_pending_claims(
                 except Exception as ex:
                     log.warning(f"log_activity (loser) failed: {ex}")
 
-        # Add player to winner's roster + drop if requested + auto-snapshot
+        # Auto-snapshot is best-effort (audit side-effect, not a state mutation)
         try:
             from services.auto_snapshot import auto_snapshot
-
             await auto_snapshot(
                 db, [winner["team_id"]],
                 trigger="waiver_claim",
@@ -332,23 +468,8 @@ async def process_pending_claims(
                     "source": "waiver_engine",
                 },
             )
-
-            # Drop player if requested
-            if winner.get("drop_player_id"):
-                await db.teams.update_one(
-                    {"_id": ObjectId(winner["team_id"])},
-                    {"$pull": {"roster": winner["drop_player_id"]}},
-                )
-
-            await db.teams.update_one(
-                {"_id": ObjectId(winner["team_id"])},
-                {"$addToSet": {"roster": winner["player_id"]}},
-            )
         except Exception as ex:
-            log.warning(
-                f"Failed to update winner roster team={winner.get('team_id')} "
-                f"player={winner.get('player_id')}: {ex}"
-            )
+            log.warning(f"auto_snapshot for winner team={winner.get('team_id')}: {ex}")
 
         if log_activity:
             try:
@@ -415,16 +536,18 @@ async def process_pending_claims(
 
 
 def compute_next_run(league: dict, now: Optional[datetime] = None) -> Optional[str]:
-    """Returns ISO datetime for the next scheduled processing pass.
+    """Returns ISO datetime (UTC) for the next scheduled processing pass.
 
     Returns None when:
       • waiver is disabled, or
       • processing_mode == "days" with no recent pending claim (the next
         run is tied to a claim's `processes_at`, not a clock).
 
-    For `processing_mode == "scheduled"`, returns the next slot in UTC.
-    Time zone is interpreted as UTC (best-effort; the wizard surfaces a
-    "league-local time" caveat).
+    For `processing_mode == "scheduled"`, the `time` field of each
+    schedule slot is interpreted in the league's local timezone
+    (`league.timezone`, IANA name; defaults to UTC when missing or
+    unparseable). The returned ISO string is in UTC so callers can
+    safely use `new Date(iso)` in the browser.
     """
     cfg = (league.get("transactions_config") or {}).get("waiver") or {}
     if not cfg.get("enabled"):
@@ -437,6 +560,18 @@ def compute_next_run(league: dict, now: Optional[datetime] = None) -> Optional[s
         slots = cfg.get("processing_schedule") or []
         if not slots:
             return None
+
+        # Resolve league timezone (iter 228c). Falls back to UTC.
+        tz = timezone.utc
+        tz_name = league.get("timezone")
+        if tz_name and tz_name.upper() != "UTC":
+            try:
+                from zoneinfo import ZoneInfo
+                tz = ZoneInfo(tz_name)
+            except Exception:
+                tz = timezone.utc
+
+        now_local = now_dt.astimezone(tz)
         candidates: list[datetime] = []
         for slot in slots:
             try:
@@ -446,14 +581,14 @@ def compute_next_run(league: dict, now: Optional[datetime] = None) -> Optional[s
                 mm_i = int(mm)
             except Exception:
                 continue
-            # Find next datetime matching this DOW + time
-            # Python weekday(): Monday=0, Sunday=6 (matches our enum)
+            # Find next datetime matching this DOW + time in the league's
+            # local timezone, then convert to UTC for the response.
             for ahead in range(0, 8):
-                cand = (now_dt + timedelta(days=ahead)).replace(
+                cand_local = (now_local + timedelta(days=ahead)).replace(
                     hour=hh_i, minute=mm_i, second=0, microsecond=0
                 )
-                if cand.weekday() == dow and cand > now_dt:
-                    candidates.append(cand)
+                if cand_local.weekday() == dow and cand_local > now_local:
+                    candidates.append(cand_local.astimezone(timezone.utc))
                     break
         if not candidates:
             return None

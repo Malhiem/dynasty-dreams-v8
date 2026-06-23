@@ -1,0 +1,58 @@
+{
+  "summary": "Iter 228c verification — SetupWizard refactor (Basics/Cap/Trades/Generate step extraction) and RulesScheduleTab card extraction tested live. CRITICAL bug found: GenerateStep crashes with 'Cannot read properties of undefined (reading length)' because the parent's `stepCtx` object in SetupWizard.jsx (lines 609-634) does NOT pass the props the new extracted step components consume. Step body divs (data-testid='wizard-body-*') render for basics/cap/divisions/schedule/trades because the testid lives on the outer wrapper, but the inputs inside are bound to UNDEFINED state setters — so user edits do NOT propagate. Generate step refuses to render at all (scheduleWarnings is undefined → .length throws). RulesScheduleTab.tsx + 3 of 4 extracted cards (SalaryCap, SalaryRetention, ContractBuyouts) render correctly on their consumer tabs (verified via card headings on Salary Cap & Contracts tab and rules-schedule-tab/rules-schedule-trade-card testids on Transactions tab).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "SetupWizard.jsx → GenerateStep.jsx",
+        "issue": "Runtime error: 'TypeError: Cannot read properties of undefined (reading length)' at GenerateStep (line 56 references scheduleWarnings.length). The parent's `stepCtx` object does NOT include scheduleWarnings, scheduleMode, busy, generateSchedule, capEnabled, capAmount, retentionEnabled, retentionSlots, retentionMaxPct, or tradeDeadlineWeek — all consumed by GenerateStep. Step 6 (generate) is completely broken; the wizard cannot be completed.",
+        "selector": "[data-testid=\"wizard-body-generate\"]",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "SetupWizard.jsx → BasicsStep.jsx",
+        "issue": "stepCtx is missing: league, previousSeasonSuggestion, maxTeams/setMaxTeams, leagueFormat/setLeagueFormat, scoringFormat/setScoringFormat, rosterSpots/setRosterSpots, benchSpots/setBenchSpots, minorsSpots/setMinorsSpots, minorsEnabled/setMinorsEnabled. The outer div renders (testid passes), but all editable inputs are uncontrolled — user input does NOT update state and saveBasicsAndCap will persist stale/default values.",
+        "selector": "[data-testid=\"wizard-body-basics\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "SetupWizard.jsx → CapStep.jsx",
+        "issue": "stepCtx is missing: capEnabled/setCapEnabled, capAmount/setCapAmount, retentionEnabled/setRetentionEnabled, retentionSlots/setRetentionSlots, retentionMaxPct/setRetentionMaxPct. Toggles and inputs render but state changes do not propagate to the parent.",
+        "selector": "[data-testid=\"wizard-body-cap\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "SetupWizard.jsx → TradesStep.jsx",
+        "issue": "stepCtx is missing: maxTeams, tradeReviewHours/setTradeReviewHours, tradeVetoCount/setTradeVetoCount, tradeDeadlineWeek/setTradeDeadlineWeek, tradeDeadlineDow/setTradeDeadlineDow, tradeDeadlineTime/setTradeDeadlineTime. Inputs render but are uncontrolled.",
+        "selector": "[data-testid=\"wizard-body-trades\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "League Setup Wizard end-to-end",
+        "issue": "Because the four extracted step components receive `undefined` for their setters, the user CANNOT change cap / basics / trade settings via the wizard. Clicking Next will save whatever defaults the parent useState initialized — silent data loss. Then on reaching step 6, the wizard crashes.",
+        "affected_selectors": ["[data-testid=\"setup-wizard-dialog\"]", "[data-testid=\"wizard-body-generate\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "URGENT: Expand the `stepCtx = { ... }` object in /app/frontend/src/lovable/pages/commissioner/SetupWizard.jsx (around lines 609-634) to include every prop the extracted step components destructure. Concretely, add: league, previousSeasonSuggestion, rosterSpots/setRosterSpots, benchSpots/setBenchSpots, minorsSpots/setMinorsSpots, minorsEnabled/setMinorsEnabled, maxTeams/setMaxTeams, leagueFormat/setLeagueFormat, scoringFormat/setScoringFormat, capEnabled/setCapEnabled, capAmount/setCapAmount, retentionEnabled/setRetentionEnabled, retentionSlots/setRetentionSlots, retentionMaxPct/setRetentionMaxPct, tradeReviewHours/setTradeReviewHours, tradeVetoCount/setTradeVetoCount, tradeDeadlineWeek/setTradeDeadlineWeek, tradeDeadlineDow/setTradeDeadlineDow, tradeDeadlineTime/setTradeDeadlineTime, busy, generateSchedule, scheduleMode, scheduleWarnings.",
+    "Verify by re-running the wizard end-to-end after the fix — Generate step should render and Generate button should kick off /api/matchups/generate-schedule."
+  ],
+  "critical_code_review_comments": [
+    "stepCtx in SetupWizard.jsx is severely under-populated after the refactor — this is a textbook 'props drilling regression' caused by extracting child components without auditing every destructured prop. Either pass `{...allState}` explicitly or move state ownership into a context provider so the four step components subscribe directly.",
+    "GenerateStep guards scheduleWarnings with `scheduleWarnings.length > 0` but should defensively default: `(scheduleWarnings || []).length > 0` — and the same for any array-valued prop in extracted components.",
+    "RulesScheduleTab.tsx re-exports the 4 cards from rules-cards/* via barrel-style `export { ... } from`. This works but couples the module to its consumers (CommissionerSettings/LeagueSetupTab/SalaryCapContractsTab). Consider importing the cards directly from rules-cards/* in those consumers in a follow-up to make the dependency graph explicit."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (frontend-only run)", "frontend": "60% — 5/6 wizard step bodies render but inputs are unwired; step 6 crashes" },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! used (commissioner). League id 69e46af167999bfb85c39628 (Ice Kings Head-to-Head).",
+  "seed_data_creation": "None.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login via POST /api/auth/login then seed localStorage with access_token + token + user + active_league_id; Playwright form-fill still doesn't propagate React state on this app. After main agent fixes stepCtx, walk Basics→Cap→Divisions→Schedule→Trades→Generate clicking wizard-next-btn; assert wizard-body-generate is visible and that scheduleWarnings rendering is guarded. RulesScheduleTab.tsx renders correctly on the Transactions tab (rules-schedule-tab, rules-schedule-trade-card, rules-schedule-save-btn). Salary Cap & Contracts tab shows the three extracted cards via headings ('Salary Cap', 'Salary Retention in Trades', 'Contract Buyouts'); explicit testids salary-cap-card/salary-retention-card/contract-buyouts-card were NOT found — main agent may want to add them for testability.",
+  "rca of the issue": "ROOT CAUSE — In SetupWizard.jsx, the refactor extracted BasicsStep / CapStep / TradesStep / GenerateStep into separate files (228c) but the parent's `stepCtx` object (lines 609-634) was only updated for the previously-extracted DivisionsStep / ScheduleStep. The new step components destructure props from `ctx` that don't exist on stepCtx, so they receive `undefined`. REPRO: login as chriszarek → /commissioner/settings → 'Re-run Setup Wizard' → click Next four times to advance to the Generate step → React red-screen 'Cannot read properties of undefined (reading length)' at GenerateStep line 56 (scheduleWarnings.length). MITIGATION: extend stepCtx to include every variable consumed by the four new step components; defensively default array props (e.g. `(scheduleWarnings || []).length`)."
+}

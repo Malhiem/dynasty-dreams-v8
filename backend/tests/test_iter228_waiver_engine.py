@@ -327,3 +327,107 @@ def test_force_process_via_route():
     assert body["processed"] == 1, body
     claim = db_sync.waiver_claims.find_one({"_id": cid})
     assert claim["status"] == "won", claim
+
+
+# ─── Iter 228c — Transaction guard + timezone-aware compute_next_run ─────
+
+
+def test_compute_next_run_respects_league_timezone():
+    """When league.timezone is set, scheduled-mode slot times are
+    interpreted in that local timezone (not UTC)."""
+    from services.waiver_engine import compute_next_run
+
+    # Fix "now" to a specific UTC moment: Mon 2026-03-02 12:00 UTC
+    now = datetime(2026, 3, 2, 12, 0, 0, tzinfo=timezone.utc)
+    league_la = {
+        "_id": ObjectId(),
+        "timezone": "America/Los_Angeles",
+        "transactions_config": {"waiver": {
+            "enabled": True,
+            "processing_mode": "scheduled",
+            "processing_schedule": [
+                # Wednesday at 09:00 LA time (= 17:00 UTC)
+                {"day_of_week": 2, "time": "09:00"},
+            ],
+        }},
+    }
+    out = compute_next_run(league_la, now=now)
+    assert out is not None, "expected next slot computed"
+    parsed = datetime.fromisoformat(out)
+    # Should be Wed 2026-03-04 17:00 UTC (= Wed 2026-03-04 09:00 LA)
+    assert parsed.year == 2026 and parsed.month == 3 and parsed.day == 4, parsed
+    assert parsed.hour == 17, f"expected 17:00 UTC (09:00 LA), got {parsed.hour}"
+
+    # Same slot but UTC league → 09:00 UTC on Wednesday
+    league_utc = dict(league_la)
+    league_utc["timezone"] = "UTC"
+    out_utc = compute_next_run(league_utc, now=now)
+    parsed_utc = datetime.fromisoformat(out_utc)
+    assert parsed_utc.hour == 9, parsed_utc
+
+
+def test_finalize_winner_rolls_back_on_roster_add_failure():
+    """If the final roster $addToSet write fails, the engine compensates
+    by undoing the claim status, FAAB debit, and any drop step.
+
+    Tests `_finalize_winner` directly with a stub db that fails on the
+    final `teams.update_one` $addToSet call. This exercises the
+    compensating-write fallback path (Path B).
+    """
+    import asyncio
+    from services.waiver_engine import _finalize_winner
+
+    # Build a stub db that records writes and fails the final addToSet
+    writes: list[dict] = []
+
+    class _StubColl:
+        def __init__(self, name):
+            self.name = name
+
+        async def update_one(self, filt, update, **kw):
+            writes.append({"coll": self.name, "filter": filt, "update": update})
+            if self.name == "teams" and "$addToSet" in update:
+                raise RuntimeError("simulated roster-add failure")
+
+            class _Res:
+                modified_count = 1
+            return _Res()
+
+    class _StubDB:
+        client = None  # forces Path B fallback (compensating-writes)
+
+        def __getattr__(self, name):
+            return _StubColl(name)
+
+    winner = {
+        "_id": "claim_abc",
+        "team_id": str(ObjectId()),
+        "player_id": "player_xyz",
+        "bid_amount": 25,
+        "drop_player_id": None,
+    }
+
+    ok = asyncio.run(_finalize_winner(_StubDB(), "league_1", winner, "faab",
+                                       datetime.now(timezone.utc).isoformat()))
+    assert ok is False, "expected finalize to abort on roster-add failure"
+
+    # Verify compensating writes ran in reverse order:
+    # forward: claim→won, FAAB-debit, teams-addToSet (failed)
+    # reverse: teams-addToSet (no actual write since failed), FAAB-refund, claim-revert
+    coll_names = [w["coll"] for w in writes]
+    # We expect at least claim->won, budgets-debit, teams-addToSet (failed),
+    # budgets-refund, claim-revert
+    assert "waiver_claims" in coll_names
+    assert "waiver_budgets" in coll_names
+    assert "teams" in coll_names
+
+    # Compensating writes: there should be TWO waiver_budgets writes
+    # (debit + refund) and TWO waiver_claims writes (won + revert)
+    budget_writes = [w for w in writes if w["coll"] == "waiver_budgets"]
+    claim_writes = [w for w in writes if w["coll"] == "waiver_claims"]
+    assert len(budget_writes) == 2, f"expected debit+refund, got {budget_writes}"
+    assert len(claim_writes) == 2, f"expected won+revert, got {claim_writes}"
+
+    # The second budget write should refund (inverse $inc)
+    refund = budget_writes[1]["update"]["$inc"]
+    assert refund["remaining"] == 25 and refund["spent"] == -25, refund
