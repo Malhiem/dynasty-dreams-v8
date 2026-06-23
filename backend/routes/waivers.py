@@ -843,6 +843,13 @@ async def process_waivers(league_id: str, request: Request):
             )
 
         try:
+            # Iter 218 — Auto-snapshot pre-waiver state for the winning team
+            from services.auto_snapshot import auto_snapshot
+            await auto_snapshot(db, [winner["team_id"]],
+                                trigger="waiver_claim",
+                                metadata={"player_id": winner["player_id"],
+                                          "player_name": winner["player_name"],
+                                          "bid": winner["bid_amount"]})
             await db.teams.update_one(
                 {"_id": ObjectId(winner["team_id"])},
                 {"$addToSet": {"roster": winner["player_id"]}},

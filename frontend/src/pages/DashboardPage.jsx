@@ -11,6 +11,7 @@ import MyLeaguesOrderedList from '@/components/MyLeaguesOrderedList';
 import LiveScoringWidget from '@/components/LiveScoringWidget';
 import { useActiveLeague } from '@/hooks/use-active-league';
 import MyWeekAtAGlance from '@/components/MyWeekAtAGlance';
+import YourActivityWidget from '@/components/YourActivityWidget';
 import FantasyLevelBadge from '@/components/FantasyLevelBadge';
 import { Trophy, Users, Calendar, Rocket, Plus, ArrowRight } from '@phosphor-icons/react';
 
@@ -112,6 +113,11 @@ export default function DashboardPage() {
 
         {/* My Week at a Glance — per-league daily/weekly/top performer/rank */}
         <MyWeekAtAGlance />
+
+        {/* Iter 218 — Your Activity (personal UX engagement signal) */}
+        <div className="mb-6">
+          <YourActivityWidget />
+        </div>
 
         {/* Live Scoring widget */}
         <LiveScoringWidget />

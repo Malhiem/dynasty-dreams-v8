@@ -3,6 +3,7 @@ import "@/index.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
+import { usePageviewTracker } from "@/hooks/use-pageview-tracker";
 import { TradeBuilderProvider } from "@/lovable/state/TradeBuilderContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
 
@@ -70,12 +71,18 @@ import LovableNotFound from "@/lovable/pages/NotFound";
 import LovableLeagueSearch from "@/lovable/pages/LeagueSearch";
 import { Toaster } from "@/components/ui/sonner";
 
+function PageviewTrackerMount() {
+  usePageviewTracker();
+  return null;
+}
+
 function App() {
   return (
     <AuthProvider>
       <Toaster position="top-right" richColors closeButton />
       <BrowserRouter>
         <ImpersonationBanner />
+        <PageviewTrackerMount />
         <TradeBuilderProvider>
         <Routes>
           {/* Public */}

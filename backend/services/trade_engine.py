@@ -713,6 +713,12 @@ async def _execute_multi_party_trade(trade: dict) -> dict:
                     })
 
     # Persist all roster updates
+    # Iter 218 — Auto-snapshot pre-trade state for every participating team
+    from services.auto_snapshot import auto_snapshot
+    await auto_snapshot(_db(), list(rosters.keys()),
+                        trigger="multi_party_trade_execute",
+                        metadata={"trade_id": str(trade["_id"]),
+                                  "party_count": len(rosters)})
     for tid, roster in rosters.items():
         await _db().teams.update_one({"_id": ObjectId(tid)}, {"$set": {"roster": roster}})
 
@@ -821,6 +827,12 @@ async def _execute_trade(trade: dict) -> dict:
         raise HTTPException(status_code=404, detail="Trade team(s) not found")
     proposer_roster = list(proposer.get("roster", []) or [])
     target_roster = list(target.get("roster", []) or [])
+
+    # Iter 218 — Auto-snapshot pre-trade state for both teams
+    from services.auto_snapshot import auto_snapshot
+    await auto_snapshot(_db(), [proposer["_id"], target["_id"]],
+                        trigger="trade_execute",
+                        metadata={"trade_id": str(trade["_id"])})
 
     # ── Position-limit pre-flight (iter 83) ────────────────────────
     # Before committing the swap, simulate the post-trade rosters and ensure

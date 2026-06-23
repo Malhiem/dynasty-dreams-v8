@@ -1518,6 +1518,23 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         await _broadcast(f"draft_{draft_id}", "draft_chat", complete_msg)
         await _broadcast(f"draft_{draft_id}", "draft_completed", {"draft_id": draft_id})
 
+        # Iter 218 — Auto-snapshot all teams in the league after draft completes
+        try:
+            draft_doc = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+            if draft_doc:
+                league_id = draft_doc.get("league_id")
+                team_ids = [str(t["_id"]) async for t in _db().teams.find(
+                    {"league_id": str(league_id)}, {"_id": 1}
+                )]
+                if team_ids:
+                    from services.auto_snapshot import auto_snapshot
+                    await auto_snapshot(_db(), team_ids,
+                                        trigger="draft_complete",
+                                        metadata={"draft_id": draft_id,
+                                                  "league_id": str(league_id)})
+        except Exception:
+            pass  # snapshot failure must never block draft completion
+
     return pick_doc
 
 # ─── Iter 170h — Commissioner powers: undo picks + swap picked player ─
