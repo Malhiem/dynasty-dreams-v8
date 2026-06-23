@@ -608,7 +608,21 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   // Iter 228 — Bundle state + helpers as `ctx` for extracted step components.
   const stepCtx = {
     HELP,
+    league,
+    previousSeasonSuggestion,
     teams,
+    maxTeams, setMaxTeams,
+    leagueFormat, setLeagueFormat,
+    scoringFormat, setScoringFormat,
+    rosterSpots, setRosterSpots,
+    benchSpots, setBenchSpots,
+    minorsSpots, setMinorsSpots,
+    minorsEnabled, setMinorsEnabled,
+    capEnabled, setCapEnabled,
+    capAmount, setCapAmount,
+    retentionEnabled, setRetentionEnabled,
+    retentionSlots, setRetentionSlots,
+    retentionMaxPct, setRetentionMaxPct,
     divisionList, conferenceList,
     newDivisionName, setNewDivisionName,
     newConferenceName, setNewConferenceName,
@@ -631,6 +645,15 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     consolationAlongPlayoffs, setConsolationAlongPlayoffs,
     consolationStartWeek, setConsolationStartWeek,
     consolationEndWeek, setConsolationEndWeek,
+    tradeReviewHours, setTradeReviewHours,
+    tradeVetoCount, setTradeVetoCount,
+    tradeDeadlineWeek, setTradeDeadlineWeek,
+    tradeDeadlineDow, setTradeDeadlineDow,
+    tradeDeadlineTime, setTradeDeadlineTime,
+    busy,
+    generateSchedule,
+    scheduleMode,
+    scheduleWarnings,
   };
 
   return (
