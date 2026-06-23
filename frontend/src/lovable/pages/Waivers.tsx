@@ -66,6 +66,10 @@ const Waivers = () => {
   const [liveHistory, setLiveHistory] = useState<any[]>([]);
   const [liveBudget, setLiveBudget] = useState<any>(null);
   const [liveOrder, setLiveOrder] = useState<any[]>([]);
+  // Iter 228 — real next-run timer (replaces hardcoded "Tonight 3:00 AM").
+  // Populated from GET /api/waivers/next-run with the league's actual
+  // scheduling config so users see the right deadline.
+  const [nextRun, setNextRun] = useState<any>(null);
   // Iter 122 — pending_visibility audience controls whether non-owners can
   // see pending claim team names. "all_teams_anonymous" masks them to
   // "Team A", "Team B", … for everyone except the team owner + commissioner.
@@ -480,7 +484,21 @@ const Waivers = () => {
                   <p className="text-xl font-bold">{myClaims.filter(c => c.status === "pending").length}</p>
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">Next process: Tonight 3:00 AM</p>
+              <p className="text-xs text-muted-foreground" data-testid="waivers-next-run">
+                {(() => {
+                  if (!nextRun?.enabled) return "Waivers disabled";
+                  if (!nextRun?.next_run_at) return "No upcoming run scheduled";
+                  try {
+                    const d = new Date(nextRun.next_run_at);
+                    return `Next process: ${d.toLocaleString(undefined, {
+                      weekday: "short", month: "short", day: "numeric",
+                      hour: "numeric", minute: "2-digit",
+                    })}`;
+                  } catch {
+                    return `Next process: ${nextRun.next_run_at}`;
+                  }
+                })()}
+              </p>
             </CardContent>
           </Card>
         </div>

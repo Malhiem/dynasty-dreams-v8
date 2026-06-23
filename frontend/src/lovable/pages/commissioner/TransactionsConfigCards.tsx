@@ -19,6 +19,7 @@ import api from "@/lib/api";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { ClockPicker } from "@/components/ui/clock-picker";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -1054,15 +1055,14 @@ export function WaiverWireCard({ cfg, setCfg, leagueTeams }) {
                             {DAY_LABELS.map((d, i) => (<SelectItem key={i} value={String(i)}>{d}</SelectItem>))}
                           </SelectContent>
                         </Select>
-                        <Input
-                          type="time"
+                        <ClockPicker
                           value={slot.time}
-                          onChange={(e) => {
+                          onChange={(time) => {
                             const arr = [...w.processing_schedule];
-                            arr[idx] = { ...slot, time: e.target.value };
+                            arr[idx] = { ...slot, time };
                             set("processing_schedule")(arr);
                           }}
-                          className="bg-secondary border-border w-32 h-8"
+                          className="w-32"
                           data-testid={`waiver-schedule-${idx}-time`}
                         />
                         <Button

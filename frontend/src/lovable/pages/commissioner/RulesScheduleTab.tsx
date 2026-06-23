@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { ClockPicker } from "@/components/ui/clock-picker";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
@@ -324,17 +325,15 @@ export default function RulesScheduleTab() {
                           <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
                             Time
                           </span>
-                          <Input
-                            id="rs-trade-deadline-at-time"
-                            type="time"
+                          <ClockPicker
                             value={deadlineAt.slice(11, 16)}
-                            onChange={(e) => {
-                              const time = e.target.value || "12:00";
+                            onChange={(time) => {
+                              const t = time || "12:00";
                               const date = deadlineAt.slice(0, 10);
-                              if (date) setDeadlineAt(`${date}T${time}`);
+                              if (date) setDeadlineAt(`${date}T${t}`);
                             }}
                             disabled={!deadlineAt.slice(0, 10)}
-                            className="bg-secondary border-border w-32 disabled:opacity-50"
+                            className="w-32"
                             data-testid="rules-schedule-trade-deadline-at-time-input"
                           />
                         </div>

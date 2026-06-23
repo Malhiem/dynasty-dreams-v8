@@ -218,7 +218,7 @@ async def suggest_free_agent(
     by FPTS (computed against the league's scoring config) descending.
     """
     db = _db()
-    user = await _get_user(request)
+    await _get_user(request)
     # Build set of player_ids already rostered in this league
     teams = await db.teams.find({"league_id": league_id}, {"roster": 1}).to_list(50)
     rostered_ids = set()
@@ -715,10 +715,14 @@ async def get_waiver_history(league_id: Optional[str] = None, limit: int = 50):
 
 
 @router.post("/waivers/process")
-async def process_waivers(league_id: str, request: Request):
-    """Commissioner-only: process all pending waiver claims for a league."""
+async def process_waivers(league_id: str, request: Request, force: bool = False):
+    """Commissioner-only: process all pending waiver claims for a league.
+
+    By default only claims whose `processes_at <= now` are processed
+    (matches the scheduled-engine semantics). Pass `force=true` to
+    immediately process EVERY pending claim regardless of scheduled time.
+    """
     db = _db()
-    logger = _logger()
     user = await _get_user(request)
     league = await db.leagues.find_one({"_id": ObjectId(league_id)})
     if not league:
@@ -726,164 +730,75 @@ async def process_waivers(league_id: str, request: Request):
     if league["commissioner_id"] != user["_id"]:
         raise HTTPException(status_code=403, detail="Only commissioner can process waivers")
 
-    pending = await db.waiver_claims.find({
+    # ── Iter 228 — Delegate to centralized engine ───────────────────
+    from services.waiver_engine import process_pending_claims
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+    now_for_engine = _dt.now(_tz.utc)
+    if force:
+        # Push the clock forward by 1 day so every pending claim's
+        # processes_at appears in the past — single-pass force-process.
+        now_for_engine = now_for_engine + _td(days=365)
+
+    return await process_pending_claims(
+        db,
+        league_id,
+        log_activity=_log_activity,
+        broadcast=_broadcast,
+        now=now_for_engine,
+    )
+
+
+# ─── Iter 228 — Next-run + admin process-due endpoints ────────────
+
+
+@router.get("/waivers/next-run")
+async def get_waiver_next_run(league_id: str):
+    """Returns the next scheduled waiver processing datetime for a league.
+
+    Shape:
+      { league_id, next_run_at: ISO|null, mode: "days"|"scheduled"|null,
+        enabled: bool, pending_count: int }
+    """
+    db = _db()
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    from services.waiver_engine import compute_next_run
+
+    cfg = (league.get("transactions_config") or {}).get("waiver") or {}
+    pending = await db.waiver_claims.count_documents({
         "league_id": league_id,
         "status": "pending",
-    }).to_list(1000)
+    })
+    return {
+        "league_id": league_id,
+        "next_run_at": compute_next_run(league),
+        "mode": cfg.get("processing_mode"),
+        "enabled": bool(cfg.get("enabled")),
+        "system_type": cfg.get("system_type"),
+        "pending_count": pending,
+        "last_processed_at": league.get("waivers_last_processed_at"),
+    }
 
-    if not pending:
-        return {"message": "No pending claims to process", "processed": 0}
 
-    # Position-limit enforcement (iter 83) — only used when the league has
-    # `enforce_position_maxes` ON; loaded once and reused per-claim. Skipped
-    # losers must mirror the same DENIED disposition as winners.
-    from utils.roster_rules import check_position_limits
-    enforce_positions = bool(league.get("enforce_position_maxes"))
-    position_limits = league.get("position_limits") or {}
+@router.post("/waivers/process-due")
+async def process_due_waivers(league_id: str, request: Request):
+    """Admin/cron-only endpoint to run a single processing pass for a
+    league. Honours each claim's `processes_at` deadline (unlike
+    `/waivers/process` which is commissioner-scoped).
+    """
+    db = _db()
+    user = await _get_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
 
-    player_claims: dict = {}
-    for claim in pending:
-        pid = claim["player_id"]
-        player_claims.setdefault(pid, []).append(claim)
+    from services.waiver_engine import process_pending_claims
 
-    processed_count = 0
-    results = []
-
-    for player_id, claims in player_claims.items():
-        claims.sort(key=lambda c: (-c["bid_amount"], c["created_at"]))
-
-        # Pre-roll: if position-limits are on, skip claimants whose roster is
-        # already at the cap for this player's position. The next-in-line bid
-        # gets promoted to winner. If everyone is blocked, the claim is
-        # marked `denied` instead of leaving the winner in a broken state.
-        winner = None
-        denied_for_positions: list = []
-        if enforce_positions and position_limits:
-            try:
-                player_doc = await db.players.find_one({"_id": ObjectId(player_id)})
-            except Exception:
-                player_doc = None
-            for cand in claims:
-                if player_doc is None:
-                    winner = cand
-                    break
-                team_doc = await db.teams.find_one(
-                    {"_id": ObjectId(cand["team_id"])},
-                    {"roster": 1},
-                )
-                roster_ids = (team_doc or {}).get("roster") or []
-                oids = []
-                for rid in roster_ids:
-                    try:
-                        oids.append(ObjectId(rid))
-                    except Exception:
-                        pass
-                roster_players = (
-                    await db.players.find(
-                        {"_id": {"$in": oids}},
-                        {"name": 1, "position": 1, "primary_position": 1,
-                         "eligible_positions": 1, "player_type": 1},
-                    ).to_list(200) if oids else []
-                )
-                err = check_position_limits(league, roster_players, player_doc)
-                if err is None:
-                    winner = cand
-                    break
-                denied_for_positions.append((cand, err))
-            losers = [c for c in claims if c is not winner and c not in [d[0] for d in denied_for_positions]]
-        else:
-            winner = claims[0]
-            losers = claims[1:]
-
-        # Mark position-blocked claims as `denied` (audit-friendly)
-        for cand, err in denied_for_positions:
-            await db.waiver_claims.update_one(
-                {"_id": cand["_id"]},
-                {"$set": {
-                    "status": "denied",
-                    "denied_reason": err,
-                    "processed_at": datetime.now(timezone.utc).isoformat(),
-                }},
-            )
-
-        if winner is None:
-            # Nobody could legally roster the player — refund attempted bids
-            # and skip the player entirely.
-            continue
-
-        await db.waiver_claims.update_one(
-            {"_id": winner["_id"]},
-            {"$set": {"status": "won", "processed_at": datetime.now(timezone.utc).isoformat()}},
-        )
-        await db.waiver_budgets.update_one(
-            {"team_id": winner["team_id"], "league_id": league_id},
-            {"$inc": {"spent": winner["bid_amount"], "remaining": -winner["bid_amount"]}},
-        )
-
-        for loser in losers:
-            await db.waiver_claims.update_one(
-                {"_id": loser["_id"]},
-                {"$set": {"status": "lost", "processed_at": datetime.now(timezone.utc).isoformat()}},
-            )
-            await _log_activity(
-                league_id,
-                "waiver_lost",
-                f"{loser['team_name']} lost waiver claim on {loser['player_name']} (${loser['bid_amount']} FAAB) — won by {winner['team_name']} (${winner['bid_amount']})",
-                None,
-                metadata={
-                    "team_id": loser["team_id"],
-                    "team_name": loser["team_name"],
-                    "player_id": loser["player_id"],
-                    "player_name": loser["player_name"],
-                    "bid_amount": loser["bid_amount"],
-                    "winning_team_id": winner["team_id"],
-                    "winning_team_name": winner["team_name"],
-                    "winning_bid": winner["bid_amount"],
-                },
-            )
-
-        try:
-            # Iter 218 — Auto-snapshot pre-waiver state for the winning team
-            from services.auto_snapshot import auto_snapshot
-            await auto_snapshot(db, [winner["team_id"]],
-                                trigger="waiver_claim",
-                                metadata={"player_id": winner["player_id"],
-                                          "player_name": winner["player_name"],
-                                          "bid": winner["bid_amount"]})
-            await db.teams.update_one(
-                {"_id": ObjectId(winner["team_id"])},
-                {"$addToSet": {"roster": winner["player_id"]}},
-            )
-        except Exception as ex:
-            logger.warning(
-                "Failed to add waiver-won player to roster team=%s player=%s: %s",
-                winner["team_id"], winner["player_id"], ex,
-            )
-
-        await _log_activity(
-            league_id,
-            "waiver_won",
-            f"{winner['team_name']} won {winner['player_name']} on waivers (${winner['bid_amount']} FAAB)",
-            None,
-            metadata={
-                "team_id": winner["team_id"],
-                "team_name": winner["team_name"],
-                "player_id": winner["player_id"],
-                "player_name": winner["player_name"],
-                "bid_amount": winner["bid_amount"],
-                "competing_claims": [
-                    {"team_id": l["team_id"], "team_name": l["team_name"], "bid_amount": l["bid_amount"]}
-                    for l in losers
-                ],
-            },
-        )
-
-        results.append({
-            "player": winner["player_name"],
-            "winner": winner["team_name"],
-            "bid": winner["bid_amount"],
-        })
-        processed_count += 1
-
-    await _broadcast(f"league_{league_id}", "waivers_processed", {"results": results})
-    return {"message": f"Processed {processed_count} waiver claims", "processed": processed_count, "results": results}
+    return await process_pending_claims(
+        db,
+        league_id,
+        log_activity=_log_activity,
+        broadcast=_broadcast,
+    )

@@ -884,6 +884,36 @@ async def startup():
                 logger.error(f"empty-league sweeper error: {e}")
             await asyncio.sleep(3600)  # check hourly
     asyncio.create_task(_empty_league_sweeper())
+
+    # Iter 228 — Waivers scheduler.
+    # Every 60s, find leagues with `transactions_config.waiver.enabled=True`
+    # and call the engine to process any claims whose `processes_at` is due.
+    # Engine is idempotent — claims already processed are skipped.
+    async def _waivers_scheduler_loop():
+        from services.waiver_engine import process_pending_claims
+        while True:
+            try:
+                cursor = db.leagues.find(
+                    {"transactions_config.waiver.enabled": True},
+                    {"_id": 1},
+                )
+                async for lg in cursor:
+                    try:
+                        await process_pending_claims(
+                            db,
+                            str(lg["_id"]),
+                            log_activity=log_activity,
+                            broadcast=broadcast_to_room,
+                        )
+                    except Exception as ex:
+                        logger.warning(
+                            "waivers scheduler: league %s error: %s",
+                            lg.get("_id"), ex,
+                        )
+            except Exception as e:
+                logger.error(f"waivers scheduler error: {e}")
+            await asyncio.sleep(60)
+    asyncio.create_task(_waivers_scheduler_loop())
     
     # Write test credentials
     import os as os_module

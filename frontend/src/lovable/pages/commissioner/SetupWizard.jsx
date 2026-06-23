@@ -19,7 +19,11 @@ import HelpTooltip from "@/components/ui/help-tooltip";
 import SmartNumberInput from "@/components/ui/smart-number-input";
 import PremiumTrialBanner from "@/lovable/components/PremiumTrialBanner";
 import CBABadge from "@/lovable/components/CBABadge";
+import { ClockPicker } from "@/components/ui/clock-picker";
 import VetoThresholdPreview from "@/lovable/components/VetoThresholdPreview";
+// Iter 228 — Extracted step components
+import DivisionsStep from "./wizard/DivisionsStep";
+import ScheduleStep from "./wizard/ScheduleStep";
 
 // Iter 225 — Robust extractor for the assorted `detail` shapes the
 // backend returns (string, Pydantic-422 list, or our custom
@@ -597,6 +601,34 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
 
   const divSet = new Set(Object.values(divisionAssignments).map((a) => a.division).filter(Boolean));
 
+  // Iter 228 — Bundle state + helpers as `ctx` for extracted step components.
+  const stepCtx = {
+    HELP,
+    teams,
+    divisionList, conferenceList,
+    newDivisionName, setNewDivisionName,
+    newConferenceName, setNewConferenceName,
+    divisionAssignments, setDivisionAssignments,
+    divisionToConference, setDivisionToConference,
+    addDivision, removeDivision,
+    addConference, removeConference,
+    autoAssignNHL,
+    divSet,
+    seasonStart, setSeasonStart,
+    seasonEnd, setSeasonEnd,
+    matchupLength, setMatchupLength,
+    opponentsPerPeriod, setOpponentsPerPeriod,
+    numWeeks, setNumWeeks,
+    weekOverrides, setWeekOverrides,
+    schedule, setSchedule,
+    playoffStartWeek, setPlayoffStartWeek,
+    playoffEndWeek, setPlayoffEndWeek,
+    consolationEnabled, setConsolationEnabled,
+    consolationAlongPlayoffs, setConsolationAlongPlayoffs,
+    consolationStartWeek, setConsolationStartWeek,
+    consolationEndWeek, setConsolationEndWeek,
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" data-testid="setup-wizard-dialog">
@@ -855,461 +887,10 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         )}
 
         {/* ─── League Structure ───────────────────────────────── */}
-        {step.id === "divisions" && (
-          <div className="space-y-3" data-testid="wizard-body-divisions">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-semibold text-white flex items-center">
-                League Structure
-                <HelpTooltip text={HELP.divisions} testId="help-divisions" />
-              </h3>
-              <Button size="sm" variant="outline" onClick={autoAssignNHL} data-testid="wizard-auto-assign-nhl">
-                Auto-assign NHL style
-              </Button>
-            </div>
-
-            {/* Step A: Create divisions + conferences */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2 border border-border rounded p-3" data-testid="wizard-division-list">
-                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Divisions ({divisionList.length})</h4>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="e.g. Atlantic"
-                    value={newDivisionName}
-                    onChange={(e) => setNewDivisionName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && addDivision()}
-                    className="h-8 text-xs"
-                    data-testid="wizard-new-division-input"
-                  />
-                  <Button size="sm" variant="outline" onClick={addDivision} data-testid="wizard-add-division-btn">
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <div className="flex flex-wrap gap-1.5 min-h-[28px]">
-                  {divisionList.map((d) => (
-                    <Badge key={d} variant="secondary" className="gap-1 pl-2 pr-1" data-testid={`wizard-division-chip-${d}`}>
-                      {d}
-                      <button onClick={() => removeDivision(d)} className="hover:text-destructive" aria-label={`Remove ${d}`}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </Badge>
-                  ))}
-                  {divisionList.length === 0 && <span className="text-xs text-muted-foreground italic">No divisions yet</span>}
-                </div>
-              </div>
-
-              <div className="space-y-2 border border-border rounded p-3" data-testid="wizard-conference-list">
-                <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Conferences ({conferenceList.length})</h4>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="e.g. Eastern"
-                    value={newConferenceName}
-                    onChange={(e) => setNewConferenceName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && addConference()}
-                    className="h-8 text-xs"
-                    data-testid="wizard-new-conference-input"
-                  />
-                  <Button size="sm" variant="outline" onClick={addConference} data-testid="wizard-add-conference-btn">
-                    <Plus className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-                <div className="flex flex-wrap gap-1.5 min-h-[28px]">
-                  {conferenceList.map((c) => (
-                    <Badge key={c} variant="secondary" className="gap-1 pl-2 pr-1" data-testid={`wizard-conference-chip-${c}`}>
-                      {c}
-                      <button onClick={() => removeConference(c)} className="hover:text-destructive" aria-label={`Remove ${c}`}>
-                        <X className="h-3 w-3" />
-                      </button>
-                    </Badge>
-                  ))}
-                  {conferenceList.length === 0 && <span className="text-xs text-muted-foreground italic">No conferences yet</span>}
-                </div>
-              </div>
-            </div>
-
-            {/* Iter 226 — Division → Conference mapping (mandatory when both
-                  are configured). Each division gets one conference. */}
-            {divisionList.length > 0 && conferenceList.length > 0 && (
-              <div className="border border-amber-500/40 bg-amber-500/5 rounded p-3 space-y-2" data-testid="wizard-div-conf-mapping">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-amber-200">
-                  Map each division to a conference
-                </h4>
-                <p className="text-[11px] text-muted-foreground">
-                  Required — each division belongs to exactly one conference. Teams in that
-                  division will inherit the conference automatically.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {divisionList.map((d) => (
-                    <div
-                      key={d}
-                      className="flex items-center justify-between gap-2 border border-border bg-background/40 rounded px-2 py-1.5"
-                      data-testid={`wizard-div-conf-row-${d}`}
-                    >
-                      <span className="text-sm font-medium truncate">{d}</span>
-                      <div className="flex gap-1 flex-wrap justify-end">
-                        {conferenceList.map((c) => {
-                          const selected = divisionToConference[d] === c;
-                          return (
-                            <button
-                              key={c}
-                              type="button"
-                              onClick={() => setDivisionToConference((prev) => ({ ...prev, [d]: c }))}
-                              className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
-                                selected
-                                  ? "bg-accent text-accent-foreground border-accent"
-                                  : "border-border text-muted-foreground hover:border-accent/60"
-                              }`}
-                              data-testid={`wizard-div-conf-btn-${d}-${c}`}
-                            >
-                              {c}
-                            </button>
-                          );
-                        })}
-                        {!divisionToConference[d] && (
-                          <span className="text-[10px] text-rose-400 self-center ml-1">unassigned</span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Step B: Assign each team via dropdown */}
-            <div className="border border-border rounded max-h-[280px] overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-secondary/30 sticky top-0">
-                  <tr className="text-xs font-medium text-muted-foreground">
-                    <th className="py-2 pl-3 text-left">Team</th>
-                    <th className="py-2 text-left">Division</th>
-                    <th className="py-2 pr-3 text-left">Conference</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50">
-                  {teams.map((t) => (
-                    <tr key={t.id}>
-                      <td className="py-1.5 pl-3 font-medium">{t.name}</td>
-                      <td className="py-1.5 pr-2">
-                        <Select
-                          value={divisionAssignments[t.id]?.division || ""}
-                          onValueChange={(v) => setDivisionAssignments((prev) => ({
-                            ...prev,
-                            [t.id]: { ...(prev[t.id] || {}), division: v === "__none__" ? "" : v },
-                          }))}
-                        >
-                          <SelectTrigger className="h-7 text-xs" data-testid={`wizard-team-division-${t.id}`}>
-                            <SelectValue placeholder="—" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">—</SelectItem>
-                            {divisionList.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </td>
-                      <td className="py-1.5 pr-3">
-                        <Select
-                          value={divisionAssignments[t.id]?.conference || ""}
-                          onValueChange={(v) => setDivisionAssignments((prev) => ({
-                            ...prev,
-                            [t.id]: { ...(prev[t.id] || {}), conference: v === "__none__" ? "" : v },
-                          }))}
-                        >
-                          <SelectTrigger className="h-7 text-xs" data-testid={`wizard-team-conference-${t.id}`}>
-                            <SelectValue placeholder="—" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">—</SelectItem>
-                            {conferenceList.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {divSet.size < 2
-                ? "⚠️ Configure at least 2 divisions to unlock division-aware scheduling in the next step."
-                : `✓ ${divSet.size} divisions configured.`}
-            </p>
-          </div>
-        )}
+        {step.id === "divisions" && <DivisionsStep ctx={stepCtx} />}
 
         {/* ─── Schedule ────────────────────────────────────── */}
-        {step.id === "schedule" && (
-          <div className="space-y-4" data-testid="wizard-body-schedule">
-            {divSet.size < 2 && (
-              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-200 flex items-start gap-2">
-                <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>
-                  You don&apos;t have 2+ divisions yet. Schedule-mix settings will save but only take effect once divisions are in place — or skip ahead to generate a vanilla round-robin.
-                </span>
-              </div>
-            )}
-
-            {/* Calendar window */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs flex items-center" htmlFor="wiz-season-start">
-                  Season start date
-                  <HelpTooltip text={HELP.seasonStart} testId="help-season-start" />
-                </Label>
-                <Input
-                  id="wiz-season-start"
-                  type="date"
-                  value={seasonStart}
-                  onChange={(e) => setSeasonStart(e.target.value)}
-                  data-testid="wizard-season-start"
-                />
-              </div>
-              <div>
-                <Label className="text-xs flex items-center" htmlFor="wiz-season-end">
-                  Season end date
-                  <HelpTooltip text={HELP.seasonEnd} testId="help-season-end" />
-                </Label>
-                <Input
-                  id="wiz-season-end"
-                  type="date"
-                  value={seasonEnd}
-                  onChange={(e) => setSeasonEnd(e.target.value)}
-                  data-testid="wizard-season-end"
-                />
-              </div>
-            </div>
-
-            {/* Matchup period config */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <Label className="text-xs flex items-center" htmlFor="wiz-matchup-len">
-                  Matchup length (days)
-                  <HelpTooltip text={HELP.matchupLen} testId="help-matchup-len" />
-                </Label>
-                <Input id="wiz-matchup-len" type="number" min={1} max={30}
-                  value={matchupLength}
-                  onChange={(e) => setMatchupLength(Math.max(1, Math.min(30, parseInt(e.target.value || "0", 10))))}
-                  data-testid="wizard-matchup-length" />
-              </div>
-              <div>
-                <Label className="text-xs flex items-center" htmlFor="wiz-opp-per">
-                  Opponents per period
-                  <HelpTooltip text={HELP.oppPerPeriod} testId="help-opp-per" />
-                </Label>
-                <Input id="wiz-opp-per" type="number" min={1} max={10}
-                  value={opponentsPerPeriod}
-                  onChange={(e) => setOpponentsPerPeriod(Math.max(1, Math.min(10, parseInt(e.target.value || "0", 10))))}
-                  data-testid="wizard-opponents-per-period" />
-              </div>
-              <div>
-                <Label className="text-xs flex items-center" htmlFor="wiz-weeks">
-                  Regular season weeks
-                  <HelpTooltip text={HELP.weeks} testId="help-weeks" />
-                </Label>
-                <Input id="wiz-weeks" type="number" min={4} max={30}
-                  value={numWeeks}
-                  onChange={(e) => setNumWeeks(Math.max(4, Math.min(30, parseInt(e.target.value || "0", 10))))}
-                  data-testid="wizard-num-weeks" />
-              </div>
-            </div>
-
-            {/* Iter 226 — Per-week matchup-length overrides */}
-            <div className="rounded border border-border p-3 space-y-2" data-testid="wizard-week-overrides">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center">
-                  Custom-length weeks
-                  <HelpTooltip
-                    text="Override matchup length for irregular weeks — late-season starts, winter-break returns, all-star, etc. Each override widens that week's calendar window without shifting later weeks."
-                    testId="help-week-overrides"
-                  />
-                </h4>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setWeekOverrides([...weekOverrides, { week_num: 1, length_days: 10, label: "" }])}
-                  data-testid="wizard-add-week-override-btn"
-                >
-                  <Plus className="h-3.5 w-3.5 mr-1" /> Add custom week
-                </Button>
-              </div>
-              {weekOverrides.length === 0 ? (
-                <p className="text-[11px] text-muted-foreground italic">
-                  Every week defaults to {matchupLength} days. Add an override for weeks that should be longer or shorter.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {weekOverrides.map((ov, idx) => (
-                    <li
-                      key={idx}
-                      className="grid grid-cols-12 items-center gap-2 text-xs"
-                      data-testid={`wizard-week-override-row-${idx}`}
-                    >
-                      <div className="col-span-3">
-                        <Label className="text-[10px] text-muted-foreground">Week #</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={numWeeks}
-                          value={ov.week_num || 1}
-                          onChange={(e) => {
-                            const next = [...weekOverrides];
-                            next[idx] = { ...next[idx], week_num: Math.max(1, parseInt(e.target.value || "0", 10)) };
-                            setWeekOverrides(next);
-                          }}
-                          className="h-8"
-                          data-testid={`wizard-week-override-week-${idx}`}
-                        />
-                      </div>
-                      <div className="col-span-3">
-                        <Label className="text-[10px] text-muted-foreground">Length (days)</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          max={21}
-                          value={ov.length_days || 7}
-                          onChange={(e) => {
-                            const next = [...weekOverrides];
-                            next[idx] = { ...next[idx], length_days: Math.max(1, Math.min(21, parseInt(e.target.value || "0", 10))) };
-                            setWeekOverrides(next);
-                          }}
-                          className="h-8"
-                          data-testid={`wizard-week-override-length-${idx}`}
-                        />
-                      </div>
-                      <div className="col-span-5">
-                        <Label className="text-[10px] text-muted-foreground">Label (optional)</Label>
-                        <Input
-                          type="text"
-                          placeholder="Winter break, All-Star, etc."
-                          value={ov.label || ""}
-                          onChange={(e) => {
-                            const next = [...weekOverrides];
-                            next[idx] = { ...next[idx], label: e.target.value };
-                            setWeekOverrides(next);
-                          }}
-                          className="h-8"
-                          data-testid={`wizard-week-override-label-${idx}`}
-                        />
-                      </div>
-                      <div className="col-span-1 flex justify-end pt-3">
-                        <button
-                          type="button"
-                          onClick={() => setWeekOverrides(weekOverrides.filter((_, i) => i !== idx))}
-                          className="text-muted-foreground hover:text-rose-400"
-                          aria-label="Remove override"
-                          data-testid={`wizard-week-override-remove-${idx}`}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            {/* Schedule mix */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <Label className="text-xs flex items-center">
-                  Intra-division games
-                  <HelpTooltip text={HELP.intraDiv} testId="help-intra-div" />
-                </Label>
-                <Input type="number" min={0} max={10} value={schedule.intra_division_games}
-                  onChange={(e) => setSchedule({ ...schedule, intra_division_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) })}
-                  data-testid="wizard-schedule-intra-div" />
-              </div>
-              <div>
-                <Label className="text-xs flex items-center">
-                  Intra-conference games
-                  <HelpTooltip text={HELP.intraConf} testId="help-intra-conf" />
-                </Label>
-                <Input type="number" min={0} max={10} value={schedule.intra_conference_games}
-                  onChange={(e) => setSchedule({ ...schedule, intra_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) })}
-                  data-testid="wizard-schedule-intra-conf" />
-              </div>
-              <div>
-                <Label className="text-xs flex items-center">
-                  Inter-conference games
-                  <HelpTooltip text={HELP.interConf} testId="help-inter-conf" />
-                </Label>
-                <Input type="number" min={0} max={10} value={schedule.inter_conference_games}
-                  onChange={(e) => setSchedule({ ...schedule, inter_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) })}
-                  data-testid="wizard-schedule-inter-conf" />
-              </div>
-            </div>
-
-            {/* Playoffs window */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-border pt-3">
-              <div>
-                <Label className="text-xs flex items-center">
-                  Playoffs start (week)
-                  <HelpTooltip text={HELP.playoffStart} testId="help-playoff-start" />
-                </Label>
-                <Input type="number" min={1} max={30} value={playoffStartWeek}
-                  onChange={(e) => setPlayoffStartWeek(Math.max(1, Math.min(30, parseInt(e.target.value || "0", 10))))}
-                  data-testid="wizard-playoff-start" />
-              </div>
-              <div>
-                <Label className="text-xs flex items-center">
-                  Playoffs end (week)
-                  <HelpTooltip text={HELP.playoffEnd} testId="help-playoff-end" />
-                </Label>
-                <Input type="number" min={1} max={40} value={playoffEndWeek}
-                  onChange={(e) => setPlayoffEndWeek(Math.max(1, Math.min(40, parseInt(e.target.value || "0", 10))))}
-                  data-testid="wizard-playoff-end" />
-              </div>
-            </div>
-
-            {/* Consolation A/B */}
-            <div className="space-y-3 border-t border-border pt-3" data-testid="wizard-consolation-card">
-              <div className="flex items-center gap-3">
-                <Switch
-                  checked={consolationEnabled}
-                  onCheckedChange={setConsolationEnabled}
-                  id="wiz-consolation-enabled"
-                  data-testid="wizard-consolation-enabled"
-                />
-                <Label htmlFor="wiz-consolation-enabled" className="cursor-pointer flex items-center font-semibold">
-                  Run a consolation playoff bracket?
-                  <HelpTooltip text={HELP.consolation} testId="help-consolation" />
-                </Label>
-              </div>
-              {consolationEnabled && (
-                <div className="space-y-2 pl-1">
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="wiz-consolation-along"
-                      checked={consolationAlongPlayoffs}
-                      onCheckedChange={(c) => setConsolationAlongPlayoffs(!!c)}
-                      data-testid="wizard-consolation-along"
-                    />
-                    <Label htmlFor="wiz-consolation-along" className="cursor-pointer text-sm flex items-center">
-                      Schedule along with playoffs
-                      <HelpTooltip text={HELP.consolationAlong} testId="help-consolation-along" />
-                    </Label>
-                  </div>
-                  {!consolationAlongPlayoffs && (
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <Label className="text-xs">Consolation start (week)</Label>
-                        <Input type="number" min={1} max={40}
-                          value={consolationStartWeek}
-                          onChange={(e) => setConsolationStartWeek(Math.max(1, Math.min(40, parseInt(e.target.value || "0", 10))))}
-                          data-testid="wizard-consolation-start" />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Consolation end (week)</Label>
-                        <Input type="number" min={1} max={40}
-                          value={consolationEndWeek}
-                          onChange={(e) => setConsolationEndWeek(Math.max(1, Math.min(40, parseInt(e.target.value || "0", 10))))}
-                          data-testid="wizard-consolation-end" />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        {step.id === "schedule" && <ScheduleStep ctx={stepCtx} />}
 
         {/* ─── Trades ──────────────────────────────────────── */}
         {step.id === "trades" && (
@@ -1372,10 +953,9 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
                   </div>
                   <div>
                     <Label className="text-[10px] text-muted-foreground">Time of day</Label>
-                    <Input
-                      type="time"
+                    <ClockPicker
                       value={tradeDeadlineTime}
-                      onChange={(e) => setTradeDeadlineTime(e.target.value)}
+                      onChange={setTradeDeadlineTime}
                       data-testid="wizard-trade-deadline-time"
                     />
                   </div>
