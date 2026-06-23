@@ -840,6 +840,50 @@ async def startup():
     # Iter 210 — Critical Alerts sweeper (broadcasts platform-wide alerts
     # to admins via Socket.IO every 60s).
     asyncio.create_task(platform_ops_routes.alerts_sweeper_loop())
+
+    # Iter 219 — Empty-league sweeper.
+    # When a league's team count drops to 0, mark it `empty_since` on
+    # first detection and hard-delete it 2 days later. Leagues with at
+    # least one team are immune (the `empty_since` field is cleared).
+    async def _empty_league_sweeper():
+        from datetime import timezone as _tz, timedelta as _td, datetime as _dt
+        while True:
+            try:
+                now = _dt.now(_tz.utc)
+                async for lg in db.leagues.find({}, {"_id": 1, "empty_since": 1}):
+                    lid = str(lg["_id"])
+                    team_count = await db.teams.count_documents({"league_id": lid})
+                    empty_since = lg.get("empty_since")
+                    if team_count == 0:
+                        if not empty_since:
+                            await db.leagues.update_one(
+                                {"_id": lg["_id"]},
+                                {"$set": {"empty_since": now.isoformat()}},
+                            )
+                        else:
+                            try:
+                                marked = _dt.fromisoformat(str(empty_since).replace("Z", "+00:00"))
+                            except Exception:
+                                marked = now
+                            if (now - marked) >= _td(days=2):
+                                # Hard delete the league + its detritus
+                                await db.leagues.delete_one({"_id": lg["_id"]})
+                                await db.teams.delete_many({"league_id": lid})
+                                await db.league_invites.delete_many({"league_id": lid})
+                                await db.forum_threads.delete_many({"league_id": lid})
+                                await db.forum_posts.delete_many({"league_id": lid})
+                                await db.roster_snapshots.delete_many({"league_id": lid})
+                                logger.info(f"empty-league sweeper: deleted league {lid} after 2-day empty grace period")
+                    else:
+                        if empty_since:
+                            await db.leagues.update_one(
+                                {"_id": lg["_id"]},
+                                {"$unset": {"empty_since": ""}},
+                            )
+            except Exception as e:
+                logger.error(f"empty-league sweeper error: {e}")
+            await asyncio.sleep(3600)  # check hourly
+    asyncio.create_task(_empty_league_sweeper())
     
     # Write test credentials
     import os as os_module

@@ -47,6 +47,8 @@ export default function CreateLeaguePage() {
     keepers_allowed: 0,
     entry_fee: 0,
     is_private: false,
+    // Iter 219 — H2H only: number of matchups per team per week (max N-1)
+    matchups_per_week: 1,
   });
 
   const updateForm = (key, value) => {
@@ -203,6 +205,31 @@ export default function CreateLeaguePage() {
                 </button>
               ))}
             </div>
+
+            {/* Iter 219 — H2H matchups per week (range 1 .. max_teams-1) */}
+            {form.scoring_format.startsWith('head_to_head') && (
+              <div className="mt-4 pt-4 border-t border-white/10" data-testid="matchups-per-week-block">
+                <Label className="text-[#A1A1AA]">Matchups per week</Label>
+                <p className="text-xs text-[#A1A1AA] mt-1 mb-2">
+                  Each team plays this many opponents every scoring week. Max = teams − 1 ({form.max_teams - 1}).
+                </p>
+                <Select
+                  value={String(form.matchups_per_week)}
+                  onValueChange={(v) => updateForm('matchups_per_week', parseInt(v, 10))}
+                >
+                  <SelectTrigger className="bg-[#0A0A0A] border-white/10 text-white max-w-[180px]" data-testid="matchups-per-week">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className="bg-[#141414] border-white/10">
+                    {Array.from({ length: form.max_teams - 1 }, (_, i) => i + 1).map((n) => (
+                      <SelectItem key={n} value={String(n)}>
+                        {n} {n === 1 ? 'matchup' : 'matchups'}/week
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
 
           {/* Draft & Salary */}

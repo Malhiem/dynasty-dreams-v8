@@ -64,6 +64,10 @@ class LeagueCreate(BaseModel):
     keepers_allowed: int = Field(default=0, ge=0, le=10)
     entry_fee: Optional[float] = None
     is_private: bool = False
+    # Iter 219 — Head-to-Head only: number of matchups each team plays
+    # per scoring week. Range 1 .. (max_teams - 1) enforced at the
+    # endpoint. Defaults to 1 (classic single-matchup H2H).
+    matchups_per_week: int = Field(default=1, ge=1, le=31)
 
 
 class LeagueResponse(BaseModel):
@@ -102,6 +106,7 @@ class LeagueResponse(BaseModel):
     playoff_rounds: Optional[int] = None
     playoff_end_week: Optional[int] = None
     regular_season_weeks: Optional[int] = None
+    matchups_per_week: Optional[int] = None  # Iter 219
     salary_retention_enabled: Optional[bool] = None
     salary_retention_max_pct: Optional[int] = None
     salary_retention_slots: Optional[int] = None
@@ -177,13 +182,27 @@ async def create_league(input: LeagueCreate, request: Request):
     get_current_user = _deps["get_current_user"]
     user = await get_current_user(request)
 
+    # Iter 219 — validate matchups_per_week for H2H formats
+    scoring_value = input.scoring_format.value
+    matchups_per_week = int(input.matchups_per_week or 1)
+    is_h2h = scoring_value.startswith("h2h") or scoring_value.startswith("head_to_head") or "h2h" in scoring_value
+    if is_h2h:
+        if matchups_per_week < 1 or matchups_per_week > input.max_teams - 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"matchups_per_week must be between 1 and {input.max_teams - 1} for H2H leagues",
+            )
+    else:
+        # Non-H2H formats don't use this — force back to 1 for cleanliness
+        matchups_per_week = 1
+
     league_doc = {
         "name": input.name,
         "sport": input.sport,
         "format": input.format.value,
-        "scoring_format": input.scoring_format.value,
+        "scoring_format": scoring_value,
         "max_teams": input.max_teams,
-        "current_teams": 0,
+        "current_teams": 1,  # commissioner is auto-joined
         "commissioner_id": user["_id"],
         "commissioner_name": user["name"],
         "salary_cap_enabled": input.salary_cap_enabled,
@@ -194,11 +213,26 @@ async def create_league(input: LeagueCreate, request: Request):
         "entry_fee": input.entry_fee,
         "is_private": input.is_private,
         "invite_code": secrets.token_urlsafe(8),
+        "matchups_per_week": matchups_per_week,
         "status": "setup",
         "created_at": datetime.now(timezone.utc),
     }
     result = await db.leagues.insert_one(league_doc)
     league_id = str(result.inserted_id)
+
+    # Iter 219 — Auto-create a team for the league commissioner so
+    # they're immediately a member of the league they just created.
+    # Without this, `useActiveLeague` returns null on /commissioner/settings
+    # and the page renders a 404-style "no league selected" state.
+    await db.teams.insert_one({
+        "league_id": league_id,
+        "owner_id": user["_id"],
+        "name": f"{user['name']}'s Team",
+        "roster": [],
+        "lineup": {},
+        "is_commissioner_team": True,
+        "created_at": datetime.now(timezone.utc),
+    })
 
     # Promote requester to commissioner role if currently a plain user
     if user["role"] == UserRole.USER.value:
@@ -214,7 +248,7 @@ async def create_league(input: LeagueCreate, request: Request):
         format=league_doc["format"],
         scoring_format=league_doc["scoring_format"],
         max_teams=league_doc["max_teams"],
-        current_teams=0,
+        current_teams=1,
         commissioner_id=league_doc["commissioner_id"],
         commissioner_name=league_doc["commissioner_name"],
         co_commissioners=league_doc.get("co_commissioners", []) or [],
@@ -229,6 +263,7 @@ async def create_league(input: LeagueCreate, request: Request):
         invite_code=league_doc.get("invite_code"),
         created_at=league_doc["created_at"],
         setup_wizard_complete=bool(league_doc.get("setup_wizard_complete", False)),
+        matchups_per_week=league_doc.get("matchups_per_week"),
     )
 
 
