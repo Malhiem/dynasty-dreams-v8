@@ -36,6 +36,7 @@ const leagueHubStatic = [
 const socialItems = [
   { title: "Trade Block", url: "/trade-block", icon: ArrowRightLeft },
   { title: "Chat", url: "/chat", icon: MessageSquare },
+  { title: "Forum", url: "/forum", icon: Newspaper },
 ];
 
 const managementItems = [

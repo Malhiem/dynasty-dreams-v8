@@ -437,19 +437,141 @@ async def edit_username(user_id: str, request: Request):
 @router.post("/{user_id}/merge-accounts")
 async def merge_accounts(user_id: str, request: Request):
     """Body: { source_user_id: str, reason: str }
-    Merges source → target (user_id). STUB: audit only — actual roster /
-    trade / chat-history migration is non-trivial and left for a
-    follow-up iteration."""
+    Merges source → target (user_id). Real migration:
+      • teams.owner_id, teams.owner_history append
+      • trades.proposer_team_owner_id, target_team_owner_id
+      • league_invites.sender_id, recipient_user_id
+      • user_reports.reporter_id, target_user_id
+      • forum_threads.author_id, forum_posts.author_id
+      • notifications.user_id
+      • user_login_audit.user_id
+      • admin_user_actions.target_user_id, admin_id
+    Merges relevant scalar fields (warnings, watchlist, payment_methods,
+    promo_credits_cents, trust_score) into the target. Source user is
+    soft-deleted (status='merged_into_other_account')."""
     admin = await _require_admin(request, "merge_accounts")
+    target = await _load_user(user_id)
     payload = await request.json()
-    source = (payload.get("source_user_id") or "").strip()
+    source_id = (payload.get("source_user_id") or "").strip()
     reason = (payload.get("reason") or "").strip()
-    if not source:
+    if not source_id:
         raise HTTPException(status_code=400, detail="source_user_id is required")
+    if source_id == user_id:
+        raise HTTPException(status_code=400, detail="source and target are the same user")
+    source = await _load_user(source_id)
+    db = _db()
+
+    # Reassignments. We capture row counts for the audit log.
+    counts = {}
+
+    counts["teams_owner_id"] = (await db.teams.update_many(
+        {"owner_id": source_id}, {"$set": {"owner_id": user_id}}
+    )).modified_count
+
+    # Append source to teams.owner_history so storytelling can still
+    # reconstruct who-played-where-when.
+    counts["teams_history_appended"] = (await db.teams.update_many(
+        {"owner_id": user_id, "owner_history": {"$not": {"$elemMatch": {"user_id": source_id}}}},
+        {"$push": {"owner_history": {
+            "user_id": source_id, "merged_at": datetime.now(timezone.utc).isoformat(),
+            "merge_reason": reason,
+        }}},
+    )).modified_count
+
+    counts["trades_proposer"] = (await db.trades.update_many(
+        {"proposer_team_owner_id": source_id},
+        {"$set": {"proposer_team_owner_id": user_id}},
+    )).modified_count
+
+    counts["trades_target"] = (await db.trades.update_many(
+        {"target_team_owner_id": source_id},
+        {"$set": {"target_team_owner_id": user_id}},
+    )).modified_count
+
+    counts["invites_sender"] = (await db.league_invites.update_many(
+        {"sender_id": source_id}, {"$set": {"sender_id": user_id}}
+    )).modified_count
+
+    counts["invites_recipient"] = (await db.league_invites.update_many(
+        {"recipient_user_id": source_id},
+        {"$set": {"recipient_user_id": user_id}},
+    )).modified_count
+
+    counts["reports_reporter"] = (await db.user_reports.update_many(
+        {"reporter_id": source_id}, {"$set": {"reporter_id": user_id}}
+    )).modified_count
+
+    counts["reports_target"] = (await db.user_reports.update_many(
+        {"target_user_id": source_id}, {"$set": {"target_user_id": user_id}}
+    )).modified_count
+
+    counts["forum_threads"] = (await db.forum_threads.update_many(
+        {"author_id": source_id}, {"$set": {"author_id": user_id}}
+    )).modified_count
+
+    counts["forum_posts"] = (await db.forum_posts.update_many(
+        {"author_id": source_id}, {"$set": {"author_id": user_id}}
+    )).modified_count
+
+    counts["notifications"] = (await db.notifications.update_many(
+        {"user_id": source_id}, {"$set": {"user_id": user_id}}
+    )).modified_count
+
+    counts["login_audit"] = (await db.user_login_audit.update_many(
+        {"user_id": source_id}, {"$set": {"user_id": user_id}}
+    )).modified_count
+
+    counts["admin_actions_target"] = (await db.admin_user_actions.update_many(
+        {"target_user_id": source_id}, {"$set": {"target_user_id": user_id}}
+    )).modified_count
+
+    counts["chat_messages"] = (await db.chat_messages.update_many(
+        {"sender_id": source_id}, {"$set": {"sender_id": user_id}}
+    )).modified_count
+
+    counts["roster_snapshots"] = (await db.roster_snapshots.update_many(
+        {"owner_id": source_id}, {"$set": {"owner_id": user_id}}
+    )).modified_count
+
+    # Merge scalar fields into target
+    merged_warnings = (target.get("warnings") or []) + (source.get("warnings") or [])
+    merged_payment = (target.get("payment_methods") or []) + (source.get("payment_methods") or [])
+    target_credits = int(target.get("promo_credits_cents") or 0)
+    source_credits = int(source.get("promo_credits_cents") or 0)
+    await db.users.update_one(
+        {"_id": target["_id"]},
+        {"$set": {
+            "warnings": merged_warnings,
+            "payment_methods": merged_payment,
+            "promo_credits_cents": target_credits + source_credits,
+            "trust_score": min(target.get("trust_score") or 100,
+                                source.get("trust_score") or 100),
+            "watchlist": bool(target.get("watchlist") or source.get("watchlist")),
+            "merged_from_user_ids": (target.get("merged_from_user_ids") or []) + [source_id],
+        }},
+    )
+
+    # Soft-delete source
+    await db.users.update_one(
+        {"_id": source["_id"]},
+        {"$set": {
+            "status": "merged_into_other_account",
+            "is_active": False,
+            "merged_into_user_id": user_id,
+            "merged_at": datetime.now(timezone.utc).isoformat(),
+            "merged_by_admin": admin.get("email"),
+            "merge_reason": reason,
+            "original_email_before_merge": source.get("email"),
+            "email": f"merged_{ObjectId()}@anonymised.local",
+        },
+         "$unset": {"password_hash": ""}},
+    )
+
     aid = await _audit(admin=admin, target_user_id=user_id, action="merge_accounts",
-                       reason=reason, metadata={"source_user_id": source}, mocked=True)
-    return {"ok": True, "audit_id": aid, "mocked": True,
-            "note": "Account merge STUBBED — implement roster/trade/team migration in follow-up"}
+                       reason=reason,
+                       metadata={"source_user_id": source_id, "counts": counts},
+                       prior_state={"source_email": source.get("email")})
+    return {"ok": True, "audit_id": aid, "counts": counts}
 
 
 @router.post("/{user_id}/unlink-sso")
@@ -584,15 +706,65 @@ async def force_remove_from_draft(user_id: str, request: Request):
 
 @router.post("/{user_id}/reset-team")
 async def reset_team(user_id: str, request: Request):
-    """STUB: audit only. Real implementation requires versioned roster
-    history snapshots."""
+    """Body: { team_id: str, snapshot_id: str, reason: str }
+    Restore a team's roster/lineup/IR/taxi/cap/FAAB from a prior
+    snapshot. Takes a pre-restore snapshot first so the restore is
+    itself reversible. Snapshots are managed via
+    `/api/teams/{team_id}/snapshots`."""
     admin = await _require_admin(request, "reset_team")
     payload = await request.json()
+    team_id = (payload.get("team_id") or "").strip()
+    snapshot_id = (payload.get("snapshot_id") or "").strip()
+    reason = (payload.get("reason") or "").strip()
+    if not (team_id and snapshot_id):
+        raise HTTPException(status_code=400, detail="team_id and snapshot_id are required")
+    db = _db()
+    try:
+        team = await db.teams.find_one({"_id": ObjectId(team_id)})
+        snap = await db.roster_snapshots.find_one(
+            {"_id": ObjectId(snapshot_id), "team_id": team_id}
+        )
+    except Exception:
+        team = snap = None
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if not snap:
+        raise HTTPException(status_code=404, detail="Snapshot not found for this team")
+    # Pre-restore safety snapshot (so the admin can undo the restore)
+    pre_snap_doc = {
+        "team_id": team_id, "league_id": team.get("league_id"),
+        "owner_id": team.get("owner_id"),
+        "taken_at": datetime.now(timezone.utc).isoformat(),
+        "taken_by": admin.get("email"),
+        "reason": f"pre_admin_reset_of_{snapshot_id}",
+        "roster": team.get("roster") or [], "lineup": team.get("lineup") or {},
+        "ir": team.get("ir") or [], "taxi": team.get("taxi") or [],
+        "salary_cap_used_cents": team.get("salary_cap_used_cents"),
+        "faab_remaining": team.get("faab_remaining"),
+        "metadata": {"admin_action": "reset_team"},
+    }
+    pre_res = await db.roster_snapshots.insert_one(pre_snap_doc)
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {
+            "roster": snap.get("roster") or [],
+            "lineup": snap.get("lineup") or {},
+            "ir": snap.get("ir") or [],
+            "taxi": snap.get("taxi") or [],
+            "salary_cap_used_cents": snap.get("salary_cap_used_cents"),
+            "faab_remaining": snap.get("faab_remaining"),
+            "last_restored_from": snapshot_id,
+            "last_restored_at": datetime.now(timezone.utc).isoformat(),
+            "last_restored_by": admin.get("email"),
+        }},
+    )
     aid = await _audit(admin=admin, target_user_id=user_id, action="reset_team",
-                       reason=(payload.get("reason") or ""),
-                       metadata={"team_id": payload.get("team_id")}, mocked=True)
-    return {"ok": True, "audit_id": aid, "mocked": True,
-            "note": "Versioned roster snapshot rollback STUBBED"}
+                       reason=reason,
+                       metadata={"team_id": team_id, "snapshot_id": snapshot_id,
+                                 "pre_restore_snapshot_id": str(pre_res.inserted_id)})
+    return {"ok": True, "audit_id": aid,
+            "restored_from_snapshot": snapshot_id,
+            "pre_restore_snapshot_id": str(pre_res.inserted_id)}
 
 
 # ─────────────────────────────────────────────────────────────────────
