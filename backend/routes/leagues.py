@@ -410,7 +410,7 @@ async def get_leagues(
             continue
 
     if all and is_admin:
-        leagues = await db.leagues.find({}).to_list(500)
+        leagues = await db.leagues.find({}).sort("created_at", -1).to_list(500)
         return [_league_to_response(league) for league in leagues]
 
     if discover:
