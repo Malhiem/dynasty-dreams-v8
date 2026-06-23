@@ -173,6 +173,8 @@ class LeagueResponse(BaseModel):
     salary_cap_year_plus_1_tentative: Optional[bool] = None
     salary_cap_year_plus_2_tentative: Optional[bool] = None
     contract_buyouts_enabled: Optional[bool] = None
+    # Iter 226 — per-week matchup-length overrides
+    week_overrides: Optional[list[dict]] = None
 
 
 # ─── League CRUD endpoints (extracted iter 109) ──────────────
@@ -364,6 +366,7 @@ def _league_to_response(league: dict) -> LeagueResponse:
         salary_cap_year_plus_1_tentative=league.get("salary_cap_year_plus_1_tentative"),
         salary_cap_year_plus_2_tentative=league.get("salary_cap_year_plus_2_tentative"),
         contract_buyouts_enabled=league.get("contract_buyouts_enabled"),
+        week_overrides=league.get("week_overrides"),
     )
 
 
@@ -1654,6 +1657,9 @@ class LeagueUpdate(BaseModel):
     minors_spots: Optional[int] = Field(default=None, ge=0, le=100)
     # Format + scoring
     scoring_format: Optional[str] = None
+    # Iter 226 — `format` (dynasty/keeper/redraft) is editable from the
+    # wizard's Basics step, so it needs to be in the sparse update model.
+    format: Optional[str] = None
     max_teams: Optional[int] = Field(default=None, ge=2, le=32)
     keepers_allowed: Optional[int] = Field(default=None, ge=0, le=30)
     entry_fee: Optional[float] = Field(default=None, ge=0)
@@ -1684,6 +1690,12 @@ class LeagueUpdate(BaseModel):
     season_end_date: Optional[str] = Field(default=None, max_length=20)
     matchup_length_days: Optional[int] = Field(default=None, ge=1, le=30)
     opponents_per_matchup_period: Optional[int] = Field(default=None, ge=1, le=10)
+    # Iter 226 — Per-week matchup-length overrides for irregular periods
+    # (late season starts, post-break weeks, all-star, etc). Each entry:
+    #   {week_num: int (1..30), length_days: int (1..21), label?: str}
+    # The schedule generator widens the named week's calendar window
+    # without shifting subsequent weeks ("absorb" semantics).
+    week_overrides: Optional[list[dict]] = Field(default=None)
     # Consolation bracket
     consolation_enabled: Optional[bool] = None
     consolation_start_week: Optional[int] = Field(default=None, ge=1, le=40)
@@ -1803,6 +1815,9 @@ _LEAGUE_UPDATE_ALLOWED = {
     "differentiate_goalie_scoring", "goalie_scoring_method",
     "goalie_best_x_count", "goalie_avg_multiplier_count",
     "goalie_gp_limit_enabled", "goalie_gp_limit", "goalie_gp_count_method",
+    # Iter 226 — Format editable from wizard Basics step; per-week overrides
+    # for irregular matchup lengths (late starts, breaks, all-star, etc).
+    "format", "week_overrides",
 }
 
 

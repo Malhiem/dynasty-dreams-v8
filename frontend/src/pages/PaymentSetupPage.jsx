@@ -19,6 +19,7 @@
  *   • Loading + success states
  */
 import { useEffect, useState, useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -71,6 +72,8 @@ function expiryValid(v) {
 }
 
 export default function PaymentSetupPage() {
+  const [searchParams] = useSearchParams();
+  const leagueId = searchParams.get("league_id");
   const [card, setCard] = useState("");
   const [exp, setExp] = useState("");
   const [cvc, setCvc] = useState("");
@@ -129,7 +132,8 @@ export default function PaymentSetupPage() {
 
   return (
     <AppLayout>
-      <div className="max-w-2xl mx-auto p-6" data-testid="payment-setup-page">
+      <div className="max-w-2xl mx-auto p-6 space-y-6" data-testid="payment-setup-page">
+        {leagueId && <LeagueTeamFeesPanel leagueId={leagueId} />}
         <Card className="border-border">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -253,5 +257,174 @@ export default function PaymentSetupPage() {
         </Card>
       </div>
     </AppLayout>
+  );
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Iter 226 — League team fees panel.
+   Full-or-partial payment for league entry fees. PAID stamps render
+   beside each cleared team. Backend marks `payment_status="paid"`
+   on each covered team (Stripe still MOCKED — actual settlement is
+   replaced once SetupIntents are wired).
+   ─────────────────────────────────────────────────────────────── */
+
+function LeagueTeamFeesPanel({ leagueId }) {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [mode, setMode] = useState("full"); // "full" | "partial"
+  const [selected, setSelected] = useState(new Set());
+  const [paying, setPaying] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/payments/league/${leagueId}/status`);
+      setStatus(data);
+      setSelected(new Set());
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to load league payment status");
+    } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [leagueId]);
+
+  const unpaid = (status?.teams || []).filter((t) => !t.paid);
+
+  const amount = useMemo(() => {
+    if (!status) return 0;
+    if (mode === "full") return status.entry_fee * unpaid.length;
+    return status.entry_fee * selected.size;
+  }, [status, mode, unpaid.length, selected]);
+
+  const toggle = (tid) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(tid)) next.delete(tid); else next.add(tid);
+      return next;
+    });
+  };
+
+  const pay = async () => {
+    if (mode === "partial" && selected.size === 0) {
+      toast.message("Pick at least one team to cover.");
+      return;
+    }
+    setPaying(true);
+    try {
+      const body = mode === "full"
+        ? { full: true }
+        : { team_ids: Array.from(selected) };
+      const { data } = await api.post(`/payments/league/${leagueId}/intent`, body);
+      const dollars = (data.amount_cents / 100).toFixed(2);
+      toast.success(`Paid $${dollars} for ${data.covered_count} team${data.covered_count === 1 ? "" : "s"}${data.mocked ? " (MOCKED)" : ""}`);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Payment failed");
+    } finally { setPaying(false); }
+  };
+
+  if (loading) {
+    return (
+      <Card className="border-border" data-testid="team-fees-panel-loading">
+        <CardContent className="p-6 text-sm text-muted-foreground">Loading league payment status…</CardContent>
+      </Card>
+    );
+  }
+  if (!status || (status.entry_fee || 0) <= 0) {
+    return null; // No fee → nothing to pay
+  }
+
+  return (
+    <Card className="border-border" data-testid="team-fees-panel">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CreditCard className="h-5 w-5 text-primary" />
+          League entry fees — ${status.entry_fee.toFixed(2)} / team
+        </CardTitle>
+        <CardDescription>
+          {status.paid_count} of {status.team_count} team{status.team_count === 1 ? "" : "s"} paid · {status.unpaid_count} unpaid
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Mode toggle */}
+        <div className="flex gap-2" data-testid="payment-mode-toggle">
+          <Button
+            variant={mode === "full" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setMode("full")}
+            data-testid="payment-mode-full"
+          >
+            Pay all unpaid (${(status.entry_fee * unpaid.length).toFixed(2)})
+          </Button>
+          <Button
+            variant={mode === "partial" ? "default" : "outline"}
+            size="sm"
+            onClick={() => setMode("partial")}
+            data-testid="payment-mode-partial"
+          >
+            Pay for specific teams
+          </Button>
+        </div>
+
+        {/* Team list */}
+        <ul className="divide-y divide-border rounded-md border border-border" data-testid="team-fees-list">
+          {(status.teams || []).map((t) => (
+            <li
+              key={t.team_id}
+              className="flex items-center justify-between px-3 py-2"
+              data-testid={`team-fee-row-${t.team_id}`}
+            >
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                {mode === "partial" && !t.paid && (
+                  <input
+                    type="checkbox"
+                    checked={selected.has(t.team_id)}
+                    onChange={() => toggle(t.team_id)}
+                    data-testid={`team-fee-checkbox-${t.team_id}`}
+                  />
+                )}
+                <span className="text-sm truncate">{t.team_name || "—"}</span>
+              </div>
+              {t.paid ? (
+                <span
+                  className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-emerald-500 border border-emerald-500/40 rounded-full px-2 py-0.5"
+                  data-testid={`team-paid-stamp-${t.team_id}`}
+                  title={t.paid_at ? `Paid ${new Date(t.paid_at).toLocaleString()}` : "Paid"}
+                >
+                  <Check className="h-3 w-3" />
+                  PAID
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">unpaid</span>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        {/* Pay button + summary */}
+        <div className="flex items-center justify-between pt-2 border-t border-border">
+          <div className="text-sm">
+            <span className="text-muted-foreground">Total: </span>
+            <span className="font-bold tabular-nums" data-testid="payment-amount-preview">
+              ${amount.toFixed(2)}
+            </span>
+            {mode === "partial" && (
+              <span className="text-xs text-muted-foreground ml-2">
+                ({selected.size} team{selected.size === 1 ? "" : "s"})
+              </span>
+            )}
+          </div>
+          <Button
+            onClick={pay}
+            disabled={paying || amount <= 0}
+            data-testid="payment-pay-now-btn"
+          >
+            {paying ? <Loader2 className="h-4 w-4 animate-spin" /> : "Pay now"}
+          </Button>
+        </div>
+        <p className="text-[10px] text-muted-foreground italic">
+          Stripe integration is MOCKED — payments mark teams paid immediately for now.
+        </p>
+      </CardContent>
+    </Card>
   );
 }

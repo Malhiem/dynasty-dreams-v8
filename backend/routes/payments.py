@@ -309,3 +309,127 @@ async def stripe_webhook(request: Request):
     except Exception as e:
         _logger().error(f"Webhook error: {e}")
         return {"status": "error"}
+
+
+# ─── Iter 226 — League team-fee payments (full or partial) ────────────
+
+
+class TeamFeeIntent(BaseModel):
+    """Body for POST /payments/league/{league_id}/intent.
+
+    Either `full=True` to cover every unpaid team in the league, or
+    pass an explicit `team_ids` list to cover only those. Amount is
+    computed server-side as `entry_fee_per_team × len(covered_teams)`.
+    """
+    full: bool = False
+    team_ids: list[str] = []
+
+
+@router.get("/payments/league/{league_id}/status")
+async def get_league_payment_status(league_id: str, request: Request):
+    """Per-team payment roll-up for the PAID stamp UI."""
+    user = await _get_user(request)
+    db = _db()
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    # Any member of the league may see the roll-up (commish, managers).
+    teams = await db.teams.find({"league_id": league_id}).to_list(50)
+    is_member = any(t.get("owner_id") == user["_id"] for t in teams) or league.get("commissioner_id") == user["_id"]
+    if not is_member and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Not a league member")
+
+    entry_fee = float(league.get("entry_fee") or 0)
+    out = []
+    paid_count = 0
+    for t in teams:
+        status = (t.get("payment_status") or "unpaid").lower()
+        paid = status in ("paid", "succeeded")
+        if paid:
+            paid_count += 1
+        out.append({
+            "team_id": str(t["_id"]),
+            "team_name": t.get("name", ""),
+            "owner_id": t.get("owner_id"),
+            "paid": paid,
+            "paid_at": t.get("payment_paid_at"),
+            "paid_by": t.get("payment_paid_by"),
+        })
+    return {
+        "league_id": league_id,
+        "entry_fee": entry_fee,
+        "team_count": len(teams),
+        "paid_count": paid_count,
+        "unpaid_count": max(0, len(teams) - paid_count),
+        "teams": out,
+    }
+
+
+@router.post("/payments/league/{league_id}/intent")
+async def create_league_payment_intent(league_id: str, body: TeamFeeIntent, request: Request):
+    """MOCKED Stripe intent — flips team `payment_status` to "paid" for
+    the selected teams. Replace the body with a real Stripe Payment Intent
+    once SetupIntents are wired (see Iter 220 backlog).
+    """
+    user = await _get_user(request)
+    db = _db()
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if league.get("commissioner_id") != user["_id"] and user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Only the commissioner can pay league fees")
+
+    entry_fee = float(league.get("entry_fee") or 0)
+    if entry_fee <= 0:
+        raise HTTPException(status_code=400, detail="This league has no entry fee configured")
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(50)
+    if body.full:
+        # Every unpaid team
+        target_team_ids = [
+            str(t["_id"]) for t in teams
+            if (t.get("payment_status") or "unpaid").lower() not in ("paid", "succeeded")
+        ]
+    else:
+        if not body.team_ids:
+            raise HTTPException(status_code=400, detail="Provide team_ids or set full=true")
+        valid_ids = {str(t["_id"]) for t in teams}
+        target_team_ids = [tid for tid in body.team_ids if tid in valid_ids]
+        if not target_team_ids:
+            raise HTTPException(status_code=400, detail="None of the supplied team_ids exist in this league")
+
+    if not target_team_ids:
+        return {"ok": True, "mocked": True, "covered_count": 0,
+                "amount_cents": 0, "message": "Nothing to pay — all teams already paid."}
+
+    amount_total = entry_fee * len(target_team_ids)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.teams.update_many(
+        {"_id": {"$in": [ObjectId(tid) for tid in target_team_ids]}},
+        {"$set": {
+            "payment_status": "paid",
+            "payment_paid_at": now,
+            "payment_paid_by": user["_id"],
+        }},
+    )
+    # Audit row in `payment_transactions` so the admin Finance tab sees it.
+    await db.payment_transactions.insert_one({
+        "league_id": league_id,
+        "payer_id": user["_id"],
+        "team_ids": target_team_ids,
+        "amount": amount_total,
+        "currency": "usd",
+        "payment_status": "paid",
+        "mocked": True,
+        "kind": "league_team_fee",
+        "created_at": datetime.now(timezone.utc),
+    })
+    return {
+        "ok": True,
+        "mocked": True,
+        "covered_count": len(target_team_ids),
+        "team_ids": target_team_ids,
+        "amount_cents": int(round(amount_total * 100)),
+        "amount_total": amount_total,
+        "entry_fee_per_team": entry_fee,
+    }

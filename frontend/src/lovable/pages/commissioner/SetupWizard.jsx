@@ -98,10 +98,20 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   // Iter 225 — Editable team slots so the commissioner can size the league
   // before invitees join. Pads the generated schedule with placeholder slots.
   const [maxTeams, setMaxTeams] = useState(12);
+  // Iter 226 — Editable Basics fields. The Teams stat becomes an editable
+  // max_teams input, format & scoring become inline selects.
+  const [leagueFormat, setLeagueFormat] = useState("dynasty");
+  const [scoringFormat, setScoringFormat] = useState("head_to_head");
+
+  // Iter 226 — Title-case label helpers shared by the wizard and the
+  // backend persistence (which still stores enum-style lowercase ids).
+  const FORMAT_LABELS = { dynasty: "Dynasty", keeper: "Keeper", redraft: "Redraft" };
+  const SCORING_LABELS = { head_to_head: "Head to Head", roto: "Roto", points: "Points" };
 
   // Salary cap + retention
   const [capEnabled, setCapEnabled] = useState(false);
-  const [capAmount, setCapAmount] = useState(82500000);
+  // Iter 226 — Default cap to $100M (closer to what commissioners actually set).
+  const [capAmount, setCapAmount] = useState(100_000_000);
   const [retentionEnabled, setRetentionEnabled] = useState(false);
   const [retentionSlots, setRetentionSlots] = useState(3);
   const [retentionMaxPct, setRetentionMaxPct] = useState(50);
@@ -112,12 +122,20 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   const [newDivisionName, setNewDivisionName] = useState("");
   const [newConferenceName, setNewConferenceName] = useState("");
   const [divisionAssignments, setDivisionAssignments] = useState({}); // teamId → {division, conference}
+  // Iter 226 — Mandatory division → conference mapping. Each division must
+  // be assigned to exactly ONE conference. Teams inherit their conference
+  // automatically from the division mapping at save time.
+  const [divisionToConference, setDivisionToConference] = useState({}); // divisionName → conferenceName
 
   // Schedule
   const [schedule, setSchedule] = useState({ intra_division_games: 2, intra_conference_games: 1, inter_conference_games: 1 });
   const [seasonStart, setSeasonStart] = useState("");
   const [seasonEnd, setSeasonEnd] = useState("");
   const [matchupLength, setMatchupLength] = useState(7);
+  // Iter 226 — Per-week matchup-length overrides. Each row:
+  //   { week_num: int, length_days: int, label?: string }
+  // Schedule generator widens the named week without shifting later weeks.
+  const [weekOverrides, setWeekOverrides] = useState([]);
   const [opponentsPerPeriod, setOpponentsPerPeriod] = useState(1);
   const [playoffStartWeek, setPlayoffStartWeek] = useState(19);
   const [playoffEndWeek, setPlayoffEndWeek] = useState(21);
@@ -158,7 +176,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         setPreviousSeasonSuggestion(sug);
         const capCfg = sug?.salary_cap_config;
         setCapEnabled(capCfg ? !!capCfg.enabled : !!lgR.data?.salary_cap_enabled);
-        setCapAmount(capCfg?.amount || lgR.data?.salary_cap || 82500000);
+        setCapAmount(capCfg?.amount || lgR.data?.salary_cap || 100_000_000);
         setRetentionEnabled(lgR.data?.salary_retention_enabled ?? (lgR.data?.salary_retention_slots > 0));
         setRetentionSlots(capCfg?.retention_slots ?? lgR.data?.salary_retention_slots ?? 3);
         setRetentionMaxPct(lgR.data?.salary_retention_max_pct ?? 50);
@@ -167,6 +185,8 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         setBenchSpots(lgR.data?.bench_spots ?? 5);
         setMinorsSpots(lgR.data?.minors_spots ?? 5);
         setMaxTeams(lgR.data?.max_teams ?? 12);
+        setLeagueFormat(lgR.data?.format || "dynasty");
+        setScoringFormat(lgR.data?.scoring_format || "head_to_head");
         setTeams(teamsR.data || []);
         // Trade defaults from league
         setTradeReviewHours(lgR.data?.trade_review_period_hours ?? 72);
@@ -188,6 +208,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         setSeasonStart(lgR.data?.season_start_date ?? "");
         setSeasonEnd(lgR.data?.season_end_date ?? "");
         setMatchupLength(lgR.data?.matchup_length_days ?? 7);
+        setWeekOverrides(Array.isArray(lgR.data?.week_overrides) ? lgR.data.week_overrides : []);
         setOpponentsPerPeriod(lgR.data?.opponents_per_matchup_period ?? 1);
         setPlayoffStartWeek(lgR.data?.playoff_start_week ?? 19);
         setPlayoffEndWeek(lgR.data?.playoff_end_week ?? 21);
@@ -200,14 +221,20 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         const seeded = {};
         const divs = new Set();
         const confs = new Set();
+        const divToConf = {};
         (teamsR.data || []).forEach((t) => {
           seeded[t.id] = { division: t.division || "", conference: t.conference || "" };
           if (t.division) divs.add(t.division);
           if (t.conference) confs.add(t.conference);
+          // Reconstruct the division→conference map from existing team rows.
+          if (t.division && t.conference && !divToConf[t.division]) {
+            divToConf[t.division] = t.conference;
+          }
         });
         setDivisionAssignments(seeded);
         setDivisionList(Array.from(divs));
         setConferenceList(Array.from(confs));
+        setDivisionToConference(divToConf);
         const schCfg = sug?.schedule_config || cfgR?.data;
         if (schCfg) setSchedule({
           intra_division_games: schCfg.intra_division_games ?? 2,
@@ -243,6 +270,11 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
       });
       return next;
     });
+    setDivisionToConference((prev) => {
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   };
   const addConference = () => {
     const name = newConferenceName.trim();
@@ -260,6 +292,13 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
       });
       return next;
     });
+    setDivisionToConference((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((d) => {
+        if (next[d] === name) delete next[d];
+      });
+      return next;
+    });
   };
 
   const autoAssignNHL = () => {
@@ -268,6 +307,12 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     const confOf = (d) => (d === "Atlantic" || d === "Metropolitan") ? "Eastern" : "Western";
     setDivisionList(divs);
     setConferenceList(confs);
+    setDivisionToConference({
+      Atlantic: "Eastern",
+      Metropolitan: "Eastern",
+      Central: "Western",
+      Pacific: "Western",
+    });
     const next = {};
     teams.forEach((t, idx) => {
       const div = divs[idx % 4];
@@ -326,6 +371,8 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         bench_spots: benchSpots,
         minors_spots: minorsEnabled ? minorsSpots : 0,
         max_teams: maxTeams,
+        format: leagueFormat,
+        scoring_format: scoringFormat,
         salary_retention_enabled: retentionEnabled,
         salary_retention_max_pct: retentionMaxPct,
         salary_retention_slots: retentionEnabled ? retentionSlots : 0,
@@ -342,11 +389,30 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   const saveDivisions = async () => {
     setBusy(true);
     try {
-      const assignments = teams.map((t) => ({
-        team_id: t.id,
-        division: divisionAssignments[t.id]?.division || null,
-        conference: divisionAssignments[t.id]?.conference || null,
-      }));
+      // Iter 226 — Validate division → conference mapping. Each division
+      // listed must be mapped to exactly ONE conference (when conferences
+      // are in use). Bail early with a precise toast.
+      if (conferenceList.length > 0 && divisionList.length > 0) {
+        const unmapped = divisionList.filter((d) => !divisionToConference[d]);
+        if (unmapped.length) {
+          toast.error(
+            `Each division needs a conference. Unassigned: ${unmapped.join(", ")}`,
+          );
+          setBusy(false);
+          return;
+        }
+      }
+      const assignments = teams.map((t) => {
+        const div = divisionAssignments[t.id]?.division || null;
+        // Iter 226 — Conference is INHERITED from the division→conference
+        // mapping so a team's conference is always consistent with its
+        // division. Falls back to the per-team selection only when no
+        // mapping exists (legacy data).
+        const conf = div
+          ? (divisionToConference[div] || divisionAssignments[t.id]?.conference || null)
+          : (divisionAssignments[t.id]?.conference || null);
+        return { team_id: t.id, division: div, conference: conf };
+      });
       await api.put(`/leagues/${leagueId}/divisions`, { assignments });
       await stampProgress(["divisions"]);
       toast.success("Divisions saved");
@@ -367,6 +433,15 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         season_start_date: seasonStart || null,
         season_end_date: seasonEnd || null,
         matchup_length_days: matchupLength,
+        // Iter 226 — Persist per-week overrides. Sanitize entries that
+        // are missing required fields (so the backend never gets junk).
+        week_overrides: (weekOverrides || [])
+          .map((w) => ({
+            week_num: Math.max(1, parseInt(w.week_num || 0, 10)),
+            length_days: Math.max(1, Math.min(21, parseInt(w.length_days || 0, 10))),
+            label: (w.label || "").slice(0, 40) || null,
+          }))
+          .filter((w) => w.week_num > 0 && w.length_days > 0),
         opponents_per_matchup_period: opponentsPerPeriod,
         regular_season_weeks: numWeeks,
         playoff_start_week: playoffStartWeek,
@@ -583,30 +658,62 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
               Welcome to <strong>{league?.name || "your league"}</strong>! We&apos;ll walk you through the core setup.
               You can revisit each step anytime from Commissioner Settings.
             </p>
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="stat-card p-3"><span className="text-muted-foreground">Teams</span><div className="font-bold">{teams.length}</div></div>
-              <div className="stat-card p-3"><span className="text-muted-foreground">Format</span><div className="font-bold">{league?.format || "—"}</div></div>
-              <div className="stat-card p-3"><span className="text-muted-foreground">Scoring</span><div className="font-bold">{league?.scoring_format || "head_to_head"}</div></div>
-              <div className="stat-card p-3"><span className="text-muted-foreground">Sport</span><div className="font-bold uppercase">{league?.sport || "nhl"}</div></div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm" data-testid="wizard-basics-editable-stats">
+              <div className="stat-card p-3">
+                <Label className="text-muted-foreground text-xs" htmlFor="wiz-stat-teams">Teams</Label>
+                <Input
+                  id="wiz-stat-teams"
+                  type="number"
+                  min={2}
+                  max={32}
+                  value={maxTeams}
+                  onChange={(e) => setMaxTeams(Math.max(2, Math.min(32, parseInt(e.target.value || "0", 10))))}
+                  className="font-bold h-8 mt-1"
+                  data-testid="wizard-max-teams"
+                />
+                {teams.length < maxTeams && (
+                  <p className="text-[10px] text-muted-foreground mt-1" data-testid="wizard-placeholder-hint">
+                    {teams.length}/{maxTeams} filled · {maxTeams - teams.length} open slot{maxTeams - teams.length === 1 ? "" : "s"}
+                  </p>
+                )}
+              </div>
+              <div className="stat-card p-3">
+                <Label className="text-muted-foreground text-xs" htmlFor="wiz-stat-format">Format</Label>
+                <select
+                  id="wiz-stat-format"
+                  value={leagueFormat}
+                  onChange={(e) => setLeagueFormat(e.target.value)}
+                  className="w-full mt-1 h-8 rounded-md border border-input bg-background px-2 text-sm font-bold"
+                  data-testid="wizard-format-select"
+                >
+                  {Object.entries(FORMAT_LABELS).map(([v, label]) => (
+                    <option key={v} value={v}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="stat-card p-3">
+                <Label className="text-muted-foreground text-xs" htmlFor="wiz-stat-scoring">Scoring</Label>
+                <select
+                  id="wiz-stat-scoring"
+                  value={scoringFormat}
+                  onChange={(e) => setScoringFormat(e.target.value)}
+                  className="w-full mt-1 h-8 rounded-md border border-input bg-background px-2 text-sm font-bold"
+                  data-testid="wizard-scoring-select"
+                >
+                  {Object.entries(SCORING_LABELS).map(([v, label]) => (
+                    <option key={v} value={v}>{label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="stat-card p-3">
+                <span className="text-muted-foreground text-xs">Sport</span>
+                <div className="font-bold uppercase mt-1">{league?.sport || "nhl"}</div>
+              </div>
             </div>
 
             <div className="space-y-3 border-t border-border pt-3">
               <h3 className="text-sm font-semibold text-white">Roster Shape</h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div>
-                  <Label className="text-xs flex items-center" htmlFor="wiz-max-teams">
-                    Team slots
-                    <HelpTooltip text="How many teams will be in this league. Unfilled slots become 'Open Slot N' placeholders in the generated schedule." testId="help-max-teams" />
-                  </Label>
-                  <Input id="wiz-max-teams" type="number" min={2} max={32} value={maxTeams}
-                    onChange={(e) => setMaxTeams(Math.max(2, Math.min(32, parseInt(e.target.value || "0", 10))))}
-                    data-testid="wizard-max-teams" />
-                  {teams.length < maxTeams && (
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      {maxTeams - teams.length} placeholder slot{maxTeams - teams.length === 1 ? "" : "s"} until filled.
-                    </p>
-                  )}
-                </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 <div>
                   <Label className="text-xs flex items-center" htmlFor="wiz-roster">
                     Roster spots
@@ -819,6 +926,54 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
               </div>
             </div>
 
+            {/* Iter 226 — Division → Conference mapping (mandatory when both
+                  are configured). Each division gets one conference. */}
+            {divisionList.length > 0 && conferenceList.length > 0 && (
+              <div className="border border-amber-500/40 bg-amber-500/5 rounded p-3 space-y-2" data-testid="wizard-div-conf-mapping">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-amber-200">
+                  Map each division to a conference
+                </h4>
+                <p className="text-[11px] text-muted-foreground">
+                  Required — each division belongs to exactly one conference. Teams in that
+                  division will inherit the conference automatically.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {divisionList.map((d) => (
+                    <div
+                      key={d}
+                      className="flex items-center justify-between gap-2 border border-border bg-background/40 rounded px-2 py-1.5"
+                      data-testid={`wizard-div-conf-row-${d}`}
+                    >
+                      <span className="text-sm font-medium truncate">{d}</span>
+                      <div className="flex gap-1 flex-wrap justify-end">
+                        {conferenceList.map((c) => {
+                          const selected = divisionToConference[d] === c;
+                          return (
+                            <button
+                              key={c}
+                              type="button"
+                              onClick={() => setDivisionToConference((prev) => ({ ...prev, [d]: c }))}
+                              className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                                selected
+                                  ? "bg-accent text-accent-foreground border-accent"
+                                  : "border-border text-muted-foreground hover:border-accent/60"
+                              }`}
+                              data-testid={`wizard-div-conf-btn-${d}-${c}`}
+                            >
+                              {c}
+                            </button>
+                          );
+                        })}
+                        {!divisionToConference[d] && (
+                          <span className="text-[10px] text-rose-400 self-center ml-1">unassigned</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Step B: Assign each team via dropdown */}
             <div className="border border-border rounded max-h-[280px] overflow-y-auto">
               <table className="w-full text-sm">
@@ -954,6 +1109,101 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
                   onChange={(e) => setNumWeeks(Math.max(4, Math.min(30, parseInt(e.target.value || "0", 10))))}
                   data-testid="wizard-num-weeks" />
               </div>
+            </div>
+
+            {/* Iter 226 — Per-week matchup-length overrides */}
+            <div className="rounded border border-border p-3 space-y-2" data-testid="wizard-week-overrides">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center">
+                  Custom-length weeks
+                  <HelpTooltip
+                    text="Override matchup length for irregular weeks — late-season starts, winter-break returns, all-star, etc. Each override widens that week's calendar window without shifting later weeks."
+                    testId="help-week-overrides"
+                  />
+                </h4>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setWeekOverrides([...weekOverrides, { week_num: 1, length_days: 10, label: "" }])}
+                  data-testid="wizard-add-week-override-btn"
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" /> Add custom week
+                </Button>
+              </div>
+              {weekOverrides.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground italic">
+                  Every week defaults to {matchupLength} days. Add an override for weeks that should be longer or shorter.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {weekOverrides.map((ov, idx) => (
+                    <li
+                      key={idx}
+                      className="grid grid-cols-12 items-center gap-2 text-xs"
+                      data-testid={`wizard-week-override-row-${idx}`}
+                    >
+                      <div className="col-span-3">
+                        <Label className="text-[10px] text-muted-foreground">Week #</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={numWeeks}
+                          value={ov.week_num || 1}
+                          onChange={(e) => {
+                            const next = [...weekOverrides];
+                            next[idx] = { ...next[idx], week_num: Math.max(1, parseInt(e.target.value || "0", 10)) };
+                            setWeekOverrides(next);
+                          }}
+                          className="h-8"
+                          data-testid={`wizard-week-override-week-${idx}`}
+                        />
+                      </div>
+                      <div className="col-span-3">
+                        <Label className="text-[10px] text-muted-foreground">Length (days)</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={21}
+                          value={ov.length_days || 7}
+                          onChange={(e) => {
+                            const next = [...weekOverrides];
+                            next[idx] = { ...next[idx], length_days: Math.max(1, Math.min(21, parseInt(e.target.value || "0", 10))) };
+                            setWeekOverrides(next);
+                          }}
+                          className="h-8"
+                          data-testid={`wizard-week-override-length-${idx}`}
+                        />
+                      </div>
+                      <div className="col-span-5">
+                        <Label className="text-[10px] text-muted-foreground">Label (optional)</Label>
+                        <Input
+                          type="text"
+                          placeholder="Winter break, All-Star, etc."
+                          value={ov.label || ""}
+                          onChange={(e) => {
+                            const next = [...weekOverrides];
+                            next[idx] = { ...next[idx], label: e.target.value };
+                            setWeekOverrides(next);
+                          }}
+                          className="h-8"
+                          data-testid={`wizard-week-override-label-${idx}`}
+                        />
+                      </div>
+                      <div className="col-span-1 flex justify-end pt-3">
+                        <button
+                          type="button"
+                          onClick={() => setWeekOverrides(weekOverrides.filter((_, i) => i !== idx))}
+                          className="text-muted-foreground hover:text-rose-400"
+                          aria-label="Remove override"
+                          data-testid={`wizard-week-override-remove-${idx}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             {/* Schedule mix */}
