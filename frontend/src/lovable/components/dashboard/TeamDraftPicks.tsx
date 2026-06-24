@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { useMemo, useState, useEffect } from "react";
+import { toast } from "sonner";
 import { ArrowRightLeft, Plus, ArrowUpDown, Megaphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -205,7 +206,13 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
   // section toggles independently.
   const [tradeModeKeys, setTradeModeKeys] = useState<Record<string, boolean>>({});
   const toggleTradeMode = (key: string) =>
-    setTradeModeKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+    setTradeModeKeys((prev) => {
+      const next = !prev[key];
+      // Iter 228w (review fix) — Enforce mutual exclusivity. Turning
+      // trade-mode ON for a section auto-collapses block-mode there.
+      if (next) setBlockModeKeys((b) => ({ ...b, [key]: false }));
+      return { ...prev, [key]: next };
+    });
 
   // Iter 228w — Parallel "trade-block mode" toggle keyed by group. When
   // ON, the bullhorn icon turns primary, and each pick chip exposes its
@@ -214,7 +221,11 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
   const [blockModeKeys, setBlockModeKeys] = useState<Record<string, boolean>>({});
   const [blockBusy, setBlockBusy] = useState<Record<string, boolean>>({});
   const toggleBlockMode = (key: string) =>
-    setBlockModeKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+    setBlockModeKeys((prev) => {
+      const next = !prev[key];
+      if (next) setTradeModeKeys((t) => ({ ...t, [key]: false }));
+      return { ...prev, [key]: next };
+    });
   const handleAddToBlock = async (pick: any, pickKey: string) => {
     if (blockBusy[pickKey]) return;
     setBlockBusy((s) => ({ ...s, [pickKey]: true }));
@@ -227,10 +238,8 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
         pick_round: String(pick.round),
         looking_for: [],
       });
-      const { toast } = await import("sonner");
       toast.success(`Added ${pick.year} Rd ${pick.round} to trade block`);
     } catch (e: any) {
-      const { toast } = await import("sonner");
       toast.error(e?.response?.data?.detail || "Couldn't add to trade block");
     } finally {
       setBlockBusy((s) => ({ ...s, [pickKey]: false }));
