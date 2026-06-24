@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useMemo, useState, useEffect } from "react";
-import { ArrowRightLeft, Plus } from "lucide-react";
+import { ArrowRightLeft, Plus, ArrowUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -198,6 +198,15 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
     return generateTeamPicks(teamId);
   }, [livePicks, teamId]);
 
+  // Iter 228t — Toggle "trade-add mode" per section. Default OFF: only
+  // the section's trade icon is visible. Click the icon → all per-pick
+  // "+ Add" buttons in THAT section appear so users can add picks one
+  // at a time. Click again to exit. Tracked by group key so each
+  // section toggles independently.
+  const [tradeModeKeys, setTradeModeKeys] = useState<Record<string, boolean>>({});
+  const toggleTradeMode = (key: string) =>
+    setTradeModeKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+
   // Iter 228o — Build the ordered list of section groups. Live picks
   // section by parent draft (preferring an explicit `_draftId` / `_draftName`
   // from the backend); mocked/seeded picks fall back to year groupings.
@@ -264,24 +273,70 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
           return (
             <div key={group.key} className="animate-slide-up" style={{ animationDelay: `${gi * 80}ms` }}>
               <div className="flex items-center gap-2 mb-3">
-                <span
-                  className="text-sm font-semibold text-foreground"
-                  data-testid={`roster-draft-section-${group.key}`}
-                >{group.label}</span>
-                {/* Iter 228s — Per-section pick count badge so the
-                    Roster page mirrors the # configured in League
-                    Admin → Drafts (rounds × team_count for the user's
-                    team = picks per draft). */}
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className="text-sm font-semibold text-foreground"
+                    data-testid={`roster-draft-section-${group.key}`}
+                  >{group.label}</span>
+                  {/* Iter 228t — Date/time beside the title in smaller
+                      muted font so users can identify the draft by its
+                      schedule at a glance. */}
+                  {group.scheduledTime && (
+                    <span
+                      className="text-[10px] text-muted-foreground"
+                      data-testid={`roster-draft-section-when-${group.key}`}
+                    >
+                      {(() => {
+                        try {
+                          return new Date(group.scheduledTime).toLocaleString(undefined, {
+                            month: "short", day: "numeric", year: "numeric",
+                            hour: "numeric", minute: "2-digit",
+                          });
+                        } catch { return group.scheduledTime; }
+                      })()}
+                    </span>
+                  )}
+                </div>
                 <span
                   className="text-[10px] uppercase tracking-wider bg-secondary/70 text-muted-foreground px-1.5 py-0.5 rounded"
                   data-testid={`roster-draft-section-count-${group.key}`}
                 >{picks.length} pick{picks.length === 1 ? "" : "s"}</span>
                 <div className="flex-1 h-px bg-border" />
-                {/* Iter 228s — Removed the section-level "Add all picks
-                    to trade" affordance. Per the user's request, picks
-                    must be selected one at a time (see the per-pick
-                    "+ Add" button below) so they don't accidentally
-                    stack the entire section into a pending trade. */}
+                {/* Iter 228t — Trade-mode toggle icon. Off by default
+                    (per-pick "+ Add" buttons hidden); clicking enters
+                    "selecting picks" mode and reveals the per-pick
+                    Add buttons in this section only. */}
+                {onTradePick && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() => toggleTradeMode(group.key)}
+                          className={`inline-flex items-center justify-center h-6 w-6 rounded transition-colors ${
+                            tradeModeKeys[group.key]
+                              ? "bg-primary/20 text-primary border border-primary/50"
+                              : "text-muted-foreground hover:text-primary hover:bg-primary/10"
+                          }`}
+                          data-testid={`roster-draft-section-trade-toggle-${group.key}`}
+                          aria-pressed={!!tradeModeKeys[group.key]}
+                          aria-label={tradeModeKeys[group.key]
+                            ? `Done selecting picks from ${group.label}`
+                            : `Select picks from ${group.label} to trade`
+                          }
+                        >
+                          <ArrowUpDown className="h-3.5 w-3.5" />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p className="text-xs">{tradeModeKeys[group.key]
+                          ? "Done — collapse Add buttons"
+                          : "Select picks from this draft to trade"
+                        }</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
               </div>
               <div className="flex flex-wrap gap-2">
                 {picks.map((pick, pi) => (
@@ -371,7 +426,7 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                         </Tooltip>
                       </TooltipProvider>
                     )}
-                    {onTradePick && (
+                    {onTradePick && tradeModeKeys[group.key] && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>

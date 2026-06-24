@@ -1,0 +1,36 @@
+{
+  "summary": "Iter 229 backend verification — TFHL data-heal + iter228p/s regression suite. 42/42 tests pass (100%). The user-reported TFHL Summer Entry 29-picks bug is RESOLVED: read-only Mongo verification confirms Summer Entry now has exactly 4 picks (rounds 1-4) and Winter total_rounds=2 with exactly 2 picks (rounds 1-2). Inaugural retains 55 picks (rounds 1-55). The shrink/grow PATCH logic from iter228p still works, traded picks are preserved across shrinks, per-draft seeding (iter228s 55+4+2 scenario) holds, and chronological draft_scheduled_time decoration on GET /api/teams/{id}/draft-picks is intact.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_tfhl_heal_verification.py",
+    "/app/backend/tests/test_iter228p_patch_total_rounds_syncs_picks.py",
+    "/app/backend/tests/test_iter228s_roster_picks_chronological_and_counts.py",
+    "/app/test_reports/pytest/iter229_tfhl_heal.xml",
+    "/app/test_reports/pytest/iter229_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "TFHL stores its league `_id` as a Mongo ObjectId (legacy doc) while newer leagues use a UUID `id` field. Test queries must accept both shapes (`league.get('id') or str(league['_id'])`). This dual-shape pattern is fragile and is a latent source of bugs for any code that joins by league_id — recommend a one-time migration to add a UUID `id` mirror on every legacy league doc.",
+    "The TFHL Summer Entry orphan bug (29 picks visible because pre-iter228s dedup key omitted draft_id) was healed via DIRECT DB mutation. This is correctly a one-off — the code path that produced the orphans is fixed (drafts.py _seed_draft_picks_for_draft dedup key now includes draft_id), so no re-occurrence is expected. The PATCH shrink code path (round>new_rounds guarded by trade_history) is independently verified to keep new shrinks consistent going forward.",
+    "drafts.py remains at 3200+ lines (still >700 line code-review threshold) — flagged in iter116 also. Not blocking but should be split.",
+    "test_iter228p and test_iter228s read REACT_APP_BACKEND_URL and MONGO_URL/DB_NAME from os.environ at module-import time without a load_dotenv. Pytest runs fine when the shell exports them, but bare `pytest backend/tests/` will fail collection. Consider adding `load_dotenv('/app/backend/.env'); load_dotenv('/app/frontend/.env')` at the top of these test modules (small, non-functional fix)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_tfhl_heal_verification.py (new — read-only TFHL heal verification)"
+  ],
+  "success_rate": {"backend": "100% (42/42)", "frontend": "n/a (backend-only run per testing_type)"},
+  "test_credentials": "Did not need admin/commissioner login — verification was purely read-only Mongo queries against the production-shape db (DB_NAME=test_database). Provided creds (chriszarek@gmail.com / Chris2026!) were not exercised.",
+  "seed_data_creation": "test_tfhl_heal_verification.py creates NO data — pure read-only. The iter228p/iter228s tests seed their own ephemeral leagues via /api/auth/register + create-league flows (UUID-namespaced, no cleanup needed).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "TFHL heal is verified persisted. If you re-run later, expect the heal counts to remain (55/4/2). Read-only verification queries TFHL by name='TFHL' then uses `str(league['_id'])` because TFHL has no UUID `id` field. The new test_tfhl_heal_verification.py is safe to re-run any time. For frontend testing: exercise the Roster page TeamDraftPicks.tsx for (a) per-section trade-mode toggle hiding '+ Add' by default, (b) date/time beside each draft title via data-testid='roster-draft-section-when-{key}', (c) toggling shows '+ Add'. Test with the chriszarek@gmail.com / Chris2026! commissioner on TFHL league.",
+  "rca of the issue": "User saw 29 picks in TFHL Summer Entry Draft instead of 4. Root cause: prior to iter228s, the `_seed_draft_picks_for_draft` dedup key was (league_id, year, round, original_team_id) — missing draft_id. When TFHL was first seeded with the Inaugural draft (rounds 1-55, year 2026), then Summer Entry was created later (also year 2026), the Summer seed was idempotency-skipped against Inaugural's rows and never inserted its own 4-pick set. Worse, prior PATCH shrinks of the Summer draft's total_rounds from a larger value down to 4 only removed rows scoped by draft_id, leaving the Inaugural rows (which were the only ones present, mis-attributed when later queried by year) visible against Summer. The iter228s fix corrected forward inserts; the historical state was healed by the main agent via direct Mongo deletion of `{league_id: TFHL, draft_id: summer_id, round: {$gt: 4}}` plus the analogous Winter delete + Winter total_rounds update from 55→2. Mitigation: verified by 5 new read-only assertions in test_tfhl_heal_verification.py + 12 regression tests covering shrink/grow/traded-preserve and the 55+4+2 per-draft seeding pattern."
+}
