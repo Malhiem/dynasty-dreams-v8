@@ -21,6 +21,7 @@ compliance endpoint in server.py (re-exported via `_router_deps`).
 All endpoints lean on dependency injection via `setup(deps)`.
 """
 from typing import Optional
+import logging
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
@@ -28,10 +29,96 @@ from pydantic import BaseModel
 
 router = APIRouter()
 _deps: dict = {}
+logger = logging.getLogger(__name__)
 
 
 def setup(deps: dict) -> None:
     _deps.update(deps)
+
+
+# ─── Helpers ────────────────────────────────────────────────────
+
+
+def _resolve_minor_auto_section(
+    league: Optional[dict],
+    player: dict,
+    team: dict,
+) -> Optional[str]:
+    """Iter 229 — Decide whether a newly-added player should be auto-placed
+    into the Minors pool.
+
+    Returns:
+      • "minors" — when the league has a minors pool with available space
+        AND the player qualifies (prospect / minor_eligible / passes the
+        age + career-GP defaults).
+      • None — otherwise (placement falls back to the user picking a slot).
+
+    The eligibility test mirrors the GET /roster/{team_id}/detail logic
+    so the auto-placement is consistent with the section the page would
+    have visually rendered.
+    """
+    if not league:
+        return None
+    total_minors = int(league.get("minors_spots") or 0)
+    if total_minors <= 0:
+        return None
+
+    # Player-level eligibility (matches GET /roster/{team_id}/detail).
+    player_type = (player.get("player_type") or "").lower()
+    if player_type == "prospect" or bool(player.get("minor_eligible")):
+        is_eligible = True
+    else:
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            bd = player.get("birth_date") or player.get("dob")
+            player_age = None
+            if bd:
+                bd_dt = _dt.fromisoformat(bd.split("T")[0]) if isinstance(bd, str) else bd
+                today = _dt.now(_tz.utc).replace(tzinfo=None)
+                player_age = today.year - bd_dt.year - (
+                    (today.month, today.day) < (bd_dt.month, bd_dt.day)
+                )
+        except Exception:
+            player_age = None
+        career_gp = player.get("career_games_played")
+        max_age = int(league.get("minors_max_age") or 22)
+        max_career_gp = int(league.get("minors_max_career_games") or 25)
+        age_ok = player_age is None or player_age <= max_age
+        gp_ok = career_gp is None or int(career_gp) <= max_career_gp
+        is_eligible = age_ok and gp_ok
+    if not is_eligible:
+        return None
+
+    # Capacity check. When the league has a split skater/goalie minors
+    # pool enabled, the relevant pool must have headroom.
+    lineup = team.get("lineup") or {}
+    is_goalie = (player.get("primary_position") or player.get("position") or "").upper() == "G"
+    minors_used_total = sum(
+        1 for v in lineup.values()
+        if isinstance(v, dict) and v.get("section") == "minors"
+    )
+    if minors_used_total >= total_minors:
+        return None
+
+    split_on = bool(league.get("minors_split_enabled"))
+    if split_on:
+        skater_cap = int(league.get("minors_skater_spots") or 0)
+        goalie_cap = int(league.get("minors_goalie_spots") or 0)
+        if is_goalie and goalie_cap > 0:
+            used_g = sum(
+                1 for pid, v in lineup.items()
+                if isinstance(v, dict) and v.get("section") == "minors" and (v.get("slot") or "").upper() == "MIN_G"
+            )
+            if used_g >= goalie_cap:
+                return None
+        elif not is_goalie and skater_cap > 0:
+            used_s = sum(
+                1 for pid, v in lineup.items()
+                if isinstance(v, dict) and v.get("section") == "minors" and (v.get("slot") or "").upper() != "MIN_G"
+            )
+            if used_s >= skater_cap:
+                return None
+    return "minors"
 
 
 # ─── Models ─────────────────────────────────────────────────────
@@ -660,6 +747,27 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
         {"_id": ObjectId(team_id)},
         {"$push": {"roster": input.player_id}},
     )
+
+    # ── Iter 229 — Default minor-eligible auto-placement ─────────────
+    # When the added player is minor-eligible AND the league has space
+    # in the Minors pool, drop the player straight into a Minors lineup
+    # slot so commissioners don't have to manually re-slot every new
+    # prospect. Respects `minors_split_enabled` (skater vs goalie pool).
+    # No-ops when the league has no Minors capacity, the player is a
+    # veteran, or the relevant pool is already full.
+    try:
+        auto_section = _resolve_minor_auto_section(league, player, team)
+        if auto_section:
+            slot_letter = "MIN_G" if auto_section == "minors" and (player.get("primary_position") or player.get("position") or "").upper() == "G" else "MIN"
+            existing_lineup = (team.get("lineup") or {}).copy()
+            existing_lineup[input.player_id] = {"section": auto_section, "slot": slot_letter}
+            await db.teams.update_one(
+                {"_id": ObjectId(team_id)},
+                {"$set": {"lineup": existing_lineup}},
+            )
+    except Exception as e:
+        # Non-fatal — failure here shouldn't roll back the add itself.
+        logger.warning(f"minor auto-placement skipped: {e}")
 
     # Refresh salary_used so the compliance + UI numbers track immediately.
     await _recompute_team_salary_used(team_id)

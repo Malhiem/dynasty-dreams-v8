@@ -107,6 +107,9 @@ async def isolated_router_app(router_module, *, user: dict | None = None):
     async def _stub_recompute(team_id):  # pragma: no cover - only used by contracts router fallback
         return 0.0
 
+    def _stub_calculate_fantasy_points(player, config=None):
+        return float(player.get("points") or player.get("fantasy_points") or 0.0)
+
     router_module.setup({
         "db": db,
         "get_current_user": _stub_get_current_user,
@@ -114,6 +117,7 @@ async def isolated_router_app(router_module, *, user: dict | None = None):
         "broadcast_to_room": _stub_broadcast,
         "log_activity": _stub_log_activity,
         "_recompute_team_salary_used": _stub_recompute,
+        "calculate_fantasy_points": _stub_calculate_fantasy_points,
     })
 
     app = FastAPI()

@@ -1,4 +1,4 @@
-// @ts-nocheck
+// Iter 229 — `@ts-nocheck` removed; component types tightened in-file.
 /**
  * Iter 157 — DraftTab extracted from CommissionerSettings.tsx using a
  * typed context-bundle pattern (lower noise than 16-prop drilling).
@@ -8,7 +8,7 @@
  * just needs an entry on the interface — no signature churn at the call site.
  */
 import { useState, useEffect } from "react";
-import EditDraftDialog from "@/lovable/pages/commissioner/EditDraftDialog";
+import EditDraftDialog, { type EditDraftPreview } from "@/lovable/pages/commissioner/EditDraftDialog";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -41,8 +41,8 @@ export interface DraftTabContext {
   firstDraftCompleted: boolean;
   draftRounds: number;
   setDraftRounds: (v: number) => void;
-  roundTimes: number[];
-  setRoundTimes: (v: number[]) => void;
+  roundTimes: Record<number, string>;
+  setRoundTimes: (v: Record<number, string>) => void;
   draftClockEnabled: boolean;
   setDraftClockEnabled: (v: boolean) => void;
   draftClockStart: string;
@@ -113,11 +113,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
   const [savingEdit, setSavingEdit] = useState<boolean>(false);
   // Iter 228q — "What if?" preview state for the rounds input. Live
   // computes the downstream impact via the new backend endpoint.
-  const [editPreview, setEditPreview] = useState<{
-    team_count: number; original_rounds: number; new_rounds: number;
-    picks_added: number; picks_removed: number;
-    traded_picks_preserved: number;
-  } | null>(null);
+  const [editPreview, setEditPreview] = useState<EditDraftPreview | null>(null);
   const [editPreviewLoading, setEditPreviewLoading] = useState(false);
   useEffect(() => {
     if (!editingDraftId || !editForm) { setEditPreview(null); return; }
@@ -298,7 +294,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
       // Iter 228d — Default to 1 hour (3600s) instead of 5 minutes when
       // no per-round override is set. Matches the user-stated default for
       // tiered times (R1+ = 1h, configurable via the round-time grid).
-      const defaultTime = Math.min(86400, parseInt(roundTimes[1] || roundTimes[2] || "3600", 10));
+      const defaultTime = Math.min(86400, parseInt(String(roundTimes[1] || roundTimes[2] || "3600"), 10));
       // Iter 228d — Compose scheduled_time as ISO from date + time inputs
       let scheduledIso: string | null = null;
       if (draftScheduledDate) {
@@ -315,7 +311,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
       let runStart: number | null = null;
       let runVal: string | null = null;
       for (let r = 1; r <= draftRounds; r++) {
-        const v = roundTimes[r] || String(defaultTime);
+        const v: string = String(roundTimes[r] || defaultTime);
         if (runVal === null) { runStart = r; runVal = v; continue; }
         if (v !== runVal) {
           if (runVal !== String(defaultTime)) {
