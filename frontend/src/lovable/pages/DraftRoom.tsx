@@ -354,15 +354,18 @@ export default function DraftRoom() {
           const lastPlayerId = d.picks[d.picks.length - 1]?.player_id;
           if (lastPlayerId) setLastPickedPlayerId(String(lastPlayerId));
         }
-        if (typeof d.current_pick === "number") {
-          setDraftConfig((prev) => ({
-            ...prev,
-            currentPick: d.current_pick,
-            draftStarted: d.status === "active",
-            totalRounds: d.total_rounds || prev.totalRounds,
-            pickTimerSeconds: d.time_per_pick || prev.pickTimerSeconds,
-          }));
-        }
+        // Iter 228j — Always hydrate totalRounds / pickTimerSeconds from
+        // the backend even when current_pick is absent (scheduled drafts
+        // pre-iter228 may not carry a numeric current_pick). Previously
+        // this guard caused the Draft Board to stay stuck on the React
+        // default of 5 rounds for legacy drafts.
+        setDraftConfig((prev) => ({
+          ...prev,
+          currentPick: typeof d.current_pick === "number" ? d.current_pick : prev.currentPick,
+          draftStarted: d.status === "active",
+          totalRounds: d.total_rounds || prev.totalRounds,
+          pickTimerSeconds: d.time_per_pick || prev.pickTimerSeconds,
+        }));
         // Iter 228f — Hydrate missed_pick_action + defer_user_options
         // so the timer hook can decide whether to surface the dialog.
         if (d.missed_pick_action) setMissedPickAction(d.missed_pick_action);

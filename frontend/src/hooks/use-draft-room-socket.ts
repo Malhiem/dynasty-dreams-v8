@@ -86,6 +86,19 @@ export default function useDraftRoomSocket({
               ],
         );
       },
+      // Iter 228k — Auto-seed safety net broadcast. Fires when the
+      // backend transparently materialised the draft_picks rows on
+      // first Draft Room load. We toast + refresh so every connected
+      // manager's Trade Center / Draft Board updates instantly.
+      draft_picks_seeded: (p: any) => {
+        refreshDraftState();
+        const n = Number(p?.picks_inserted || 0);
+        if (n > 0) {
+          toast.info("Draft picks generated", {
+            description: `Seeded ${n} pick${n === 1 ? "" : "s"} for trade & board views.`,
+          });
+        }
+      },
       // Iter 203 — when the draft completes, surface a celebratory
       // toast + auto-refresh so the UI flips to its completed state.
       draft_completed: () => {

@@ -24,6 +24,8 @@ export default function usePickTimer({
   currentDraftId,
   isDraftActive,
   refreshDraftState,
+  deferOnExpiry = false,
+  onTimerExpired,
 }: {
   isClockActive: boolean;
   pickTimerSeconds: number;
@@ -31,6 +33,8 @@ export default function usePickTimer({
   currentDraftId?: string | null;
   isDraftActive: boolean;
   refreshDraftState: () => Promise<void> | void;
+  deferOnExpiry?: boolean;
+  onTimerExpired?: (pickNo: number) => void;
 }) {
   const [pickTimeLeft, setPickTimeLeft] = useState<number>(pickTimerSeconds);
   const [timerPaused, setTimerPaused] = useState(false);

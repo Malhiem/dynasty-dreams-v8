@@ -1496,9 +1496,67 @@ async def auto_init_draft(league_id: str, request: Request):
     if not (is_comm or user["_id"] in co_comms):
         raise HTTPException(status_code=403, detail="Only commissioners can auto-init drafts")
 
+    # Iter 228k — Derive total_rounds from the league's roster capacity
+    # (active + bench + minors) so the Draft Board renders the full
+    # roster height instead of the legacy default of 5.
+    roster_cap = (
+        int(league.get("roster_spots") or 0)
+        + int(league.get("bench_spots") or 0)
+        + int(league.get("minors_spots") or 0)
+    )
+    default_rounds = roster_cap if roster_cap > 0 else 5
+
     existing = await _db().drafts.find_one({"league_id": league_id}, sort=[("created_at", -1)])
     if existing:
-        existing["_id"] = str(existing["_id"])
+        existing_draft_id = str(existing["_id"])
+        # Iter 228k — Heal legacy drafts that were auto-init'd with the
+        # old `total_rounds=5` default. Only bumps when no picks have
+        # been made yet (preserving in-progress drafts) and the roster
+        # cap is meaningfully larger than the stored value.
+        if (
+            not existing.get("picks")
+            and roster_cap > 0
+            and int(existing.get("total_rounds") or 0) < roster_cap
+            and existing.get("status") != "active"
+        ):
+            await _db().drafts.update_one(
+                {"_id": existing["_id"]},
+                {"$set": {"total_rounds": roster_cap}},
+            )
+            existing["total_rounds"] = roster_cap
+
+        # Iter 228k — Auto-seed safety net. When the draft exists but
+        # the `draft_picks` collection has zero rows for this league, run
+        # the seed-picks helper transparently so the Draft Board /
+        # Trade Center are never blank after a commissioner opens the
+        # Draft Room. Broadcast so already-connected clients refresh.
+        existing_picks_count = await _db().draft_picks.count_documents({
+            "league_id": league_id,
+        })
+        if existing_picks_count == 0:
+            try:
+                season = str(league.get("season") or "2026").split("-")[0]
+                inserted = await _seed_draft_picks_for_draft(
+                    draft_id=existing_draft_id,
+                    league_id=league_id,
+                    rounds=int(existing.get("total_rounds") or default_rounds),
+                    year=int(season),
+                )
+                if inserted > 0:
+                    await _broadcast(
+                        f"draft_{existing_draft_id}",
+                        "draft_picks_seeded",
+                        {
+                            "draft_id": existing_draft_id,
+                            "league_id": league_id,
+                            "picks_inserted": inserted,
+                        },
+                    )
+            except Exception:
+                # Seeding is best-effort; never block the Draft Room load.
+                pass
+
+        existing["_id"] = existing_draft_id
         existing.pop("team_map", None)
         # Iter 173 — Surface the league's minors_enabled flag so the Draft
         # Room can render a "Minor-eligible" affordance on prospects.
@@ -1515,7 +1573,7 @@ async def auto_init_draft(league_id: str, request: Request):
         "league_name": league.get("name"),
         "draft_type": "snake",
         "scheduled_time": None,
-        "total_rounds": 5,
+        "total_rounds": default_rounds,
         "time_per_pick": 120,
         "snake_draft": True,
         "player_criteria": "open",  # Iter 170n — the players collection
@@ -1537,10 +1595,35 @@ async def auto_init_draft(league_id: str, request: Request):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     res = await _db().drafts.insert_one(draft_doc)
-    draft_doc["_id"] = str(res.inserted_id)
+    new_draft_id = str(res.inserted_id)
+    draft_doc["_id"] = new_draft_id
     draft_doc.pop("team_map", None)
     # Iter 173 — surface league minors_enabled for the Draft Room badges.
     draft_doc["league_minors_enabled"] = bool(league.get("minors_enabled"))
+
+    # Iter 228k — Auto-seed the freshly-created draft so the trade center
+    # and Draft Board have rows immediately.
+    try:
+        season = str(league.get("season") or "2026").split("-")[0]
+        inserted = await _seed_draft_picks_for_draft(
+            draft_id=new_draft_id,
+            league_id=league_id,
+            rounds=default_rounds,
+            year=int(season),
+        )
+        if inserted > 0:
+            await _broadcast(
+                f"draft_{new_draft_id}",
+                "draft_picks_seeded",
+                {
+                    "draft_id": new_draft_id,
+                    "league_id": league_id,
+                    "picks_inserted": inserted,
+                },
+            )
+    except Exception:
+        pass
+
     return {"draft": draft_doc, "created": True}
 
 @router.post("/drafts/{draft_id}/start")
