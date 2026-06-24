@@ -5,6 +5,8 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
 import { useTradeBlockUiPrefs } from "@/hooks/use-trade-block-ui-prefs";
+import { useSocket } from "@/hooks/use-socket";
+import { useAuth } from "@/contexts/AuthContext";
 import api from "@/lib/api";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
@@ -208,6 +210,7 @@ const owners = ["All Teams", "Frozen Thunder", "Glacier Kings", "Puck Masters", 
 
 const TradeBlock = () => {
   const { league, leagueTeams, myTeam } = useActiveLeague();
+  const { user } = useAuth();
   const { streaks } = useSeasonStreaks(league?.id);
   const navigate = useNavigate();
   const leagueTeamsCount = leagueTeams?.length || 0;
@@ -229,6 +232,10 @@ const TradeBlock = () => {
   const [myRoster, setMyRoster] = useState<any[]>([]);
 
   // Fetch real trade-block items
+  // Iter 228z — Bump a tick to re-fetch whenever a `trade_block_changed`
+  // socket event arrives, so the page lights up the instant any league
+  // member adds/removes/updates a listing.
+  const [tradeBlockTick, setTradeBlockTick] = useState(0);
   useEffect(() => {
     if (!league?.id) return;
     let cancelled = false;
@@ -237,7 +244,13 @@ const TradeBlock = () => {
       setLiveItems(Array.isArray(data) ? data : []);
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [league?.id]);
+  }, [league?.id, tradeBlockTick]);
+
+  useSocket(
+    league?.id ? `league_${league.id}` : null,
+    { trade_block_changed: () => setTradeBlockTick((t) => t + 1) },
+    user?.id || user?._id,
+  );
 
   // My roster (for "My Players" tab)
   useEffect(() => {

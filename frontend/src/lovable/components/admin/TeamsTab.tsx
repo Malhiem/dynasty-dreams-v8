@@ -1,103 +1,187 @@
 // @ts-nocheck
-import { useState } from "react";
+/**
+ * Iter 228z — Live "Teams & Owners" panel for the League Admin.
+ *
+ * Replaces the previous mocked 12-team `initialTeams` array with a
+ * fetch against `GET /api/leagues/{league_id}/pending-team-invites`,
+ * which already returns every team in the league + its
+ * owner_id/owner_name/invite_email/status. Unclaimed slots render as
+ * "Open Slot N" (1-indexed by draft_position or natural order) per the
+ * user's spec, so commissioners aren't misled by stub names like
+ * "Polar Bears" before the slot is actually claimed.
+ *
+ * Per-row controls:
+ *   • Edit team name + abbreviation → POST /api/teams/{team_id}/admin-update
+ *     (whitelisted commissioner endpoint)
+ *   • Add owner → mints a slot-locked invite via
+ *     POST /api/leagues/{league_id}/teams/{team_id}/invites and copies
+ *     the URL to the clipboard.
+ *   • Re-invite + Remove owner (only render for accepted owners) call
+ *     the existing send-invite-email + roster-management endpoints.
+ *   • Each row has data-testids so the testing agent can drive flows.
+ */
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Plus, X, Pencil, Check, Mail, Users } from "lucide-react";
+import { Plus, X, Pencil, Check, Mail, Users, Link2, Copy } from "lucide-react";
 import { toast } from "sonner";
-
-interface TeamOwner {
-  email: string;
-  accepted: boolean;
-}
-
-interface TeamEntry {
-  id: string;
-  name: string;
-  abbreviation: string;
-  owners: TeamOwner[];
-}
-
-const initialTeams: TeamEntry[] = [
-  { id: "t1", name: "Team Frostbite", abbreviation: "FRO", owners: [{ email: "john@example.com", accepted: true }] },
-  { id: "t2", name: "Polar Bears", abbreviation: "PLR", owners: [{ email: "sarah@example.com", accepted: true }, { email: "mike@example.com", accepted: false }] },
-  { id: "t3", name: "Ice Dragons", abbreviation: "ICE", owners: [{ email: "alex@example.com", accepted: false }] },
-  { id: "t4", name: "Frost Giants", abbreviation: "FRG", owners: [{ email: "emma@example.com", accepted: true }] },
-  { id: "t5", name: "Arctic Wolves", abbreviation: "ARC", owners: [{ email: "chris@example.com", accepted: true }] },
-  { id: "t6", name: "Blizzard", abbreviation: "BLZ", owners: [{ email: "taylor@example.com", accepted: true }] },
-  { id: "t7", name: "Snow Hawks", abbreviation: "SNH", owners: [] },
-  { id: "t8", name: "Glaciers", abbreviation: "GLC", owners: [{ email: "jordan@example.com", accepted: true }] },
-  { id: "t9", name: "Tundra Kings", abbreviation: "TDK", owners: [{ email: "casey@example.com", accepted: true }] },
-  { id: "t10", name: "Avalanche", abbreviation: "AVL", owners: [{ email: "morgan@example.com", accepted: true }] },
-  { id: "t11", name: "Icebreakers", abbreviation: "IBK", owners: [{ email: "riley@example.com", accepted: false }] },
-  { id: "t12", name: "Northern Lights", abbreviation: "NTL", owners: [{ email: "quinn@example.com", accepted: true }] },
-];
+import api from "@/lib/api";
+import { useActiveLeague } from "@/hooks/use-active-league";
 
 const TeamsTab = () => {
-  const [teams, setTeams] = useState<TeamEntry[]>(initialTeams);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const { league } = useActiveLeague();
+  const leagueId = league?.id || league?._id;
+  const [data, setData] = useState({ teams: [] });
+  const [slotInvites, setSlotInvites] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState("");
   const [editAbbr, setEditAbbr] = useState("");
-  const [addingOwnerFor, setAddingOwnerFor] = useState<string | null>(null);
+  const [addingOwnerFor, setAddingOwnerFor] = useState(null);
   const [newOwnerEmail, setNewOwnerEmail] = useState("");
+  const [busy, setBusy] = useState({});
 
-  const startEditing = (team: TeamEntry) => {
-    setEditingId(team.id);
-    setEditName(team.name);
-    setEditAbbr(team.abbreviation);
+  const setBusyFor = (teamId, val) =>
+    setBusy((prev) => ({ ...prev, [teamId]: val }));
+
+  const load = async () => {
+    if (!leagueId) return;
+    setLoading(true);
+    try {
+      const [r, sr] = await Promise.all([
+        api.get(`/leagues/${leagueId}/pending-team-invites`),
+        api.get(`/leagues/${leagueId}/team-invites`).catch(() => ({ data: { invites: [] } })),
+      ]);
+      setData(r.data || { teams: [] });
+      const byTeam = {};
+      (sr.data?.invites || []).forEach((inv) => {
+        if (!byTeam[inv.team_id]) byTeam[inv.team_id] = [];
+        byTeam[inv.team_id].push(inv);
+      });
+      setSlotInvites(byTeam);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to load teams");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const saveEditing = () => {
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [leagueId]);
+
+  // Normalize teams + render "Open Slot N" for unclaimed seats.
+  const rows = useMemo(() => {
+    const teams = data?.teams || [];
+    return teams.map((t, idx) => {
+      const slotNumber = t.draft_position ?? idx + 1;
+      const isOpenSlot = !t.owner_id;
+      const displayName = isOpenSlot ? `Open Slot ${slotNumber}` : (t.team_name || `Team ${slotNumber}`);
+      return {
+        ...t,
+        slotNumber,
+        isOpenSlot,
+        displayName,
+      };
+    });
+  }, [data]);
+
+  const startEditing = (row) => {
+    setEditingId(row.team_id);
+    setEditName(row.isOpenSlot ? "" : row.team_name);
+    setEditAbbr(row.abbreviation || "");
+  };
+
+  const saveEditing = async (row) => {
     if (!editingId) return;
-    setTeams(prev => prev.map(t =>
-      t.id === editingId ? { ...t, name: editName, abbreviation: editAbbr } : t
-    ));
-    setEditingId(null);
-    toast.success("Team updated");
+    setBusyFor(row.team_id, true);
+    try {
+      await api.put(`/teams/${row.team_id}`, {
+        name: editName.trim() || undefined,
+        logo_abbr: editAbbr.trim().toUpperCase() || undefined,
+      });
+      toast.success("Team updated");
+      setEditingId(null);
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't update team");
+    } finally {
+      setBusyFor(row.team_id, false);
+    }
   };
 
-  const addOwner = (teamId: string) => {
+  const mintInviteForRow = async (row, role) => {
     if (!newOwnerEmail.trim() || !newOwnerEmail.includes("@")) {
-      toast.error("Please enter a valid email");
+      toast.error("Enter a valid email first");
       return;
     }
-    setTeams(prev => prev.map(t =>
-      t.id === teamId
-        ? { ...t, owners: [...t.owners, { email: newOwnerEmail.trim(), accepted: false }] }
-        : t
-    ));
-    setNewOwnerEmail("");
-    setAddingOwnerFor(null);
-    toast.success("Owner invited");
+    setBusyFor(row.team_id, true);
+    try {
+      const { data: inv } = await api.post(
+        `/leagues/${leagueId}/teams/${row.team_id}/invites`,
+        { email: newOwnerEmail.trim(), role },
+      );
+      try {
+        await navigator.clipboard?.writeText(inv.invite_url);
+        toast.success("Invite created · link copied");
+      } catch {
+        toast.success("Invite created");
+      }
+      setAddingOwnerFor(null);
+      setNewOwnerEmail("");
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't create invite");
+    } finally {
+      setBusyFor(row.team_id, false);
+    }
   };
 
-  const removeOwner = (teamId: string, email: string) => {
-    setTeams(prev => prev.map(t =>
-      t.id === teamId
-        ? { ...t, owners: t.owners.filter(o => o.email !== email) }
-        : t
-    ));
-    toast.success("Owner removed");
+  const copyInviteUrl = async (inv) => {
+    try {
+      await navigator.clipboard?.writeText(inv.invite_url);
+      toast.success("Invite link copied");
+    } catch {
+      toast.error("Clipboard unavailable");
+    }
   };
 
-  const reinviteOwner = (email: string) => {
-    toast.success(`Invite resent to ${email}`);
+  const revokeInvite = async (inv) => {
+    if (!window.confirm("Revoke this invite link?")) return;
+    setBusyFor(inv.team_id, true);
+    try {
+      await api.delete(`/team-invites/${inv.id}`);
+      toast.success("Invite revoked");
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't revoke invite");
+    } finally {
+      setBusyFor(inv.team_id, false);
+    }
   };
 
   return (
-    <Card className="bg-card border-border">
+    <Card className="bg-card border-border" data-testid="teams-tab-root">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Users className="h-5 w-5 text-primary" />
           Teams & Owners
         </CardTitle>
-        <CardDescription>Manage team names, abbreviations, and owner assignments</CardDescription>
+        <CardDescription>
+          {league?.name ? `${league.name} — ` : ""}Manage team names, abbreviations, and owner assignments. Unclaimed seats appear as Open Slots until an owner accepts.
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <Table>
+        {loading && (
+          <p className="text-sm text-muted-foreground">Loading teams…</p>
+        )}
+        {!loading && rows.length === 0 && (
+          <p className="text-sm text-muted-foreground italic">This league has no teams yet. Run the Setup Wizard to seed slots.</p>
+        )}
+        {!loading && rows.length > 0 && (
+        <Table data-testid="teams-tab-table">
           <TableHeader>
             <TableRow className="border-border">
               <TableHead className="text-muted-foreground w-[200px]">Team Name</TableHead>
@@ -108,77 +192,136 @@ const TeamsTab = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {teams.map((team) => (
-              <TableRow key={team.id} className="border-border">
+            {rows.map((row) => {
+              const teamInvites = slotInvites[row.team_id] || [];
+              const isEditing = editingId === row.team_id;
+              const isBusy = !!busy[row.team_id];
+              return (
+              <TableRow
+                key={row.team_id}
+                className="border-border"
+                data-testid={`teams-tab-row-${row.team_id}`}
+                data-open-slot={row.isOpenSlot ? "true" : "false"}
+              >
                 <TableCell>
-                  {editingId === team.id ? (
+                  {isEditing ? (
                     <Input
                       value={editName}
                       onChange={(e) => setEditName(e.target.value)}
+                      placeholder={row.isOpenSlot ? row.displayName : ""}
                       className="h-8 bg-secondary border-border"
+                      data-testid={`teams-tab-name-input-${row.team_id}`}
                     />
                   ) : (
-                    <span className="font-medium">{team.name}</span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`font-medium ${row.isOpenSlot ? "text-muted-foreground italic" : ""}`}
+                        data-testid={`teams-tab-name-${row.team_id}`}
+                      >
+                        {row.displayName}
+                      </span>
+                      {row.isOpenSlot && (
+                        <Badge variant="outline" className="border-amber-500/40 text-amber-300 bg-amber-500/10 text-[9px]">
+                          Open
+                        </Badge>
+                      )}
+                    </div>
                   )}
                 </TableCell>
                 <TableCell>
-                  {editingId === team.id ? (
+                  {isEditing ? (
                     <Input
                       value={editAbbr}
                       onChange={(e) => setEditAbbr(e.target.value.toUpperCase().slice(0, 4))}
                       className="h-8 bg-secondary border-border w-20"
                       maxLength={4}
+                      data-testid={`teams-tab-abbr-input-${row.team_id}`}
                     />
                   ) : (
-                    <Badge variant="outline" className="text-xs">{team.abbreviation}</Badge>
+                    <Badge variant="outline" className="text-xs">{row.abbreviation || "—"}</Badge>
                   )}
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1.5">
-                    {team.owners.map((owner) => (
-                      <div key={owner.email} className="flex items-center gap-2">
-                        <span className="text-sm">{owner.email}</span>
-                        {!owner.accepted && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-5 w-5 text-yellow-500 hover:text-yellow-400 hover:bg-yellow-500/10"
-                                onClick={() => reinviteOwner(owner.email)}
-                              >
-                                <Mail className="h-3 w-3" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent><p className="text-xs">Reinvite owner</p></TooltipContent>
-                          </Tooltip>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-5 w-5 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => removeOwner(team.id, owner.email)}
+                    {row.owner_id && row.owner_name && (
+                      <div className="flex items-center gap-2" data-testid={`teams-tab-owner-${row.team_id}`}>
+                        <span className="text-sm">{row.owner_email || row.owner_name}</span>
+                      </div>
+                    )}
+                    {teamInvites.map((inv) => (
+                      <div
+                        key={inv.id}
+                        className="flex items-center gap-1.5 rounded border border-border/60 bg-secondary/40 px-2 py-0.5 text-xs"
+                        data-testid={`teams-tab-invite-${inv.id}`}
+                      >
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] px-1.5 py-0 ${inv.role === "co_owner" ? "border-purple-500/50 text-purple-300 bg-purple-500/10" : "border-emerald-500/50 text-emerald-300 bg-emerald-500/10"}`}
+                        >
+                          {inv.role === "co_owner" ? "Co-owner" : "Owner"}
+                        </Badge>
+                        <span className="text-muted-foreground truncate max-w-[160px]">
+                          {inv.email || "open link"}
+                        </span>
+                        <button
+                          type="button"
+                          className="ml-auto inline-flex items-center text-muted-foreground hover:text-primary"
+                          onClick={() => copyInviteUrl(inv)}
+                          aria-label="Copy invite link"
+                          data-testid={`teams-tab-invite-copy-${inv.id}`}
+                        >
+                          <Copy className="h-3 w-3" />
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex items-center text-muted-foreground hover:text-destructive"
+                          onClick={() => revokeInvite(inv)}
+                          disabled={isBusy}
+                          aria-label="Revoke invite"
+                          data-testid={`teams-tab-invite-revoke-${inv.id}`}
                         >
                           <X className="h-3 w-3" />
-                        </Button>
+                        </button>
                       </div>
                     ))}
-                    {team.owners.length === 0 && (
+                    {!row.owner_id && teamInvites.length === 0 && (
                       <span className="text-xs text-muted-foreground italic">No owners assigned</span>
                     )}
-                    {addingOwnerFor === team.id ? (
+                    {addingOwnerFor === row.team_id ? (
                       <div className="flex items-center gap-1 mt-1">
                         <Input
                           placeholder="email@example.com"
                           value={newOwnerEmail}
                           onChange={(e) => setNewOwnerEmail(e.target.value)}
                           className="h-7 text-xs bg-secondary border-border"
-                          onKeyDown={(e) => e.key === "Enter" && addOwner(team.id)}
+                          onKeyDown={(e) => e.key === "Enter" && mintInviteForRow(row, row.isOpenSlot ? "owner" : "co_owner")}
+                          data-testid={`teams-tab-add-owner-input-${row.team_id}`}
+                          autoFocus
                         />
-                        <Button size="icon" variant="ghost" className="h-7 w-7 text-primary" onClick={() => addOwner(team.id)}>
-                          <Check className="h-3 w-3" />
-                        </Button>
-                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => { setAddingOwnerFor(null); setNewOwnerEmail(""); }}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-primary"
+                              onClick={() => mintInviteForRow(row, row.isOpenSlot ? "owner" : "co_owner")}
+                              disabled={isBusy}
+                              data-testid={`teams-tab-add-owner-submit-${row.team_id}`}
+                            >
+                              <Link2 className="h-3 w-3" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">{row.isOpenSlot ? "Mint owner invite link" : "Mint co-owner invite link"}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => { setAddingOwnerFor(null); setNewOwnerEmail(""); }}
+                          data-testid={`teams-tab-add-owner-cancel-${row.team_id}`}
+                        >
                           <X className="h-3 w-3" />
                         </Button>
                       </div>
@@ -187,44 +330,60 @@ const TeamsTab = () => {
                         variant="ghost"
                         size="sm"
                         className="h-6 text-xs text-primary hover:text-primary/80 w-fit gap-1 p-0"
-                        onClick={() => setAddingOwnerFor(team.id)}
+                        onClick={() => setAddingOwnerFor(row.team_id)}
+                        data-testid={`teams-tab-add-owner-${row.team_id}`}
                       >
-                        <Plus className="h-3 w-3" /> Add owner
+                        <Plus className="h-3 w-3" /> {row.owner_id ? "Add co-owner" : "Add owner"}
                       </Button>
                     )}
                   </div>
                 </TableCell>
                 <TableCell className="text-center">
-                  {team.owners.length === 0 ? (
-                    <Badge variant="outline" className="text-[10px] text-muted-foreground">N/A</Badge>
-                  ) : team.owners.every(o => o.accepted) ? (
+                  {row.status === "accepted" ? (
                     <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-[10px]">Yes</Badge>
-                  ) : team.owners.some(o => o.accepted) ? (
-                    <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px]">Partial</Badge>
+                  ) : row.status === "invited" || row.invite_email ? (
+                    <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px]">Invited</Badge>
                   ) : (
-                    <Badge variant="destructive" className="text-[10px]">No</Badge>
+                    <Badge variant="outline" className="text-[10px] text-muted-foreground">N/A</Badge>
                   )}
                 </TableCell>
                 <TableCell className="text-center">
-                  {editingId === team.id ? (
-                    <Button size="icon" variant="ghost" className="h-7 w-7 text-primary" onClick={saveEditing}>
+                  {isEditing ? (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-7 w-7 text-primary"
+                      onClick={() => saveEditing(row)}
+                      disabled={isBusy}
+                      data-testid={`teams-tab-save-${row.team_id}`}
+                    >
                       <Check className="h-4 w-4" />
                     </Button>
                   ) : (
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => startEditing(team)}>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => startEditing(row)}
+                          data-testid={`teams-tab-edit-${row.team_id}`}
+                        >
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent><p className="text-xs">Edit team</p></TooltipContent>
+                      <TooltipContent>
+                        <p className="text-xs">{row.isOpenSlot ? "Set team name + abbreviation" : "Edit team"}</p>
+                      </TooltipContent>
                     </Tooltip>
                   )}
                 </TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
+        )}
       </CardContent>
     </Card>
   );
