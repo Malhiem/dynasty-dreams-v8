@@ -914,6 +914,27 @@ async def startup():
                 logger.error(f"waivers scheduler error: {e}")
             await asyncio.sleep(60)
     asyncio.create_task(_waivers_scheduler_loop())
+
+    # Iter 228d — Archived drafts sweeper (hard-delete after 15 days).
+    async def _archived_drafts_sweeper():
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+        while True:
+            try:
+                cutoff = _dt.now(_tz.utc) - _td(days=15)
+                cutoff_iso = cutoff.isoformat()
+                res = await db.drafts.delete_many({
+                    "status": "archived",
+                    "archived_at": {"$lt": cutoff_iso},
+                })
+                if res.deleted_count:
+                    logger.info(
+                        f"archived-drafts sweeper: hard-deleted {res.deleted_count} draft(s) "
+                        f"archived more than 15 days ago"
+                    )
+            except Exception as e:
+                logger.error(f"archived-drafts sweeper error: {e}")
+            await asyncio.sleep(3600)  # hourly
+    asyncio.create_task(_archived_drafts_sweeper())
     
     # Write test credentials
     import os as os_module

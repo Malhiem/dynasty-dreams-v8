@@ -1127,16 +1127,40 @@ async def create_draft(input: CreateDraftRequest, request: Request):
     if input.scheduled_time:
         scheduled = input.scheduled_time
 
+    # Iter 228d — soft-validate total_rounds against the league's actual
+    # roster capacity (active + bench + minors) so a typo doesn't create
+    # a 100-round draft. Cap silently at the larger of the configured
+    # roster_size or 30 to keep legacy small-league behaviour intact.
+    roster_cap = int(league.get("roster_spots") or 0) \
+        + int(league.get("bench_spots") or 0) \
+        + int(league.get("minors_spots") or 0)
+    effective_max = max(roster_cap, 30)
+    if input.total_rounds > effective_max:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"total_rounds ({input.total_rounds}) exceeds the league's "
+                f"roster capacity ({effective_max}). Reduce rounds or increase "
+                "roster spots."
+            ),
+        )
+
     draft_doc = {
         "league_id": input.league_id,
         "league_name": league["name"],
+        # Iter 228d — name persisted on create (was being dropped, so the
+        # Scheduled Drafts list always rendered "Untitled Draft").
+        "name": (input.name or "").strip() or f"{league['name']} Draft",
         "draft_type": input.draft_type,
         "scheduled_time": scheduled,
         "total_rounds": input.total_rounds,
         "time_per_pick": input.time_per_pick,
+        "round_time_overrides": input.round_time_overrides or [],
         "snake_draft": input.snake_draft,
         "player_criteria": input.player_criteria,
         "missed_pick_action": input.missed_pick_action,
+        "defer_user_options": input.defer_user_options or [],
+        "window_elapsed_actions": input.window_elapsed_actions or [],
         "current_pick": 1,
         "status": "scheduled",
         "draft_started": False,
@@ -1155,14 +1179,98 @@ async def create_draft(input: CreateDraftRequest, request: Request):
     return draft_doc
 
 @router.get("/drafts")
-async def get_drafts(league_id: Optional[str] = None, request: Request = None):
-    query = {}
+async def get_drafts(
+    league_id: Optional[str] = None,
+    include_archived: bool = False,
+    request: Request = None,
+):
+    query: dict = {}
     if league_id:
         query["league_id"] = league_id
+    # Iter 228d — hide soft-deleted drafts by default
+    if not include_archived:
+        query["status"] = {"$ne": "archived"}
     drafts = await _db().drafts.find(query, {"team_map": 0}).sort("created_at", -1).to_list(100)
     for d in drafts:
         d["_id"] = str(d["_id"])
     return drafts
+
+
+@router.delete("/drafts/{draft_id}")
+async def delete_draft(draft_id: str, request: Request):
+    """Iter 228d — Soft-delete a scheduled draft. Commissioner only.
+
+    Marks the draft `status="archived"` + stamps `archived_at`. A
+    background sweeper hard-deletes archived drafts after 15 days
+    (recoverable until then via the admin UI).
+    """
+    user = await _get_user(request)
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner or admin only")
+
+    if draft.get("status") in ("in_progress", "completed"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Can't archive a draft that's already {draft['status']}.",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {"$set": {
+            "status": "archived",
+            "archived_at": now_iso,
+            "archived_by": user["_id"],
+        }},
+    )
+    return {"draft_id": draft_id, "status": "archived", "archived_at": now_iso}
+
+
+@router.post("/drafts/{draft_id}/restore")
+async def restore_draft(draft_id: str, request: Request):
+    """Iter 228d — Restore a soft-deleted draft (within 15-day window)."""
+    user = await _get_user(request)
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get("status") != "archived":
+        raise HTTPException(status_code=400, detail="Draft is not archived")
+
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    is_commish = (
+        league and (
+            league.get("commissioner_id") == user["_id"]
+            or user["_id"] in (league.get("co_commissioners") or [])
+            or user.get("role") == "admin"
+        )
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner or admin only")
+
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {"$set": {"status": "scheduled"},
+         "$unset": {"archived_at": "", "archived_by": ""}},
+    )
+    return {"draft_id": draft_id, "status": "scheduled"}
 
 @router.get("/drafts/{draft_id}")
 async def get_draft(draft_id: str):
@@ -1508,7 +1616,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
 
     if new_status == "completed":
         complete_msg = {
-            "id": f"sys-complete",
+            "id": "sys-complete",
             "type": "pick",
             "sender": "System",
             "text": "Draft is complete! All picks have been made.",

@@ -83,6 +83,30 @@ export default function DraftTab({ ctx }: DraftTabProps) {
 
   // Iter 227 — Real Create Draft handler (was a toast-only stub).
   const [creatingDraft, setCreatingDraft] = useState(false);
+  // Iter 228d — New Create-Draft state: name (was being dropped → "Untitled Draft"),
+  // scheduled date+time, missed-pick action with "defer-to-user", multi-select
+  // window-elapsed actions (OR semantics).
+  const [draftName, setDraftName] = useState<string>("");
+  const [draftScheduledDate, setDraftScheduledDate] = useState<string>("");
+  const [draftScheduledTime, setDraftScheduledTime] = useState<string>("19:00");
+  const [missedPickAction, setMissedPickAction] = useState<string>("auto-select");
+  const [windowElapsedActions, setWindowElapsedActions] = useState<string[]>([]);
+  // Iter 228d — Deleting a scheduled draft (soft delete, 15-day recovery)
+  const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
+  const handleDeleteDraft = async (draftId: string) => {
+    if (!draftId) return;
+    if (!window.confirm("Archive this draft? It can be restored within 15 days, then it will be permanently deleted.")) return;
+    setDeletingDraftId(draftId);
+    try {
+      await api.delete(`/drafts/${draftId}`);
+      toast.success("Draft archived (recoverable for 15 days)");
+      await onReloadScheduledDrafts?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to archive draft");
+    } finally {
+      setDeletingDraftId(null);
+    }
+  };
   // Iter 228 — Lottery Generator state. Opens the animated reveal modal
   // when the commissioner picks "Draft Lottery Generator" from the Draft
   // Order select. Final order is persisted via onComplete callback below.
@@ -113,21 +137,52 @@ export default function DraftTab({ ctx }: DraftTabProps) {
     }
     setCreatingDraft(true);
     try {
-      // Pick the SECOND-ROUND timer as the default "time per pick" persisted
-      // on the draft document (the per-round map can still differ — backend
-      // honours it during the live draft).
-      const defaultTime = Math.min(21600, parseInt(roundTimes[1] || roundTimes[2] || "300", 10));
-      const body = {
+      // Iter 228d — Default to 1 hour (3600s) instead of 5 minutes when
+      // no per-round override is set. Matches the user-stated default for
+      // tiered times (R1+ = 1h, configurable via the round-time grid).
+      const defaultTime = Math.min(86400, parseInt(roundTimes[1] || roundTimes[2] || "3600", 10));
+      // Iter 228d — Compose scheduled_time as ISO from date + time inputs
+      let scheduledIso: string | null = null;
+      if (draftScheduledDate) {
+        const t = (draftScheduledTime || "19:00");
+        try {
+          const dt = new Date(`${draftScheduledDate}T${t}:00`);
+          if (!isNaN(dt.getTime())) scheduledIso = dt.toISOString();
+        } catch { /* ignore */ }
+      }
+      // Iter 228d — Build round_time_overrides from per-round overrides
+      // that differ from the default. Backend stores ranges; we collapse
+      // contiguous identical values into [{from,to,seconds}] tuples.
+      const overrides: { from: number; to: number; seconds: number }[] = [];
+      let runStart: number | null = null;
+      let runVal: string | null = null;
+      for (let r = 1; r <= draftRounds; r++) {
+        const v = roundTimes[r] || String(defaultTime);
+        if (runVal === null) { runStart = r; runVal = v; continue; }
+        if (v !== runVal) {
+          if (runVal !== String(defaultTime)) {
+            overrides.push({ from: runStart!, to: r - 1, seconds: parseInt(runVal, 10) });
+          }
+          runStart = r; runVal = v;
+        }
+      }
+      if (runVal !== null && runVal !== String(defaultTime)) {
+        overrides.push({ from: runStart!, to: draftRounds, seconds: parseInt(runVal, 10) });
+      }
+      const body: any = {
         league_id: activeLeague.id,
+        name: (draftName || "").trim() || `${activeLeague.name || "League"} Draft`,
         draft_type: draftType || "entry",
-        scheduled_time: null,
+        scheduled_time: scheduledIso,
         total_rounds: draftRounds,
         time_per_pick: defaultTime,
+        round_time_overrides: overrides,
         snake_draft: true,
         player_criteria: Array.isArray(selectedPlayerCriteria)
           ? selectedPlayerCriteria
           : [selectedPlayerCriteria || "all"],
-        missed_pick_action: "auto-select",
+        missed_pick_action: missedPickAction || "auto-select",
+        window_elapsed_actions: windowElapsedActions,
       };
       await api.post(`/drafts`, body);
       toast.success("Draft created and added to Scheduled Drafts");
@@ -192,6 +247,40 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                   Use <strong>Redraft</strong> to run a full draft with the same settings.
                 </p>
               )}
+            </div>
+            <Separator />
+            {/* Iter 228d — Draft name + scheduled date/time inputs (previously missing → drafts saved as "Untitled Draft" with no schedule). */}
+            <div className="grid gap-3 sm:grid-cols-3" data-testid="draft-create-meta">
+              <div className="space-y-2 sm:col-span-3">
+                <Label htmlFor="draft-name">Draft Name</Label>
+                <Input
+                  id="draft-name"
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  placeholder="e.g. TFHL Inaugural Draft"
+                  className="bg-secondary border-border"
+                  data-testid="draft-name-input"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="draft-scheduled-date">Scheduled Date</Label>
+                <Input
+                  id="draft-scheduled-date"
+                  type="date"
+                  value={draftScheduledDate}
+                  onChange={(e) => setDraftScheduledDate(e.target.value)}
+                  className="bg-secondary border-border"
+                  data-testid="draft-scheduled-date-input"
+                />
+              </div>
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="draft-scheduled-time">Start Time</Label>
+                <ClockPicker
+                  value={draftScheduledTime}
+                  onChange={setDraftScheduledTime}
+                  data-testid="draft-scheduled-time-input"
+                />
+              </div>
             </div>
             <Separator />
             <DraftOrderConfigCard
@@ -272,7 +361,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
             <div className="grid gap-4 md:grid-cols-3">
                <div className="space-y-2">
                 <Label>Number of Rounds</Label>
-                <Input type="number" min={1} max={30} value={draftRounds} onChange={(e) => setDraftRounds(Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))} className="bg-secondary border-border" />
+                <Input type="number" min={1} max={100} value={draftRounds} onChange={(e) => setDraftRounds(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))} className="bg-secondary border-border" data-testid="draft-rounds-input" />
               </div>
               <div className="space-y-2">
                 <Label>Default Time Per Pick</Label>
@@ -339,7 +428,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                 {Array.from({ length: draftRounds }, (_, i) => i + 1).map((round) => (
                   <div key={round} className="flex items-center gap-2">
                     <Label className="text-sm text-muted-foreground whitespace-nowrap w-14">Rd {round}</Label>
-                    <Select value={roundTimes[round] || "120"} onValueChange={(v) => setRoundTimes({ ...roundTimes, [round]: v })}>
+                    <Select value={roundTimes[round] || "3600"} onValueChange={(v) => setRoundTimes({ ...roundTimes, [round]: v })}>
                       <SelectTrigger className="bg-secondary border-border h-8 text-sm">
                         <SelectValue />
                       </SelectTrigger>
@@ -436,25 +525,46 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="text-xs">When Window Elapses</Label>
-                  <Select
-                    value={draftTradePostDelayAction}
-                    onValueChange={setDraftTradePostDelayAction}
-                  >
-                    <SelectTrigger
-                      className="bg-secondary border-border"
-                      data-testid="draft-trade-post-delay-action-select"
-                    >
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto_execute">Auto-execute trade</SelectItem>
-                      <SelectItem value="pause_draft">Pause draft until reviewed</SelectItem>
-                      <SelectItem value="extend_timer">Extend pick timer</SelectItem>
-                      <SelectItem value="require_admin">Require league-admin approval</SelectItem>
-                      <SelectItem value="majority_vote">Voting only (majority decides)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label className="text-xs">When Window Elapses (OR — any selected trigger fires)</Label>
+                  <div className="flex flex-wrap gap-3" data-testid="window-elapsed-actions">
+                    {[
+                      { v: "auto_execute", label: "Auto-execute trade" },
+                      { v: "pause_draft", label: "Pause draft until reviewed" },
+                      { v: "extend_timer", label: "Extend pick timer" },
+                      { v: "require_admin", label: "League-admin approval" },
+                      { v: "majority_vote", label: "Majority vote" },
+                    ].map((opt) => {
+                      const checked = windowElapsedActions.includes(opt.v);
+                      return (
+                        <label
+                          key={opt.v}
+                          className={`flex items-center gap-2 text-xs cursor-pointer rounded-md border px-2 py-1.5 transition-colors ${
+                            checked ? "border-accent bg-accent/10 text-accent" : "border-border text-muted-foreground hover:border-accent/40"
+                          }`}
+                          data-testid={`window-elapsed-${opt.v}`}
+                        >
+                          <input
+                            type="checkbox"
+                            className="accent-accent"
+                            checked={checked}
+                            onChange={(e) => {
+                              setWindowElapsedActions((prev) =>
+                                e.target.checked
+                                  ? Array.from(new Set([...prev, opt.v]))
+                                  : prev.filter((x) => x !== opt.v),
+                              );
+                            }}
+                          />
+                          {opt.label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {windowElapsedActions.length === 0 && (
+                    <p className="text-[10px] text-muted-foreground italic">
+                      Pick one or more. Any selected criterion will trigger the action (OR semantics).
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -570,15 +680,22 @@ export default function DraftTab({ ctx }: DraftTabProps) {
             <div className="space-y-2">
               <Label>If a Team Misses Their Pick</Label>
               <p className="text-sm text-muted-foreground">What happens when the pick timer expires</p>
-              <Select defaultValue="auto-select">
-                <SelectTrigger className="bg-secondary border-border">
+              <Select value={missedPickAction} onValueChange={setMissedPickAction}>
+                <SelectTrigger className="bg-secondary border-border" data-testid="draft-missed-pick-action">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="auto-select">Auto-select best available player</SelectItem>
                   <SelectItem value="pick-anytime">Allow pick anytime when they return</SelectItem>
+                  <SelectItem value="defer-to-user">Defer to user (decide in draft room)</SelectItem>
                 </SelectContent>
               </Select>
+              {missedPickAction === "defer-to-user" && (
+                <p className="text-xs text-muted-foreground italic mt-1" data-testid="defer-to-user-hint">
+                  The owner will be prompted in the draft room to: auto-select best available, auto-select from queue,
+                  or skip this pick and select anytime before the draft ends.
+                </p>
+              )}
             </div>
             <Separator />
             <div className="flex items-center justify-between">
@@ -648,10 +765,12 @@ export default function DraftTab({ ctx }: DraftTabProps) {
             )}
             {scheduledDrafts.map((draft) => (
               <div key={draft.id} className="border border-border rounded-lg overflow-hidden">
-                <button
-                  className="w-full flex items-center justify-between p-4 bg-secondary/50 hover:bg-secondary transition-colors text-left"
-                  onClick={() => setExpandedDraft(expandedDraft === draft.id ? null : draft.id)}
-                >
+                <div className="w-full flex items-stretch justify-between bg-secondary/50 hover:bg-secondary transition-colors">
+                  <button
+                    className="flex-1 flex items-center justify-between p-4 text-left"
+                    onClick={() => setExpandedDraft(expandedDraft === draft.id ? null : draft.id)}
+                    data-testid={`draft-row-${draft.id}`}
+                  >
                   <div className="flex items-center gap-3">
                     <Badge variant={draft.status === "completed" ? "default" : draft.status === "in-progress" ? "destructive" : "secondary"}>
                       {draft.status === "completed" ? "Completed" : draft.status === "in-progress" ? "In Progress" : "Scheduled"}
@@ -662,7 +781,20 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                     <span>{draft.scheduledDate}</span>
                     <svg className={`h-4 w-4 transition-transform ${expandedDraft === draft.id ? "rotate-180" : ""}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                   </div>
-                </button>
+                  </button>
+                  {draft.status === "scheduled" && (
+                    <button
+                      className="px-4 border-l border-border text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
+                      onClick={(e) => { e.stopPropagation(); handleDeleteDraft(draft.id); }}
+                      disabled={deletingDraftId === draft.id}
+                      data-testid={`draft-delete-${draft.id}`}
+                      title="Archive draft (recoverable for 15 days)"
+                      aria-label="Archive draft"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
                 {expandedDraft === draft.id && (
                   <div className="p-4 space-y-4 border-t border-border">
                     <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3">

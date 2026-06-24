@@ -301,22 +301,54 @@ const CommissionerSettings = () => {
     }
     try {
       const { data } = await api.get(`/drafts`, { params: { league_id: activeLeague.id } });
-      const rows = (Array.isArray(data) ? data : data?.drafts || []).map((d) => ({
-        id: d.id || d._id,
-        name: d.name || d.title || "Untitled draft",
-        type: d.type || d.draft_type || "Snake Draft",
-        format: d.format || (d.snake_draft ? "Snake Draft" : "Linear Draft"),
-        rounds: d.rounds || d.total_rounds || 0,
-        timePerPick: d.time_per_pick || d.timePerPick || "—",
-        playerCriteria: d.player_criteria || "All Players",
-        missedPickAction: d.missed_pick_action || "Auto-select best available",
-        scheduledDate: d.scheduled_date || d.scheduledDate || "—",
-        scheduledTime: d.scheduled_time || d.scheduledTime || "—",
-        status: (d.status || "scheduled"),
-        completedDate: d.completed_at || d.completedDate || null,
-        pickTradingEnabled: !!d.pick_trading_enabled,
-        tradingWindowOpens: d.trading_window_opens || null,
-      }));
+      // Iter 228d — Normalize draft rows for display:
+      //   • formatSeconds: turn raw seconds (e.g. 7200) into "2 hr" / "30 min"
+      //   • titleCase: capitalize "all" → "All", "auto-select" → "Auto-select"
+      //   • split scheduled_time ISO into separate date + time strings
+      const formatSeconds = (s) => {
+        const n = parseInt(s, 10);
+        if (!Number.isFinite(n) || n <= 0) return "—";
+        if (n >= 3600 && n % 3600 === 0) return `${n / 3600} hr`;
+        if (n >= 3600) return `${(n / 3600).toFixed(1)} hr`;
+        if (n >= 60) return `${Math.round(n / 60)} min`;
+        return `${n} sec`;
+      };
+      const titleCase = (v) => {
+        if (Array.isArray(v)) return v.map(titleCase).join(", ");
+        if (!v) return v;
+        const s = String(v).replace(/-/g, " ").replace(/_/g, " ");
+        return s.charAt(0).toUpperCase() + s.slice(1);
+      };
+      const splitDateTime = (iso) => {
+        if (!iso) return { date: "—", time: "—" };
+        try {
+          const dt = new Date(iso);
+          if (isNaN(dt.getTime())) return { date: String(iso), time: "—" };
+          return {
+            date: dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }),
+            time: dt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
+          };
+        } catch { return { date: String(iso), time: "—" }; }
+      };
+      const rows = (Array.isArray(data) ? data : data?.drafts || []).map((d) => {
+        const { date, time } = splitDateTime(d.scheduled_time || d.scheduled_date);
+        return {
+          id: d.id || d._id,
+          name: d.name || d.title || "Untitled draft",
+          type: titleCase(d.type || d.draft_type || "snake draft"),
+          format: d.format || (d.snake_draft ? "Snake Draft" : "Linear Draft"),
+          rounds: d.rounds || d.total_rounds || 0,
+          timePerPick: formatSeconds(d.time_per_pick || d.timePerPick),
+          playerCriteria: titleCase(d.player_criteria || "all"),
+          missedPickAction: titleCase(d.missed_pick_action || "auto-select best available"),
+          scheduledDate: date,
+          scheduledTime: time,
+          status: (d.status || "scheduled"),
+          completedDate: d.completed_at || d.completedDate || null,
+          pickTradingEnabled: !!d.pick_trading_enabled,
+          tradingWindowOpens: d.trading_window_opens || null,
+        };
+      });
       setScheduledDrafts(rows);
     } catch {
       setScheduledDrafts([]);

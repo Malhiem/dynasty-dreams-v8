@@ -16,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import api, { formatApiError } from "@/lib/api";
+import { useLeagueSocket } from "@/hooks/use-socket";
 import TeamLink from "@/lovable/components/TeamLink";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -74,6 +75,41 @@ const Waivers = () => {
   // see pending claim team names. "all_teams_anonymous" masks them to
   // "Team A", "Team B", … for everyone except the team owner + commissioner.
   const [txConfig, setTxConfig] = useState<any>(null);
+
+  // Iter 228d — Real-time toast when the waiver scheduler awards claims.
+  // Subscribes to the league room and shows a single toast summarising
+  // wins/losses for the active user's team, plus a "🎯 Just landed!"
+  // bubble for the player IDs the user was bidding on.
+  useLeagueSocket(league?.id, {
+    onWaiversProcessed: (data: any) => {
+      const results = data?.results || [];
+      if (!results.length) return;
+      const myTeamId = (myTeam as any)?.id || (myTeam as any)?._id;
+      const myWins = results.filter((r: any) => r.winner_team_id === myTeamId);
+      const myLosses = results.filter((r: any) =>
+        (r.losers || []).some((tn: string) => tn === (myTeam as any)?.name),
+      );
+      if (myWins.length) {
+        const list = myWins.map((w: any) => `${w.player} ($${w.bid || 0})`).join(", ");
+        toast.success(`Waivers landed: ${list}`, {
+          duration: 8000,
+          description: "Refresh your roster to see your new players.",
+        });
+      }
+      if (myLosses.length) {
+        const list = myLosses.map((w: any) => `${w.player} → ${w.winner}`).join(", ");
+        toast.info(`Lost on waivers: ${list}`, {
+          duration: 8000,
+        });
+      }
+      // Always refresh data after a processing pass
+      try {
+        if (league?.id) {
+          api.get(`/waivers/next-run?league_id=${league.id}`).then(({ data: d }) => setNextRun(d));
+        }
+      } catch { /* ignore */ }
+    },
+  });
 
   // Claim modal state ────────────────────────────────────────────────
   const [claimModalOpen, setClaimModalOpen] = useState(false);
