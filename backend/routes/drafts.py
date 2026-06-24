@@ -2460,3 +2460,120 @@ async def init_auction_budgets(draft_id: str, request: Request):
 
     return {"message": f"Initialized {len(budgets)} budgets at ${cap}", "budgets": budgets}
 
+
+
+# ─── Iter 228e — Per-pick defer_user_options ──────────────────────
+
+
+class DeferPickChoiceRequest(BaseModel):
+    """Owner's choice when their pick timer expires and the draft's
+    missed_pick_action is "defer-to-user".
+    """
+    choice: str  # "auto-best" | "auto-queue" | "pick-anytime"
+
+
+@router.post("/drafts/{draft_id}/picks/{pick_no}/defer")
+async def set_pick_defer_choice(
+    draft_id: str, pick_no: int, body: DeferPickChoiceRequest, request: Request,
+):
+    """Records the owner's defer-to-user choice for a specific pick.
+    Only callable by the team's owner; persists onto the pick document
+    (was only on the draft level before iter 228e).
+
+    Valid choices:
+      • auto-best   — engine auto-selects the best available player NOW
+      • auto-queue  — engine auto-selects the next-available from the
+                      team's draft queue
+      • pick-anytime — the pick is skipped (other rounds continue);
+                      owner can return and pick anytime before draft end
+    """
+    user = await _get_user(request)
+    valid = {"auto-best", "auto-queue", "pick-anytime"}
+    if body.choice not in valid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"choice must be one of {sorted(valid)}",
+        )
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get("missed_pick_action") != "defer-to-user":
+        raise HTTPException(
+            status_code=400,
+            detail="This draft's missed_pick_action is not 'defer-to-user'.",
+        )
+
+    # Find the pick (1-indexed)
+    picks = draft.get("picks") or []
+    pick = next((p for p in picks if int(p.get("pick_no", 0)) == int(pick_no)), None)
+    if pick is None:
+        # Picks might not yet be materialized — allow pre-claiming the
+        # choice by storing under a `pick_defer_choices` map on the draft.
+        await _db().drafts.update_one(
+            {"_id": ObjectId(draft_id)},
+            {"$set": {
+                f"pick_defer_choices.{pick_no}": {
+                    "choice": body.choice,
+                    "team_id": None,  # client may not know yet
+                    "claimed_at": datetime.now(timezone.utc).isoformat(),
+                    "claimed_by": user["_id"],
+                },
+            }},
+        )
+        return {"draft_id": draft_id, "pick_no": pick_no,
+                "choice": body.choice, "stored": "pending"}
+
+    # Auth: only the owner of this pick can set the choice (unless admin)
+    pick_team_id = pick.get("team_id")
+    if user.get("role") != "admin":
+        team = await _db().teams.find_one({"_id": ObjectId(pick_team_id)}) if pick_team_id else None
+        if not team or team.get("owner_id") != user["_id"]:
+            raise HTTPException(status_code=403, detail="Only the pick's owner can set this.")
+
+    # Atomic update on the pick itself
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id), "picks.pick_no": int(pick_no)},
+        {"$set": {
+            "picks.$.defer_choice": body.choice,
+            "picks.$.defer_chosen_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    return {
+        "draft_id": draft_id,
+        "pick_no": pick_no,
+        "team_id": pick_team_id,
+        "choice": body.choice,
+        "stored": "on_pick",
+    }
+
+
+@router.get("/drafts/{draft_id}/picks/{pick_no}/defer")
+async def get_pick_defer_choice(draft_id: str, pick_no: int, request: Request):
+    """Returns the persisted defer choice + the draft-level options the
+    user can choose from. Surfaces both the per-pick state AND the
+    available defer_user_options so the draft-room dialog has a single
+    fetch instead of two."""
+    await _get_user(request)
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    picks = draft.get("picks") or []
+    pick = next((p for p in picks if int(p.get("pick_no", 0)) == int(pick_no)), None)
+    pending = (draft.get("pick_defer_choices") or {}).get(str(pick_no))
+    available = draft.get("defer_user_options") or [
+        "auto-best", "auto-queue", "pick-anytime",
+    ]
+    return {
+        "draft_id": draft_id,
+        "pick_no": pick_no,
+        "available_options": available,
+        "defer_choice": (pick or {}).get("defer_choice") or (pending or {}).get("choice"),
+        "defer_chosen_at": (pick or {}).get("defer_chosen_at") or (pending or {}).get("claimed_at"),
+    }

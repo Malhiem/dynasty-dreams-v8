@@ -564,3 +564,211 @@ async def admin_seed_trade_scenarios(league_id: str = Query(...), request: Reque
     }
 
 
+
+# ─── Iter 228e — Archived drafts admin UI ──────────────────────
+
+
+@router.get("/admin/drafts/archived")
+async def admin_list_archived_drafts(request: Request):
+    """Returns every soft-deleted draft across the platform, sorted by
+    `archived_at` DESC, with `days_until_purge` computed against the
+    15-day TTL. Site-admin only.
+    """
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+    drafts = await _db().drafts.find(
+        {"status": "archived"},
+        {"team_map": 0, "picks": 0, "chat_messages": 0},
+    ).sort("archived_at", -1).to_list(500)
+
+    now = _dt.now(_tz.utc)
+    out = []
+    for d in drafts:
+        archived_iso = d.get("archived_at")
+        days_left = None
+        try:
+            if archived_iso:
+                arch_dt = _dt.fromisoformat(str(archived_iso).replace("Z", "+00:00"))
+                days_left = max(0, 15 - int((now - arch_dt).total_seconds() // 86400))
+        except Exception:
+            pass
+        out.append({
+            "id": str(d["_id"]),
+            "name": d.get("name") or "Untitled Draft",
+            "league_id": d.get("league_id"),
+            "league_name": d.get("league_name"),
+            "draft_type": d.get("draft_type"),
+            "total_rounds": d.get("total_rounds"),
+            "scheduled_time": d.get("scheduled_time"),
+            "archived_at": archived_iso,
+            "archived_by": d.get("archived_by"),
+            "days_until_purge": days_left,
+        })
+    return {"drafts": out, "count": len(out)}
+
+
+@router.post("/admin/drafts/{draft_id}/purge")
+async def admin_purge_draft(draft_id: str, request: Request):
+    """Permanently delete an archived draft (bypasses the 15-day TTL).
+    Site-admin only. Refuses to purge a non-archived draft."""
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if draft.get("status") != "archived":
+        raise HTTPException(
+            status_code=400,
+            detail="Only archived drafts can be purged. Soft-delete first via DELETE /api/drafts/{id}.",
+        )
+    await _db().drafts.delete_one({"_id": ObjectId(draft_id)})
+    return {"draft_id": draft_id, "status": "purged"}
+
+
+@router.post("/admin/drafts/{draft_id}/restore")
+async def admin_restore_archived_draft(draft_id: str, request: Request):
+    """Site-admin shortcut to restore an archived draft (same as
+    POST /api/drafts/{id}/restore, but available even if the original
+    league commissioner is unavailable)."""
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+    try:
+        res = await _db().drafts.update_one(
+            {"_id": ObjectId(draft_id), "status": "archived"},
+            {"$set": {"status": "scheduled"},
+             "$unset": {"archived_at": "", "archived_by": ""}},
+        )
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if res.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Archived draft not found")
+    return {"draft_id": draft_id, "status": "scheduled"}
+
+
+# ─── Iter 228e — Player roster verification UI ─────────────────
+
+
+@router.get("/admin/players/verify")
+async def admin_verify_players(
+    request: Request,
+    search: Optional[str] = None,
+    league_status: Optional[str] = None,  # "NHL" | "AHL" | "Europe" | "Junior" | "Draft Eligible" | "Retired"
+    position: Optional[str] = None,
+    nhl_team: Optional[str] = None,
+    limit: int = Query(default=100, ge=1, le=500),
+    page: int = Query(default=1, ge=1),
+):
+    """Site-admin player browse / verify endpoint.
+
+    Returns the platform-wide player pool with the new `league_status`
+    field highlighted so an admin can quickly verify whether a player
+    is already on file before manually inserting a new one. Filters
+    mirror the public `/api/players` endpoint plus `league_status`.
+    """
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+
+    query: dict = {}
+    if search:
+        query["$or"] = [
+            {"name": {"$regex": search, "$options": "i"}},
+            {"team": {"$regex": search, "$options": "i"}},
+        ]
+    if nhl_team:
+        query["team"] = nhl_team
+    if position:
+        query["position"] = position.upper()
+    if league_status:
+        # Backward-compatible default: NHL when missing
+        if league_status.upper() == "NHL":
+            query["$or"] = (query.get("$or") or []) + [
+                {"league_status": {"$exists": False}},
+                {"league_status": "NHL"},
+                {"league_status": None},
+            ]
+        else:
+            query["league_status"] = league_status
+
+    total = await _db().players.count_documents(query)
+    skip = (page - 1) * limit
+    docs = await _db().players.find(
+        query, {
+            "name": 1, "team": 1, "position": 1, "primary_position": 1,
+            "jersey_number": 1, "nhl_id": 1, "player_type": 1,
+            "league_status": 1, "injury_status": 1, "date_of_birth": 1,
+            "minors_eligible": 1,
+        }
+    ).sort("name", 1).skip(skip).limit(limit).to_list(limit)
+    for p in docs:
+        p["id"] = str(p["_id"])
+        del p["_id"]
+        # Default visible status when missing
+        if not p.get("league_status"):
+            p["league_status"] = "NHL"
+    return {
+        "players": docs,
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "pages": (total + limit - 1) // limit,
+    }
+
+
+class AdminCreatePlayerRequest(BaseModel):
+    name: str
+    position: str
+    team: Optional[str] = None
+    jersey_number: Optional[int] = None
+    league_status: str = "NHL"  # NHL/AHL/Europe/Junior/Draft Eligible/Retired
+    player_type: str = "skater"
+    date_of_birth: Optional[str] = None
+    notes: Optional[str] = None
+
+
+@router.post("/admin/players")
+async def admin_create_player(req: AdminCreatePlayerRequest, request: Request):
+    """Admin shortcut to add a new player record (e.g. a European/AHL/Junior
+    prospect missing from the NHL feed). Generates a synthetic nhl_id in the
+    9-digit reserved range so the upstream sync never collides."""
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+
+    from datetime import datetime as _dt, timezone as _tz
+    import secrets
+
+    if not req.name.strip():
+        raise HTTPException(status_code=400, detail="name is required")
+
+    # Synthetic nhl_id in 9xx,xxx,xxx range (reserved for admin-created)
+    synth_id = 900_000_000 + secrets.randbelow(99_999_999)
+
+    doc = {
+        "name": req.name.strip(),
+        "position": req.position.upper(),
+        "primary_position": req.position.upper(),
+        "team": (req.team or "").upper(),
+        "jersey_number": req.jersey_number,
+        "league_status": req.league_status,
+        "player_type": req.player_type,
+        "nhl_id": synth_id,
+        "date_of_birth": req.date_of_birth,
+        "notes": req.notes,
+        "source": "admin_manual",
+        "created_at": _dt.now(_tz.utc).isoformat(),
+        "created_by": user.get("_id"),
+    }
+    res = await _db().players.insert_one(doc)
+    doc["id"] = str(res.inserted_id)
+    del doc["_id"]
+    return doc

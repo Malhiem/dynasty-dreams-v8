@@ -21,7 +21,7 @@ import {
   Users, ListChecks, TrendingUp, Activity, Shield, RotateCcw, Clock, Filter,
   ArrowLeftRight, AlertTriangle, UserX, Monitor, BarChart3, Heart, ScrollText,
   Headphones, ServerCog, DollarSign, Goal, Wrench, Flag, MessageSquare, Gavel,
-  User,
+  User, Archive,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -57,6 +57,9 @@ import { LeagueHealthPanel } from "./components/LeagueHealthPanel";
 import { SupportMetricsPanel } from "./components/SupportMetricsPanel";
 import { ServerOpsPanel } from "./components/ServerOpsPanel";
 import { RecentAdminActionsFeed } from "./components/RecentAdminActionsFeed";
+// Iter 228e — Archived drafts + Player verification panels
+import ArchivedDraftsPanel from "./components/ArchivedDraftsPanel";
+import PlayerVerifyPanel from "./components/PlayerVerifyPanel";
 export { ModNotesPanel } from "./components/ModNotesPanel";
 import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_shared";
 
@@ -161,6 +164,8 @@ export default function AdminDashboard() {
             <SidebarTab value="ops" icon={ServerCog} label="Server Ops" testid="admin-tab-ops" />
             <SidebarTab value="analytics" icon={BarChart3} label="Analytics" testid="admin-tab-analytics" />
             <SidebarTab value="ux-analytics" icon={Activity} label="UX Analytics" testid="admin-tab-ux-analytics" />
+            <SidebarTab value="archived-drafts" icon={Archive} label="Archived Drafts" testid="admin-tab-archived-drafts" />
+            <SidebarTab value="players" icon={Users} label="Player Verify" testid="admin-tab-player-verify" />
           </TabsList>
 
           {/* Right content pane */}
@@ -278,6 +283,16 @@ export default function AdminDashboard() {
           {/* ─── UX Analytics (Iter 220) ─── */}
           <TabsContent value="ux-analytics" className="space-y-3 mt-0">
             <UXAnalyticsPanel />
+          </TabsContent>
+
+          {/* ─── Iter 228e — Archived Drafts ─── */}
+          <TabsContent value="archived-drafts" className="space-y-3 mt-0">
+            <ArchivedDraftsPanel />
+          </TabsContent>
+
+          {/* ─── Iter 228e — Player Verification ─── */}
+          <TabsContent value="players" className="space-y-3 mt-0">
+            <PlayerVerifyPanel />
           </TabsContent>
           </div>
         </Tabs>
