@@ -137,6 +137,23 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
       draft_undo: () => setReloadTick((t) => t + 1),
       draft_pick_swapped: () => setReloadTick((t) => t + 1),
       draft_pick: () => setReloadTick((t) => t + 1),
+      // Iter 228q — Also refresh when a commissioner edits the draft
+      // (e.g. changes total_rounds) so the per-team pick count + the
+      // section labels stay in sync with the Draft Board.
+      draft_edited: () => setReloadTick((t) => t + 1),
+    },
+    user?.id || user?._id,
+  );
+
+  // Iter 228q — Subscribe to the league-wide channel too so edits to
+  // ANY draft in the league (not just the most-recent one resolved
+  // above) refresh the Roster Draft Picks card. Backend mirrors every
+  // `draft_edited` emission to both `draft_{id}` and `league_{id}`.
+  useSocket(
+    leagueId ? `league_${leagueId}` : null,
+    {
+      draft_edited: () => setReloadTick((t) => t + 1),
+      draft_picks_seeded: () => setReloadTick((t) => t + 1),
     },
     user?.id || user?._id,
   );

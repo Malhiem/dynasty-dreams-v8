@@ -110,6 +110,35 @@ export default function DraftTab({ ctx }: DraftTabProps) {
     excludePreviouslyDrafted: boolean; minorsEligibilityRequired: boolean;
   } | null>(null);
   const [savingEdit, setSavingEdit] = useState<boolean>(false);
+  // Iter 228q — "What if?" preview state for the rounds input. Live
+  // computes the downstream impact via the new backend endpoint.
+  const [editPreview, setEditPreview] = useState<{
+    team_count: number; original_rounds: number; new_rounds: number;
+    picks_added: number; picks_removed: number;
+    traded_picks_preserved: number;
+  } | null>(null);
+  const [editPreviewLoading, setEditPreviewLoading] = useState(false);
+  useEffect(() => {
+    if (!editingDraftId || !editForm) { setEditPreview(null); return; }
+    const newRounds = editForm.totalRounds;
+    if (!Number.isFinite(newRounds) || newRounds < 1) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setEditPreviewLoading(true);
+      try {
+        const { data } = await api.get(
+          `/drafts/${editingDraftId}/edit-preview?total_rounds=${newRounds}`,
+        );
+        if (!cancelled) setEditPreview(data);
+      } catch {
+        if (!cancelled) setEditPreview(null);
+      } finally {
+        if (!cancelled) setEditPreviewLoading(false);
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [editingDraftId, editForm?.totalRounds]);
+
   const openEditDraft = (draft: any) => {
     setEditingDraftId(draft.id);
     let sd = "", st = "19:00";
@@ -152,8 +181,9 @@ export default function DraftTab({ ctx }: DraftTabProps) {
       excludePreviouslyDrafted: !!draft.excludePreviouslyDrafted,
       minorsEligibilityRequired: !!draft.minorsEligibilityRequired,
     });
+    setEditPreview(null);
   };
-  const closeEditDraft = () => { setEditingDraftId(null); setEditForm(null); };
+  const closeEditDraft = () => { setEditingDraftId(null); setEditForm(null); setEditPreview(null); };
   const submitEditDraft = async () => {
     if (!editingDraftId || !editForm) return;
     setSavingEdit(true);
@@ -1152,7 +1182,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                       data-testid="edit-draft-time-input"
                     />
                   </div>
-                  <div className="space-y-2">
+                  <div className="space-y-2 col-span-2">
                     <Label>Rounds</Label>
                     <Input
                       type="number" min={1} max={100}
@@ -1160,6 +1190,50 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                       onChange={(e) => setEditForm({ ...editForm, totalRounds: parseInt(e.target.value || "1", 10) })}
                       data-testid="edit-draft-rounds-input"
                     />
+                    {/* Iter 228q — "What if I change rounds?" preview banner */}
+                    {editPreview && (editPreview.new_rounds !== editPreview.original_rounds) && (
+                      <div
+                        className={`rounded-md border px-3 py-2 text-xs ${
+                          editPreview.picks_added > 0
+                            ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-200"
+                            : "bg-rose-500/10 border-rose-500/40 text-rose-200"
+                        }`}
+                        data-testid="edit-draft-rounds-preview"
+                      >
+                        {editPreview.picks_added > 0 ? (
+                          <>
+                            <span className="font-semibold">
+                              This will add {editPreview.picks_added_per_team} pick
+                              {editPreview.picks_added_per_team === 1 ? "" : "s"} per team
+                              {" "}({editPreview.picks_added} total)
+                            </span>
+                            {" "}across {editPreview.team_count} team{editPreview.team_count === 1 ? "" : "s"}.
+                            New rounds will be appended to every roster on Save.
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-semibold">
+                              This will remove {editPreview.picks_removed_per_team} pick
+                              {editPreview.picks_removed_per_team === 1 ? "" : "s"} per team
+                              {" "}({editPreview.picks_removed} total)
+                            </span>
+                            {" "}across {editPreview.team_count} team{editPreview.team_count === 1 ? "" : "s"}.
+                            {editPreview.traded_picks_preserved > 0 && (
+                              <>
+                                {" "}
+                                <span className="text-amber-300 font-semibold">
+                                  {editPreview.traded_picks_preserved} traded pick
+                                  {editPreview.traded_picks_preserved === 1 ? "" : "s"} will be preserved.
+                                </span>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                    {editPreviewLoading && (
+                      <p className="text-[10px] text-muted-foreground italic">Computing impact…</p>
+                    )}
                   </div>
                   <div className="space-y-2">
                     <Label>Default Time/Pick</Label>

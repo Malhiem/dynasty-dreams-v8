@@ -1594,16 +1594,76 @@ async def patch_draft(draft_id: str, body: dict, request: Request):
     fresh["_id"] = str(fresh["_id"])
 
     # Broadcast so connected Draft Room clients refresh in real time.
+    # Iter 228q — Also broadcast to the league-wide channel so the
+    # Rosters page (which doesn't know the active draft_id) refreshes
+    # its TeamDraftPicks card on every commissioner edit.
     try:
         await _broadcast(
             f"draft_{draft_id}",
             "draft_edited",
             {"draft_id": draft_id, "fields": list(update.keys())},
         )
+        await _broadcast(
+            f"league_{draft['league_id']}",
+            "draft_edited",
+            {
+                "draft_id": draft_id,
+                "league_id": draft["league_id"],
+                "fields": list(update.keys()),
+            },
+        )
     except Exception:
         pass
 
     return {"draft": fresh, "updated_fields": list(update.keys())}
+
+
+@router.get("/drafts/{draft_id}/edit-preview")
+async def edit_draft_preview(
+    draft_id: str, total_rounds: int = 0, request: Request = None
+):
+    """Iter 228q — Returns a "what-if I save these new rounds?" diff so
+    the Edit Draft dialog can render an inline preview banner BEFORE
+    the commissioner commits. Computes:
+      - team_count
+      - original_rounds + new_rounds
+      - picks_added (per team and total)
+      - picks_removed (per team and total)
+      - traded_picks_preserved (rows with non-empty trade_history that
+        survive a shrink)
+    """
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    league_id = draft.get("league_id")
+    team_count = await _db().teams.count_documents({"league_id": league_id})
+    original_rounds = int(draft.get("total_rounds") or 0)
+    new_rounds = max(0, int(total_rounds or 0))
+    picks_added_per_team = max(0, new_rounds - original_rounds)
+    picks_removed_per_team = max(0, original_rounds - new_rounds)
+    picks_added = picks_added_per_team * team_count
+    picks_removed = picks_removed_per_team * team_count
+    traded_preserved = 0
+    if new_rounds < original_rounds:
+        traded_preserved = await _db().draft_picks.count_documents({
+            "draft_id": draft_id,
+            "round": {"$gt": new_rounds},
+            "trade_history": {"$exists": True, "$ne": []},
+        })
+    return {
+        "draft_id": draft_id,
+        "team_count": team_count,
+        "original_rounds": original_rounds,
+        "new_rounds": new_rounds,
+        "picks_added_per_team": picks_added_per_team,
+        "picks_removed_per_team": picks_removed_per_team,
+        "picks_added": picks_added,
+        "picks_removed": picks_removed,
+        "traded_picks_preserved": traded_preserved,
+    }
 
 
 @router.get("/leagues/{league_id}/upcoming-drafts")

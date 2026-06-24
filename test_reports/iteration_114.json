@@ -1,0 +1,31 @@
+{
+  "summary": "Iter 228q backend verification. Ran the new test_iter228q_edit_preview_and_league_broadcast.py (5 tests) plus full iter228k-228p regression (30 tests). All 35 backend tests pass against the live preview backend (https://dynasty-preview.preview.emergentagent.com). The new GET /api/drafts/{id}/edit-preview endpoint returns correct math for grow (5->8 => picks_added=12, per_team=3), shrink (5->2 => picks_removed=12, per_team=3), shrink-with-traded (traded_picks_preserved=1), no-change (all zeros), and 404 for unknown draft. PATCH /api/drafts/{id} still mutates the per-team draft_picks collection on total_rounds change (iter228p regression: 3->7 on 4-team league => 28 picks). Code review confirmed the `f'league_{draft[\"league_id\"]}'` broadcast string is present at drafts.py:1607 and the `draft_edited` event is emitted to both `draft_{id}` and `league_{id}` Socket.IO rooms within the patch_draft handler (lines 1601-1614). Frontend Socket.IO wiring is out of scope per testing_type='backend only'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter228q_edit_preview_and_league_broadcast.py",
+    "/app/test_reports/pytest/iter228q_results.xml",
+    "/app/test_reports/pytest/iter228_regression_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "drafts.py:1600-1616 — broadcasts are wrapped in a single try/except Exception: pass — if EITHER the draft_{id} OR the league_{id} emit fails, the other is silently skipped because they share the same try-block. Consider wrapping each _broadcast call in its own try/except so one failing channel doesn't suppress the other. Not blocking for this iteration.",
+    "drafts.py:1623 — `total_rounds: int = 0` default means GET /api/drafts/{id}/edit-preview with no query param returns picks_removed = original_rounds * team_count (i.e. acts like 'shrink to 0'). Probably harmless because the dialog always sends a value, but a None-default + 422 would be safer than a misleading 'remove all picks' diff.",
+    "drafts.py:1635-1638 — `ObjectId(draft_id)` raising on malformed input returns 400 'Invalid draft_id', but the test_edit_preview_404_for_unknown_draft test asserts 404 for a syntactically valid '0'*24 OID. Both behaviours are intentional and covered by the new tests — flagging only because main agent may want to align this with other endpoints that 404 for both invalid + missing."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (35/35)", "frontend": "skipped"},
+  "test_credentials": "Tests register fresh users via /api/auth/register (i228q_<hex>@example.com / Pass123!); commissioner/admin credentials from problem statement not required.",
+  "seed_data_creation": "Each test creates its own league + (n_teams-1) auxiliary teams via direct db.teams.insert_one, then POST /api/drafts to seed picks. No shared seed data.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter228q backend is green. The Socket.IO league_{id} broadcast was verified by code inspection (string literal present at drafts.py:1607, inside the patch_draft handler that wrapped in try/except). A real Socket.IO subscriber harness was not built because (a) testing_type='backend only', (b) the request explicitly said the binary-present check is sufficient. If you need to verify the live broadcast end-to-end, add a python-socketio client that joins room `league_{id}` and asserts it receives `draft_edited` after PATCH. Test file: /app/backend/tests/test_iter228q_edit_preview_and_league_broadcast.py. To run locally, you MUST export REACT_APP_BACKEND_URL, MONGO_URL, DB_NAME before invoking pytest (they're in /app/frontend/.env and /app/backend/.env respectively, not auto-loaded by the test files).",
+  "rca of the issue": "N/A — iter228q is a feature addition (new /edit-preview endpoint + extra league_{id} broadcast on PATCH), not a bug fix. The user's original 'Rosters page stays stale' bug from iter228p was caused by the frontend TeamDraftPicks component being subscribed only to `draft_{id}` (which it doesn't know on the Rosters page); iter228q's mitigation is to ALSO broadcast on `league_{id}` so the Rosters page (which knows its league_id) can subscribe and refetch. Backend portion verified — frontend subscription is out of scope for this run."
+}
