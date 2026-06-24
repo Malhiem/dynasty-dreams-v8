@@ -724,6 +724,43 @@ async def admin_restore_archived_draft(draft_id: str, request: Request):
     return {"draft_id": draft_id, "status": "scheduled"}
 
 
+@router.get("/admin/drafts/{draft_id}/audit")
+async def admin_draft_audit_log(draft_id: str, request: Request):
+    """Iter 228l — Return the audit-log timeline for a specific draft.
+
+    Surfaces every `admin_user_actions` row whose `metadata.draft_id`
+    matches, regardless of which actor triggered it. Used by the
+    Admin → Archived Drafts panel's "History" drawer so compliance can
+    inspect the full lifecycle (commissioner archive → admin purge /
+    restore / auto-purge) without leaving the page.
+    """
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+
+    rows = await _db().admin_user_actions.find({
+        "metadata.draft_id": draft_id,
+        "action": {"$in": [
+            "draft_archive", "draft_restore", "draft_purge", "draft_auto_purge",
+        ]},
+    }).sort("ts", -1).to_list(200)
+
+    entries = []
+    for r in rows:
+        entries.append({
+            "id": str(r.get("_id")),
+            "action": r.get("action"),
+            "admin_id": r.get("admin_id"),
+            "admin_email": r.get("admin_email"),
+            "admin_tier": r.get("admin_tier"),
+            "reason": r.get("reason"),
+            "metadata": r.get("metadata") or {},
+            "prior_state": r.get("prior_state") or {},
+            "ts": r.get("ts"),
+        })
+    return {"draft_id": draft_id, "entries": entries, "count": len(entries)}
+
+
 # ─── Iter 228e — Player roster verification UI ─────────────────
 
 

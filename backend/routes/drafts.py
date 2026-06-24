@@ -1328,6 +1328,30 @@ async def delete_draft(draft_id: str, request: Request):
             "archived_by": user["_id"],
         }},
     )
+
+    # Iter 228l — Audit row so the History drawer in the admin panel
+    # can show "Archived by {commissioner} at {timestamp}" alongside
+    # subsequent admin purge/restore entries.
+    await _db().admin_user_actions.insert_one({
+        "admin_id": str(user["_id"]),
+        "admin_email": user.get("email"),
+        "admin_tier": user.get("permission_tier") or user.get("role") or "commissioner",
+        "target_user_id": league.get("commissioner_id"),
+        "action": "draft_archive",
+        "reason": "Commissioner soft-deleted a scheduled draft (15-day recovery window)",
+        "metadata": {
+            "draft_id": draft_id,
+            "draft_name": draft.get("name"),
+            "league_id": draft.get("league_id"),
+            "league_name": draft.get("league_name"),
+            "total_rounds": draft.get("total_rounds"),
+            "scheduled_time": draft.get("scheduled_time"),
+        },
+        "prior_state": {"status": draft.get("status")},
+        "mocked": False,
+        "ts": now_iso,
+    })
+
     return {"draft_id": draft_id, "status": "archived", "archived_at": now_iso}
 
 
@@ -1360,6 +1384,32 @@ async def restore_draft(draft_id: str, request: Request):
         {"$set": {"status": "scheduled"},
          "$unset": {"archived_at": "", "archived_by": ""}},
     )
+
+    # Iter 228l — Audit row mirrors the admin restore endpoint so the
+    # History drawer covers BOTH commissioner-initiated and admin-
+    # initiated restores in a single timeline.
+    from datetime import datetime as _dt, timezone as _tz
+    await _db().admin_user_actions.insert_one({
+        "admin_id": str(user["_id"]),
+        "admin_email": user.get("email"),
+        "admin_tier": user.get("permission_tier") or user.get("role") or "commissioner",
+        "target_user_id": (league or {}).get("commissioner_id"),
+        "action": "draft_restore",
+        "reason": "Commissioner restored archived draft within the 15-day window",
+        "metadata": {
+            "draft_id": draft_id,
+            "draft_name": draft.get("name"),
+            "league_id": draft.get("league_id"),
+            "league_name": draft.get("league_name"),
+        },
+        "prior_state": {
+            "status": "archived",
+            "archived_at": draft.get("archived_at"),
+        },
+        "mocked": False,
+        "ts": _dt.now(_tz.utc).isoformat(),
+    })
+
     return {"draft_id": draft_id, "status": "scheduled"}
 
 @router.get("/drafts/{draft_id}")
