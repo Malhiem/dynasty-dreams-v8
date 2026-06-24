@@ -55,6 +55,13 @@ class CreateDraftRequest(BaseModel):
     # Iter 228d — multi-criteria "When window elapses" (OR semantics).
     # Values: "admin_approval", "majority_vote".
     window_elapsed_actions: list[str] = Field(default_factory=list)
+    # Iter 228h — Pick trading + when the window opens to teams.
+    pick_trading_enabled: bool = False
+    trading_window_opens: str = "immediately"
+    # Iter 228h — Draft clock daily window with timezone awareness
+    clock_timezone: Optional[str] = None  # IANA name, e.g. "America/New_York"
+    clock_starts_at: Optional[str] = None  # "HH:MM"
+    clock_stops_at: Optional[str] = None   # "HH:MM"
 
 
 class MakeDraftPickRequest(BaseModel):

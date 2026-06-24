@@ -1145,6 +1145,13 @@ async def create_draft(input: CreateDraftRequest, request: Request):
             ),
         )
 
+    # Iter 228h — When pick trading is enabled AND the window opens
+    # immediately, generate the draft_picks rows so all teams see them
+    # in the trade center / draft board right away. Without this the
+    # commissioner has to manually call /admin/seed/draft-picks.
+    pick_trading_enabled = bool(getattr(input, "pick_trading_enabled", False))
+    trading_window_opens = str(getattr(input, "trading_window_opens", "immediately") or "immediately")
+
     draft_doc = {
         "league_id": input.league_id,
         "league_name": league["name"],
@@ -1153,6 +1160,10 @@ async def create_draft(input: CreateDraftRequest, request: Request):
         "name": (input.name or "").strip() or f"{league['name']} Draft",
         "draft_type": input.draft_type,
         "scheduled_time": scheduled,
+        # Iter 228h — Timezone for the clock-starts / clock-stops fields
+        "clock_timezone": getattr(input, "clock_timezone", None) or league.get("timezone") or "UTC",
+        "clock_starts_at": getattr(input, "clock_starts_at", None),
+        "clock_stops_at": getattr(input, "clock_stops_at", None),
         "total_rounds": input.total_rounds,
         "time_per_pick": input.time_per_pick,
         "round_time_overrides": input.round_time_overrides or [],
@@ -1161,6 +1172,8 @@ async def create_draft(input: CreateDraftRequest, request: Request):
         "missed_pick_action": input.missed_pick_action,
         "defer_user_options": input.defer_user_options or [],
         "window_elapsed_actions": input.window_elapsed_actions or [],
+        "pick_trading_enabled": pick_trading_enabled,
+        "trading_window_opens": trading_window_opens,
         "current_pick": 1,
         "status": "scheduled",
         "draft_started": False,
@@ -1176,7 +1189,84 @@ async def create_draft(input: CreateDraftRequest, request: Request):
     result = await _db().drafts.insert_one(draft_doc)
     draft_doc["_id"] = str(result.inserted_id)
     draft_doc.pop("team_map", None)
+
+    # Iter 228h — Generate draft_picks rows when trading window is
+    # already open. If the order isn't set yet, default to alphabetical
+    # team ordering so the picks have a deterministic slot. The order
+    # can be reshuffled later by saving the DraftOrderConfigCard.
+    if pick_trading_enabled and trading_window_opens == "immediately":
+        try:
+            inserted = await _seed_draft_picks_for_draft(
+                draft_id=str(result.inserted_id),
+                league_id=input.league_id,
+                rounds=input.total_rounds,
+                year=int((league.get("season") or "2026").split("-")[0]),
+            )
+            draft_doc["picks_generated"] = inserted
+        except Exception as ex:
+            import logging
+            logging.getLogger("drafts").warning(
+                f"Failed to auto-generate draft picks for {result.inserted_id}: {ex}")
+            draft_doc["picks_generated"] = 0
+
     return draft_doc
+
+
+async def _seed_draft_picks_for_draft(
+    draft_id: str, league_id: str, rounds: int, year: int,
+) -> int:
+    """Iter 228h helper — materialises `rounds × team-count` draft_picks
+    rows for a freshly-created draft so they're immediately visible in
+    the trade center and draft board.
+
+    Teams are ordered alphabetically when the league hasn't saved a
+    pick order yet — deterministic and trivially overridable later.
+    Idempotent on (league_id, year, round, original_team_id).
+    """
+    from datetime import datetime as _dt, timezone as _tz
+
+    teams = await _db().teams.find({"league_id": league_id}).to_list(200)
+    if not teams:
+        return 0
+    # Honour saved pick order when present, else alphabetical
+    saved_order_doc = await _db().draft_order_config.find_one({"league_id": league_id})
+    saved_order = (saved_order_doc or {}).get("pick_order") or []
+    if saved_order:
+        order_index = {tid: idx for idx, tid in enumerate(saved_order)}
+        teams.sort(key=lambda t: order_index.get(str(t["_id"]), 9999))
+    else:
+        teams.sort(key=lambda t: (t.get("name") or "").lower())
+
+    inserted = 0
+    now = _dt.now(_tz.utc)
+    for r in range(1, rounds + 1):
+        for slot, team in enumerate(teams, start=1):
+            tid = str(team["_id"])
+            existing = await _db().draft_picks.find_one({
+                "league_id": league_id,
+                "year": year,
+                "round": r,
+                "original_team_id": tid,
+            })
+            if existing:
+                continue
+            await _db().draft_picks.insert_one({
+                "league_id": league_id,
+                "draft_id": draft_id,
+                "year": year,
+                "round": r,
+                "slot": slot,
+                "overall": (r - 1) * len(teams) + slot,
+                "original_team_id": tid,
+                "original_team_name": team.get("name") or "Unknown",
+                "current_team_id": tid,
+                "current_team_name": team.get("name") or "Unknown",
+                "trade_history": [],
+                "tradeable": True,
+                "created_at": now,
+            })
+            inserted += 1
+    return inserted
 
 @router.get("/drafts")
 async def get_drafts(

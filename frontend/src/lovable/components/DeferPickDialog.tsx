@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Iter 228f — Defer-to-User missed-pick dialog.
  *

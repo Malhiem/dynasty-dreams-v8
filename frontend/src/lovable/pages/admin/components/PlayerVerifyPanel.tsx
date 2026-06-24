@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Iter 228e — Admin Player Verification Panel.
  *
@@ -14,7 +13,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Search, Plus, Users, RefreshCcw, Download, Loader2 } from "lucide-react";
+import { Search, Plus, Users, RefreshCcw, Download, Loader2, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -105,7 +104,7 @@ export default function PlayerVerifyPanel() {
     }
   };
 
-  // Iter 228g — NHL Central Scouting draft-class sync handler
+  // Iter 228h — NHL Central Scouting draft-class sync handler
   const handleSyncDraftClass = async () => {
     if (!window.confirm(
       `Pull all NHL Central Scouting prospects for the ${syncYear} draft? New players will be added; existing ones left alone (use "Overwrite" if you also want to refresh rankings).`,
@@ -127,6 +126,50 @@ export default function PlayerVerifyPanel() {
     }
   };
 
+  // Iter 228h — CSV bulk import handler. Expects header row:
+  // name, position, team, league_status, date_of_birth, jersey_number
+  const handleCsvImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const text = String(ev.target?.result || "");
+      const lines = text.split(/\r?\n/).filter((l) => l.trim());
+      if (lines.length < 2) {
+        toast.error("CSV must include a header row + at least one data row");
+        return;
+      }
+      const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+      const idx = (k: string) => header.indexOf(k);
+      const rows = lines.slice(1).map((line) => {
+        const parts = line.split(",").map((p) => p.trim());
+        return {
+          name: parts[idx("name")] || "",
+          position: parts[idx("position")] || "C",
+          team: parts[idx("team")] || "",
+          league_status: parts[idx("league_status")] || "NHL",
+          date_of_birth: parts[idx("date_of_birth")] || undefined,
+          jersey_number: parts[idx("jersey_number")] ? parseInt(parts[idx("jersey_number")], 10) : undefined,
+        };
+      }).filter((r) => r.name);
+      try {
+        const { data } = await api.post("/admin/players/bulk-import", {
+          rows, skip_duplicates: true,
+        });
+        toast.success(
+          `Imported ${data.added} of ${data.received} rows (${data.skipped?.length || 0} duplicates skipped, ${data.errors?.length || 0} errors)`,
+          { duration: 8000 },
+        );
+        await fetchPlayers();
+      } catch (err: any) {
+        toast.error(err?.response?.data?.detail || "CSV import failed");
+      } finally {
+        if (e.target) e.target.value = "";
+      }
+    };
+    reader.readAsText(file);
+  };
+
   return (
     <Card className="hover-glow" data-testid="player-verify-panel">
       <CardHeader className="flex flex-row items-center justify-between">
@@ -144,6 +187,21 @@ export default function PlayerVerifyPanel() {
           >
             <RefreshCcw className={`h-3.5 w-3.5 mr-1.5 ${loading ? "animate-spin" : ""}`} />
             Refresh
+          </Button>
+          <Button
+            size="sm" variant="outline" asChild
+            data-testid="player-verify-csv-import-label"
+          >
+            <label className="cursor-pointer">
+              <Upload className="h-3.5 w-3.5 mr-1.5" />
+              Import CSV
+              <input
+                type="file" accept=".csv,text/csv"
+                onChange={handleCsvImport}
+                className="hidden"
+                data-testid="player-verify-csv-import-input"
+              />
+            </label>
           </Button>
           <Button
             size="sm" onClick={() => setAddOpen((v) => !v)}

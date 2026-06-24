@@ -976,6 +976,76 @@ async def startup():
                 logger.error(f"archived-drafts sweeper error: {e}")
             await asyncio.sleep(3600)  # hourly
     asyncio.create_task(_archived_drafts_sweeper())
+
+    # Iter 228h — Monthly NHL Central Scouting auto-sync for the
+    # upcoming draft year. Runs once per day; only triggers a fetch
+    # on the 15th of each month to keep the upstream API happy.
+    async def _draft_class_monthly_sync():
+        import httpx
+        from datetime import datetime as _dt, timezone as _tz
+        CATEGORIES = [(1, "NA Skater"), (2, "INT Skater"), (3, "NA Goalie"), (4, "INT Goalie")]
+        last_run_day: int | None = None
+        while True:
+            try:
+                now = _dt.now(_tz.utc)
+                if now.day == 15 and last_run_day != now.day:
+                    # Sync the UPCOMING draft year (calendar Sept onwards = next year's draft)
+                    target_year = now.year + 1 if now.month >= 9 else now.year
+                    total_added = 0
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        for cat_id, _ in CATEGORIES:
+                            try:
+                                r = await client.get(
+                                    f"https://api-web.nhle.com/v1/draft/rankings/{target_year}/{cat_id}"
+                                )
+                                if r.status_code != 200:
+                                    continue
+                                rankings = (r.json() or {}).get("rankings") or []
+                                import secrets
+                                import re
+                                for p in rankings:
+                                    name = f"{(p.get('firstName') or '').strip()} {(p.get('lastName') or '').strip()}".strip()
+                                    if not name:
+                                        continue
+                                    q: dict = {"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}
+                                    if p.get("birthDate"):
+                                        q["date_of_birth"] = p.get("birthDate")
+                                    if await db.players.find_one(q):
+                                        continue
+                                    position = (p.get("positionCode") or "").upper() or "C"
+                                    await db.players.insert_one({
+                                        "name": name,
+                                        "position": position,
+                                        "primary_position": position,
+                                        "team": p.get("lastAmateurClub") or "",
+                                        "league_status": "Draft Eligible",
+                                        "player_type": "goalie" if cat_id >= 3 else "skater",
+                                        "date_of_birth": p.get("birthDate"),
+                                        "draft_year": target_year,
+                                        "draft_rank_midterm": p.get("midtermRank"),
+                                        "draft_rank_final": p.get("finalRank"),
+                                        "shoots_catches": p.get("shootsCatches"),
+                                        "height_inches": p.get("heightInInches"),
+                                        "weight_pounds": p.get("weightInPounds"),
+                                        "source": "nhl_central_scouting_auto",
+                                        "nhl_id": 950_000_000 + secrets.randbelow(49_999_999),
+                                        "created_at": now.isoformat(),
+                                    })
+                                    total_added += 1
+                            except Exception as ex:
+                                logger.warning(f"draft-class sync cat={cat_id} year={target_year}: {ex}")
+                    if total_added:
+                        logger.info(
+                            f"draft-class monthly auto-sync: added {total_added} "
+                            f"prospects for {target_year}"
+                        )
+                    last_run_day = now.day
+                elif now.day != 15:
+                    last_run_day = None
+            except Exception as e:
+                logger.error(f"draft-class monthly sync error: {e}")
+            await asyncio.sleep(86400)  # daily check
+    asyncio.create_task(_draft_class_monthly_sync())
     
     # Write test credentials
     import os as os_module

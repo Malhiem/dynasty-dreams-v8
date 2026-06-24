@@ -958,3 +958,82 @@ async def admin_sync_draft_class(req: DraftClassSyncRequest, request: Request):
         "errors": errors,
         "sample_ids": seen_ids[:5],
     }
+
+
+# ─── Iter 228h — Bulk CSV player import ─────────────────────────
+
+
+class BulkImportRow(BaseModel):
+    name: str
+    position: str
+    team: Optional[str] = None
+    league_status: str = "NHL"
+    date_of_birth: Optional[str] = None
+    jersey_number: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class BulkImportRequest(BaseModel):
+    rows: list[BulkImportRow]
+    skip_duplicates: bool = True
+
+
+@router.post("/admin/players/bulk-import")
+async def admin_bulk_import_players(req: BulkImportRequest, request: Request):
+    """Bulk insert player rows (CSV row → object). Frontend parses the
+    CSV and POSTs the rows here. Admin only. Returns per-row outcomes
+    so the UI can highlight skipped duplicates and errors.
+    """
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+
+    import secrets
+    import re
+    from datetime import datetime as _dt, timezone as _tz
+
+    added = 0
+    skipped: list[dict] = []
+    errors: list[dict] = []
+    now = _dt.now(_tz.utc).isoformat()
+
+    for idx, row in enumerate(req.rows):
+        if not row.name.strip():
+            errors.append({"row": idx + 1, "error": "name is required"})
+            continue
+        try:
+            query: dict = {"name": {"$regex": f"^{re.escape(row.name.strip())}$",
+                                     "$options": "i"}}
+            if row.date_of_birth:
+                query["date_of_birth"] = row.date_of_birth
+            if req.skip_duplicates:
+                existing = await _db().players.find_one(query)
+                if existing:
+                    skipped.append({"row": idx + 1, "name": row.name,
+                                    "reason": "duplicate"})
+                    continue
+            await _db().players.insert_one({
+                "name": row.name.strip(),
+                "position": (row.position or "C").upper(),
+                "primary_position": (row.position or "C").upper(),
+                "team": (row.team or "").upper(),
+                "jersey_number": row.jersey_number,
+                "league_status": row.league_status or "NHL",
+                "player_type": "goalie" if (row.position or "").upper() == "G" else "skater",
+                "date_of_birth": row.date_of_birth,
+                "notes": row.notes,
+                "source": "admin_bulk_csv",
+                "nhl_id": 950_000_000 + secrets.randbelow(49_999_999),
+                "created_at": now,
+                "created_by": user.get("_id"),
+            })
+            added += 1
+        except Exception as ex:
+            errors.append({"row": idx + 1, "name": row.name, "error": str(ex)})
+
+    return {
+        "received": len(req.rows),
+        "added": added,
+        "skipped": skipped,
+        "errors": errors,
+    }

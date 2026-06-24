@@ -93,6 +93,9 @@ export default function DraftTab({ ctx }: DraftTabProps) {
   const [windowElapsedActions, setWindowElapsedActions] = useState<string[]>([]);
   // Iter 228d — Deleting a scheduled draft (soft delete, 15-day recovery)
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
+  // Iter 228h — Clock window timezone + Trading window state
+  const [draftClockTimezone, setDraftClockTimezone] = useState<string>("America/New_York");
+  const [tradingWindowOpens, setTradingWindowOpens] = useState<string>("immediately");
   const handleDeleteDraft = async (draftId: string) => {
     if (!draftId) return;
     if (!window.confirm("Archive this draft? It can be restored within 15 days, then it will be permanently deleted.")) return;
@@ -183,6 +186,11 @@ export default function DraftTab({ ctx }: DraftTabProps) {
           : [selectedPlayerCriteria || "all"],
         missed_pick_action: missedPickAction || "auto-select",
         window_elapsed_actions: windowElapsedActions,
+        pick_trading_enabled: createDraftPickTrading,
+        trading_window_opens: tradingWindowOpens,
+        clock_timezone: draftClockEnabled ? draftClockTimezone : null,
+        clock_starts_at: draftClockEnabled ? draftClockStart : null,
+        clock_stops_at: draftClockEnabled ? draftClockEnd : null,
       };
       await api.post(`/drafts`, body);
       toast.success("Draft created and added to Scheduled Drafts");
@@ -480,8 +488,28 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                       data-testid="draft-clock-stops-at"
                     />
                   </div>
+                  {/* Iter 228h — Timezone selector for clock window */}
+                  <div className="col-span-2 space-y-1">
+                    <Label className="text-xs">Timezone</Label>
+                    <Select value={draftClockTimezone} onValueChange={setDraftClockTimezone}>
+                      <SelectTrigger className="bg-secondary border-border" data-testid="draft-clock-timezone">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="America/New_York">America/New York (Eastern)</SelectItem>
+                        <SelectItem value="America/Chicago">America/Chicago (Central)</SelectItem>
+                        <SelectItem value="America/Denver">America/Denver (Mountain)</SelectItem>
+                        <SelectItem value="America/Los_Angeles">America/Los Angeles (Pacific)</SelectItem>
+                        <SelectItem value="America/Toronto">America/Toronto</SelectItem>
+                        <SelectItem value="America/Vancouver">America/Vancouver</SelectItem>
+                        <SelectItem value="Europe/London">Europe/London</SelectItem>
+                        <SelectItem value="Europe/Stockholm">Europe/Stockholm</SelectItem>
+                        <SelectItem value="UTC">UTC</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <p className="col-span-2 text-xs text-muted-foreground">
-                    Example: 9:00 AM – 11:00 PM means pick timers only count down during those hours each day.
+                    Example: 9:00 AM – 11:00 PM in your selected timezone — pick timers only count down during those hours each day.
                   </p>
                 </div>
               )}
@@ -706,8 +734,8 @@ export default function DraftTab({ ctx }: DraftTabProps) {
               <div className="space-y-2 mt-4">
                 <Label>Trading Window Opens</Label>
                 <p className="text-xs text-muted-foreground">Draft picks become visible to teams and available for use in trades when the trading window opens.</p>
-                <Select defaultValue="immediately">
-                  <SelectTrigger className="bg-secondary border-border">
+                <Select value={tradingWindowOpens} onValueChange={setTradingWindowOpens}>
+                  <SelectTrigger className="bg-secondary border-border" data-testid="trading-window-opens-select">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
