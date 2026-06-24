@@ -345,6 +345,16 @@ const CommissionerSettings = () => {
           timePerPickSeconds: Number(d.time_per_pick || d.timePerPick || 3600),
           excludePreviouslyDrafted: !!d.exclude_previously_drafted,
           minorsEligibilityRequired: !!d.minors_eligibility_required,
+          // Iter 228o — Raw fields for the expanded Edit Draft dialog.
+          draftType: d.draft_type || d.type || "entry",
+          snakeDraft: d.snake_draft !== undefined ? !!d.snake_draft : true,
+          // Backend stores player_criteria as a list (modern) or string (legacy).
+          playerCriteriaRaw: d.player_criteria,
+          missedPickActionKey: d.missed_pick_action || "auto-select",
+          deferUserOptions: Array.isArray(d.defer_user_options)
+            ? d.defer_user_options
+            : ["auto-best", "auto-queue", "pick-anytime"],
+          roundTimeOverrides: Array.isArray(d.round_time_overrides) ? d.round_time_overrides : [],
           playerCriteria: titleCase(d.player_criteria || "all"),
           missedPickAction: titleCase(d.missed_pick_action || "auto-select best available"),
           scheduledDate: date,

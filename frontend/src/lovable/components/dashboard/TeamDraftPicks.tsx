@@ -161,6 +161,11 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
             originalTeamFull: traded ? p.original_team_name : null,
             _liveKey: key,
             _isConditional: (p.pending_protections || []).length > 0,
+            // Iter 228o — Parent draft metadata so the Roster page can
+            // section picks by draft (e.g. "TFHL Inaugural Draft") not
+            // just by calendar year.
+            _draftId: p.draft_id || null,
+            _draftName: p.draft_name || null,
           } as any;
         });
         setLivePicks(hydrated);
@@ -173,7 +178,30 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
     if (livePicks !== null) return livePicks;
     return generateTeamPicks(teamId);
   }, [livePicks, teamId]);
-  const years = [...new Set(draftPicks.map(p => p.year))].sort();
+
+  // Iter 228o — Build the ordered list of section groups. Live picks
+  // section by parent draft (preferring an explicit `_draftId` / `_draftName`
+  // from the backend); mocked/seeded picks fall back to year groupings.
+  const sectionGroups = useMemo(() => {
+    const groups: { key: string; label: string; picks: DraftPick[]; year: number }[] = [];
+    const indexByKey: Record<string, number> = {};
+    for (const p of draftPicks) {
+      const draftId = (p as any)._draftId as string | null;
+      const draftName = (p as any)._draftName as string | null;
+      const key = draftId || draftName || `year-${p.year}`;
+      const label = draftName || `${p.year} Draft`;
+      let idx = indexByKey[key];
+      if (idx === undefined) {
+        idx = groups.length;
+        indexByKey[key] = idx;
+        groups.push({ key, label, picks: [], year: p.year });
+      }
+      groups[idx].picks.push(p);
+    }
+    // Sort ascending by representative year, then label.
+    groups.sort((a, b) => (a.year - b.year) || a.label.localeCompare(b.label));
+    return groups;
+  }, [draftPicks]);
 
   const handleTradePick = (pick: DraftPick, index: number) => {
     if (!onTradePick) return;
@@ -201,12 +229,15 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
       </div>
 
       <div className="p-6 space-y-5">
-        {years.map((year, yi) => {
-          const picks = draftPicks.filter(p => p.year === year);
+        {sectionGroups.map((group, gi) => {
+          const picks = group.picks;
           return (
-            <div key={year} className="animate-slide-up" style={{ animationDelay: `${yi * 80}ms` }}>
+            <div key={group.key} className="animate-slide-up" style={{ animationDelay: `${gi * 80}ms` }}>
               <div className="flex items-center gap-2 mb-3">
-                <span className="text-sm font-semibold text-foreground">{year}</span>
+                <span
+                  className="text-sm font-semibold text-foreground"
+                  data-testid={`roster-draft-section-${group.key}`}
+                >{group.label}</span>
                 <div className="flex-1 h-px bg-border" />
                 {onTradePick && (
                   <TooltipProvider>
@@ -217,14 +248,14 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                           size="icon"
                           className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10"
                           onClick={() => {
-                            picks.forEach((pick, pi) => handleTradePick(pick, yi * 10 + pi));
+                            picks.forEach((pick, pi) => handleTradePick(pick, gi * 100 + pi));
                           }}
                         >
                           <ArrowUpDown className="h-3.5 w-3.5" />
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p className="text-xs">Add all {year} picks to trade</p>
+                        <p className="text-xs">Add all {group.label} picks to trade</p>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
@@ -233,7 +264,7 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
               <div className="flex flex-wrap gap-2">
                 {picks.map((pick, pi) => (
                   <div
-                    key={`${pick.year}-${pick.round}-${pi}`}
+                    key={`${group.key}-${pick.round}-${pi}`}
                     className={`group flex items-center gap-1 px-3 py-2 rounded-lg border text-sm transition-all hover:border-primary/30 ${
                       pick.round === 1
                         ? "bg-accent/10 border-accent/30"
@@ -324,7 +355,7 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                           <TooltipTrigger asChild>
                             <button
                               className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-primary"
-                              onClick={() => handleTradePick(pick, yi * 10 + pi)}
+                              onClick={() => handleTradePick(pick, gi * 100 + pi)}
                             >
                               <ArrowUpDown className="h-3 w-3" />
                             </button>

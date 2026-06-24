@@ -95,10 +95,17 @@ export default function DraftTab({ ctx }: DraftTabProps) {
   const [excludePreviouslyDrafted, setExcludePreviouslyDrafted] = useState<boolean>(false);
   const [minorsEligibilityRequired, setMinorsEligibilityRequired] = useState<boolean>(false);
   // Iter 228n — Edit-draft modal state. Reused by every row's pencil icon.
+  // Iter 228o — Expanded to cover EVERY editable field from CreateDraftRequest:
+  // draft_type, snake_draft, player_criteria, missed_pick_action,
+  // defer_user_options, round_time_overrides, plus the existing
+  // name/scheduled_time/total_rounds/time_per_pick/eligibility flags.
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{
     name: string; scheduledDate: string; scheduledTime: string;
     totalRounds: number; timePerPick: number;
+    draftType: string; snakeDraft: boolean;
+    playerCriteria: string; missedPickAction: string;
+    deferUserOptions: string[]; roundTimeOverrides: string;
     excludePreviouslyDrafted: boolean; minorsEligibilityRequired: boolean;
   } | null>(null);
   const [savingEdit, setSavingEdit] = useState<boolean>(false);
@@ -113,12 +120,27 @@ export default function DraftTab({ ctx }: DraftTabProps) {
         st = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
       }
     }
+    const dt0 = (draft.draftType || draft.type || "entry").toLowerCase().split(" ")[0];
+    const validTypes = ["entry", "keeper", "expansion", "snake", "auction"];
+    const draftTypeNorm = validTypes.includes(dt0) ? dt0 : "entry";
+    const rawCrit = draft.playerCriteriaRaw ?? draft.player_criteria ?? draft.playerCriteria;
+    const critStr = Array.isArray(rawCrit) ? (rawCrit[0] || "all") : (rawCrit || "all");
     setEditForm({
       name: draft.name || "",
       scheduledDate: sd,
       scheduledTime: st,
       totalRounds: Number(draft.rounds) || 5,
       timePerPick: Number(draft.timePerPickSeconds) || 3600,
+      draftType: draftTypeNorm,
+      snakeDraft: draft.snakeDraft != null ? !!draft.snakeDraft : true,
+      playerCriteria: String(critStr).toLowerCase(),
+      missedPickAction: (draft.missedPickActionKey || draft.missed_pick_action || "auto-select").toLowerCase(),
+      deferUserOptions: Array.isArray(draft.deferUserOptions)
+        ? draft.deferUserOptions
+        : ["auto-best", "auto-queue", "pick-anytime"],
+      roundTimeOverrides: Array.isArray(draft.roundTimeOverrides) && draft.roundTimeOverrides.length
+        ? JSON.stringify(draft.roundTimeOverrides, null, 2)
+        : "",
       excludePreviouslyDrafted: !!draft.excludePreviouslyDrafted,
       minorsEligibilityRequired: !!draft.minorsEligibilityRequired,
     });
@@ -135,11 +157,29 @@ export default function DraftTab({ ctx }: DraftTabProps) {
           if (!isNaN(dt.getTime())) scheduledIso = dt.toISOString();
         } catch { /* ignore */ }
       }
+      let parsedOverrides: any = undefined;
+      const ovTrim = (editForm.roundTimeOverrides || "").trim();
+      if (ovTrim) {
+        try {
+          parsedOverrides = JSON.parse(ovTrim);
+          if (!Array.isArray(parsedOverrides)) throw new Error();
+        } catch {
+          toast.error("Round time overrides must be valid JSON array, e.g. [{\"from\":1,\"to\":3,\"seconds\":600}]");
+          setSavingEdit(false);
+          return;
+        }
+      }
       await api.patch(`/drafts/${editingDraftId}`, {
         name: editForm.name.trim() || undefined,
         scheduled_time: scheduledIso,
         total_rounds: editForm.totalRounds,
         time_per_pick: editForm.timePerPick,
+        draft_type: editForm.draftType,
+        snake_draft: editForm.snakeDraft,
+        player_criteria: [editForm.playerCriteria],
+        missed_pick_action: editForm.missedPickAction,
+        defer_user_options: editForm.deferUserOptions,
+        round_time_overrides: parsedOverrides ?? [],
         exclude_previously_drafted: editForm.excludePreviouslyDrafted,
         minors_eligibility_required: editForm.minorsEligibilityRequired,
       });
@@ -1126,6 +1166,121 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                       data-testid="edit-draft-time-per-pick-input"
                     />
                   </div>
+                  {/* Iter 228o — Full customisation: draft type + format */}
+                  <div className="space-y-2">
+                    <Label>Draft Type</Label>
+                    <Select
+                      value={editForm.draftType}
+                      onValueChange={(v) => setEditForm({ ...editForm, draftType: v })}
+                    >
+                      <SelectTrigger
+                        className="bg-secondary border-border"
+                        data-testid="edit-draft-type-select"
+                      ><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="entry">Entry / Inaugural</SelectItem>
+                        <SelectItem value="keeper">Keeper</SelectItem>
+                        <SelectItem value="expansion">Expansion</SelectItem>
+                        <SelectItem value="snake">Snake (one-shot)</SelectItem>
+                        <SelectItem value="auction">Auction</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Format</Label>
+                    <Select
+                      value={editForm.snakeDraft ? "snake" : "linear"}
+                      onValueChange={(v) => setEditForm({ ...editForm, snakeDraft: v === "snake" })}
+                    >
+                      <SelectTrigger
+                        className="bg-secondary border-border"
+                        data-testid="edit-draft-format-select"
+                      ><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="snake">Snake Draft</SelectItem>
+                        <SelectItem value="linear">Linear Draft</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Player Criteria</Label>
+                    <Select
+                      value={editForm.playerCriteria}
+                      onValueChange={(v) => setEditForm({ ...editForm, playerCriteria: v })}
+                    >
+                      <SelectTrigger
+                        className="bg-secondary border-border"
+                        data-testid="edit-draft-criteria-select"
+                      ><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {playerCriteriaOptions.map((o: any) => (
+                          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Missed Pick Action</Label>
+                    <Select
+                      value={editForm.missedPickAction}
+                      onValueChange={(v) => setEditForm({ ...editForm, missedPickAction: v })}
+                    >
+                      <SelectTrigger
+                        className="bg-secondary border-border"
+                        data-testid="edit-draft-missed-pick-select"
+                      ><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="auto-select">Auto-select Best Available</SelectItem>
+                        <SelectItem value="skip">Skip Pick</SelectItem>
+                        <SelectItem value="defer-to-user">Defer to User</SelectItem>
+                        <SelectItem value="pause">Pause Draft</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                {/* Iter 228o — Defer sub-options (only meaningful when
+                    missed_pick_action="defer-to-user") */}
+                {editForm.missedPickAction === "defer-to-user" && (
+                  <div className="space-y-2 border-l-2 border-amber-500/40 pl-3">
+                    <Label className="text-xs">Defer-to-User Options</Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Choose which fallback actions the manager can select when their pick window expires.
+                    </p>
+                    {["auto-best", "auto-queue", "pick-anytime"].map((opt) => (
+                      <label key={opt} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          checked={editForm.deferUserOptions.includes(opt)}
+                          onCheckedChange={(v) => {
+                            const next = v
+                              ? Array.from(new Set([...editForm.deferUserOptions, opt]))
+                              : editForm.deferUserOptions.filter((o) => o !== opt);
+                            setEditForm({ ...editForm, deferUserOptions: next });
+                          }}
+                          data-testid={`edit-draft-defer-option-${opt}`}
+                        />
+                        <span className="text-xs">{
+                          opt === "auto-best" ? "Auto-select best available player" :
+                          opt === "auto-queue" ? "Auto-pick from manager's queue" :
+                          "Pick anytime (skip until manually picked)"
+                        }</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {/* Iter 228o — Per-round time overrides expert escape hatch */}
+                <div className="space-y-2">
+                  <Label className="text-xs">Round Time Overrides (advanced JSON)</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Optional. Stamp specific round ranges with non-default timers. Example: <code className="text-[10px]">[{`{"from":1,"to":5,"seconds":7200}`}]</code>. Leave blank to use the default time per pick above for every round.
+                  </p>
+                  <textarea
+                    className="w-full rounded-md border border-border bg-secondary px-2 py-1.5 text-xs font-mono"
+                    rows={3}
+                    value={editForm.roundTimeOverrides}
+                    onChange={(e) => setEditForm({ ...editForm, roundTimeOverrides: e.target.value })}
+                    data-testid="edit-draft-round-overrides"
+                    placeholder='[{"from":1,"to":3,"seconds":600}]'
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Eligibility Filters</Label>

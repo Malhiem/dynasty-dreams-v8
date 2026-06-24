@@ -396,14 +396,69 @@ async def get_team_draft_picks(team_id: str, year: Optional[int] = None):
     matches the requested team_id — regardless of who held the slot
     originally. Each pick carries its full `trade_history` so the
     front-end can render the provenance chain.
+
+    Iter 228o — Each pick is decorated with `draft_id` + `draft_name`
+    so the Roster page can group picks by parent draft (e.g. "TFHL
+    Inaugural Draft" vs "TFHL 2026 Entry Draft") instead of just by
+    calendar year. Mapping prefers an explicit `pick.draft_id` field
+    (set on newly-seeded picks), then falls back to matching the pick's
+    `(league_id, year)` against the league's drafts collection.
     """
     db = _deps["db"]
     query = {"current_team_id": team_id}
     if year:
         query["year"] = int(year)
     picks = await db.draft_picks.find(query).sort([("year", 1), ("round", 1)]).to_list(1000)
+
+    # ─── Build a year → (draft_id, draft_name) lookup for fallback ────
+    league_ids = list({p.get("league_id") for p in picks if p.get("league_id")})
+    drafts_by_year: dict = {}     # (league_id, year) → (draft_id, name)
+    drafts_by_id: dict = {}       # draft_id → name
+    if league_ids:
+        all_drafts = await db.drafts.find(
+            {"league_id": {"$in": league_ids},
+             "status": {"$ne": "archived"}},
+            {"_id": 1, "league_id": 1, "name": 1, "scheduled_time": 1,
+             "season": 1, "draft_type": 1},
+        ).to_list(500)
+        for d in all_drafts:
+            did = str(d["_id"])
+            name = d.get("name") or "Untitled Draft"
+            drafts_by_id[did] = name
+            # Derive year for the draft
+            yr = None
+            sched = d.get("scheduled_time")
+            if sched:
+                try:
+                    yr = int(str(sched)[:4])
+                except Exception:
+                    pass
+            if yr is None and d.get("season"):
+                try:
+                    yr = int(str(d["season"]).split("-")[0])
+                except Exception:
+                    pass
+            if yr is not None:
+                key = (d["league_id"], yr)
+                # Pick the most recently-created draft for a given (league, year)
+                # — older inaugural drafts get bumped only if there's a tie.
+                if key not in drafts_by_year:
+                    drafts_by_year[key] = (did, name)
+
     for p in picks:
         p["_id"] = str(p["_id"])
+        explicit_did = p.get("draft_id")
+        if explicit_did and explicit_did in drafts_by_id:
+            p["draft_name"] = drafts_by_id[explicit_did]
+        else:
+            key = (p.get("league_id"), int(p.get("year") or 0))
+            mapped = drafts_by_year.get(key)
+            if mapped:
+                p["draft_id"] = mapped[0]
+                p["draft_name"] = mapped[1]
+            else:
+                p["draft_name"] = f"{p.get('year') or 'Unknown'} Draft"
+
     return {"team_id": team_id, "year": year, "picks": picks}
 
 
