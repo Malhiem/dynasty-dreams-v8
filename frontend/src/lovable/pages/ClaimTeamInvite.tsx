@@ -68,10 +68,15 @@ export default function ClaimTeamInvite() {
     try {
       const { data } = await api.post(`/team-invites/${token}/accept`);
       const isCo = data.role === "co_owner";
+      // Iter 229c — Switch the active league context to the team's
+      // league so the user lands in the right place. Without this the
+      // dashboard / /team page falls back to the user's prior default
+      // league and feels like the invite "did nothing".
+      try { localStorage.setItem("dd_active_league_id", data.league_id); } catch { /* noop */ }
       toast.success(isCo
         ? `You've joined ${data.team_name} as a co-owner!`
         : `You've claimed ${data.team_name}!`);
-      navigate(`/team?team_id=${data.team_id}`);
+      navigate(`/leagues/${data.league_id}`);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Couldn't accept invite");
     } finally {

@@ -74,7 +74,13 @@ def team_to_response(team: dict) -> TeamResponse:
     Honors `logo_abbr_override` (set via PUT /teams/{id}) before falling back
     to deriving from the team name (first letters of significant words).
     """
-    name = team.get("name", "")
+    name = team.get("name") or ""
+    # Iter 229b — Auto-seeded "Open Slot" stubs have `name=None`. Surface
+    # a stable placeholder so downstream consumers (TeamResponse + UI)
+    # don't break on `.replace`/length operations.
+    if not name:
+        slot_n = team.get("draft_position")
+        name = f"Open Slot {slot_n}" if slot_n else "Open Slot"
     override = (team.get("logo_abbr_override") or "").strip().upper()
     if override:
         abbr = override[:3]
