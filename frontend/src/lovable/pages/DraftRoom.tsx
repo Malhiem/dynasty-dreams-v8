@@ -572,11 +572,18 @@ export default function DraftRoom() {
   const [deferAvailable, setDeferAvailable] = useState<string[]>([
     "auto-best", "auto-queue", "pick-anytime",
   ]);
-  // Determine whether the active pick belongs to the local user's team
+  // Iter 228i — Determine whether the active pick belongs to the local
+  // user's team WITHOUT referencing the `myTeam` useMemo (which is
+  // declared further down the file → would trigger a Temporal Dead
+  // Zone "can't access lexical declaration 'myTeam' before
+  // initialization" error in production builds).
   const isMyPickActive = (() => {
-    if (!myTeam || !draftConfig.draftStarted) return false;
+    if (!user || !liveTeams?.length || !draftConfig.draftStarted) return false;
     const teamAbbr = getTeamForPick(draftConfig.currentPick);
-    return teamAbbr && (myTeam as any)?.abbr === teamAbbr;
+    if (!teamAbbr) return false;
+    const mine: any = liveTeams.find((t: any) => t.owner_id === user.id);
+    const myAbbr = mine?.logo_abbr || (mine?.name || "").slice(0, 3).toUpperCase();
+    return myAbbr === teamAbbr;
   })();
   const shouldDefer = missedPickAction === "defer-to-user" && isMyPickActive;
 

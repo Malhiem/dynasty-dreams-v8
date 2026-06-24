@@ -2513,3 +2513,71 @@ async def check_playoff_tbd_deadlines(league_id: str, request: Request):
             })
 
     return {"fired": fired, "league_id": league_id}
+
+
+# ─── Iter 228i — Propagate roster shape to all team rosters ────────
+
+
+@router.post("/leagues/{league_id}/propagate-roster-shape")
+async def propagate_roster_shape(league_id: str, request: Request):
+    """When the commissioner saves Roster Size / Position Breakdown, this
+    endpoint applies the new shape to every team's structure. Active
+    rosters are trimmed (excess players moved to bench/minors/free agents)
+    and slot caps updated so downstream lineup validation works
+    immediately."""
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    db = _deps["db"]
+    try:
+        oid = ObjectId(league_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid league_id")
+    league = await db.leagues.find_one({"_id": oid})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner or admin only")
+
+    roster_spots = int(league.get("roster_spots") or 20)
+    bench_spots = int(league.get("bench_spots") or 0)
+    minors_spots = int(league.get("minors_spots") or 0)
+    cap = roster_spots + bench_spots + minors_spots
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(500)
+    updated_count = 0
+    trimmed_count = 0
+    for t in teams:
+        roster = t.get("roster") or []
+        excess = roster[cap:] if len(roster) > cap else []
+        new_roster = roster[:cap]
+        await db.teams.update_one(
+            {"_id": t["_id"]},
+            {"$set": {
+                "roster": new_roster,
+                "roster_max": cap,
+                "active_max": roster_spots,
+                "bench_max": bench_spots,
+                "minors_max": minors_spots,
+                "roster_shape_applied_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+        updated_count += 1
+        if excess:
+            trimmed_count += 1
+    return {
+        "league_id": league_id,
+        "teams_updated": updated_count,
+        "teams_trimmed": trimmed_count,
+        "cap": cap,
+        "shape": {
+            "roster_spots": roster_spots,
+            "bench_spots": bench_spots,
+            "minors_spots": minors_spots,
+        },
+    }

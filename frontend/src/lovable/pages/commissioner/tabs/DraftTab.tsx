@@ -93,6 +93,25 @@ export default function DraftTab({ ctx }: DraftTabProps) {
   const [windowElapsedActions, setWindowElapsedActions] = useState<string[]>([]);
   // Iter 228d — Deleting a scheduled draft (soft delete, 15-day recovery)
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
+  // Iter 228i — Backfill picks for legacy drafts (pre-iter228h auto-gen)
+  const [seedingDraftId, setSeedingDraftId] = useState<string | null>(null);
+  const handleSeedPicks = async (draftId: string) => {
+    if (!draftId) return;
+    setSeedingDraftId(draftId);
+    try {
+      const { data } = await api.post(`/drafts/${draftId}/seed-picks`);
+      if (data?.picks_inserted > 0) {
+        toast.success(`Generated ${data.picks_inserted} draft picks. Trade center now has inventory.`);
+      } else {
+        toast.info("All picks already exist — nothing to backfill.");
+      }
+      await onReloadScheduledDrafts?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Backfill failed");
+    } finally {
+      setSeedingDraftId(null);
+    }
+  };
   // Iter 228h — Clock window timezone + Trading window state
   const [draftClockTimezone, setDraftClockTimezone] = useState<string>("America/New_York");
   const [tradingWindowOpens, setTradingWindowOpens] = useState<string>("immediately");
@@ -807,6 +826,21 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                     <svg className={`h-4 w-4 transition-transform ${expandedDraft === draft.id ? "rotate-180" : ""}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                   </div>
                   </button>
+                  {/* Iter 228i — Backfill picks for legacy drafts created
+                       before iter228h's auto-gen logic. Idempotent on the
+                       backend (skips picks that already exist). */}
+                  {draft.status === "scheduled" && (
+                    <button
+                      className="px-3 border-l border-border text-muted-foreground hover:text-emerald-400 hover:bg-emerald-500/10 transition-colors disabled:opacity-50 text-sm"
+                      onClick={(e) => { e.stopPropagation(); handleSeedPicks(draft.id); }}
+                      disabled={seedingDraftId === draft.id}
+                      data-testid={`draft-seed-picks-${draft.id}`}
+                      title="Backfill draft picks into the trade center (safe to re-run)"
+                      aria-label="Backfill draft picks"
+                    >
+                      {seedingDraftId === draft.id ? "…" : "⟲ Picks"}
+                    </button>
+                  )}
                   {draft.status === "scheduled" && (
                     <button
                       className="px-4 border-l border-border text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-50"

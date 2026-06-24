@@ -261,9 +261,33 @@ export default function RostersTab() {
     try {
       const { data } = await api.put(`/leagues/${league.id}`, payload);
       const changedKeys = Object.keys(data?.changes ?? {});
+      // Iter 228i — When roster shape changed, push the new caps + trim
+      // overflow rosters across every team so downstream validators see
+      // the updated structure immediately.
+      const shapeKeys = ["roster_spots", "bench_spots", "minors_spots"];
+      const shapeChanged = changedKeys.some((k) => shapeKeys.includes(k));
+      if (shapeChanged) {
+        try {
+          const { data: prop } = await api.post(
+            `/leagues/${league.id}/propagate-roster-shape`,
+          );
+          if (prop?.teams_trimmed) {
+            toast.info(
+              `Roster shape applied — ${prop.teams_trimmed} of ${prop.teams_updated} teams had excess players trimmed`,
+              { duration: 6000 },
+            );
+          } else {
+            toast.success(`Roster shape applied to ${prop?.teams_updated || 0} team(s)`);
+          }
+        } catch (pe: any) {
+          toast.warning(
+            pe?.response?.data?.detail || "Saved league but failed to propagate shape to teams",
+          );
+        }
+      }
       if (changedKeys.length === 0) {
         toast("No changes to save", { description: "Values already match what's stored." });
-      } else {
+      } else if (!shapeChanged) {
         toast.success(`Saved ${changedKeys.length} roster setting${changedKeys.length === 1 ? "" : "s"}`);
       }
       reloadLeague?.();

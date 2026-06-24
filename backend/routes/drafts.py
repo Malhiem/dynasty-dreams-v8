@@ -2667,3 +2667,53 @@ async def get_pick_defer_choice(draft_id: str, pick_no: int, request: Request):
         "defer_choice": (pick or {}).get("defer_choice") or (pending or {}).get("choice"),
         "defer_chosen_at": (pick or {}).get("defer_chosen_at") or (pending or {}).get("claimed_at"),
     }
+
+
+# ─── Iter 228i — Retroactive pick seeding for pre-iter228h drafts ──
+
+
+@router.post("/drafts/{draft_id}/seed-picks")
+async def seed_draft_picks(draft_id: str, request: Request):
+    """Commissioner-only: materialise draft_picks rows for an existing
+    draft. Useful when a draft was created with `pick_trading_enabled`
+    BEFORE iter228h shipped the auto-gen logic, so the picks weren't
+    populated and the trade-center inventory is empty.
+
+    Idempotent — calls `_seed_draft_picks_for_draft` which skips rows
+    that already exist on `(league_id, year, round, original_team_id)`.
+    """
+    user = await _get_user(request)
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner or admin only")
+
+    season = (league.get("season") or "2026").split("-")[0]
+    inserted = await _seed_draft_picks_for_draft(
+        draft_id=draft_id,
+        league_id=draft["league_id"],
+        rounds=int(draft.get("total_rounds") or 1),
+        year=int(season),
+    )
+    return {
+        "draft_id": draft_id,
+        "league_id": draft["league_id"],
+        "picks_inserted": inserted,
+        "message": (
+            f"Inserted {inserted} draft pick(s)" if inserted
+            else "All picks already exist (idempotent re-run)"
+        ),
+    }
