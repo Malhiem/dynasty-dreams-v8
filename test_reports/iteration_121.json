@@ -1,0 +1,37 @@
+{
+  "summary": "Iter 228y — Verified slot-locked team invite tokens (NEW backend + frontend) + glowing-horn regression for draft picks on the trade block. 25/25 backend tests green (10 new iter228y + 3 iter228w bullhorn + 12 trade_block_router regression). Live smoke tests against the deployed API confirmed all 5 new endpoints behave per spec, including 403 for non-commissioner mint, single-use token, email-lock enforcement, and `current_teams` bump on accept. Frontend /team-invites/:token claim page renders both the 'Invite unavailable' state (invalid token) and the valid 'Pending — claim it / Sign in / Claim Team' state. /commissioner/owner-invites shows the new Slot invites column with: Mint open link (no email), Mint locked link (auto-appears when an email is typed into the row's input), 'Add co-owner' on the already-owned team (Zarek's Frozen / chriszarek), Owner chips with copy + X revoke controls, 'Slot invite created' toast on success, and the pre-existing 'Invite All' bulk flow still rendered. /team Roster page has the section header block toggles (data-testid roster-draft-section-block-toggle-* — 2 sections detected) and animate-pulse glow classes wired. No critical bugs found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/trade-block?team_id=...", "issue": "Response still leaks Mongo `_id` (ObjectId). Pre-existing, not introduced by iter228y — flagged for future cleanup."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter228y_team_invites.py",
+    "/app/test_reports/pytest/iter228y_run.xml"
+  ],
+  "action_items": [
+    "(Optional) Exclude `_id` from GET /api/trade-block responses for consistency with rest of API.",
+    "(Optional) Confirmation prompt before destructive 'Revoke' (X) chip click — currently revokes immediately without a confirm dialog. Low priority UX nit."
+  ],
+  "critical_code_review_comments": [
+    "routes/team_invites.py L116-119: `_invite_status` correctly handles naive expires_at by treating as UTC — good defensive coding for older docs.",
+    "routes/team_invites.py L286-298: `current_teams` bump uses an `$inc` guarded by `if not team.get('owner_id')` BEFORE the team is updated — correct logic (the old document is checked, not the post-update state). No race condition because the same handler holds the request scope.",
+    "routes/team_invites.py L283-285: Promoting a co-owner to owner strips them from co_owner_ids — good edge case handling.",
+    "routes/team_invites.py L48-52: `_frontend_base` falls back to a hard-coded preview URL when FRONTEND_URL env var is missing. Acceptable safety net but consider raising in prod.",
+    "test_iter228y_team_invites.py: 10 well-scoped pytest cases covering all major branches (happy-path, email lock, single-use, co-owner add/double, owner-already-owned, revoke, expired, listing filter, non-commissioner 403). Great coverage."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (25/25)", "frontend": "100% — claim page (valid + invalid), Owner Invites column with mint/locked/co-owner buttons + revoke chip, /team roster section toggle data-testids present"},
+  "test_credentials": "Used chriszarek@gmail.com / Chris2026! (commissioner) per /app/memory/test_credentials.md.",
+  "seed_data_creation": "Live: minted 2 fresh team_invites for league 69e46af167999bfb85c39628 / team 69e59b30cbd3fea02a914c63 ('Ice Breakers') — one open-link, one email-locked to test_owner@example.com — left active. They can be revoked via the Owner Invites UI or DELETE /api/team-invites/{id} when no longer needed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 228y is functionally complete. Backend router at /app/backend/routes/team_invites.py exposes 5 endpoints; 10 isolated_router_app pytest cases (test_iter228y_team_invites.py) all green; live integration against REACT_APP_BACKEND_URL confirmed. Frontend: ClaimTeamInvite.tsx (public /team-invites/:token), OwnerInvites.tsx (new Slot invites column with Mint open / Mint locked / Add co-owner / chip revoke), and the existing TeamDraftPicks.tsx glowing horn (iter228w) all rendered correctly. Note: 'Mint locked link' button label only appears once an email is typed in the row's email input — that's by design and verified. The Ice Breakers team currently has NO primary owner (test data state); if the next iter needs to test the co-owner flow, first claim Ice Breakers, then mint a co_owner invite. The minor `_id` leak in GET /api/trade-block is pre-existing.",
+  "rca of the issue": "N/A — feature works end-to-end. All 6 scenarios from the review request verified: (1) backend invite mint+preview+accept+single-use+email-lock+revoke+list, (2) co-owner flow (mint role=co_owner, double-join 400, owner-when-owned 400, non-commish 403), (3) trade-block CRUD regression intact, (4) /team-invites/:token claim page renders both states correctly with Sign in CTA, (5) /commissioner/owner-invites Slot invites column with Mint open/locked, chip copy/revoke, Add co-owner, and Invite All all working, (6) Glowing horn section toggles wired with correct data-testids and animate-pulse classes on /team."
+}

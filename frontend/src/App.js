@@ -62,6 +62,8 @@ import OpsConsolePage from "@/lovable/pages/commissioner/OpsConsole";
 import AdminDashboard from "@/lovable/pages/admin/AdminDashboard";
 // Iter 193 — Bulk Owner Invites
 import OwnerInvitesPage from "@/lovable/pages/commissioner/OwnerInvites";
+// Iter 228y — Public claim page for slot-locked team invites
+import ClaimTeamInvitePage from "@/lovable/pages/ClaimTeamInvite";
 import LovableLeaguePayments from "@/lovable/pages/LeaguePayments";
 import LovablePlayerNews from "@/lovable/pages/PlayerNews";
 import LovablePlayerPool from "@/lovable/pages/PlayerPool";
@@ -91,6 +93,8 @@ function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/join/:code" element={<JoinLeaguePage />} />
+          {/* Iter 228y — Slot-locked team invite claim page (public preview, auth required to accept) */}
+          <Route path="/team-invites/:token" element={<ClaimTeamInvitePage />} />
           <Route path="/u/:username" element={<ProfilePage />} />
           <Route path="/profile/edit" element={<ProtectedRoute><EditProfilePage /></ProtectedRoute>} />
           <Route path="/forum" element={<ProtectedRoute><ForumPage /></ProtectedRoute>} />

@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { Mail, Upload, RefreshCw, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Mail, Upload, RefreshCw, AlertTriangle, CheckCircle2, Link2, UserPlus, Copy, X } from "lucide-react";
 
 function statusBadgeProps(status) {
   switch (status) {
@@ -48,18 +48,33 @@ export default function OwnerInvites() {
   const [loading, setLoading] = useState(true);
   const [emails, setEmails] = useState({}); // team_id → email
   const [sending, setSending] = useState(false);
+  // Iter 228y — Per-team slot invites pulled from /team-invites.
+  // Map of team_id → array of pending invites (so per-row UI can show
+  // active links + revoke buttons).
+  const [slotInvites, setSlotInvites] = useState({});
+  // Track in-flight per-team actions so the buttons can disable themselves.
+  const [busyTeam, setBusyTeam] = useState({});
 
   const load = async () => {
     if (!leagueId) return;
     setLoading(true);
     try {
-      const r = await api.get(`/leagues/${leagueId}/pending-team-invites`);
+      const [r, sr] = await Promise.all([
+        api.get(`/leagues/${leagueId}/pending-team-invites`),
+        api.get(`/leagues/${leagueId}/team-invites`).catch(() => ({ data: { invites: [] } })),
+      ]);
       setData(r.data);
       const seed = {};
       (r.data?.teams || []).forEach((t) => {
         if (t.invite_email) seed[t.team_id] = t.invite_email;
       });
       setEmails(seed);
+      const byTeam = {};
+      (sr.data?.invites || []).forEach((inv) => {
+        if (!byTeam[inv.team_id]) byTeam[inv.team_id] = [];
+        byTeam[inv.team_id].push(inv);
+      });
+      setSlotInvites(byTeam);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to load pending teams");
     } finally {
@@ -100,6 +115,57 @@ export default function OwnerInvites() {
     }
     setEmails(next);
     toast.success(`Mapped ${matched} email(s)${unmatched ? ` · ${unmatched} unmatched` : ""}`);
+  };
+
+  // Iter 228y — Slot-locked invite helpers.
+  const setBusy = (teamId, val) =>
+    setBusyTeam((prev) => ({ ...prev, [teamId]: val }));
+
+  const mintSlotInvite = async (team, { role }) => {
+    setBusy(team.team_id, true);
+    try {
+      const email = (emails[team.team_id] || "").trim();
+      const payload = { role };
+      if (email && email.includes("@")) payload.email = email;
+      const { data: inv } = await api.post(
+        `/leagues/${leagueId}/teams/${team.team_id}/invites`,
+        payload,
+      );
+      try {
+        await navigator.clipboard?.writeText(inv.invite_url);
+        toast.success("Slot invite link copied to clipboard");
+      } catch {
+        toast.success("Slot invite created");
+      }
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't mint slot invite");
+    } finally {
+      setBusy(team.team_id, false);
+    }
+  };
+
+  const copyInviteUrl = async (inv) => {
+    try {
+      await navigator.clipboard?.writeText(inv.invite_url);
+      toast.success("Invite link copied");
+    } catch {
+      toast.error("Clipboard unavailable — link: " + inv.invite_url);
+    }
+  };
+
+  const revokeInvite = async (inv) => {
+    if (!window.confirm("Revoke this invite link? Anyone who already has it won't be able to claim the team.")) return;
+    setBusy(inv.team_id, true);
+    try {
+      await api.delete(`/team-invites/${inv.id}`);
+      toast.success("Invite revoked");
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't revoke invite");
+    } finally {
+      setBusy(inv.team_id, false);
+    }
   };
 
   const onSubmit = async () => {
@@ -151,7 +217,7 @@ export default function OwnerInvites() {
           <h1 className="text-3xl font-bold tracking-tight">Owner Invites</h1>
           <p className="text-sm text-muted-foreground">
             {data?.league_name ? `${data.league_name} — ` : ""}
-            Pre-seed each team with the owner's email, then send everything in one click.
+            Pre-seed each team with the owner&apos;s email, then send everything in one click.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -202,17 +268,20 @@ export default function OwnerInvites() {
                     <th className="text-left py-2 w-12">#</th>
                     <th className="text-left py-2">Team</th>
                     <th className="text-left py-2 w-56">Owner email</th>
-                    <th className="text-right py-2 w-32">Status</th>
+                    <th className="text-left py-2">Slot invites</th>
+                    <th className="text-right py-2 w-28">Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(data?.teams || []).map((t) => {
                     const badge = statusBadgeProps(t.status);
                     const accepted = t.status === "accepted";
+                    const teamInvites = slotInvites[t.team_id] || [];
+                    const teamBusy = !!busyTeam[t.team_id];
                     return (
                       <tr
                         key={t.team_id}
-                        className="border-b border-border/40"
+                        className="border-b border-border/40 align-top"
                         data-testid={`owner-invites-row-${t.team_id}`}
                       >
                         <td className="py-2 text-muted-foreground">{t.draft_position ?? "—"}</td>
@@ -230,11 +299,80 @@ export default function OwnerInvites() {
                             type="email"
                             value={emails[t.team_id] || ""}
                             onChange={(e) => setEmails((prev) => ({ ...prev, [t.team_id]: e.target.value }))}
-                            disabled={accepted}
                             placeholder="owner@example.com"
                             className="h-8 text-sm"
                             data-testid={`owner-invites-email-${t.team_id}`}
                           />
+                        </td>
+                        <td className="py-2 text-xs space-y-1">
+                          {/* Iter 228y — Active slot-locked invites */}
+                          {teamInvites.length === 0 && (
+                            <span className="text-muted-foreground italic">No active links</span>
+                          )}
+                          {teamInvites.map((inv) => (
+                            <div
+                              key={inv.id}
+                              className="flex items-center gap-1.5 rounded border border-border/60 bg-secondary/40 px-2 py-1"
+                              data-testid={`owner-invites-slot-${inv.id}`}
+                            >
+                              <Badge
+                                variant="outline"
+                                className={`text-[9px] px-1.5 py-0 ${inv.role === "co_owner" ? "border-purple-500/50 text-purple-300 bg-purple-500/10" : "border-emerald-500/50 text-emerald-300 bg-emerald-500/10"}`}
+                              >
+                                {inv.role === "co_owner" ? "Co-owner" : "Owner"}
+                              </Badge>
+                              <span className="text-muted-foreground truncate max-w-[160px]">
+                                {inv.email || "open link"}
+                              </span>
+                              <button
+                                type="button"
+                                className="ml-auto inline-flex items-center text-muted-foreground hover:text-primary"
+                                onClick={() => copyInviteUrl(inv)}
+                                data-testid={`owner-invites-slot-copy-${inv.id}`}
+                                aria-label="Copy invite link"
+                              >
+                                <Copy className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                className="inline-flex items-center text-muted-foreground hover:text-destructive"
+                                onClick={() => revokeInvite(inv)}
+                                disabled={teamBusy}
+                                data-testid={`owner-invites-slot-revoke-${inv.id}`}
+                                aria-label="Revoke invite"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          ))}
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {!accepted && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-[10px]"
+                                onClick={() => mintSlotInvite(t, { role: "owner" })}
+                                disabled={teamBusy}
+                                data-testid={`owner-invites-mint-owner-${t.team_id}`}
+                              >
+                                <Link2 className="h-3 w-3 mr-1" />
+                                {emails[t.team_id]?.includes("@") ? "Mint locked link" : "Mint open link"}
+                              </Button>
+                            )}
+                            {accepted && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-6 px-2 text-[10px]"
+                                onClick={() => mintSlotInvite(t, { role: "co_owner" })}
+                                disabled={teamBusy}
+                                data-testid={`owner-invites-mint-coowner-${t.team_id}`}
+                              >
+                                <UserPlus className="h-3 w-3 mr-1" />
+                                Add co-owner
+                              </Button>
+                            )}
+                          </div>
                         </td>
                         <td className="py-2 text-right">
                           <Badge variant="outline" className={`text-[10px] ${badge.className}`}>

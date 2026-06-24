@@ -146,18 +146,65 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
     user?.id || user?._id,
   );
 
+  // Iter 228x — Track which picks (by this team) are currently on the
+  // trade block so each pick chip can render a glowing horn indicator.
+  // Stored as a Map keyed by pickKey → trade_block item_id (so the
+  // glowing icon can DELETE the listing on click).
+  const [blockedPicks, setBlockedPicks] = useState<Record<string, string>>({});
+  const [blockedReloadTick, setBlockedReloadTick] = useState(0);
+  const refreshBlocked = () => setBlockedReloadTick((t) => t + 1);
+
   // Iter 228q — Subscribe to the league-wide channel too so edits to
   // ANY draft in the league (not just the most-recent one resolved
   // above) refresh the Roster Draft Picks card. Backend mirrors every
   // `draft_edited` emission to both `draft_{id}` and `league_{id}`.
+  // Iter 228x — Also listen for `trade_block_changed` so the glowing
+  // horn lights up the moment ANY league member adds/removes one of
+  // this team's picks.
   useSocket(
     leagueId ? `league_${leagueId}` : null,
     {
       draft_edited: () => setReloadTick((t) => t + 1),
       draft_picks_seeded: () => setReloadTick((t) => t + 1),
+      trade_block_changed: () => refreshBlocked(),
     },
     user?.id || user?._id,
   );
+
+  // Iter 228x — Fetch the team's active trade-block items and build a
+  // lookup so each pick chip knows whether it's actively listed. Keys:
+  //   • pick_id when present (live picks from /api/teams/{id}/draft-picks)
+  //   • `${year}-${round}` fallback for legacy / mocked picks
+  useEffect(() => {
+    if (!looksLikeObjectId || !teamId) { setBlockedPicks({}); return; }
+    let cancelled = false;
+    api
+      .get(`/trade-block?team_id=${teamId}`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const map: Record<string, string> = {};
+        for (const it of (data || []) as any[]) {
+          if (it.item_type !== "pick") continue;
+          const itemId = String(it._id);
+          if (it.pick_id) map[`id:${it.pick_id}`] = itemId;
+          if (it.pick_year != null && it.pick_round != null) {
+            map[`yr:${it.pick_year}-${it.pick_round}`] = itemId;
+          }
+        }
+        setBlockedPicks(map);
+      })
+      .catch(() => { if (!cancelled) setBlockedPicks({}); });
+    return () => { cancelled = true; };
+  }, [teamId, looksLikeObjectId, blockedReloadTick]);
+
+  // Iter 228x — Resolve the trade-block item_id for a given pick (so
+  // we can DELETE it when the user clicks the glowing horn).
+  const getBlockItemId = (pick: any): string | null => {
+    const livePid = pick._liveKey ? (liveRawByKey[pick._liveKey] || {})._id : undefined;
+    if (livePid && blockedPicks[`id:${String(livePid)}`]) return blockedPicks[`id:${String(livePid)}`];
+    const yrKey = `yr:${pick.year}-${pick.round}`;
+    return blockedPicks[yrKey] || null;
+  };
 
   useEffect(() => {
     if (!looksLikeObjectId) { setLivePicks(null); setLiveRawByKey({}); return; }
@@ -239,8 +286,27 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
         looking_for: [],
       });
       toast.success(`Added ${pick.year} Rd ${pick.round} to trade block`);
+      // Iter 228x — Glow the horn immediately for the listing user.
+      refreshBlocked();
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || "Couldn't add to trade block");
+    } finally {
+      setBlockBusy((s) => ({ ...s, [pickKey]: false }));
+    }
+  };
+
+  // Iter 228x — Remove a pick from the trade block (clicking the
+  // glowing horn indicator on a pick chip).
+  const handleRemoveFromBlock = async (pick: any, pickKey: string) => {
+    const itemId = getBlockItemId(pick);
+    if (!itemId || blockBusy[pickKey]) return;
+    setBlockBusy((s) => ({ ...s, [pickKey]: true }));
+    try {
+      await api.delete(`/trade-block/${itemId}`);
+      toast.success(`Removed ${pick.year} Rd ${pick.round} from trade block`);
+      refreshBlocked();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Couldn't remove from trade block");
     } finally {
       setBlockBusy((s) => ({ ...s, [pickKey]: false }));
     }
@@ -385,7 +451,13 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                 {/* Iter 228w — Bullhorn for trade block. Mirrors the
                     trade-icon UX: click → enter selection mode →
                     "+ Add" buttons reveal → click each pick to POST it
-                    to /api/trade-block. */}
+                    to /api/trade-block. Iter 228x — When any pick in
+                    this section is on the block, the bullhorn pulses
+                    with an amber glow so users get instant feedback
+                    that listings are active. */}
+                {(() => {
+                  const sectionHasListed = picks.some((p) => !!getBlockItemId(p));
+                  return (
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -395,13 +467,18 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                         className={`inline-flex items-center justify-center h-6 w-6 rounded transition-colors ${
                           blockModeKeys[group.key]
                             ? "bg-amber-500/20 text-amber-300 border border-amber-500/50"
-                            : "text-muted-foreground hover:text-amber-300 hover:bg-amber-500/10"
+                            : sectionHasListed
+                              ? "bg-amber-500/10 text-amber-300 border border-amber-400/60 shadow-[0_0_12px_rgba(251,191,36,0.55)] animate-pulse hover:bg-amber-500/20"
+                              : "text-muted-foreground hover:text-amber-300 hover:bg-amber-500/10"
                         }`}
                         data-testid={`roster-draft-section-block-toggle-${group.key}`}
+                        data-has-listed={sectionHasListed ? "true" : "false"}
                         aria-pressed={!!blockModeKeys[group.key]}
                         aria-label={blockModeKeys[group.key]
                           ? `Done selecting picks from ${group.label}`
-                          : `Add picks from ${group.label} to trade block`
+                          : sectionHasListed
+                            ? `${group.label} has picks on the trade block — click to manage`
+                            : `Add picks from ${group.label} to trade block`
                         }
                       >
                         <Megaphone className="h-3.5 w-3.5" />
@@ -410,21 +487,31 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                     <TooltipContent>
                       <p className="text-xs">{blockModeKeys[group.key]
                         ? "Done — collapse Add buttons"
-                        : "Add picks from this draft to your trade block"
+                        : sectionHasListed
+                          ? "Picks from this draft are on your trade block"
+                          : "Add picks from this draft to your trade block"
                       }</p>
                     </TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
+                  );
+                })()}
               </div>
               <div className="flex flex-wrap gap-2">
-                {picks.map((pick, pi) => (
+                {picks.map((pick, pi) => {
+                  const pickKey = `${group.key}-${pick.year}-${pick.round}-${pi}`;
+                  const blockItemId = getBlockItemId(pick);
+                  const isOnBlock = !!blockItemId;
+                  const isOwnerView = isOwnTeam; // only the owner can list/unlist
+                  return (
                   <div
                     key={`${group.key}-${pick.round}-${pi}`}
                     className={`group flex items-center gap-1 px-3 py-2 rounded-lg border text-sm transition-all hover:border-primary/30 ${
                       pick.round === 1
                         ? "bg-accent/10 border-accent/30"
                         : "bg-secondary/50 border-border"
-                    }`}
+                    } ${isOnBlock ? "ring-1 ring-amber-400/40" : ""}`}
+                    data-on-block={isOnBlock ? "true" : "false"}
                   >
                     <span className={`font-semibold ${pick.round === 1 ? "text-accent" : "text-foreground"}`}>
                       Rd {pick.round}
@@ -504,6 +591,45 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                         </Tooltip>
                       </TooltipProvider>
                     )}
+                    {/* Iter 228x — Always-visible glowing horn on a
+                        pick chip when it's actively on the trade
+                        block. Owners can click to remove the listing;
+                        viewers from other teams see a static glow. */}
+                    {isOnBlock && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            {isOwnerView ? (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveFromBlock(pick, pickKey)}
+                                disabled={blockBusy[pickKey]}
+                                className="ml-0.5 inline-flex items-center justify-center h-5 w-5 rounded-full text-amber-300 bg-amber-500/10 ring-1 ring-amber-400/60 shadow-[0_0_10px_rgba(251,191,36,0.65)] animate-pulse hover:bg-amber-500/20 transition-colors disabled:opacity-50"
+                                data-testid={`roster-pick-on-block-${pick.year}-${pick.round}-${pi}`}
+                                aria-label={`On trade block — click to remove ${group.label} round ${pick.round} pick`}
+                              >
+                                <Megaphone className="h-3 w-3" />
+                              </button>
+                            ) : (
+                              <span
+                                className="ml-0.5 inline-flex items-center justify-center h-5 w-5 rounded-full text-amber-300 bg-amber-500/10 ring-1 ring-amber-400/60 shadow-[0_0_10px_rgba(251,191,36,0.65)] animate-pulse"
+                                data-testid={`roster-pick-on-block-${pick.year}-${pick.round}-${pi}`}
+                                aria-label={`On trade block`}
+                              >
+                                <Megaphone className="h-3 w-3" />
+                              </span>
+                            )}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">
+                              {isOwnerView
+                                ? "On your trade block — click to remove"
+                                : "Listed on the trade block"}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
                     {onTradePick && tradeModeKeys[group.key] && (
                       <TooltipProvider>
                         <Tooltip>
@@ -526,15 +652,18 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                     )}
                     {/* Iter 228w — Per-pick "Add to trade block" pill,
                         revealed only when the section's bullhorn is
-                        active. Posts to /api/trade-block on click. */}
-                    {blockModeKeys[group.key] && (
+                        active. Posts to /api/trade-block on click.
+                        Iter 228x — When this pick is already on the
+                        block the pill flips to "Listed" + disabled so
+                        users can't double-list. */}
+                    {blockModeKeys[group.key] && !isOnBlock && (
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button
                               className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
-                              onClick={() => handleAddToBlock(pick, `${group.key}-${pick.year}-${pick.round}-${pi}`)}
-                              disabled={blockBusy[`${group.key}-${pick.year}-${pick.round}-${pi}`]}
+                              onClick={() => handleAddToBlock(pick, pickKey)}
+                              disabled={blockBusy[pickKey]}
                               data-testid={`roster-pick-block-add-${pick.year}-${pick.round}-${pi}`}
                               aria-label={`Add ${group.label} round ${pick.round} pick to trade block`}
                             >
@@ -548,8 +677,17 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                         </Tooltip>
                       </TooltipProvider>
                     )}
+                    {blockModeKeys[group.key] && isOnBlock && (
+                      <span
+                        className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider border border-amber-500/60 bg-amber-500/15 text-amber-200"
+                        data-testid={`roster-pick-block-listed-${pick.year}-${pick.round}-${pi}`}
+                      >
+                        Listed
+                      </span>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );

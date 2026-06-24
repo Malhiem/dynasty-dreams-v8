@@ -595,7 +595,7 @@ async def health():
     return {"status": "healthy"}
 
 # ─── Wire modular routers (awards, drafts, matchups) ──────────
-from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes, roster as roster_routes, constitution_audit as constitution_audit_routes, live_scoring as live_scoring_routes, scoring as scoring_routes, lineup as lineup_routes, league_invites as league_invites_routes, recommendations as recommendations_routes, sports as sports_routes, admin as admin_routes, transactions_config as transactions_config_routes, cap_floor as cap_floor_routes, matchup_stars as matchup_stars_routes, monitors as monitors_routes, ops_console as ops_console_routes, admin_platform as admin_platform_routes, user_reports as user_reports_routes, moderation as moderation_routes, platform_ops as platform_ops_routes, admin_user_actions as admin_user_actions_routes, forum as forum_routes, roster_snapshots as roster_snapshots_routes, analytics_ux as analytics_ux_routes
+from routes import awards as awards_routes, drafts as drafts_routes, matchups as matchups_routes, analytics as analytics_routes, waivers as waivers_routes, players as players_routes, trades as trades_routes, comparisons as comparisons_routes, chat as chat_routes, auth as auth_routes, trade_analyzer as trade_analyzer_routes, users as users_routes, leagues as leagues_routes, push as push_routes, seasons as seasons_routes, teams as teams_routes, ratings as ratings_routes, notifications as notifications_routes, contracts as contracts_routes, activity as activity_routes, trade_block as trade_block_routes, roster as roster_routes, constitution_audit as constitution_audit_routes, live_scoring as live_scoring_routes, scoring as scoring_routes, lineup as lineup_routes, league_invites as league_invites_routes, team_invites as team_invites_routes, recommendations as recommendations_routes, sports as sports_routes, admin as admin_routes, transactions_config as transactions_config_routes, cap_floor as cap_floor_routes, matchup_stars as matchup_stars_routes, monitors as monitors_routes, ops_console as ops_console_routes, admin_platform as admin_platform_routes, user_reports as user_reports_routes, moderation as moderation_routes, platform_ops as platform_ops_routes, admin_user_actions as admin_user_actions_routes, forum as forum_routes, roster_snapshots as roster_snapshots_routes, analytics_ux as analytics_ux_routes
 
 _router_deps = {
     "db": db,
@@ -649,6 +649,7 @@ live_scoring_routes.setup(_router_deps)
 scoring_routes.setup(_router_deps)
 lineup_routes.setup(_router_deps)
 league_invites_routes.setup(_router_deps)
+team_invites_routes.setup(_router_deps)
 recommendations_routes.setup(_router_deps)
 sports_routes.setup(_router_deps)
 admin_routes.setup(_router_deps)
@@ -716,6 +717,7 @@ api_router.include_router(live_scoring_routes.router)
 api_router.include_router(scoring_routes.router)
 api_router.include_router(lineup_routes.router)
 api_router.include_router(league_invites_routes.router)
+api_router.include_router(team_invites_routes.router)
 api_router.include_router(payments_routes.router)
 api_router.include_router(recommendations_routes.router)
 api_router.include_router(sports_routes.router)
