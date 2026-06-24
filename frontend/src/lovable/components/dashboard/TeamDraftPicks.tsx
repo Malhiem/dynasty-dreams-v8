@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useMemo, useState, useEffect } from "react";
-import { ArrowUpDown, ArrowRightLeft } from "lucide-react";
+import { ArrowRightLeft, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -180,9 +180,11 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
             _isConditional: (p.pending_protections || []).length > 0,
             // Iter 228o — Parent draft metadata so the Roster page can
             // section picks by draft (e.g. "TFHL Inaugural Draft") not
-            // just by calendar year.
+            // just by calendar year. Iter 228s — also carry the
+            // scheduled_time so groups sort chronologically.
             _draftId: p.draft_id || null,
             _draftName: p.draft_name || null,
+            _draftScheduledTime: p.draft_scheduled_time || null,
           } as any;
         });
         setLivePicks(hydrated);
@@ -199,24 +201,35 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
   // Iter 228o — Build the ordered list of section groups. Live picks
   // section by parent draft (preferring an explicit `_draftId` / `_draftName`
   // from the backend); mocked/seeded picks fall back to year groupings.
+  // Iter 228s — Sort chronologically by the parent draft's
+  // `scheduled_time` (soonest first) so a 55-pick Inaugural in May
+  // shows above a 4-pick Summer Entry in July and a 2-pick Winter
+  // draft in December.
   const sectionGroups = useMemo(() => {
-    const groups: { key: string; label: string; picks: DraftPick[]; year: number }[] = [];
+    type Group = { key: string; label: string; picks: DraftPick[]; year: number; scheduledTime: string | null };
+    const groups: Group[] = [];
     const indexByKey: Record<string, number> = {};
     for (const p of draftPicks) {
       const draftId = (p as any)._draftId as string | null;
       const draftName = (p as any)._draftName as string | null;
+      const draftSched = (p as any)._draftScheduledTime as string | null;
       const key = draftId || draftName || `year-${p.year}`;
       const label = draftName || `${p.year} Draft`;
       let idx = indexByKey[key];
       if (idx === undefined) {
         idx = groups.length;
         indexByKey[key] = idx;
-        groups.push({ key, label, picks: [], year: p.year });
+        groups.push({ key, label, picks: [], year: p.year, scheduledTime: draftSched });
       }
       groups[idx].picks.push(p);
     }
-    // Sort ascending by representative year, then label.
-    groups.sort((a, b) => (a.year - b.year) || a.label.localeCompare(b.label));
+    groups.sort((a, b) => {
+      const ta = a.scheduledTime ? new Date(a.scheduledTime).getTime() : Number.POSITIVE_INFINITY;
+      const tb = b.scheduledTime ? new Date(b.scheduledTime).getTime() : Number.POSITIVE_INFINITY;
+      if (ta !== tb) return ta - tb;          // soonest first
+      if (a.year !== b.year) return a.year - b.year;
+      return a.label.localeCompare(b.label);  // stable
+    });
     return groups;
   }, [draftPicks]);
 
@@ -255,28 +268,20 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                   className="text-sm font-semibold text-foreground"
                   data-testid={`roster-draft-section-${group.key}`}
                 >{group.label}</span>
+                {/* Iter 228s — Per-section pick count badge so the
+                    Roster page mirrors the # configured in League
+                    Admin → Drafts (rounds × team_count for the user's
+                    team = picks per draft). */}
+                <span
+                  className="text-[10px] uppercase tracking-wider bg-secondary/70 text-muted-foreground px-1.5 py-0.5 rounded"
+                  data-testid={`roster-draft-section-count-${group.key}`}
+                >{picks.length} pick{picks.length === 1 ? "" : "s"}</span>
                 <div className="flex-1 h-px bg-border" />
-                {onTradePick && (
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 text-muted-foreground hover:text-primary hover:bg-primary/10"
-                          onClick={() => {
-                            picks.forEach((pick, pi) => handleTradePick(pick, gi * 100 + pi));
-                          }}
-                        >
-                          <ArrowUpDown className="h-3.5 w-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p className="text-xs">Add all {group.label} picks to trade</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
+                {/* Iter 228s — Removed the section-level "Add all picks
+                    to trade" affordance. Per the user's request, picks
+                    must be selected one at a time (see the per-pick
+                    "+ Add" button below) so they don't accidentally
+                    stack the entire section into a pending trade. */}
               </div>
               <div className="flex flex-wrap gap-2">
                 {picks.map((pick, pi) => (
@@ -371,14 +376,17 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button
-                              className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-primary"
+                              className="ml-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider border border-primary/40 text-primary hover:bg-primary/10 transition-colors"
                               onClick={() => handleTradePick(pick, gi * 100 + pi)}
+                              data-testid={`roster-pick-add-${pick.year}-${pick.round}-${pi}`}
+                              aria-label={`Add ${group.label} round ${pick.round} pick to trade`}
                             >
-                              <ArrowUpDown className="h-3 w-3" />
+                              <Plus className="h-3 w-3" />
+                              Add
                             </button>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p className="text-xs">Add to trade</p>
+                            <p className="text-xs">Add this pick to the pending trade</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>

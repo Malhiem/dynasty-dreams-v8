@@ -414,6 +414,7 @@ async def get_team_draft_picks(team_id: str, year: Optional[int] = None):
     league_ids = list({p.get("league_id") for p in picks if p.get("league_id")})
     drafts_by_year: dict = {}     # (league_id, year) → (draft_id, name)
     drafts_by_id: dict = {}       # draft_id → name
+    drafts_meta_by_id: dict = {}  # draft_id → {name, scheduled_time}
     if league_ids:
         all_drafts = await db.drafts.find(
             {"league_id": {"$in": league_ids},
@@ -425,6 +426,11 @@ async def get_team_draft_picks(team_id: str, year: Optional[int] = None):
             did = str(d["_id"])
             name = d.get("name") or "Untitled Draft"
             drafts_by_id[did] = name
+            # Iter 228s — also stash scheduled_time for chronological sort.
+            drafts_meta_by_id[did] = {
+                "name": name,
+                "scheduled_time": d.get("scheduled_time"),
+            }
             # Derive year for the draft
             yr = None
             sched = d.get("scheduled_time")
@@ -450,14 +456,19 @@ async def get_team_draft_picks(team_id: str, year: Optional[int] = None):
         explicit_did = p.get("draft_id")
         if explicit_did and explicit_did in drafts_by_id:
             p["draft_name"] = drafts_by_id[explicit_did]
+            # Iter 228s — surface scheduled_time so the Roster page can sort
+            # chronologically (soonest draft on top).
+            p["draft_scheduled_time"] = (drafts_meta_by_id.get(explicit_did) or {}).get("scheduled_time")
         else:
             key = (p.get("league_id"), int(p.get("year") or 0))
             mapped = drafts_by_year.get(key)
             if mapped:
                 p["draft_id"] = mapped[0]
                 p["draft_name"] = mapped[1]
+                p["draft_scheduled_time"] = (drafts_meta_by_id.get(mapped[0]) or {}).get("scheduled_time")
             else:
                 p["draft_name"] = f"{p.get('year') or 'Unknown'} Draft"
+                p["draft_scheduled_time"] = None
 
     return {"team_id": team_id, "year": year, "picks": picks}
 
@@ -1300,8 +1311,16 @@ async def _seed_draft_picks_for_draft(
     for r in range(1, rounds + 1):
         for slot, team in enumerate(teams, start=1):
             tid = str(team["_id"])
+            # Iter 228s — Include `draft_id` in the dedup key so the
+            # league can have multiple drafts in the SAME year (e.g.
+            # Inaugural in May + Summer Entry in July + Winter in
+            # December — all 2026) and each gets its OWN independent
+            # set of pick rows. Without this guard, the second and
+            # third drafts found existing rows from the first and
+            # skipped every insert.
             existing = await _db().draft_picks.find_one({
                 "league_id": league_id,
+                "draft_id": draft_id,
                 "year": year,
                 "round": r,
                 "original_team_id": tid,
