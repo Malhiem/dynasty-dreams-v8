@@ -1,0 +1,39 @@
+{
+  "summary": "Iter 228v / 229b follow-up — backend-only verification of trade-builder draft-name differentiator data path after frontend fix in GlobalTradeBuilder.jsx. Ran the iter229b contract tests + the full iter228k-228s regression suite listed in the review request. 42/42 tests passed. No backend code changed this iter; the fix is purely the new chip JSX in GlobalTradeBuilder.jsx L153-180. Code-reviewed the new chip — pattern is identical to the verified TradeDraftPickCard chip in TradeBuilder.tsx (same regex-based shortening, leading-acronym drop, 'Draft' suffix strip, title tooltip, data-testid, graceful no-op when draftName missing). Backend data path (GET /api/teams/{id}/draft-picks decorating each pick with draft_id + draft_name) remains intact and verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter229b_trade_builder_draft_differentiator.py",
+    "/app/backend/tests/test_iter229b_tfhl_real_data_spotcheck.py",
+    "/app/backend/tests/test_iter228k_auto_init_seed_safety_net.py",
+    "/app/backend/tests/test_iter228l_draft_audit_history.py",
+    "/app/backend/tests/test_iter228m_minors_derive_and_split.py",
+    "/app/backend/tests/test_iter228n_draft_edit_upcoming_filters.py",
+    "/app/backend/tests/test_iter228o_roster_picks_grouping_and_full_edit.py",
+    "/app/backend/tests/test_iter228p_patch_total_rounds_syncs_picks.py",
+    "/app/backend/tests/test_iter228q_edit_preview_and_league_broadcast.py",
+    "/app/backend/tests/test_iter228s_roster_picks_chronological_and_counts.py",
+    "/app/test_reports/pytest/iter229b_followup.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "GlobalTradeBuilder.jsx L162-178: chip shortening logic is duplicated almost verbatim from TradeBuilder.tsx L347-359. Consider extracting into a shared helper (e.g. /app/frontend/src/lovable/lib/draftLabel.js exporting shortenDraftName(name)) so future tweaks stay in lock-step across both render paths. Not blocking — both copies are correct today.",
+    "Minor nit: GlobalTradeBuilder applies .toUpperCase() in JS AND CSS class 'uppercase' — one is redundant. TradeBuilder.tsx only uses the CSS class. Harmless.",
+    "Both render paths gracefully fall back to legacy display when draftName is absent — verified visually in code; no test gap."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (42/42)", "frontend": "skipped per testing_type='backend only'"},
+  "test_credentials": "Used real Mongo + REACT_APP_BACKEND_URL from .env; admin/commish credentials not exercised because contract tests build their own league fixtures.",
+  "seed_data_creation": "No new seed data. Tests use ephemeral league fixtures and clean up after themselves.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 228v is the frontend twin of iter 228u — the same draftAbbr chip pattern was added to a SECOND render path (GlobalTradeBuilder.jsx, the global modal/cart) in addition to the original TradeDraftPickCard in TradeBuilder.tsx. Backend data path is unchanged. The 42-test backend suite (4 iter229b contract + 1 tfhl spotcheck + 37 iter228k-228s regression) gates that draft_id + draft_name still flow on every pick from GET /api/teams/{id}/draft-picks. Note: the review_request mentioned '47 tests' but the prev_test_files list resolves to 42 tests — discrepancy is just file enumeration, all listed files passed. To run locally: `set -a && . /app/backend/.env && . /app/frontend/.env && set +a && pytest backend/tests/test_iter229b_*.py backend/tests/test_iter228[klmnopqs]_*.py`. If next iter touches the chip shortening logic, recommend extracting it to a shared helper to avoid drift between TradeBuilder.tsx and GlobalTradeBuilder.jsx.",
+  "rca of the issue": "N/A — no regression detected. Fix is frontend-only; backend payload (draft_id + draft_name on each pick) was already correct from iter 228o/s/u and continues to pass all 42 listed tests."
+}

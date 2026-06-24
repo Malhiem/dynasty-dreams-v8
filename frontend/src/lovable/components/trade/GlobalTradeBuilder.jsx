@@ -150,7 +150,33 @@ function PartnerSection({ partner, isProposer, ownAssets, ownPicks, partners, on
                 className="flex items-center gap-2 rounded border border-border/50 bg-background/40 p-2"
                 data-testid={`tb-pick-${p.pick.id}`}
               >
-                <span className="text-xs font-semibold flex-1">{p.pick.year} Rd {p.pick.round}</span>
+                <span className="text-xs font-semibold flex-1">
+                  {p.pick.year} Rd {p.pick.round}
+                  {/* Iter 228v — Same-year multi-draft differentiator
+                      chip. When a league has multiple drafts in the
+                      same year (e.g. Inaugural + Entry both 2026), the
+                      cart needs to tell two "2026 Rd 2" picks apart.
+                      Shortens the parent draft name into a 2-3 word
+                      chip, drops any leading league acronym, and
+                      hides "Draft" from the tail. */}
+                  {p.pick.draftName && (() => {
+                    const cleaned = String(p.pick.draftName)
+                      .replace(/\bdraft\b/i, "")
+                      .replace(/[^A-Za-z0-9 ]/g, " ")
+                      .trim();
+                    if (!cleaned) return null;
+                    const words = cleaned.split(/\s+/).filter(Boolean);
+                    const start = words[0] && /^[A-Z]{3,}$/.test(words[0]) ? 1 : 0;
+                    const short = (words.slice(start).join(" ") || cleaned).toUpperCase();
+                    return (
+                      <span
+                        className="ml-1.5 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-secondary/80 text-muted-foreground align-middle"
+                        data-testid={`tb-pick-draft-label-${p.pick.id}`}
+                        title={p.pick.draftName}
+                      >{short}</span>
+                    );
+                  })()}
+                </span>
                 {others.length > 1 ? (
                   <Select
                     value={p.toTeamId || ""}
