@@ -252,6 +252,12 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
       originalTeamFull: pick.originalTeamFull,
       fromTeam: currentTeamContext,
       value: pickValues[pick.round] ?? 500,
+      // Iter 228u — Differentiator so the Trade Builder can label a
+      // "2026 Rd 2 (Inaugural)" pick differently from a "2026 Rd 2
+      // (Entry)" pick when both come from the same year but different
+      // parent drafts. Falls back to `_draftId` when no human name.
+      draftId: (pick as any)._draftId ?? undefined,
+      draftName: (pick as any)._draftName ?? undefined,
     };
     onTradePick(tradePick);
   };

@@ -75,6 +75,11 @@ export interface TradeDraftPick {
   originalTeamFull: string | null;
   fromTeam: string;
   value: number;
+  // Iter 228u — Parent-draft differentiator so the Trade Builder can
+  // distinguish "2026 Rd 2 (Inaugural)" from "2026 Rd 2 (Entry)" when
+  // a league has multiple drafts in the same calendar year.
+  draftId?: string;
+  draftName?: string;
 }
 
 interface TradeAsset {
@@ -335,24 +340,54 @@ const TradeDraftPickCard = ({
 }: {
   pick: TradeDraftPick;
   onRemove: () => void;
-}) => (
-  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card/80">
-    <div className="flex-1">
-      <span className="text-xs font-semibold">
-        {pick.year} Rd {pick.round}
-      </span>
-      {pick.originalTeam && (
-        <span className="ml-1 text-[10px] text-primary">({pick.originalTeam})</span>
-      )}
+}) => {
+  // Iter 228u — Shorten the parent draft name into a 2-3 letter chip
+  // so the differentiator stays compact next to "{year} Rd {round}".
+  // "TFHL Inaugural Draft" → "Inaugural" → uppercase initial chunks.
+  const draftAbbr = (() => {
+    if (!pick.draftName) return null;
+    const cleaned = pick.draftName
+      .replace(/\bdraft\b/i, "")
+      .replace(/[^A-Za-z0-9 ]/g, " ")
+      .trim();
+    if (!cleaned) return null;
+    const words = cleaned.split(/\s+/).filter(Boolean);
+    // Drop any leading league acronym (3+ uppercase letters in a row)
+    const start = words[0] && /^[A-Z]{3,}$/.test(words[0]) ? 1 : 0;
+    const short = words.slice(start).join(" ");
+    return short || cleaned;
+  })();
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card/80"
+      data-testid={`trade-pick-${pick.id}`}
+    >
+      <div className="flex-1 min-w-0">
+        <span className="text-xs font-semibold">
+          {pick.year} Rd {pick.round}
+        </span>
+        {draftAbbr && (
+          <span
+            className="ml-1.5 text-[10px] uppercase tracking-wider px-1 py-0.5 rounded bg-secondary/80 text-muted-foreground"
+            data-testid={`trade-pick-draft-label-${pick.id}`}
+            title={pick.draftName || ""}
+          >
+            {draftAbbr}
+          </span>
+        )}
+        {pick.originalTeam && (
+          <span className="ml-1 text-[10px] text-primary">({pick.originalTeam})</span>
+        )}
+      </div>
+      <Badge variant="outline" className="bg-accent/10 text-accent text-[10px]">
+        ~{pick.value.toLocaleString()}
+      </Badge>
+      <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={onRemove}>
+        <X className="h-3 w-3" />
+      </Button>
     </div>
-    <Badge variant="outline" className="bg-accent/10 text-accent text-[10px]">
-      ~{pick.value.toLocaleString()}
-    </Badge>
-    <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive" onClick={onRemove}>
-      <X className="h-3 w-3" />
-    </Button>
-  </div>
-);
+  );
+};
 
 // ── Main TradeBuilder Panel ───────────────────────────
 
