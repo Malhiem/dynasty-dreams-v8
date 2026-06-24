@@ -1,0 +1,38 @@
+{
+  "summary": "Iter 228w — Backend-only verification of trade-block bullhorn UX for roster draft picks. The new TeamDraftPicks.tsx bullhorn POSTs to the EXISTING POST /api/trade-block endpoint with item_type='pick'. Verified the contract accepts all three payload shapes the frontend sends (pick_id, pick_year+pick_round fallback, dedup). Ran 52/52 backend tests green (3 new iter228w + 37 iter228k-228s regression + 5 iter229b + 7 iter228p integration). Frontend code-review-only pass on TeamDraftPicks.tsx — found one minor inconsistency between comment and behaviour (trade-mode vs block-mode are not actually mutually exclusive though the comment claims they are), plus a wasteful dynamic import. Nothing blocking.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter228w_trade_block_pick_bullhorn.py",
+    "/app/test_reports/pytest/iter228w.xml",
+    "/app/test_reports/pytest/iter228w_regression.xml"
+  ],
+  "action_items": [
+    "Optional UX: enforce mutual exclusivity between tradeModeKeys[group.key] and blockModeKeys[group.key] in TeamDraftPicks.tsx L207-217 — the inline comment at L213 claims 'Only one of trade-mode / block-mode is active per section at a time' but the toggles are independent and both '+ Add' pills can render at once on the same pick. Either drop the claim or make `toggleBlockMode` clear the trade-mode key for the same group (and vice-versa).",
+    "Optional polish: hoist `import { toast } from 'sonner'` to the top of TeamDraftPicks.tsx instead of `const { toast } = await import('sonner')` inside both branches of handleAddToBlock (L230, L233). Dynamic import is unnecessary here and adds a micro-task on every click.",
+    "Optional polish: after a successful add the bullhorn pill stays enabled, so a second click yields a 400 'Already on trade block' toast. Consider tracking added pick keys in a Set and disabling the pill after success for a smoother UX."
+  ],
+  "critical_code_review_comments": [
+    "TeamDraftPicks.tsx L213-217: Comment-vs-code drift. Comment says 'Only one of trade-mode / block-mode is active per section at a time' but `toggleBlockMode` does NOT clear `tradeModeKeys[key]` (and vice versa). Both '+ Add' pills can show simultaneously on the same pick chip. Either update the comment or enforce exclusivity in the togglers.",
+    "TeamDraftPicks.tsx L222-229: payload correctly sends pick_id when a live _liveKey resolves to an ObjectId, otherwise falls back to pick_year + pick_round. Backend handles both paths (verified by tests). However, when BOTH pick_id and pick_year/pick_round are sent, the backend's `elif input.item_type == 'pick'` branch prefers pick_id (correct) but the dedup query at routes/trade_block.py L140-144 also prefers pick_id — so an item first added by pick_id and then re-added by year+round will create a duplicate row. Not a regression introduced by this iter (the new UI always sends both fields together so pick_id wins on dedup), but worth noting as a latent edge case.",
+    "TeamDraftPicks.tsx L222: api.post('/trade-block', ...) — relative path. Confirmed `api` axios instance has baseURL = REACT_APP_BACKEND_URL + '/api', so this resolves correctly. No issue.",
+    "TeamDraftPicks.tsx L230 & L233: redundant `await import('sonner')` in both branches of handleAddToBlock. Should be a static import at the top of the file. Minor.",
+    "File size: 552 lines — under the 700-line threshold; no split needed.",
+    "data-testid coverage: bullhorn (`roster-draft-section-block-toggle-{key}`) and per-pick add pill (`roster-pick-block-add-{year}-{round}-{idx}`) both present and unique. Good."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (52/52)", "frontend": "skipped per testing_type='backend only(skip frontend)'"},
+  "test_credentials": "Admin/commish creds not exercised — iter228w tests build ephemeral leagues via /api/auth/register + /api/leagues.",
+  "seed_data_creation": "Ephemeral fixtures only. Each test creates its own league + 3 teams via direct Mongo insert + /api/drafts; cleanup is implicit (test_database is a scratch DB).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 228w adds a bullhorn (Megaphone icon) next to the existing ArrowUpDown trade icon on each draft section header in /lovable/components/dashboard/TeamDraftPicks.tsx. Clicking it enters 'trade-block-selection mode' for that section, revealing a '+ Add' pill (amber, distinct from the primary-blue trade-builder '+ Add' pill) on each pick chip. Each pill POSTs to the EXISTING /api/trade-block endpoint with item_type='pick'. NO BACKEND CHANGES. Verified the existing endpoint cleanly accepts: (a) pick_id ObjectId path, (b) pick_year+pick_round fallback path, (c) dedup-by-pick_id returns 400 'Already on trade block' on 2nd add. Full 52-test suite: 3 iter228w + 5 iter229b (draft differentiator) + 37 iter228k-228s regression + 7 iter228p integration — all green in ~197s. Two minor non-blocking items flagged: (1) the comment-vs-code drift around mutual exclusivity of trade-mode vs block-mode toggles, and (2) dynamic `await import('sonner')` inside the handler instead of a top-level import. Neither blocks the feature.",
+  "rca of the issue": "N/A — feature works as designed. The three new backend contract tests cover the bullhorn's payload shapes against the existing /api/trade-block endpoint; no endpoint or schema changes were required this iter."
+}

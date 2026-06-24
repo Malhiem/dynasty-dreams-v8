@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useMemo, useState, useEffect } from "react";
-import { ArrowRightLeft, Plus, ArrowUpDown } from "lucide-react";
+import { ArrowRightLeft, Plus, ArrowUpDown, Megaphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -207,6 +207,36 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
   const toggleTradeMode = (key: string) =>
     setTradeModeKeys((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  // Iter 228w — Parallel "trade-block mode" toggle keyed by group. When
+  // ON, the bullhorn icon turns primary, and each pick chip exposes its
+  // own "+ Add" pill that POSTs to /api/trade-block (item_type=pick).
+  // Only one of trade-mode / block-mode is active per section at a time.
+  const [blockModeKeys, setBlockModeKeys] = useState<Record<string, boolean>>({});
+  const [blockBusy, setBlockBusy] = useState<Record<string, boolean>>({});
+  const toggleBlockMode = (key: string) =>
+    setBlockModeKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+  const handleAddToBlock = async (pick: any, pickKey: string) => {
+    if (blockBusy[pickKey]) return;
+    setBlockBusy((s) => ({ ...s, [pickKey]: true }));
+    try {
+      await api.post("/trade-block", {
+        item_type: "pick",
+        team_id: teamId,
+        pick_id: pick._liveKey ? (liveRawByKey[pick._liveKey] || {})._id : undefined,
+        pick_year: pick.year,
+        pick_round: String(pick.round),
+        looking_for: [],
+      });
+      const { toast } = await import("sonner");
+      toast.success(`Added ${pick.year} Rd ${pick.round} to trade block`);
+    } catch (e: any) {
+      const { toast } = await import("sonner");
+      toast.error(e?.response?.data?.detail || "Couldn't add to trade block");
+    } finally {
+      setBlockBusy((s) => ({ ...s, [pickKey]: false }));
+    }
+  };
+
   // Iter 228o — Build the ordered list of section groups. Live picks
   // section by parent draft (preferring an explicit `_draftId` / `_draftName`
   // from the backend); mocked/seeded picks fall back to year groupings.
@@ -343,6 +373,39 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                     </Tooltip>
                   </TooltipProvider>
                 )}
+                {/* Iter 228w — Bullhorn for trade block. Mirrors the
+                    trade-icon UX: click → enter selection mode →
+                    "+ Add" buttons reveal → click each pick to POST it
+                    to /api/trade-block. */}
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => toggleBlockMode(group.key)}
+                        className={`inline-flex items-center justify-center h-6 w-6 rounded transition-colors ${
+                          blockModeKeys[group.key]
+                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/50"
+                            : "text-muted-foreground hover:text-amber-300 hover:bg-amber-500/10"
+                        }`}
+                        data-testid={`roster-draft-section-block-toggle-${group.key}`}
+                        aria-pressed={!!blockModeKeys[group.key]}
+                        aria-label={blockModeKeys[group.key]
+                          ? `Done selecting picks from ${group.label}`
+                          : `Add picks from ${group.label} to trade block`
+                        }
+                      >
+                        <Megaphone className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className="text-xs">{blockModeKeys[group.key]
+                        ? "Done — collapse Add buttons"
+                        : "Add picks from this draft to your trade block"
+                      }</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
               <div className="flex flex-wrap gap-2">
                 {picks.map((pick, pi) => (
@@ -448,6 +511,30 @@ const TeamDraftPicks = ({ onTradePick, isOwnTeam = true, currentTeamContext = "m
                           </TooltipTrigger>
                           <TooltipContent>
                             <p className="text-xs">Add this pick to the pending trade</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                    {/* Iter 228w — Per-pick "Add to trade block" pill,
+                        revealed only when the section's bullhorn is
+                        active. Posts to /api/trade-block on click. */}
+                    {blockModeKeys[group.key] && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              className="ml-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 transition-colors disabled:opacity-50"
+                              onClick={() => handleAddToBlock(pick, `${group.key}-${pick.year}-${pick.round}-${pi}`)}
+                              disabled={blockBusy[`${group.key}-${pick.year}-${pick.round}-${pi}`]}
+                              data-testid={`roster-pick-block-add-${pick.year}-${pick.round}-${pi}`}
+                              aria-label={`Add ${group.label} round ${pick.round} pick to trade block`}
+                            >
+                              <Plus className="h-3 w-3" />
+                              Add
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p className="text-xs">Add this pick to your public trade block</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
