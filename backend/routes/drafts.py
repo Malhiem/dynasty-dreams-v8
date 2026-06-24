@@ -1174,6 +1174,9 @@ async def create_draft(input: CreateDraftRequest, request: Request):
         "window_elapsed_actions": input.window_elapsed_actions or [],
         "pick_trading_enabled": pick_trading_enabled,
         "trading_window_opens": trading_window_opens,
+        # Iter 228n — Eligibility filters (see CreateDraftRequest).
+        "exclude_previously_drafted": bool(getattr(input, "exclude_previously_drafted", False)),
+        "minors_eligibility_required": bool(getattr(input, "minors_eligibility_required", False)),
         "current_pick": 1,
         "status": "scheduled",
         "draft_started": False,
@@ -1412,6 +1415,152 @@ async def restore_draft(draft_id: str, request: Request):
 
     return {"draft_id": draft_id, "status": "scheduled"}
 
+
+@router.patch("/drafts/{draft_id}")
+async def patch_draft(draft_id: str, body: dict, request: Request):
+    """Iter 228n — Edit a scheduled draft.
+
+    Commissioners (and admins) can correct draft metadata while the
+    draft is still `status="scheduled"`. Active/completed/archived
+    drafts are immutable here to preserve integrity (use the dedicated
+    pick-swap / restore endpoints for those flows).
+
+    Whitelisted editable fields: name, scheduled_time, total_rounds,
+    time_per_pick, missed_pick_action, defer_user_options, draft_type,
+    snake_draft, player_criteria, exclude_previously_drafted,
+    minors_eligibility_required, round_time_overrides.
+    """
+    user = await _get_user(request)
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner or admin only")
+
+    if draft.get("status") != "scheduled":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only scheduled drafts can be edited (this draft is '{draft.get('status')}').",
+        )
+
+    EDITABLE = {
+        "name", "scheduled_time", "total_rounds", "time_per_pick",
+        "missed_pick_action", "defer_user_options", "draft_type",
+        "snake_draft", "player_criteria", "round_time_overrides",
+        # Iter 228n — New eligibility filters surfaced in the create-draft
+        # form. Editing them here lets commissioners correct mid-stride
+        # before the draft starts.
+        "exclude_previously_drafted", "minors_eligibility_required",
+    }
+    update: dict = {}
+    for k, v in (body or {}).items():
+        if k in EDITABLE:
+            update[k] = v
+    if not update:
+        raise HTTPException(status_code=400, detail="No editable fields supplied")
+
+    # Range checks
+    if "total_rounds" in update:
+        try:
+            tr = int(update["total_rounds"])
+            if not (1 <= tr <= 100):
+                raise ValueError()
+            update["total_rounds"] = tr
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="total_rounds must be an int 1-100")
+    if "time_per_pick" in update:
+        try:
+            tpp = int(update["time_per_pick"])
+            if not (30 <= tpp <= 86400):
+                raise ValueError()
+            update["time_per_pick"] = tpp
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="time_per_pick must be 30-86400 seconds")
+
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id)}, {"$set": update}
+    )
+    fresh = await _db().drafts.find_one({"_id": ObjectId(draft_id)}, {"team_map": 0})
+    fresh["_id"] = str(fresh["_id"])
+
+    # Broadcast so connected Draft Room clients refresh in real time.
+    try:
+        await _broadcast(
+            f"draft_{draft_id}",
+            "draft_edited",
+            {"draft_id": draft_id, "fields": list(update.keys())},
+        )
+    except Exception:
+        pass
+
+    return {"draft": fresh, "updated_fields": list(update.keys())}
+
+
+@router.get("/leagues/{league_id}/upcoming-drafts")
+async def get_upcoming_drafts(
+    league_id: str,
+    days: int = 30,
+    request: Request = None,
+):
+    """Iter 228n — Upcoming drafts within a rolling N-day window.
+
+    Used by the Draft Room to populate a dropdown when multiple drafts
+    are scheduled close together. Returns drafts sorted by
+    `scheduled_time` ASC (soonest first). Past drafts and archived
+    drafts are excluded.
+    """
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    horizon = now + timedelta(days=max(1, min(days, 365)))
+
+    query = {
+        "league_id": league_id,
+        "status": "scheduled",
+    }
+    cursor = _db().drafts.find(query, {"team_map": 0}).sort("scheduled_time", 1)
+    raw = await cursor.to_list(50)
+
+    upcoming = []
+    for d in raw:
+        sched = d.get("scheduled_time")
+        if not sched:
+            # Drafts without a scheduled_time still surface — they're
+            # commissioner-initiated, not auto-launched. Place last.
+            d["_id"] = str(d["_id"])
+            upcoming.append(d)
+            continue
+        try:
+            sched_dt = datetime.fromisoformat(str(sched).replace("Z", "+00:00"))
+        except Exception:
+            d["_id"] = str(d["_id"])
+            upcoming.append(d)
+            continue
+        if sched_dt <= horizon and sched_dt >= now - timedelta(hours=2):
+            # Allow a 2-hour lookback so drafts that started moments
+            # ago still appear in the picker.
+            d["_id"] = str(d["_id"])
+            upcoming.append(d)
+
+    return {
+        "league_id": league_id,
+        "window_days": days,
+        "count": len(upcoming),
+        "drafts": upcoming,
+    }
+
+
 @router.get("/drafts/{draft_id}")
 async def get_draft(draft_id: str):
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
@@ -1454,16 +1603,48 @@ async def get_draft_eligible_players(
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
-    # Get already-drafted player IDs
+    # Get already-drafted player IDs (in THIS draft only)
     drafted_ids = [p["player_id"] for p in draft.get("picks", []) if p.get("player_id")]
+
+    # Iter 228n — Optional eligibility filters surfaced as draft-config
+    # checkboxes. `exclude_previously_drafted` removes any player ever
+    # drafted by ANY team in this league (full historical audit, per the
+    # user's preference). `minors_eligibility_required` keeps only
+    # players flagged `minor_eligible: true`.
+    league_id_str = draft.get("league_id")
+    if draft.get("exclude_previously_drafted") and league_id_str:
+        historical = await _db().drafts.find(
+            {
+                "league_id": league_id_str,
+                "_id": {"$ne": draft["_id"]},
+                "status": {"$in": ["scheduled", "active", "completed"]},
+            },
+            {"picks": 1},
+        ).to_list(500)
+        for past in historical:
+            for p in past.get("picks") or []:
+                pid = p.get("player_id")
+                if pid:
+                    drafted_ids.append(pid)
 
     query = {}
     if drafted_ids:
-        query["_id"] = {"$nin": [ObjectId(pid) for pid in drafted_ids]}
+        unique_oids = list({pid for pid in drafted_ids})
+        query["_id"] = {"$nin": [ObjectId(pid) for pid in unique_oids]}
+
+    if draft.get("minors_eligibility_required"):
+        query["minor_eligible"] = True
 
     # Iter 170o — Criteria-aware filter. "entry" → prospect pool only;
     # "open" / anything else → all NHL skaters/goalies (no prospects).
-    criteria = (draft.get("player_criteria") or "open").lower()
+    # `player_criteria` can be either a legacy string OR a list (modern
+    # multi-select); normalise to a single canonical lowercase string.
+    raw_crit = draft.get("player_criteria")
+    if isinstance(raw_crit, list):
+        criteria = (raw_crit[0] if raw_crit else "open")
+    else:
+        criteria = raw_crit or "open"
+    criteria = str(criteria).lower()
     if criteria == "entry":
         query["player_type"] = "prospect"
     else:

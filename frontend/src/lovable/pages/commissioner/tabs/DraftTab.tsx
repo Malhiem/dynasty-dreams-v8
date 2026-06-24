@@ -91,6 +91,67 @@ export default function DraftTab({ ctx }: DraftTabProps) {
   const [draftScheduledTime, setDraftScheduledTime] = useState<string>("19:00");
   const [missedPickAction, setMissedPickAction] = useState<string>("auto-select");
   const [windowElapsedActions, setWindowElapsedActions] = useState<string[]>([]);
+  // Iter 228n — Eligibility filters that flow into CreateDraftRequest.
+  const [excludePreviouslyDrafted, setExcludePreviouslyDrafted] = useState<boolean>(false);
+  const [minorsEligibilityRequired, setMinorsEligibilityRequired] = useState<boolean>(false);
+  // Iter 228n — Edit-draft modal state. Reused by every row's pencil icon.
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<{
+    name: string; scheduledDate: string; scheduledTime: string;
+    totalRounds: number; timePerPick: number;
+    excludePreviouslyDrafted: boolean; minorsEligibilityRequired: boolean;
+  } | null>(null);
+  const [savingEdit, setSavingEdit] = useState<boolean>(false);
+  const openEditDraft = (draft: any) => {
+    setEditingDraftId(draft.id);
+    let sd = "", st = "19:00";
+    if (draft.scheduledISO) {
+      const dt = new Date(draft.scheduledISO);
+      if (!isNaN(dt.getTime())) {
+        const pad = (n: number) => String(n).padStart(2, "0");
+        sd = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+        st = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      }
+    }
+    setEditForm({
+      name: draft.name || "",
+      scheduledDate: sd,
+      scheduledTime: st,
+      totalRounds: Number(draft.rounds) || 5,
+      timePerPick: Number(draft.timePerPickSeconds) || 3600,
+      excludePreviouslyDrafted: !!draft.excludePreviouslyDrafted,
+      minorsEligibilityRequired: !!draft.minorsEligibilityRequired,
+    });
+  };
+  const closeEditDraft = () => { setEditingDraftId(null); setEditForm(null); };
+  const submitEditDraft = async () => {
+    if (!editingDraftId || !editForm) return;
+    setSavingEdit(true);
+    try {
+      let scheduledIso: string | null = null;
+      if (editForm.scheduledDate) {
+        try {
+          const dt = new Date(`${editForm.scheduledDate}T${editForm.scheduledTime || "19:00"}:00`);
+          if (!isNaN(dt.getTime())) scheduledIso = dt.toISOString();
+        } catch { /* ignore */ }
+      }
+      await api.patch(`/drafts/${editingDraftId}`, {
+        name: editForm.name.trim() || undefined,
+        scheduled_time: scheduledIso,
+        total_rounds: editForm.totalRounds,
+        time_per_pick: editForm.timePerPick,
+        exclude_previously_drafted: editForm.excludePreviouslyDrafted,
+        minors_eligibility_required: editForm.minorsEligibilityRequired,
+      });
+      toast.success("Draft updated");
+      await onReloadScheduledDrafts?.();
+      closeEditDraft();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Update failed");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
   // Iter 228d — Deleting a scheduled draft (soft delete, 15-day recovery)
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
   // Iter 228i — Backfill picks for legacy drafts (pre-iter228h auto-gen)
@@ -210,6 +271,9 @@ export default function DraftTab({ ctx }: DraftTabProps) {
         clock_timezone: draftClockEnabled ? draftClockTimezone : null,
         clock_starts_at: draftClockEnabled ? draftClockStart : null,
         clock_stops_at: draftClockEnabled ? draftClockEnd : null,
+        // Iter 228n — Eligibility filters (checkbox UI rendered below).
+        exclude_previously_drafted: excludePreviouslyDrafted,
+        minors_eligibility_required: minorsEligibilityRequired,
       };
       await api.post(`/drafts`, body);
       toast.success("Draft created and added to Scheduled Drafts");
@@ -310,6 +374,50 @@ export default function DraftTab({ ctx }: DraftTabProps) {
               </div>
             </div>
             <Separator />
+            {/* Iter 228n — Additional eligibility filters that apply on
+                top of Player Criteria. Surfaced as two simple checkboxes;
+                editable later via the Edit Draft dialog. */}
+            <div className="space-y-3" data-testid="draft-eligibility-filters">
+              <div>
+                <Label>Additional Eligibility Filters</Label>
+                <p className="text-sm text-muted-foreground">
+                  Narrow the eligible player pool further. These apply on top of Player Criteria above.
+                </p>
+              </div>
+              <label className="flex items-start gap-2 cursor-pointer rounded-md border border-border/60 p-3 hover:bg-muted/20 transition-colors">
+                <Checkbox
+                  checked={excludePreviouslyDrafted}
+                  onCheckedChange={(v) => setExcludePreviouslyDrafted(!!v)}
+                  className="mt-0.5"
+                  data-testid="draft-exclude-previously-drafted"
+                />
+                <div className="flex-1">
+                  <div className="font-medium text-sm">
+                    Exclude players previously drafted in {activeLeague?.name || "this league"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Hides anyone selected in any past or scheduled draft within this league (full historical audit). Useful for keeper-leftover or supplementary drafts.
+                  </div>
+                </div>
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer rounded-md border border-border/60 p-3 hover:bg-muted/20 transition-colors">
+                <Checkbox
+                  checked={minorsEligibilityRequired}
+                  onCheckedChange={(v) => setMinorsEligibilityRequired(!!v)}
+                  className="mt-0.5"
+                  data-testid="draft-minors-eligibility-required"
+                />
+                <div className="flex-1">
+                  <div className="font-medium text-sm">
+                    Meets minors eligibility
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Restricts the pool to players flagged <code>minor_eligible</code> (e.g. prospect age cap, career-games threshold). Pair with the &quot;Exclude previously drafted&quot; filter to run a clean prospect-only draft.
+                  </div>
+                </div>
+              </label>
+            </div>
+            <Separator />
             <DraftOrderConfigCard
               leagueId={activeLeague?.id}
               isCommish={true}
@@ -341,8 +449,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
             <Separator />
             <div className="space-y-3">
               <Label>Player Criteria</Label>
-              <p className="text-sm text-muted-foreground">Select one or more criteria to define which players are eligible for this draft</p>
-              {selectedPlayerCriteria.length > 0 && (
+              <p className="text-sm text-muted-foreground">Select one or more criteria to define which players are eligible for this draft</p>              {selectedPlayerCriteria.length > 0 && (
                 <div className="flex flex-wrap gap-2">
                   {selectedPlayerCriteria.map((c) => (
                     <Badge key={c} variant="secondary" className="gap-1">
@@ -415,18 +522,6 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                     <SelectItem value="14400">4 hours</SelectItem>
                     <SelectItem value="18000">5 hours</SelectItem>
                     <SelectItem value="21600">6 hours</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Draft Order</Label>
-                <Select defaultValue="snake">
-                  <SelectTrigger className="bg-secondary border-border">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="snake">Snake Draft</SelectItem>
-                    <SelectItem value="linear">Linear Draft</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -614,61 +709,10 @@ export default function DraftTab({ ctx }: DraftTabProps) {
             </div>
 
             <Separator />
-            <div className="space-y-2">
-                <Label>Draft Order</Label>
-                <Select
-                  defaultValue={firstDraftCompleted ? "reverse-standings" : "manual"}
-                  onValueChange={(v) => { if (v === "lottery-generator") openLottery(); }}
-                >
-                  <SelectTrigger className="bg-secondary border-border" data-testid="draft-order-trigger">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {/* Iter 227 — NHL lottery only makes sense for the NHL
-                        Entry Draft (held in May). Grey it out for inaugural /
-                        startup drafts and label why. */}
-                    <SelectItem
-                      value="nhl-lottery"
-                      disabled={!firstDraftCompleted}
-                      data-testid="draft-order-nhl-lottery"
-                    >
-                      NHL Draft Lottery Representation
-                      {!firstDraftCompleted && (
-                        <span className="ml-2 text-[10px] italic text-muted-foreground">
-                          — best for the NHL Entry Draft
-                        </span>
-                      )}
-                    </SelectItem>
-                    <SelectItem value="lottery-generator" data-testid="draft-order-lottery-generator">
-                      Draft Lottery Generator
-                      {!firstDraftCompleted && (
-                        <span className="ml-2 text-[10px] italic text-muted-foreground">
-                          — picks teams 24 → 1 step-by-step
-                        </span>
-                      )}
-                    </SelectItem>
-                    <SelectItem value="manual">Manual Entry</SelectItem>
-                    <SelectItem
-                      value="reverse-standings"
-                      disabled={!firstDraftCompleted}
-                      data-testid="draft-order-reverse-standings"
-                    >
-                      Reverse Order of Standings
-                      {!firstDraftCompleted && (
-                        <span className="ml-2 text-[10px] italic text-muted-foreground">
-                          — needs a previous season
-                        </span>
-                      )}
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                {!firstDraftCompleted && (
-                  <p className="text-[11px] text-amber-300/90" data-testid="draft-order-inaugural-hint">
-                    Inaugural draft — pick order can be set manually or generated step-by-step (24 → 1) via the Lottery Generator.
-                  </p>
-                )}
-            </div>
-            <Separator />
+            {/* Iter 228n — Removed duplicate Draft Order selector. The
+                canonical editor lives in <DraftOrderConfigCard> above
+                (rendered at line ~313). Tiebreakers section below remains
+                because it's logically distinct from the order selector. */}
             <div
               className={`space-y-4 ${!firstDraftCompleted ? "opacity-50" : ""}`}
               data-testid="draft-tiebreakers-section"
@@ -843,6 +887,17 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                   )}
                   {draft.status === "scheduled" && (
                     <button
+                      className="px-3 border-l border-border text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10 transition-colors disabled:opacity-50 text-sm"
+                      onClick={(e) => { e.stopPropagation(); openEditDraft(draft); }}
+                      data-testid={`draft-edit-${draft.id}`}
+                      title="Edit draft (rename, reschedule, change rounds/timer, eligibility filters)"
+                      aria-label="Edit draft"
+                    >
+                      ✎ Edit
+                    </button>
+                  )}
+                  {draft.status === "scheduled" && (
+                    <button
                       className="px-4 border-l border-border text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10 transition-colors disabled:opacity-50"
                       onClick={(e) => { e.stopPropagation(); handleDeleteDraft(draft.id); }}
                       disabled={deletingDraftId === draft.id}
@@ -1003,6 +1058,109 @@ export default function DraftTab({ ctx }: DraftTabProps) {
             }
           }}
         />
+
+        {/* Iter 228n — Edit Draft dialog. Opens via the pencil icon in
+            the Scheduled Drafts list. Only scheduled drafts can be
+            edited (backend enforces this; the row only renders the
+            button for status="scheduled"). */}
+        {editingDraftId && editForm && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+            onClick={(e) => { if (e.target === e.currentTarget) closeEditDraft(); }}
+            data-testid="edit-draft-dialog"
+          >
+            <div className="bg-card border border-border rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto m-4">
+              <div className="p-4 border-b border-border flex items-center justify-between">
+                <h3 className="font-semibold">Edit Draft</h3>
+                <button
+                  onClick={closeEditDraft}
+                  className="text-muted-foreground hover:text-foreground"
+                  data-testid="edit-draft-close-btn"
+                  aria-label="Close edit dialog"
+                ><X className="h-4 w-4" /></button>
+              </div>
+              <div className="p-4 space-y-4">
+                <div className="space-y-2">
+                  <Label>Draft Name</Label>
+                  <Input
+                    value={editForm.name}
+                    onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                    data-testid="edit-draft-name-input"
+                    placeholder="e.g. TFHL Mid-Season Supplemental"
+                  />
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Scheduled Date</Label>
+                    <Input
+                      type="date"
+                      value={editForm.scheduledDate}
+                      onChange={(e) => setEditForm({ ...editForm, scheduledDate: e.target.value })}
+                      data-testid="edit-draft-date-input"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Start Time</Label>
+                    <Input
+                      type="time"
+                      value={editForm.scheduledTime}
+                      onChange={(e) => setEditForm({ ...editForm, scheduledTime: e.target.value })}
+                      data-testid="edit-draft-time-input"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Rounds</Label>
+                    <Input
+                      type="number" min={1} max={100}
+                      value={editForm.totalRounds}
+                      onChange={(e) => setEditForm({ ...editForm, totalRounds: parseInt(e.target.value || "1", 10) })}
+                      data-testid="edit-draft-rounds-input"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Default Time/Pick (seconds)</Label>
+                    <Input
+                      type="number" min={30} max={86400} step={30}
+                      value={editForm.timePerPick}
+                      onChange={(e) => setEditForm({ ...editForm, timePerPick: parseInt(e.target.value || "30", 10) })}
+                      data-testid="edit-draft-time-per-pick-input"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Eligibility Filters</Label>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border/60 p-2 hover:bg-muted/20">
+                    <Checkbox
+                      checked={editForm.excludePreviouslyDrafted}
+                      onCheckedChange={(v) => setEditForm({ ...editForm, excludePreviouslyDrafted: !!v })}
+                      data-testid="edit-draft-exclude-previously-drafted"
+                    />
+                    <span>Exclude players previously drafted in {activeLeague?.name || "this league"}</span>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer text-sm rounded-md border border-border/60 p-2 hover:bg-muted/20">
+                    <Checkbox
+                      checked={editForm.minorsEligibilityRequired}
+                      onCheckedChange={(v) => setEditForm({ ...editForm, minorsEligibilityRequired: !!v })}
+                      data-testid="edit-draft-minors-eligibility-required"
+                    />
+                    <span>Meets minors eligibility</span>
+                  </label>
+                </div>
+              </div>
+              <div className="p-4 border-t border-border flex items-center justify-end gap-2">
+                <Button
+                  variant="outline" onClick={closeEditDraft}
+                  data-testid="edit-draft-cancel-btn"
+                >Cancel</Button>
+                <Button
+                  onClick={submitEditDraft}
+                  disabled={savingEdit}
+                  data-testid="edit-draft-save-btn"
+                >{savingEdit ? "Saving…" : "Save Changes"}</Button>
+              </div>
+            </div>
+          </div>
+        )}
     </div>
   );
 }

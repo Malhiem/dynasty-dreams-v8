@@ -326,12 +326,48 @@ export default function DraftRoom() {
   // (TruncatedRosterPanel) refetches the active team and shows the
   // newly drafted player without a full page reload.
   const [rosterReloadTick, setRosterReloadTick] = useState(0);
+
+  // Iter 228n — Upcoming-drafts picker. When the league has 2+ scheduled
+  // drafts within the next 30 days, render a dropdown above the room so
+  // managers can switch (e.g. mid-season trade deadline draft vs.
+  // off-season rookie draft). Defaults to the soonest.
+  const [upcomingDrafts, setUpcomingDrafts] = useState<any[]>([]);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!activeLeagueCtx?.id) { setUpcomingDrafts([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/leagues/${activeLeagueCtx.id}/upcoming-drafts?days=30`);
+        if (cancelled) return;
+        const list = Array.isArray(data?.drafts) ? data.drafts : [];
+        setUpcomingDrafts(list);
+        if (list.length > 0 && !selectedDraftId) {
+          // Default to the soonest scheduled draft.
+          setSelectedDraftId(list[0]._id || list[0].id);
+        }
+      } catch {
+        // Non-fatal — fall back to auto-init.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [activeLeagueCtx?.id]);
   useEffect(() => {
     if (!activeLeagueCtx?.id) { setCurrentDraft(null); return; }
     let cancelled = false;
     (async () => {
       try {
-        const { data } = await api.post(`/drafts/auto-init/${activeLeagueCtx.id}`);
+        // Iter 228n — When the user picked a specific draft from the
+        // upcoming-drafts dropdown, load that one directly instead of
+        // auto-init (which always returns the most-recent draft).
+        let data;
+        if (selectedDraftId) {
+          const r = await api.get(`/drafts/${selectedDraftId}`);
+          data = { draft: r.data, created: false };
+        } else {
+          const r = await api.post(`/drafts/auto-init/${activeLeagueCtx.id}`);
+          data = r.data;
+        }
         if (cancelled) return;
         const d = data?.draft;
         if (!d) return;
@@ -365,6 +401,13 @@ export default function DraftRoom() {
           draftStarted: d.status === "active",
           totalRounds: d.total_rounds || prev.totalRounds,
           pickTimerSeconds: d.time_per_pick || prev.pickTimerSeconds,
+          // Iter 228n — Anchor the "Draft starts in" countdown to the
+          // backend's scheduled_time (set in League Admin > Drafts).
+          // Previously this stayed pinned to the React default of
+          // `Date.now() + 2h`, so the countdown showed the wrong ETA.
+          scheduledTime: d.scheduled_time
+            ? new Date(d.scheduled_time)
+            : prev.scheduledTime,
         }));
         // Iter 228f — Hydrate missed_pick_action + defer_user_options
         // so the timer hook can decide whether to surface the dialog.
@@ -387,10 +430,9 @@ export default function DraftRoom() {
       }
     })();
     return () => { cancelled = true; };
-  }, [activeLeagueCtx?.id]);
+  }, [activeLeagueCtx?.id, selectedDraftId]);
 
-  // Iter 194c — On mount / league change, hydrate any pick trade
-  // already in `pending_draft_review` so a refreshed Draft Room still
+  // Iter 194c — On mount / league change, hydrate any pick trade  // already in `pending_draft_review` so a refreshed Draft Room still
   // shows the floating review pill. Simulates a freshly-received
   // `pick_trade_proposed` WS event for the pill.
   useEffect(() => {
@@ -1164,6 +1206,41 @@ export default function DraftRoom() {
           }}
         />
         <div className="space-y-4">
+          {/* Iter 228n — Upcoming-drafts dropdown. Renders only when the
+              league has 2+ scheduled drafts within the next 30 days.
+              Defaults to the soonest; switching reloads the room. */}
+          {upcomingDrafts.length > 1 && (
+            <div
+              className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2"
+              data-testid="draft-room-upcoming-picker"
+            >
+              <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                Upcoming drafts ({upcomingDrafts.length})
+              </span>
+              <select
+                className="bg-background border border-border rounded px-2 py-1 text-sm flex-1"
+                value={selectedDraftId || ""}
+                onChange={(e) => setSelectedDraftId(e.target.value)}
+                data-testid="draft-room-upcoming-select"
+              >
+                {upcomingDrafts.map((d: any) => {
+                  const id = d._id || d.id;
+                  const when = d.scheduled_time
+                    ? new Date(d.scheduled_time).toLocaleString(undefined, {
+                        month: "short", day: "numeric",
+                        hour: "numeric", minute: "2-digit",
+                      })
+                    : "TBD";
+                  return (
+                    <option key={id} value={id}>
+                      {d.name || "Untitled Draft"} · {when}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          )}
+
           {/* ── Header row ─────────────────────────────────────────────── */}
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
             <div className="flex-1 min-w-0 flex flex-col gap-3">

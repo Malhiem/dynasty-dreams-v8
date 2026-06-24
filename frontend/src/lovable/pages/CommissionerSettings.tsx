@@ -339,6 +339,12 @@ const CommissionerSettings = () => {
           format: d.format || (d.snake_draft ? "Snake Draft" : "Linear Draft"),
           rounds: d.rounds || d.total_rounds || 0,
           timePerPick: formatSeconds(d.time_per_pick || d.timePerPick),
+          // Iter 228n — Raw fields so the Edit Draft dialog can
+          // pre-fill date pickers + numeric inputs without re-parsing.
+          scheduledISO: d.scheduled_time || d.scheduled_date || null,
+          timePerPickSeconds: Number(d.time_per_pick || d.timePerPick || 3600),
+          excludePreviouslyDrafted: !!d.exclude_previously_drafted,
+          minorsEligibilityRequired: !!d.minors_eligibility_required,
           playerCriteria: titleCase(d.player_criteria || "all"),
           missedPickAction: titleCase(d.missed_pick_action || "auto-select best available"),
           scheduledDate: date,

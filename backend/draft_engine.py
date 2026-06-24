@@ -62,6 +62,12 @@ class CreateDraftRequest(BaseModel):
     clock_timezone: Optional[str] = None  # IANA name, e.g. "America/New_York"
     clock_starts_at: Optional[str] = None  # "HH:MM"
     clock_stops_at: Optional[str] = None   # "HH:MM"
+    # Iter 228n — Eligibility filters surfaced as draft-config checkboxes.
+    # `exclude_previously_drafted` removes any player ever drafted by ANY
+    # team in this league (full historical audit). `minors_eligibility_required`
+    # restricts the eligible pool to players flagged `minor_eligible: true`.
+    exclude_previously_drafted: bool = False
+    minors_eligibility_required: bool = False
 
 
 class MakeDraftPickRequest(BaseModel):
