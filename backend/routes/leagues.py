@@ -95,6 +95,10 @@ class LeagueResponse(BaseModel):
     # Extended wizard / commissioner-settable fields (single source of truth)
     bench_spots: Optional[int] = None
     minors_spots: Optional[int] = None
+    # Iter 228m — Split Minors pool into skater + goalie sub-pools.
+    minors_split_enabled: Optional[bool] = None
+    minors_skater_spots: Optional[int] = None
+    minors_goalie_spots: Optional[int] = None
     trade_review_period_hours: Optional[int] = None
     trade_veto_threshold_pct: Optional[int] = None
     trade_deadline_week: Optional[int] = None
@@ -295,6 +299,9 @@ def _league_to_response(league: dict) -> LeagueResponse:
         setup_wizard_complete=bool(league.get("setup_wizard_complete", False)),
         bench_spots=league.get("bench_spots"),
         minors_spots=league.get("minors_spots"),
+        minors_split_enabled=league.get("minors_split_enabled"),
+        minors_skater_spots=league.get("minors_skater_spots"),
+        minors_goalie_spots=league.get("minors_goalie_spots"),
         trade_review_period_hours=league.get("trade_review_period_hours"),
         trade_veto_threshold_pct=league.get("trade_veto_threshold_pct"),
         trade_deadline_week=league.get("trade_deadline_week"),
@@ -1655,6 +1662,14 @@ class LeagueUpdate(BaseModel):
     roster_spots: Optional[int] = Field(default=None, ge=10, le=100)
     bench_spots: Optional[int] = Field(default=None, ge=0, le=20)
     minors_spots: Optional[int] = Field(default=None, ge=0, le=100)
+    # Iter 228m — Split Minors pool into skater + goalie sub-pools so a
+    # team can't hoard 20 goalies in a 30-slot Minors team. When
+    # `minors_split_enabled` is True, `minors_skater_spots` and
+    # `minors_goalie_spots` enforce per-sub-pool caps (their sum should
+    # equal `minors_spots`; the UI keeps them in sync).
+    minors_split_enabled: Optional[bool] = None
+    minors_skater_spots: Optional[int] = Field(default=None, ge=0, le=100)
+    minors_goalie_spots: Optional[int] = Field(default=None, ge=0, le=100)
     # Format + scoring
     scoring_format: Optional[str] = None
     # Iter 226 — `format` (dynasty/keeper/redraft) is editable from the
@@ -1779,6 +1794,8 @@ class LeagueUpdate(BaseModel):
 
 _LEAGUE_UPDATE_ALLOWED = {
     "is_private", "name", "roster_spots", "bench_spots", "minors_spots",
+    # Iter 228m — Split Minors pool into skater + goalie sub-pools.
+    "minors_split_enabled", "minors_skater_spots", "minors_goalie_spots",
     "scoring_format", "max_teams", "keepers_allowed", "entry_fee",
     "trade_review_period_hours", "trade_veto_threshold_pct", "trade_deadline_week",
     "trade_deadline_at",
@@ -1889,6 +1906,36 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
                 old_rs = league.get("roster_spots")
                 update["roster_spots"] = active_sum
                 diff["roster_spots"] = {"from": old_rs, "to": active_sum, "derived": True}
+
+    # ── Iter 228m: Mirror the iter-176 auto-derive for `bench_spots`
+    # and `minors_spots` so the section totals stay in sync with their
+    # Position Breakdown row sums. This fixes the long-standing
+    # "Minors shows 0/0 even though I configured 30 prospect spots"
+    # bug where users typed per-position caps under the Minors row but
+    # never realized the section total was a separate input.
+    def _derive_section_total(row_key: str, field: str):
+        if field in body:
+            return  # commissioner explicitly set the section total — respect it
+        breakdown = (
+            update.get("position_breakdown")
+            or body.get("position_breakdown")
+            or {}
+        )
+        row = (breakdown or {}).get(row_key) or {}
+        if not row:
+            return
+        try:
+            total = sum(int(v) for v in row.values() if v is not None and v != "")
+        except (TypeError, ValueError):
+            total = 0
+        if total > 0 and total != league.get(field):
+            old = league.get(field)
+            update[field] = total
+            diff[field] = {"from": old, "to": total, "derived": True}
+
+    if "position_breakdown" in body:
+        _derive_section_total("bench", "bench_spots")
+        _derive_section_total("minors", "minors_spots")
 
     # ── Iter 181: per-row caps cannot exceed the section's overall size.
     # If the active row sums to 21 but roster_spots is 19, reject the

@@ -247,13 +247,25 @@ const PlayerRoster = ({
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const sectionConfig = useMemo(() => {
     const l: any = activeLeagueFromHook || {};
+    // Iter 228m — When the league has split Minors enabled, the
+    // "minors" pool reads `minors_skater_spots` and the
+    // "goalies_minors" pool reads `minors_goalie_spots`. Otherwise
+    // both fall back to the combined `minors_spots` value (which the
+    // backend now auto-derives from the position-breakdown row sum).
+    const splitOn = !!l.minors_split_enabled;
+    const skaterMinorsMax = splitOn && typeof l.minors_skater_spots === "number"
+      ? l.minors_skater_spots
+      : (typeof l.minors_spots === "number" ? l.minors_spots : 0);
+    const goalieMinorsMax = splitOn && typeof l.minors_goalie_spots === "number"
+      ? l.minors_goalie_spots
+      : (typeof l.minors_spots === "number" ? l.minors_spots : 0);
     const _modDefaults = ({
       starting: { label: "Starting Roster", color: "bg-primary/10", borderColor: "border-l-primary", maxSlots: LEAGUE_ROSTER_SLOTS.length },
       bench: { label: "Bench", color: "bg-accent/10", borderColor: "border-l-accent", maxSlots: typeof l.bench_spots === "number" ? l.bench_spots : 4 },
       ir: { label: "Injury Reserve", color: "bg-destructive/10", borderColor: "border-l-destructive", maxSlots: typeof l.ir_slots === "number" ? l.ir_slots : 3 },
-      minors: { label: "Minors Pool", color: "bg-purple-500/10", borderColor: "border-l-purple-500", maxSlots: typeof l.minors_spots === "number" ? l.minors_spots : 5 },
+      minors: { label: splitOn ? "Skater Minors" : "Minors Pool", color: "bg-purple-500/10", borderColor: "border-l-purple-500", maxSlots: skaterMinorsMax },
       goalies: { label: "Goalies", color: "bg-teal-500/10", borderColor: "border-l-teal-500", maxSlots: 4 },
-      goalies_minors: { label: "Goalies — Minors Pool", color: "bg-teal-500/5", borderColor: "border-l-teal-700", maxSlots: typeof l.minors_spots === "number" ? l.minors_spots : 5 },
+      goalies_minors: { label: splitOn ? "Goalie Minors" : "Goalies — Minors Pool", color: "bg-teal-500/5", borderColor: "border-l-teal-700", maxSlots: goalieMinorsMax },
     });
     return _modDefaults;
   }, [activeLeagueFromHook, LEAGUE_ROSTER_SLOTS.length]);

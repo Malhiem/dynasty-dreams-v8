@@ -26,6 +26,8 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 // enforcement helper treats them as supersets:
 //   S → matches any non-goalie player
 //   W → matches LW or RW
+//   P → (iter 228m) Prospect / position-agnostic. Used on the Minors
+//       row to mean "any minor-eligible player regardless of position".
 // Leaving any cell blank disables that limit (no restriction).
 const POSITIONS = [
   { key: "S", label: "Skater (S)", help: "Any non-goalie. Covers C, LW, RW, and D." },
@@ -35,6 +37,7 @@ const POSITIONS = [
   { key: "W", label: "Wing (W)", help: "Either LW or RW. Useful when leagues lump wingers together." },
   { key: "D", label: "Defenseman (D)", help: "" },
   { key: "G", label: "Goalie (G)", help: "" },
+  { key: "P", label: "Prospect (P)", help: "Position-agnostic. On the Minors row, each P slot accepts any minor-eligible player regardless of position. Most dynasty leagues use a single number here (e.g. 30) instead of micro-managing per-position caps." },
 ];
 
 // Iter 176 — Three editable rows. `bench` and `minors` are only
@@ -85,6 +88,11 @@ export default function RostersTab() {
   const [irPlusSlots, setIrPlusSlots] = useState("");
   const [prospectPool, setProspectPool] = useState("");
   const [taxiSquad, setTaxiSquad] = useState("");
+
+  // Iter 228m — Minors split (skater vs goalie sub-pools).
+  const [minorsSplitEnabled, setMinorsSplitEnabled] = useState(false);
+  const [minorsSkaterSpots, setMinorsSkaterSpots] = useState("");
+  const [minorsGoalieSpots, setMinorsGoalieSpots] = useState("");
 
   // Iter 176 — Position Breakdown: three editable rows (active / bench
   // / minors) each holding the same 7-position dict. Leaving any cell
@@ -149,6 +157,16 @@ export default function RostersTab() {
     setIrModes(Array.isArray(league.ir_eligibility_modes) ? league.ir_eligibility_modes : ["IR"]);
     setProspectMaxAge(league.prospect_max_age != null ? String(league.prospect_max_age) : "");
     setProspectMaxGames(league.prospect_max_career_games != null ? String(league.prospect_max_career_games) : "");
+    // Iter 228m — Hydrate minors split state.
+    setMinorsSplitEnabled(!!(league as any).minors_split_enabled);
+    setMinorsSkaterSpots(
+      (league as any).minors_skater_spots != null
+        ? String((league as any).minors_skater_spots) : "",
+    );
+    setMinorsGoalieSpots(
+      (league as any).minors_goalie_spots != null
+        ? String((league as any).minors_goalie_spots) : "",
+    );
   }, [league?.id, league]);
 
   const toggleIrMode = (key: string) => {
@@ -198,6 +216,9 @@ export default function RostersTab() {
       ["min_games_played", minGamesPlayed, 0, 200],
       ["prospect_max_age", prospectMaxAge, 16, 30],
       ["prospect_max_career_games", prospectMaxGames, 0, 500],
+      // Iter 228m — Minors split sub-pools.
+      ["minors_skater_spots", minorsSkaterSpots, 0, 100],
+      ["minors_goalie_spots", minorsGoalieSpots, 0, 100],
     ];
     for (const [key, raw, lo, hi] of numFields) {
       const n = parseIntOrNull(raw);
@@ -250,6 +271,9 @@ export default function RostersTab() {
     payload.prorate_min_max_by_period = prorateByPeriod;
     payload.allow_illegal_rosters = allowIllegal;
     payload.ir_eligibility_modes = irModes;
+    // Iter 228m — Always persist the minors-split toggle (it's a bool,
+    // numFields above only covers numeric inputs).
+    payload.minors_split_enabled = minorsSplitEnabled;
     return payload;
   };
 
@@ -422,9 +446,34 @@ export default function RostersTab() {
                 Minors Team Size (0–100)
                 <InfoHint testId="info-prospect-pool" text="Dynasty farm system slots. Players in the Minors don't earn fantasy points and are excluded from cap math, but they auto-promote when they hit your league's age/games threshold." />
               </Label>
-              <Input id="roster-size-prospects" type="number" min={0} max={100}
-                value={prospectPool} onChange={(e) => setProspectPool(e.target.value)}
-                placeholder="10" data-testid="rosters-minors-spots-input" />
+              {/* Iter 228m — Show derived hint when the Minors row in
+                  Position Breakdown sums to a value (mirrors the
+                  Active-row hint shown above). */}
+              {(() => {
+                const minorsSum = POSITIONS.reduce((s, p) => {
+                  const n = parseIntOrNull(positionBreakdown.minors?.[p.key]);
+                  return s + (n ?? 0);
+                }, 0);
+                const hasMinorsCaps = POSITIONS.some(
+                  (p) => parseIntOrNull(positionBreakdown.minors?.[p.key]) !== null,
+                ) && minorsSum > 0;
+                return (
+                  <>
+                    <Input id="roster-size-prospects" type="number" min={0} max={100}
+                      value={prospectPool} onChange={(e) => setProspectPool(e.target.value)}
+                      placeholder={hasMinorsCaps ? String(minorsSum) : "10"}
+                      data-testid="rosters-minors-spots-input" />
+                    {hasMinorsCaps && (
+                      <p
+                        className="text-[11px] text-muted-foreground"
+                        data-testid="rosters-minors-spots-derived-note"
+                      >
+                        Position Breakdown → Minors sums to <strong>{minorsSum}</strong>. Leave blank to inherit, or type a different value to override.
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
             </div>
             <div className="space-y-2">
               <Label htmlFor="roster-size-taxi">
@@ -435,6 +484,83 @@ export default function RostersTab() {
                 value={taxiSquad} onChange={(e) => setTaxiSquad(e.target.value)}
                 placeholder="5" data-testid="rosters-taxi-squad-input" />
             </div>
+          </div>
+
+          {/* Iter 228m — Split Minors pool into skater + goalie sub-pools
+              so a team can't hoard goalies in a position-agnostic minors
+              section. When OFF: any minor-eligible player goes into the
+              Minors pool. When ON: separate caps per sub-pool. */}
+          <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex-1">
+                <Label className="flex items-center gap-1">
+                  Split Minors into Skater &amp; Goalie sub-pools
+                  <InfoHint
+                    testId="info-minors-split"
+                    text="OFF: any minor-eligible player can occupy any slot in the Minors pool. ON: caps are enforced separately for skater minors and goalie minors so a team can't stash 20 goalies. Sum should equal Minors Team Size."
+                  />
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Recommended when commissioners want to prevent goalie hoarding.
+                </p>
+              </div>
+              <Switch
+                checked={minorsSplitEnabled}
+                onCheckedChange={setMinorsSplitEnabled}
+                data-testid="rosters-minors-split-toggle"
+              />
+            </div>
+            {minorsSplitEnabled && (
+              <div
+                className="grid gap-3 md:grid-cols-2 pt-2 border-t border-border/40"
+                data-testid="rosters-minors-split-inputs"
+              >
+                <div className="space-y-1">
+                  <Label htmlFor="minors-skater-spots" className="text-xs">
+                    Skater Minors (0–100)
+                  </Label>
+                  <Input
+                    id="minors-skater-spots"
+                    type="number" min={0} max={100}
+                    value={minorsSkaterSpots}
+                    onChange={(e) => setMinorsSkaterSpots(e.target.value)}
+                    placeholder="25"
+                    data-testid="rosters-minors-skater-spots-input"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="minors-goalie-spots" className="text-xs">
+                    Goalie Minors (0–100)
+                  </Label>
+                  <Input
+                    id="minors-goalie-spots"
+                    type="number" min={0} max={100}
+                    value={minorsGoalieSpots}
+                    onChange={(e) => setMinorsGoalieSpots(e.target.value)}
+                    placeholder="5"
+                    data-testid="rosters-minors-goalie-spots-input"
+                  />
+                </div>
+                {(() => {
+                  const sk = parseIntOrNull(minorsSkaterSpots) ?? 0;
+                  const go = parseIntOrNull(minorsGoalieSpots) ?? 0;
+                  const total = sk + go;
+                  const minorsTotal = parseIntOrNull(prospectPool) ?? 0;
+                  if (total > 0 && minorsTotal > 0 && total !== minorsTotal) {
+                    return (
+                      <div
+                        className="md:col-span-2 text-[11px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded px-2 py-1.5"
+                        data-testid="rosters-minors-split-mismatch"
+                      >
+                        Skater + Goalie sub-pools sum to <strong>{total}</strong> but Minors Team Size is <strong>{minorsTotal}</strong>.
+                        Adjust one to keep them in sync.
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+              </div>
+            )}
           </div>
 
           {/* Iter 181 — Position Breakdown is now nested inside the
