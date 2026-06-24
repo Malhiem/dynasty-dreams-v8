@@ -685,7 +685,10 @@ async def admin_verify_players(
             {"team": {"$regex": search, "$options": "i"}},
         ]
     if nhl_team:
-        query["team"] = nhl_team
+        # Iter 228e — match team regardless of case so the UI doesn't have
+        # to upper-case before passing the filter (admin_create_player
+        # stores team uppercased).
+        query["team"] = {"$regex": f"^{nhl_team}$", "$options": "i"}
     if position:
         query["position"] = position.upper()
     if league_status:
