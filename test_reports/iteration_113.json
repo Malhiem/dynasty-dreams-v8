@@ -1,0 +1,41 @@
+{
+  "summary": "Iter 228p BUG FIX VERIFIED end-to-end on the live preview backend. The PATCH /api/drafts/{id} sync of the per-team draft_picks collection now correctly grows AND shrinks when total_rounds changes, AND the Roster page (GET /api/teams/{id}/draft-picks) reflects the new count immediately. All 30 pre-existing iter 228k-228p pytest cases pass, and 7 additional curl/requests-based integration tests against https://dynasty-preview.preview.emergentagent.com also pass — total 37/37.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter228p_patch_total_rounds_syncs_picks.py",
+    "/app/backend/tests/test_iter228p_integration_live_preview.py",
+    "/app/test_reports/pytest/iter228p.xml",
+    "/app/test_reports/pytest/iter228p_integration.xml",
+    "/app/test_reports/pytest/iter228_full.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "patch_draft (drafts.py ~L1474-1606) cleanly separates grow vs shrink. Grow path relies on _seed_draft_picks_for_draft being idempotent on (league_id, year, round, original_team_id) — verified by the no-op test where unchanged total_rounds does not churn _ids.",
+    "Shrink path filters out picks with non-empty trade_history before delete_many — verified by test_patch_shrink_preserves_traded_picks (a round-4 pick survived a 5→2 shrink).",
+    "Sync block is guarded by `if 'total_rounds' in update:` so other PATCH payloads (name, time_per_pick, etc.) do not touch the picks collection — verified by test_patch_without_total_rounds_does_not_touch_picks_collection.",
+    "Failure of the sync is swallowed (try/except + warn log) so the draft document still persists. Acceptable for resilience, but consider surfacing a non-blocking warning in the API response or a structured audit row so a stale picks collection is discoverable post-hoc.",
+    "Range validation accepts 1-100 rounds. Out-of-range (150, 0, -1, string) all correctly return 400 and the picks collection stays untouched.",
+    "Non-commissioner returns 403; active/completed/archived all return 400 with the offending status reflected in the message — verified end-to-end."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter228p_integration_live_preview.py (new — 7 live-preview integration tests)"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "not_tested_per_request"
+  },
+  "test_credentials": "Used self-registered ephemeral users (i228p_<uuid>@example.com / Pass123!). The supplied admin@dynastydreams.com / Admin123! and chriszarek@gmail.com / Chris2026! credentials were not required for these flows — every test bootstraps its own commissioner/league/draft so the suite is isolated and re-runnable.",
+  "seed_data_creation": "Each test creates a fresh league via POST /api/leagues, inserts 3 extra teams directly into MongoDB (db.teams) to reach 4 teams, and creates a fresh draft via POST /api/drafts with pick_trading_enabled=true so draft_picks are auto-seeded. No shared/global seed data is created or modified.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 228p sync of draft_picks on PATCH /api/drafts/{id} is fully verified — 37/37 pytest cases pass. The new integration suite at /app/backend/tests/test_iter228p_integration_live_preview.py exercises the LIVE preview backend (REACT_APP_BACKEND_URL) and is the canonical regression for this bug going forward. If future iters touch _seed_draft_picks_for_draft, the patch_draft endpoint, or get_team_draft_picks, rerun both iter228p files together: `REACT_APP_BACKEND_URL=... MONGO_URL=... DB_NAME=... pytest tests/test_iter228p_*.py -v`. Frontend (Edit Draft dialog restyle — round time ranges rows + minute/hour select) was explicitly out of scope per the testing_type=backend_only directive; main agent should self-verify the UI once.",
+  "rca of the issue": "ROOT CAUSE: The previous PATCH /api/drafts/{id} handler updated draft.total_rounds in the `drafts` collection but did not touch the per-team `draft_picks` collection (which is seeded once at draft-create time when pick_trading_enabled). The per-team Roster Draft Picks card binds to GET /api/teams/{id}/draft-picks which reads from `draft_picks`, so it stayed stale after edits. REPRODUCTION: 1) Create a league with pick_trading_enabled draft at total_rounds=5 → 4 teams × 5 = 20 rows in draft_picks. 2) PATCH /api/drafts/{id} {total_rounds: 2}. 3) Pre-fix: draft.total_rounds=2 but draft_picks count still 20 → Roster card still shows 5 picks per team. MITIGATION (iter 228p, drafts.py L1551-1591): after the $set, the handler now (a) GROWS by calling _seed_draft_picks_for_draft (idempotent on year+round+original_team_id) for new_rounds > old_rounds, or (b) SHRINKS by db.draft_picks.delete_many on rounds > new_rounds with a trade_history guard. VERIFICATION: pytest test_patch_total_rounds_grows_picks_collection (3→7 ⇒ 12→28 picks), test_patch_total_rounds_shrinks_picks_collection (5→2 ⇒ 20→8 picks), test_patch_shrink_preserves_traded_picks (round-4 traded pick survives 5→2 shrink), and the new live-preview test_roster_page_reflects_grow_and_shrink_immediately confirming the GET /api/teams/{id}/draft-picks endpoint returns the synced count."
+}

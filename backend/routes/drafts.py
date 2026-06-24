@@ -1547,6 +1547,49 @@ async def patch_draft(draft_id: str, body: dict, request: Request):
     await _db().drafts.update_one(
         {"_id": ObjectId(draft_id)}, {"$set": update}
     )
+
+    # Iter 228p — Sync the `draft_picks` collection when total_rounds
+    # changes. Previously the draft document picked up the new count
+    # but the per-team Roster Draft Picks card stayed stale (root cause
+    # of "edited # of picks but they didn't reduce on roster").
+    if "total_rounds" in update:
+        old_rounds = int(draft.get("total_rounds") or 0)
+        new_rounds = int(update["total_rounds"])
+        try:
+            if new_rounds > old_rounds:
+                # Grow: seed extra rows. `_seed_draft_picks_for_draft`
+                # is idempotent on (league_id, year, round, original_team_id)
+                # so reseeding will only insert the missing rounds.
+                season = str(league.get("season") or "2026").split("-")[0]
+                await _seed_draft_picks_for_draft(
+                    draft_id=draft_id,
+                    league_id=draft["league_id"],
+                    rounds=new_rounds,
+                    year=int(season),
+                )
+            elif new_rounds < old_rounds:
+                # Shrink: drop pick rows for rounds > new_rounds, but
+                # protect any pick that's been traded or used (has
+                # `trade_history` entries or is referenced in a pick).
+                # Scheduled drafts shouldn't have used picks, but
+                # trade activity may have happened on future-round picks.
+                doomed = await _db().draft_picks.find({
+                    "draft_id": draft_id,
+                    "round": {"$gt": new_rounds},
+                }, {"_id": 1, "round": 1, "trade_history": 1}).to_list(2000)
+                deletable_ids = [
+                    p["_id"] for p in doomed
+                    if not (p.get("trade_history") or [])
+                ]
+                if deletable_ids:
+                    await _db().draft_picks.delete_many({
+                        "_id": {"$in": deletable_ids},
+                    })
+        except Exception as ex:
+            import logging
+            logging.getLogger("drafts").warning(
+                f"Failed to sync draft_picks for {draft_id} on total_rounds change: {ex}")
+
     fresh = await _db().drafts.find_one({"_id": ObjectId(draft_id)}, {"team_map": 0})
     fresh["_id"] = str(fresh["_id"])
 

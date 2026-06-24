@@ -105,7 +105,8 @@ export default function DraftTab({ ctx }: DraftTabProps) {
     totalRounds: number; timePerPick: number;
     draftType: string; snakeDraft: boolean;
     playerCriteria: string; missedPickAction: string;
-    deferUserOptions: string[]; roundTimeOverrides: string;
+    deferUserOptions: string[];
+    roundTimeRanges: { from: number; to: number; seconds: number }[];
     excludePreviouslyDrafted: boolean; minorsEligibilityRequired: boolean;
   } | null>(null);
   const [savingEdit, setSavingEdit] = useState<boolean>(false);
@@ -138,9 +139,16 @@ export default function DraftTab({ ctx }: DraftTabProps) {
       deferUserOptions: Array.isArray(draft.deferUserOptions)
         ? draft.deferUserOptions
         : ["auto-best", "auto-queue", "pick-anytime"],
-      roundTimeOverrides: Array.isArray(draft.roundTimeOverrides) && draft.roundTimeOverrides.length
-        ? JSON.stringify(draft.roundTimeOverrides, null, 2)
-        : "",
+      // Iter 228p — Structured round-time ranges (was a free-form JSON
+      // textarea). Each row: { from, to, seconds }. Empty = default time
+      // for every round.
+      roundTimeRanges: Array.isArray(draft.roundTimeOverrides)
+        ? draft.roundTimeOverrides.map((o: any) => ({
+            from: Number(o.from) || 1,
+            to: Number(o.to) || 1,
+            seconds: Number(o.seconds) || 3600,
+          }))
+        : [],
       excludePreviouslyDrafted: !!draft.excludePreviouslyDrafted,
       minorsEligibilityRequired: !!draft.minorsEligibilityRequired,
     });
@@ -158,17 +166,13 @@ export default function DraftTab({ ctx }: DraftTabProps) {
         } catch { /* ignore */ }
       }
       let parsedOverrides: any = undefined;
-      const ovTrim = (editForm.roundTimeOverrides || "").trim();
-      if (ovTrim) {
-        try {
-          parsedOverrides = JSON.parse(ovTrim);
-          if (!Array.isArray(parsedOverrides)) throw new Error();
-        } catch {
-          toast.error("Round time overrides must be valid JSON array, e.g. [{\"from\":1,\"to\":3,\"seconds\":600}]");
-          setSavingEdit(false);
-          return;
-        }
-      }
+      // Iter 228p — Structured ranges; validate + drop invalid rows.
+      const validRanges = (editForm.roundTimeRanges || [])
+        .filter((r) => Number.isFinite(r.from) && Number.isFinite(r.to)
+          && Number.isFinite(r.seconds) && r.from >= 1 && r.to >= r.from
+          && r.seconds >= 30)
+        .map((r) => ({ from: r.from, to: r.to, seconds: r.seconds }));
+      parsedOverrides = validRanges;
       await api.patch(`/drafts/${editingDraftId}`, {
         name: editForm.name.trim() || undefined,
         scheduled_time: scheduledIso,
@@ -1158,13 +1162,36 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Default Time/Pick (seconds)</Label>
-                    <Input
-                      type="number" min={30} max={86400} step={30}
-                      value={editForm.timePerPick}
-                      onChange={(e) => setEditForm({ ...editForm, timePerPick: parseInt(e.target.value || "30", 10) })}
-                      data-testid="edit-draft-time-per-pick-input"
-                    />
+                    <Label>Default Time/Pick</Label>
+                    {/* Iter 228p — Human-friendly Select instead of raw
+                        seconds input. Falls back to a custom seconds
+                        field at the bottom for non-standard values. */}
+                    <Select
+                      value={String(editForm.timePerPick)}
+                      onValueChange={(v) => setEditForm({ ...editForm, timePerPick: parseInt(v, 10) })}
+                    >
+                      <SelectTrigger
+                        className="bg-secondary border-border"
+                        data-testid="edit-draft-time-per-pick-select"
+                      ><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="60">1 minute</SelectItem>
+                        <SelectItem value="120">2 minutes</SelectItem>
+                        <SelectItem value="300">5 minutes</SelectItem>
+                        <SelectItem value="600">10 minutes</SelectItem>
+                        <SelectItem value="900">15 minutes</SelectItem>
+                        <SelectItem value="1800">30 minutes</SelectItem>
+                        <SelectItem value="2700">45 minutes</SelectItem>
+                        <SelectItem value="3600">1 hour</SelectItem>
+                        <SelectItem value="5400">1.5 hours</SelectItem>
+                        <SelectItem value="7200">2 hours</SelectItem>
+                        <SelectItem value="10800">3 hours</SelectItem>
+                        <SelectItem value="14400">4 hours</SelectItem>
+                        <SelectItem value="21600">6 hours</SelectItem>
+                        <SelectItem value="43200">12 hours</SelectItem>
+                        <SelectItem value="86400">24 hours</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                   {/* Iter 228o — Full customisation: draft type + format */}
                   <div className="space-y-2">
@@ -1267,20 +1294,114 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                     ))}
                   </div>
                 )}
-                {/* Iter 228o — Per-round time overrides expert escape hatch */}
-                <div className="space-y-2">
-                  <Label className="text-xs">Round Time Overrides (advanced JSON)</Label>
+                {/* Iter 228p — Round Time Ranges (replaced the iter-228o
+                    JSON textarea). Each row stamps a range of rounds
+                    [from..to] with a human-readable duration. Empty
+                    list = every round uses the Default Time/Pick above. */}
+                <div className="space-y-2" data-testid="edit-draft-round-ranges">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Round Time Ranges</Label>
+                    <Button
+                      type="button"
+                      size="sm" variant="outline"
+                      onClick={() => setEditForm({
+                        ...editForm,
+                        roundTimeRanges: [
+                          ...editForm.roundTimeRanges,
+                          { from: 1, to: Math.min(editForm.totalRounds, 5), seconds: 3600 },
+                        ],
+                      })}
+                      data-testid="edit-draft-round-range-add"
+                    ><Plus className="h-3 w-3 mr-1" />Add range</Button>
+                  </div>
                   <p className="text-[11px] text-muted-foreground">
-                    Optional. Stamp specific round ranges with non-default timers. Example: <code className="text-[10px]">[{`{"from":1,"to":5,"seconds":7200}`}]</code>. Leave blank to use the default time per pick above for every round.
+                    Optional. Override the default for specific round spans (e.g. R1–R5 = 1 hour, R6–R30 = 5 min). Empty list inherits the default.
                   </p>
-                  <textarea
-                    className="w-full rounded-md border border-border bg-secondary px-2 py-1.5 text-xs font-mono"
-                    rows={3}
-                    value={editForm.roundTimeOverrides}
-                    onChange={(e) => setEditForm({ ...editForm, roundTimeOverrides: e.target.value })}
-                    data-testid="edit-draft-round-overrides"
-                    placeholder='[{"from":1,"to":3,"seconds":600}]'
-                  />
+                  {editForm.roundTimeRanges.length === 0 && (
+                    <p className="text-[11px] text-muted-foreground italic px-2 py-1">
+                      No range overrides — every round uses the default time above.
+                    </p>
+                  )}
+                  {editForm.roundTimeRanges.map((r, idx) => (
+                    <div
+                      key={idx}
+                      className="grid grid-cols-12 gap-2 items-end"
+                      data-testid={`edit-draft-round-range-row-${idx}`}
+                    >
+                      <div className="col-span-3 space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">From Rd</Label>
+                        <Input
+                          type="number" min={1} max={editForm.totalRounds}
+                          value={r.from}
+                          onChange={(e) => {
+                            const ranges = [...editForm.roundTimeRanges];
+                            ranges[idx] = { ...r, from: parseInt(e.target.value || "1", 10) };
+                            setEditForm({ ...editForm, roundTimeRanges: ranges });
+                          }}
+                          data-testid={`edit-draft-round-range-from-${idx}`}
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                      <div className="col-span-3 space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">To Rd</Label>
+                        <Input
+                          type="number" min={r.from} max={editForm.totalRounds}
+                          value={r.to}
+                          onChange={(e) => {
+                            const ranges = [...editForm.roundTimeRanges];
+                            ranges[idx] = { ...r, to: parseInt(e.target.value || "1", 10) };
+                            setEditForm({ ...editForm, roundTimeRanges: ranges });
+                          }}
+                          data-testid={`edit-draft-round-range-to-${idx}`}
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                      <div className="col-span-5 space-y-1">
+                        <Label className="text-[10px] text-muted-foreground">Time</Label>
+                        <Select
+                          value={String(r.seconds)}
+                          onValueChange={(v) => {
+                            const ranges = [...editForm.roundTimeRanges];
+                            ranges[idx] = { ...r, seconds: parseInt(v, 10) };
+                            setEditForm({ ...editForm, roundTimeRanges: ranges });
+                          }}
+                        >
+                          <SelectTrigger
+                            className="h-8 text-sm bg-secondary border-border"
+                            data-testid={`edit-draft-round-range-time-${idx}`}
+                          ><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="60">1 minute</SelectItem>
+                            <SelectItem value="120">2 minutes</SelectItem>
+                            <SelectItem value="300">5 minutes</SelectItem>
+                            <SelectItem value="600">10 minutes</SelectItem>
+                            <SelectItem value="900">15 minutes</SelectItem>
+                            <SelectItem value="1800">30 minutes</SelectItem>
+                            <SelectItem value="3600">1 hour</SelectItem>
+                            <SelectItem value="5400">1.5 hours</SelectItem>
+                            <SelectItem value="7200">2 hours</SelectItem>
+                            <SelectItem value="10800">3 hours</SelectItem>
+                            <SelectItem value="14400">4 hours</SelectItem>
+                            <SelectItem value="21600">6 hours</SelectItem>
+                            <SelectItem value="43200">12 hours</SelectItem>
+                            <SelectItem value="86400">24 hours</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="col-span-1 flex justify-end">
+                        <Button
+                          type="button" size="icon" variant="ghost"
+                          className="h-8 w-8 text-muted-foreground hover:text-rose-400"
+                          onClick={() => {
+                            const ranges = editForm.roundTimeRanges.filter((_, i) => i !== idx);
+                            setEditForm({ ...editForm, roundTimeRanges: ranges });
+                          }}
+                          data-testid={`edit-draft-round-range-remove-${idx}`}
+                          aria-label="Remove this range"
+                        ><X className="h-3.5 w-3.5" /></Button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
                 <div className="space-y-2">
                   <Label>Eligibility Filters</Label>
