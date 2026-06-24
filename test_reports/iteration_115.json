@@ -1,0 +1,79 @@
+{
+  "summary": "Verified the iter-229 frontend bug fix: adding `useEffect` to React imports in DraftTab.tsx. League Administration → Drafts tab now loads cleanly without the previous `useEffect is not defined` ReferenceError. All smoke-test elements render correctly. The 'What if?' preview banner code path was verified via code review (live trigger was unreachable because the only draft in chriszarek's league is `status=completed`, and the edit pencil button is intentionally gated to `status === 'scheduled'`).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verification_details": {
+    "bug_fix_useEffect_not_defined": {
+      "status": "PASS",
+      "evidence": [
+        "Line 10 of DraftTab.tsx confirmed: `import { useState, useEffect } from \"react\";`",
+        "Playwright loaded /commissioner/settings → Draft tab. page.on('pageerror') captured ZERO errors. page.on('console',error) captured ZERO non-401 errors.",
+        "Drafts tab body rendered completely (Create Draft form, eligibility checkboxes, DraftOrderConfigCard, Scheduled Drafts list)."
+      ]
+    },
+    "smoke_flow_draft_tab": {
+      "status": "PASS",
+      "elements_verified": {
+        "create-draft-btn": "present (testid: create-draft-btn)",
+        "Player Criteria text/section": "visible",
+        "draft-exclude-previously-drafted": "count=1 visible=True",
+        "draft-minors-eligibility-required": "count=1 visible=True",
+        "draft-order-config-card (DraftOrderConfigCard)": "visible (Draft Order heading shown)",
+        "draft-rounds-input": "present",
+        "draft-clock-starts-at / stops-at / timezone": "present",
+        "draft-trade-review-section": "present",
+        "draft-tiebreakers-section": "present",
+        "scheduled drafts list (draft-row-*)": "1 row rendered ('Untitled draft', status=completed)"
+      }
+    },
+    "edit_dialog_what_if_banner": {
+      "status": "PARTIAL — code verified, live trigger blocked by data",
+      "code_review": [
+        "useEffect hook (lines 121-140) correctly debounces 250ms and calls GET /drafts/{editingDraftId}/edit-preview?total_rounds={newRounds}.",
+        "Effect cleanup cancels stale requests via `cancelled` flag + clearTimeout — race-condition safe.",
+        "Dependency array `[editingDraftId, editForm?.totalRounds]` is correct.",
+        "Banner (lines 1194-1240) conditionally renders only when `editPreview && editPreview.new_rounds !== editPreview.original_rounds` — correctly hides on no-op.",
+        "data-testid='edit-draft-rounds-preview' is set on the banner container (line 1201).",
+        "Pencil/edit button at line 962-972 is gated on `draft.status === 'scheduled'` — by design completed drafts cannot be edited."
+      ],
+      "live_test_blocker": "chriszarek's only draft in 'Zarek's Frozen' is status=completed (Untitled draft, 5 rounds, Snake) — no edit pencil rendered. Admin account landed in a League Setup Wizard modal that blocked the Drafts tab in 'Stat Chasers Roto'."
+    },
+    "regression_edit_preview_endpoint": {
+      "status": "Not re-tested (per main agent instructions)",
+      "note": "Iter 228q pytest already verified 35/35 (see iteration_114.json). Backend file drafts.py is untouched in this iter."
+    }
+  },
+  "test_report_links": [],
+  "action_items": [
+    "OPTIONAL: To enable live UI regression of the 'What if?' banner in future test runs, seed at least one draft with status='scheduled' in the chriszarek demo league, OR provide a flag to bypass the setup wizard for admin@dynastydreams.com so its leagues are reachable."
+  ],
+  "critical_code_review_comments": [
+    "DraftTab.tsx is 1575 lines — well over the 700-line guideline. Consider extracting the Edit Draft dialog (lines ~1100-1280) and the Scheduled Drafts table (lines ~900-1080) into their own components; this would also have prevented the missing-import regression by reducing surface area.",
+    "File starts with `// @ts-nocheck` — typescript safety is fully disabled, which is exactly why a missing-import like `useEffect` slipped past compile-time checks. Recommend incrementally removing @ts-nocheck on extracted child components.",
+    "Effect cancellation pattern (lines 125-139) is correct, but consider moving the debounce timeout into a constant (e.g., EDIT_PREVIEW_DEBOUNCE_MS = 250) for readability."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only run)",
+    "frontend": "100% on testable scope (bug fix + smoke flow). Edit-dialog live banner not exercised due to test-data constraints; code-level review PASS."
+  },
+  "test_credentials": "Used chriszarek@gmail.com / Chris2026! (commissioner) and admin@dynastydreams.com / Admin123! from review_request.",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Primary bug fix is verified — no useEffect ReferenceError on the Drafts tab. To live-test the 'What if?' edit-preview banner end-to-end, a draft with status='scheduled' must exist in the active league. Currently chriszarek's 'Zarek's Frozen' has only a completed draft; admin's leagues launch a Setup Wizard modal that masks the page. Either create a scheduled draft via the Create Draft form OR seed one in the DB. Once the pencil button (data-testid=draft-edit-{id}) is reachable, the banner test is: open dialog → change [data-testid=edit-draft-rounds-input] → wait ~500ms → assert [data-testid=edit-draft-rounds-preview] becomes visible for grow/shrink and hidden on no-op.",
+  "rca of the issue": {
+    "bug": "ReferenceError: useEffect is not defined when opening League Administration → Drafts tab.",
+    "root_cause": "Iter 228q introduced a new useEffect hook (lines 121-140) for the 'What if?' debounced /edit-preview call, but the React import on line 10 of DraftTab.tsx only imported `useState`. Since the file has `// @ts-nocheck`, the missing import was not caught at build time and only surfaced at runtime when the component mounted.",
+    "fix_applied_by_main_agent": "Added `useEffect` to the named imports on line 10: `import { useState, useEffect } from \"react\";`",
+    "verification": "Playwright run navigated to /commissioner/settings → Draft tab and captured zero pageerror events; the tab body rendered all expected sections.",
+    "mitigation_recommendation": "Either remove `// @ts-nocheck` from this file (or its extracted children) so TypeScript catches missing imports, or add an ESLint rule `react-hooks/rules-of-hooks` + `no-undef` over the tabs/* directory."
+  }
+}

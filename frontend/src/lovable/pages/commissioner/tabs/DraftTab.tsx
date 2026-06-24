@@ -7,7 +7,7 @@
  * and passes it as a single prop. Any future field added to the tab body
  * just needs an entry on the interface — no signature churn at the call site.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
