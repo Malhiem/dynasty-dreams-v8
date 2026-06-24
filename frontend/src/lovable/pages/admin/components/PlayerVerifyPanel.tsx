@@ -105,6 +105,28 @@ export default function PlayerVerifyPanel() {
     }
   };
 
+  // Iter 228g — NHL Central Scouting draft-class sync handler
+  const handleSyncDraftClass = async () => {
+    if (!window.confirm(
+      `Pull all NHL Central Scouting prospects for the ${syncYear} draft? New players will be added; existing ones left alone (use "Overwrite" if you also want to refresh rankings).`,
+    )) return;
+    setSyncing(true);
+    try {
+      const { data } = await api.post("/admin/players/sync-draft-class", {
+        year: syncYear, overwrite: false,
+      });
+      toast.success(
+        `Sync complete — ${data.added} added, ${data.updated} updated (${data.errors?.length || 0} category errors)`,
+        { duration: 8000 },
+      );
+      await fetchPlayers();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Draft-class sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <Card className="hover-glow" data-testid="player-verify-panel">
       <CardHeader className="flex flex-row items-center justify-between">

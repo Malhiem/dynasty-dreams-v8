@@ -779,7 +779,8 @@ async def admin_verify_players(
             "name": 1, "team": 1, "position": 1, "primary_position": 1,
             "jersey_number": 1, "nhl_id": 1, "player_type": 1,
             "league_status": 1, "injury_status": 1, "date_of_birth": 1,
-            "minors_eligible": 1,
+            "minors_eligible": 1, "source": 1, "draft_year": 1,
+            "draft_rank_final": 1,
         }
     ).sort("name", 1).skip(skip).limit(limit).to_list(limit)
     for p in docs:

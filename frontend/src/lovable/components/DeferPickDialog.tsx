@@ -113,6 +113,16 @@ export default function DeferPickDialog({
     }
   };
 
+  // Iter 228g — Auto-submit the safety-net choice when the countdown ends.
+  // Without this, the dialog ticks to 0s and stalls (PRD requires auto-resolve).
+  useEffect(() => {
+    if (!open) return;
+    if (autoResolveSeconds <= 0) return;
+    if (secondsLeft > 0) return;
+    if (busy) return;
+    void submit(autoResolveChoice);
+  }, [open, secondsLeft, autoResolveSeconds, busy, autoResolveChoice]);
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o && !busy) onClose(); }}>
       <DialogContent
