@@ -339,6 +339,10 @@ export default function DraftRoom() {
         // Hydrate picks + currentPick from backend if any picks exist
         if (Array.isArray(d.picks) && d.picks.length > 0) {
           setPicks(d.picks.map((p: any) => ({
+            // Iter 228i — Stable unique key per pick. Was previously
+            // derived from `pick-${Date.now()}` shared across rapid hydrates,
+            // causing duplicate React keys when re-render fired twice.
+            id: p.id || p._id || `pick-${p.round}-${p.pick_in_round || p.overall}`,
             round: p.round,
             pickInRound: p.pick_in_round,
             overall: p.overall,
