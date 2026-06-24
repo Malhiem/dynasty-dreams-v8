@@ -8,6 +8,8 @@ import usePickTimer from "@/hooks/use-pick-timer";
 // Iter 205 — localStorage persistence + chat composer extracted.
 import useDraftRoomPersistence from "@/hooks/use-draft-room-persistence";
 import useDraftChat from "@/hooks/use-draft-chat";
+// Iter 228f — Defer-to-User missed-pick dialog
+import DeferPickDialog from "@/lovable/components/DeferPickDialog";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -357,6 +359,12 @@ export default function DraftRoom() {
             pickTimerSeconds: d.time_per_pick || prev.pickTimerSeconds,
           }));
         }
+        // Iter 228f — Hydrate missed_pick_action + defer_user_options
+        // so the timer hook can decide whether to surface the dialog.
+        if (d.missed_pick_action) setMissedPickAction(d.missed_pick_action);
+        if (Array.isArray(d.defer_user_options) && d.defer_user_options.length) {
+          setDeferAvailable(d.defer_user_options);
+        }
         // Iter 170m — hydrate historic chat (picks + system messages
         // including auto-pick badges) so a reload preserves the
         // narrative arc of the draft.
@@ -558,6 +566,20 @@ export default function DraftRoom() {
 
   const isClockActive = draftConfig.draftStarted && !draftConfig.earlyStart;
 
+  // Iter 228f — Defer-to-User missed-pick dialog state
+  const [missedPickAction, setMissedPickAction] = useState<string>("auto-select");
+  const [deferDialogOpen, setDeferDialogOpen] = useState(false);
+  const [deferAvailable, setDeferAvailable] = useState<string[]>([
+    "auto-best", "auto-queue", "pick-anytime",
+  ]);
+  // Determine whether the active pick belongs to the local user's team
+  const isMyPickActive = (() => {
+    if (!myTeam || !draftConfig.draftStarted) return false;
+    const teamAbbr = getTeamForPick(draftConfig.currentPick);
+    return teamAbbr && (myTeam as any)?.abbr === teamAbbr;
+  })();
+  const shouldDefer = missedPickAction === "defer-to-user" && isMyPickActive;
+
   // Iter 204 — pick timer extracted to `usePickTimer` hook (-30 lines).
   const { pickTimeLeft, setPickTimeLeft, timerPaused, setTimerPaused } = usePickTimer({
     isClockActive,
@@ -566,6 +588,10 @@ export default function DraftRoom() {
     currentDraftId: currentDraft?._id,
     isDraftActive,
     refreshDraftState,
+    // Iter 228f — Only defer when the current pick is owned by the
+    // local user AND the draft uses defer-to-user mode.
+    deferOnExpiry: shouldDefer,
+    onTimerExpired: (_pickNo: number) => setDeferDialogOpen(true),
   });
 
   // ─── Draft order ────────────────────────────────────────────────────────────
@@ -1111,6 +1137,19 @@ export default function DraftRoom() {
   return (
     <AppLayout>
       <TooltipProvider>
+        {/* Iter 228f — Defer-to-User missed-pick dialog */}
+        <DeferPickDialog
+          open={deferDialogOpen}
+          onClose={() => setDeferDialogOpen(false)}
+          draftId={currentDraft?._id || ""}
+          pickNo={draftConfig.currentPick}
+          availableOptions={deferAvailable}
+          onResolved={() => {
+            // After resolving, refresh draft state to pick up the engine's
+            // auto-pick (auto-best/auto-queue) or skip-anytime advancement.
+            refreshDraftState();
+          }}
+        />
         <div className="space-y-4">
           {/* ── Header row ─────────────────────────────────────────────── */}
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">

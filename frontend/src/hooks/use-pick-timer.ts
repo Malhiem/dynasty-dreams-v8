@@ -55,6 +55,14 @@ export default function usePickTimer({
         if (prev <= 1) {
           if (currentDraftId && isDraftActive && lastAutoFireRef.current !== currentPick) {
             lastAutoFireRef.current = currentPick;
+            // Iter 228f — When `deferOnExpiry` is set the caller wants
+            // to surface the DeferPickDialog instead of immediately
+            // auto-picking. Fire the callback and DO NOT hit the
+            // auto-pick endpoint.
+            if (deferOnExpiry) {
+              try { onTimerExpired?.(currentPick); } catch { /* noop */ }
+              return 0;
+            }
             api
               .post(`/drafts/${currentDraftId}/auto-pick`)
               .then(() => refreshDraftState())
@@ -76,6 +84,8 @@ export default function usePickTimer({
     currentDraftId,
     isDraftActive,
     refreshDraftState,
+    deferOnExpiry,
+    onTimerExpired,
   ]);
 
   return { pickTimeLeft, setPickTimeLeft, timerPaused, setTimerPaused };

@@ -206,3 +206,56 @@ def test_admin_verify_players_requires_admin():
     H = {"Authorization": f"Bearer {tok}"}
     r = requests.get(f"{API_URL}/api/admin/players/verify", headers=H)
     assert r.status_code == 403
+
+
+# ─── Iter 228f — Admin purge/restore audit logging ────────────
+
+
+def test_admin_purge_writes_audit_row():
+    """Purging an archived draft writes an admin_user_actions audit row
+    with the draft snapshot in metadata."""
+    from pymongo import MongoClient
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+
+    _, tok = _register("aupg")
+    league, draft = _create_league_and_draft(tok)
+    Hc = {"Authorization": f"Bearer {tok}"}
+    requests.delete(f"{API_URL}/api/drafts/{draft['_id']}", headers=Hc).raise_for_status()
+
+    admin_tok = _login_admin()
+    Ha = {"Authorization": f"Bearer {admin_tok}"}
+    r = requests.post(f"{API_URL}/api/admin/drafts/{draft['_id']}/purge", headers=Ha)
+    assert r.status_code == 200
+
+    row = db.admin_user_actions.find_one({
+        "action": "draft_purge",
+        "metadata.draft_id": draft["_id"],
+    })
+    assert row is not None, "expected an audit row for the purge"
+    assert row["admin_email"] == ADMIN_EMAIL
+    assert row["metadata"]["draft_name"] == "Archive test"
+    assert row["metadata"]["league_id"] == league["id"]
+    assert row["target_user_id"]  # commissioner's id captured
+    assert "ts" in row
+
+
+def test_admin_restore_writes_audit_row():
+    from pymongo import MongoClient
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+
+    _, tok = _register("aurs")
+    _, draft = _create_league_and_draft(tok)
+    Hc = {"Authorization": f"Bearer {tok}"}
+    requests.delete(f"{API_URL}/api/drafts/{draft['_id']}", headers=Hc).raise_for_status()
+
+    admin_tok = _login_admin()
+    Ha = {"Authorization": f"Bearer {admin_tok}"}
+    r = requests.post(f"{API_URL}/api/admin/drafts/{draft['_id']}/restore", headers=Ha)
+    assert r.status_code == 200
+
+    row = db.admin_user_actions.find_one({
+        "action": "draft_restore",
+        "metadata.draft_id": draft["_id"],
+    })
+    assert row is not None, "expected an audit row for the restore"
+    assert row["prior_state"]["status"] == "archived"

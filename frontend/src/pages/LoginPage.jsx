@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { formatApiError } from '@/lib/api';
@@ -23,14 +23,24 @@ export default function LoginPage() {
   const location = useLocation();
 
   const from = location.state?.from?.pathname || '/dashboard';
+  // Iter 228f — Track that the user actively submitted the login form
+  // in THIS session. Without this guard the Remember-Me auto-clear
+  // useEffect below kept firing AFTER a successful login (because
+  // `user` transitioned from null→authed during handleSubmit), and the
+  // stored `auth_remember=false` branch would call logout() → killing
+  // the freshly-created session → bouncing the user back to /login.
+  // The "flash of dashboard then back to login" loop bug.
+  const justLoggedInRef = useRef(false);
 
   // Iter 227 — "Remember me" governs whether a returning visitor with a
   // live session is auto-bounced to the dashboard. If the user did NOT
   // check Remember-me on their last sign-in, we proactively log them out
   // when they land on /login so the form is always clean for the next
-  // person on a shared device.
+  // person on a shared device. **Skipped immediately after a successful
+  // login** (iter 228f) — handleSubmit handles the navigation itself.
   useEffect(() => {
     if (!user) return;
+    if (justLoggedInRef.current) return; // Skip auto-clear right after login
     const stored = (typeof window !== 'undefined' && localStorage.getItem('auth_remember')) || 'false';
     if (stored === 'true') {
       navigate(from, { replace: true });
@@ -65,13 +75,20 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
     try {
-      await login(email, password);
-      // Iter 227 — Persist the remember-me preference for next visit.
+      // Iter 228f — Mark "this is a fresh login" BEFORE we await so the
+      // user-watching useEffect skips its auto-logout branch when user
+      // state transitions from null→authed.
+      justLoggedInRef.current = true;
+      // Iter 227 — Persist remember-me BEFORE the login network call so
+      // any concurrent re-render of the useEffect reads the right value.
       try {
         localStorage.setItem('auth_remember', remember ? 'true' : 'false');
       } catch { /* noop */ }
+      await login(email, password);
       navigate(from, { replace: true });
     } catch (err) {
+      // On failure, allow the auto-clear effect to run again if needed
+      justLoggedInRef.current = false;
       setError(formatApiError(err));
     } finally {
       setLoading(false);

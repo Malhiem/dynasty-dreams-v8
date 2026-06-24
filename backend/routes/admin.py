@@ -614,7 +614,12 @@ async def admin_list_archived_drafts(request: Request):
 @router.post("/admin/drafts/{draft_id}/purge")
 async def admin_purge_draft(draft_id: str, request: Request):
     """Permanently delete an archived draft (bypasses the 15-day TTL).
-    Site-admin only. Refuses to purge a non-archived draft."""
+    Site-admin only. Refuses to purge a non-archived draft.
+
+    Iter 228f — writes an `admin_user_actions` audit row so compliance
+    can demonstrate the deletion was traceable (admin id, timestamp,
+    pre-purge draft snapshot).
+    """
     user = await _get_user(request)
     if not _is_site_admin(user):
         raise HTTPException(status_code=403, detail="Site admin only")
@@ -629,28 +634,93 @@ async def admin_purge_draft(draft_id: str, request: Request):
             status_code=400,
             detail="Only archived drafts can be purged. Soft-delete first via DELETE /api/drafts/{id}.",
         )
+    league = None
+    try:
+        league = await _db().leagues.find_one({"_id": ObjectId(draft.get("league_id"))})
+    except Exception:
+        pass
+
+    # Audit BEFORE delete so the row references the live draft snapshot.
+    from datetime import datetime as _dt, timezone as _tz
+    await _db().admin_user_actions.insert_one({
+        "admin_id": str(user.get("_id")),
+        "admin_email": user.get("email"),
+        "admin_tier": user.get("permission_tier") or user.get("role") or "admin",
+        "target_user_id": (league or {}).get("commissioner_id"),
+        "action": "draft_purge",
+        "reason": "Admin permanent purge of archived draft (bypasses 15-day TTL)",
+        "metadata": {
+            "draft_id": draft_id,
+            "draft_name": draft.get("name"),
+            "league_id": draft.get("league_id"),
+            "league_name": draft.get("league_name"),
+            "archived_at": draft.get("archived_at"),
+            "archived_by": draft.get("archived_by"),
+            "total_rounds": draft.get("total_rounds"),
+            "scheduled_time": draft.get("scheduled_time"),
+        },
+        "prior_state": {"status": draft.get("status")},
+        "mocked": False,
+        "ts": _dt.now(_tz.utc).isoformat(),
+    })
+
     await _db().drafts.delete_one({"_id": ObjectId(draft_id)})
     return {"draft_id": draft_id, "status": "purged"}
 
 
 @router.post("/admin/drafts/{draft_id}/restore")
 async def admin_restore_archived_draft(draft_id: str, request: Request):
-    """Site-admin shortcut to restore an archived draft (same as
-    POST /api/drafts/{id}/restore, but available even if the original
-    league commissioner is unavailable)."""
+    """Site-admin shortcut to restore an archived draft.
+
+    Iter 228f — writes an `admin_user_actions` audit row so the restore
+    appears in the recent-admin-actions feed.
+    """
     user = await _get_user(request)
     if not _is_site_admin(user):
         raise HTTPException(status_code=403, detail="Site admin only")
     try:
-        res = await _db().drafts.update_one(
-            {"_id": ObjectId(draft_id), "status": "archived"},
-            {"$set": {"status": "scheduled"},
-             "$unset": {"archived_at": "", "archived_by": ""}},
-        )
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Archived draft not found")
+    if draft.get("status") != "archived":
+        raise HTTPException(status_code=404, detail="Archived draft not found")
+    league = None
+    try:
+        league = await _db().leagues.find_one({"_id": ObjectId(draft.get("league_id"))})
+    except Exception:
+        pass
+
+    res = await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id), "status": "archived"},
+        {"$set": {"status": "scheduled"},
+         "$unset": {"archived_at": "", "archived_by": ""}},
+    )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Archived draft not found")
+
+    from datetime import datetime as _dt, timezone as _tz
+    await _db().admin_user_actions.insert_one({
+        "admin_id": str(user.get("_id")),
+        "admin_email": user.get("email"),
+        "admin_tier": user.get("permission_tier") or user.get("role") or "admin",
+        "target_user_id": (league or {}).get("commissioner_id"),
+        "action": "draft_restore",
+        "reason": "Admin restored archived draft to scheduled status",
+        "metadata": {
+            "draft_id": draft_id,
+            "draft_name": draft.get("name"),
+            "league_id": draft.get("league_id"),
+            "league_name": draft.get("league_name"),
+        },
+        "prior_state": {
+            "status": "archived",
+            "archived_at": draft.get("archived_at"),
+        },
+        "mocked": False,
+        "ts": _dt.now(_tz.utc).isoformat(),
+    })
     return {"draft_id": draft_id, "status": "scheduled"}
 
 

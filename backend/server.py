@@ -916,12 +916,53 @@ async def startup():
     asyncio.create_task(_waivers_scheduler_loop())
 
     # Iter 228d — Archived drafts sweeper (hard-delete after 15 days).
+    # Iter 228f — Writes admin_user_actions audit rows BEFORE delete so
+    # compliance has a record of every auto-purge.
     async def _archived_drafts_sweeper():
         from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         while True:
             try:
                 cutoff = _dt.now(_tz.utc) - _td(days=15)
                 cutoff_iso = cutoff.isoformat()
+                now_iso = _dt.now(_tz.utc).isoformat()
+                # Snapshot expired drafts BEFORE deleting them so we can
+                # write audit rows for each (the sweeper acts as the
+                # "admin" — admin_id="__system__").
+                expired = await db.drafts.find({
+                    "status": "archived",
+                    "archived_at": {"$lt": cutoff_iso},
+                }, {"name": 1, "league_id": 1, "league_name": 1,
+                    "archived_at": 1, "archived_by": 1, "total_rounds": 1,
+                    "scheduled_time": 1}).to_list(500)
+                for d in expired:
+                    try:
+                        league = await db.leagues.find_one(
+                            {"_id": ObjectId(str(d.get("league_id")))},
+                            {"commissioner_id": 1},
+                        ) if d.get("league_id") else None
+                    except Exception:
+                        league = None
+                    await db.admin_user_actions.insert_one({
+                        "admin_id": "__system__",
+                        "admin_email": "system@dynasty-sweeper",
+                        "admin_tier": "system",
+                        "target_user_id": (league or {}).get("commissioner_id"),
+                        "action": "draft_auto_purge",
+                        "reason": "15-day TTL elapsed (auto-purge sweeper)",
+                        "metadata": {
+                            "draft_id": str(d.get("_id")),
+                            "draft_name": d.get("name"),
+                            "league_id": d.get("league_id"),
+                            "league_name": d.get("league_name"),
+                            "archived_at": d.get("archived_at"),
+                            "archived_by": d.get("archived_by"),
+                            "total_rounds": d.get("total_rounds"),
+                            "scheduled_time": d.get("scheduled_time"),
+                        },
+                        "prior_state": {"status": "archived"},
+                        "mocked": False,
+                        "ts": now_iso,
+                    })
                 res = await db.drafts.delete_many({
                     "status": "archived",
                     "archived_at": {"$lt": cutoff_iso},
@@ -929,7 +970,7 @@ async def startup():
                 if res.deleted_count:
                     logger.info(
                         f"archived-drafts sweeper: hard-deleted {res.deleted_count} draft(s) "
-                        f"archived more than 15 days ago"
+                        f"archived more than 15 days ago (audit rows written)"
                     )
             except Exception as e:
                 logger.error(f"archived-drafts sweeper error: {e}")
