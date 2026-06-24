@@ -681,7 +681,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
               <Label>If a Team Misses Their Pick</Label>
               <p className="text-sm text-muted-foreground">What happens when the pick timer expires</p>
               <Select value={missedPickAction} onValueChange={setMissedPickAction}>
-                <SelectTrigger className="bg-secondary border-border" data-testid="draft-missed-pick-action">
+                <SelectTrigger className="bg-secondary border-border" data-testid="missed-pick-action-select">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -778,7 +778,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                     <span className="font-medium">{draft.name}</span>
                   </div>
                   <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                    <span>{draft.scheduledDate}</span>
+                    <span>{draft.scheduledDate}{draft.scheduledTime && draft.scheduledTime !== "—" ? ` · ${draft.scheduledTime}` : ""}</span>
                     <svg className={`h-4 w-4 transition-transform ${expandedDraft === draft.id ? "rotate-180" : ""}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
                   </div>
                   </button>
