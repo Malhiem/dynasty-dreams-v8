@@ -411,6 +411,47 @@ async def get_pending_team_invites(league_id: str, request: Request):
         raise HTTPException(status_code=403, detail="Commissioner access required")
 
     teams = await db.teams.find({"league_id": league_id}).sort("draft_position", 1).to_list(64)
+
+    # Iter 229b — Auto-seed missing slots up to league.max_teams so the
+    # Teams & Owners panel always renders the full seat chart (e.g. 1
+    # claimed + 23 Open Slots for a 24-team league). Each stub has a
+    # real ObjectId so the commissioner can mint invites against it
+    # immediately. Idempotent: only inserts rows for `draft_position`
+    # values that aren't already represented.
+    max_teams = int(league.get("max_teams") or 0)
+    if max_teams > 0 and len(teams) < max_teams:
+        from datetime import datetime, timezone
+        used_positions = {
+            t.get("draft_position") for t in teams if t.get("draft_position") is not None
+        }
+        # Compute the highest assigned position so we can extend cleanly.
+        next_pos = 1
+        new_docs = []
+        for slot_n in range(1, max_teams + 1):
+            if slot_n in used_positions:
+                continue
+            if len(teams) + len(new_docs) >= max_teams:
+                break
+            new_docs.append({
+                "league_id": league_id,
+                "name": None,
+                "abbreviation": None,
+                "owner_id": None,
+                "owner_name": None,
+                "is_pending": True,
+                "draft_position": slot_n,
+                "roster": [],
+                "lineup": {},
+                "created_at": datetime.now(timezone.utc),
+                "created_by_auto_seed": True,
+            })
+        if new_docs:
+            res = await db.teams.insert_many(new_docs)
+            for doc, _id in zip(new_docs, res.inserted_ids):
+                doc["_id"] = _id
+                teams.append(doc)
+            teams.sort(key=lambda t: t.get("draft_position") or 9999)
+
     # Pull all invites for the league in one query.
     invites = await db.league_invites.find({"league_id": league_id}).to_list(256)
     invites_by_email: dict = {}
