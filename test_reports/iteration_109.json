@@ -1,0 +1,50 @@
+{
+  "summary": "Iter 228g — Backend fully green (13/13 pytests, sync-draft-class confirmed adding 433 prospects for 2026, 895 total with source='nhl_central_scouting'). Frontend: 2 of 7 polish items broken. CRITICAL: PlayerVerifyPanel crashes with ReferenceError because handleSyncDraftClass is referenced (line 152) but never defined — this blocks BOTH the new page-size selector AND the draft-class Sync button from being usable. Also: DeferPickDialog countdown banner renders correctly with both test IDs, but the auto-submit-on-zero logic is missing (countdown ticks to 0 then halts, never calls submit()). The other 5 items pass (admin back button → /dashboard; commissioner Draft tab has exactly 1 draft-name-input; help-pick-order-entry-date tooltip present; DraftRoom.tsx lint clean; all backend endpoints working).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/players/sync-draft-class", "issue": "Response shape varies between calls: first call returned {total_seen:null} (no key 'total_processed' for already-synced year=2025), then 2026 call returned {total_processed:433, sample_ids:[...]} — inconsistent fields, harmless but worth normalising"},
+      {"endpoint": "/api/admin/players/verify", "issue": "Response does not surface the 'source' field per player, so the UI can't distinguish nhl_central_scouting prospects from admin-added rows (verified via DB: source IS persisted correctly; just not echoed back)"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PlayerVerifyPanel.tsx", "issue": "Uncaught ReferenceError: handleSyncDraftClass is not defined. Function is invoked at line 152 (onClick={handleSyncDraftClass}) but its declaration is missing entirely — must be added between the existing handleCreate (~line 86-106) and the return (~line 108). Crashes the whole panel; renders the React red-screen instead of the player list, page-size selector, OR sync controls. BLOCKS testing of items #2 and #4 of the request.", "selector": "[data-testid=\"draft-class-sync-btn\"]", "priority": "CRITICAL"},
+      {"component": "DeferPickDialog.tsx", "issue": "Countdown banner is rendered with data-testid='defer-countdown-banner' + 'defer-countdown-seconds' and ticks down once per second, BUT there is NO useEffect that calls submit(autoResolveChoice) when secondsLeft reaches 0. The PRD requires 'auto-submits auto-best if no choice made before countdown ends' — currently the timer just stops at 0s with no API call.", "selector": "[data-testid=\"defer-countdown-banner\"]", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Admin → Player Verify → Sync 2026 NHL Central Scouting prospects", "issue": "Entire panel crashes before any sync UI is visible (see PlayerVerifyPanel ReferenceError)", "affected_selectors": ["[data-testid=\"player-verify-page-size\"]", "[data-testid=\"draft-class-sync-btn\"]", "[data-testid=\"draft-class-sync-year\"]", "[data-testid=\"player-verify-panel\"]"]}
+    ],
+    "design_issues": []
+  },
+  "passed_items": [
+    "Item 3 (backend): POST /admin/players/sync-draft-class?year=2026 returned added=433, errors=[]; year=2025 idempotent re-run ok; total 895 prospects persisted with source='nhl_central_scouting' + league_status='Draft Eligible'; non-admin gets 403 (pytest test_admin_sync_draft_class_requires_admin)",
+    "Item 5 (admin back button): data-testid='admin-back-to-user-dashboard' found on /admin header, click navigates to /dashboard",
+    "Item 6 (lint cleanup): DraftRoom.tsx lints clean (✅ No issues found)",
+    "Item 7 (Pick Order Entry Date tooltip): data-testid='help-pick-order-entry-date' present in DraftOrderConfigCard on Commissioner Settings → Draft tab",
+    "Item 8 (duplicate Draft Name removed): exactly 1 [data-testid='draft-name-input'] on the Draft tab",
+    "Iter 228e/f regressions: all 13 pytests in test_iter228e_admin_archive_defer_players.py pass (archived list / purge / restore / defer options / verify endpoints / audit rows)"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter228e_admin_archive_defer_players.py",
+    "/app/test_reports/pytest/iter228g_results.xml"
+  ],
+  "action_items": [
+    "FIX PlayerVerifyPanel.tsx — add the missing handleSyncDraftClass async function (POST to /admin/players/sync-draft-class with {year: syncYear}, manage setSyncing(), toast result, then refetch fetchPlayers()). Without it the panel is unusable.",
+    "FIX DeferPickDialog.tsx — add a useEffect that calls submit(autoResolveChoice) exactly once when open && autoResolveSeconds>0 && secondsLeft===0 && !busy, so the 30s auto-submit actually fires.",
+    "(minor) Normalise sync-draft-class response shape — always return total_processed (or always total_seen), not both/neither.",
+    "(minor) Include 'source' field in /admin/players/verify response so the UI can badge Central-Scouting-synced rows."
+  ],
+  "critical_code_review_comments": [
+    "PlayerVerifyPanel.tsx has @ts-nocheck at the top, which is why this ReferenceError slipped past static checks — ESLint reports 'no issues' for the file despite the missing handler. Consider removing @ts-nocheck on changed admin panels.",
+    "DeferPickDialog only ticks the countdown but never acts on it — the test ID is present so a future automated test would still pass purely by selector existence, masking the missing auto-submit. Suggest a Cypress/RTL test that fakes timers and asserts api.post('/drafts/.../defer') is called with the autoResolveChoice."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (13/13 pytests; live sync verified)", "frontend": "5/7 items (Admin back button, draft-name dedup, tooltip, lint cleanup, no regressions) — 2 broken (PlayerVerifyPanel crash, DeferPickDialog missing auto-submit)"},
+  "test_credentials": "admin@dynastydreams.com / Admin123!  •  chriszarek@gmail.com / Chris2026!",
+  "seed_data_creation": "Triggered live sync of 2026 NHL Central Scouting (added 433 prospects). Total 'Draft Eligible' players in DB now: 896.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PlayerVerifyPanel needs the missing handleSyncDraftClass function added. After fix, retest by logging in as admin → /admin → click 'Player Verify' tab. Expect: data-testid='player-verify-page-size' (10/25/100/250/500 options) and data-testid='draft-class-sync-btn' visible without red-screen. For DeferPickDialog, add a useEffect that calls submit(autoResolveChoice) when secondsLeft===0 (guard with a ref or hasFired flag to avoid double-submit). Then verify via unit/RTL test rather than live draft.",
+  "rca of the issue": "PlayerVerifyPanel.tsx: developer added JSX onClick={handleSyncDraftClass} + the syncYear/syncing state hooks (lines 62-63) but forgot to author the handler function body. Because the file is marked @ts-nocheck, TypeScript would have flagged this but is silenced. ESLint also passes (handleSyncDraftClass is treated as an unresolved JSX reference, not an undefined variable). Repro: log in as admin → /admin → click Player Verify tab → page shows 'Uncaught runtime errors: handleSyncDraftClass is not defined' overlay. Mitigation: define handleSyncDraftClass = async () => { setSyncing(true); try { const { data } = await api.post('/admin/players/sync-draft-class', { year: syncYear }); toast.success(`Synced ${data.added} new + ${data.updated} updated for ${syncYear}`); await fetchPlayers(); } catch (e) { toast.error(e?.response?.data?.detail || 'Sync failed'); } finally { setSyncing(false); } }; — wire a confirm() dialog before the POST per the PRD."
+}

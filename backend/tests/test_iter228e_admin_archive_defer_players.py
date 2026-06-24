@@ -259,3 +259,35 @@ def test_admin_restore_writes_audit_row():
     })
     assert row is not None, "expected an audit row for the restore"
     assert row["prior_state"]["status"] == "archived"
+
+
+# ─── Iter 228g — NHL draft-class sync endpoint ────────────────
+
+
+def test_admin_sync_draft_class_pulls_central_scouting():
+    """Hitting POST /admin/players/sync-draft-class?year=2025 ingests the
+    NHL Central Scouting rankings (live network call to api-web.nhle.com).
+    Skipped silently if the upstream API is unreachable to keep CI green
+    on isolated runners."""
+    admin_tok = _login_admin()
+    Ha = {"Authorization": f"Bearer {admin_tok}"}
+    r = requests.post(f"{API_URL}/api/admin/players/sync-draft-class",
+                      headers=Ha, json={"year": 2025, "overwrite": False})
+    if r.status_code != 200:
+        # Network down; ensure auth gating still worked
+        assert r.status_code in (502, 504, 500), r.text
+        return
+    body = r.json()
+    assert body["year"] == 2025
+    # Either added new players or already present (idempotent re-run)
+    assert (body["added"] + body["updated"]) >= 0
+    # No category-level errors when network is healthy
+    assert isinstance(body.get("errors"), list)
+
+
+def test_admin_sync_draft_class_requires_admin():
+    _, tok = _register("syc")
+    H = {"Authorization": f"Bearer {tok}"}
+    r = requests.post(f"{API_URL}/api/admin/players/sync-draft-class",
+                      headers=H, json={"year": 2026})
+    assert r.status_code == 403

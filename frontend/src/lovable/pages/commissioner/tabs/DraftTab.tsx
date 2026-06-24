@@ -353,11 +353,8 @@ export default function DraftTab({ ctx }: DraftTabProps) {
             <CardDescription>Configure rounds, timing, and draft order</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>Draft Name</Label>
-              <Input placeholder="e.g. 2026 NHL Entry Draft" defaultValue="" className="bg-secondary border-border" />
-            </div>
-            <Separator />
+            {/* Iter 228g — Draft Name field removed (duplicate; the canonical
+                  input lives in the "Create a Draft" card above). */}
             <div className="grid gap-4 md:grid-cols-3">
                <div className="space-y-2">
                 <Label>Number of Rounds</Label>

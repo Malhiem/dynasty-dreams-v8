@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Search, Plus, Users, RefreshCcw } from "lucide-react";
+import { Search, Plus, Users, RefreshCcw, Download, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -46,6 +46,8 @@ export default function PlayerVerifyPanel() {
   const [players, setPlayers] = useState<any[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  // Iter 228g — page size selector (10/25/100/250/500)
+  const [pageSize, setPageSize] = useState(100);
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
 
@@ -56,10 +58,14 @@ export default function PlayerVerifyPanel() {
   const [newStatus, setNewStatus] = useState("Europe");
   const [creating, setCreating] = useState(false);
 
+  // Iter 228g — NHL draft-class sync button state
+  const [syncYear, setSyncYear] = useState(2026);
+  const [syncing, setSyncing] = useState(false);
+
   const fetchPlayers = useCallback(async () => {
     setLoading(true);
     try {
-      const params: Record<string, string> = { limit: "100" };
+      const params: Record<string, string> = { limit: String(pageSize) };
       if (search) params.search = search;
       if (statusFilter) params.league_status = statusFilter;
       const { data } = await api.get("/admin/players/verify", { params });
@@ -70,7 +76,7 @@ export default function PlayerVerifyPanel() {
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter]);
+  }, [search, statusFilter, pageSize]);
 
   useEffect(() => {
     const t = setTimeout(() => { void fetchPlayers(); }, 250);
@@ -127,6 +133,30 @@ export default function PlayerVerifyPanel() {
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Iter 228g — NHL Central Scouting draft-class sync */}
+        <div className="flex items-center gap-2 flex-wrap p-3 border border-violet-500/40 bg-violet-500/5 rounded-lg" data-testid="draft-class-sync-row">
+          <span className="text-xs font-semibold uppercase tracking-wider text-violet-300">
+            NHL Draft Class Sync
+          </span>
+          <span className="text-xs text-muted-foreground">
+            Pulls Central Scouting rankings + adds new prospects with status &quot;Draft Eligible&quot;.
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Input
+              type="number" min={2008} max={2030} value={syncYear}
+              onChange={(e) => setSyncYear(parseInt(e.target.value || "2026", 10))}
+              className="w-20 h-8"
+              data-testid="draft-class-sync-year"
+            />
+            <Button
+              size="sm" onClick={handleSyncDraftClass} disabled={syncing}
+              data-testid="draft-class-sync-btn"
+            >
+              {syncing ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1.5" />}
+              Sync {syncYear}
+            </Button>
+          </div>
+        </div>
         {/* Quick-add form */}
         {addOpen && (
           <div
@@ -193,13 +223,24 @@ export default function PlayerVerifyPanel() {
               data-testid="player-verify-search"
             />
           </div>
-          <div className="sm:col-span-4">
+          <div className="sm:col-span-3">
             <Select value={statusFilter || "__all__"}
                     onValueChange={(v) => setStatusFilter(v === "__all__" ? "" : v)}>
               <SelectTrigger data-testid="player-verify-status-filter"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {STATUS_OPTIONS.map((s) => (
                   <SelectItem key={s.v || "__all__"} value={s.v || "__all__"}>{s.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {/* Iter 228g — page size selector */}
+          <div className="sm:col-span-1">
+            <Select value={String(pageSize)} onValueChange={(v) => setPageSize(parseInt(v, 10))}>
+              <SelectTrigger data-testid="player-verify-page-size"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {[10, 25, 100, 250, 500].map((n) => (
+                  <SelectItem key={n} value={String(n)}>{n}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

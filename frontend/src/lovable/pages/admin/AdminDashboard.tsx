@@ -21,7 +21,7 @@ import {
   Users, ListChecks, TrendingUp, Activity, Shield, RotateCcw, Clock, Filter,
   ArrowLeftRight, AlertTriangle, UserX, Monitor, BarChart3, Heart, ScrollText,
   Headphones, ServerCog, DollarSign, Goal, Wrench, Flag, MessageSquare, Gavel,
-  User, Archive,
+  User, Archive, Home,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -135,6 +135,17 @@ export default function AdminDashboard() {
           </div>
           <Button variant="outline" size="sm" onClick={loadAll} disabled={loading} data-testid="admin-refresh-btn">
             Refresh
+          </Button>
+          {/* Iter 228g — Return to user dashboard view (admins can otherwise
+                get stuck on the platform-admin page with no obvious way back). */}
+          <Button
+            variant="default" size="sm"
+            onClick={() => navigate("/dashboard")}
+            data-testid="admin-back-to-user-dashboard"
+            className="gap-1.5"
+          >
+            <Home className="h-4 w-4" />
+            User Dashboard
           </Button>
         </div>
 

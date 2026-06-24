@@ -12,7 +12,7 @@ import os
 import time
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from bson import ObjectId
 
@@ -845,3 +845,115 @@ async def admin_create_player(req: AdminCreatePlayerRequest, request: Request):
     doc["id"] = str(res.inserted_id)
     del doc["_id"]
     return doc
+
+
+# ─── Iter 228g — NHL draft-class sync ─────────────────────────
+
+
+class DraftClassSyncRequest(BaseModel):
+    year: int = Field(default=2026, ge=2008, le=2030)
+    overwrite: bool = False  # If True, update existing players with the new rankings
+
+
+@router.post("/admin/players/sync-draft-class")
+async def admin_sync_draft_class(req: DraftClassSyncRequest, request: Request):
+    """Pulls the public NHL Central Scouting rankings for the given draft
+    year across all 4 categories (NA Skater, INT Skater, NA Goalie, INT
+    Goalie) and upserts each prospect into the players collection with
+    `league_status="Draft Eligible"` + `draft_year=<year>`. Site admin only.
+
+    Endpoint: https://api-web.nhle.com/v1/draft/rankings/{year}/{categoryId}
+    """
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+
+    import httpx
+    import re
+    from datetime import datetime as _dt, timezone as _tz
+
+    CATEGORIES = [
+        (1, "North American Skater"),
+        (2, "International Skater"),
+        (3, "North American Goalie"),
+        (4, "International Goalie"),
+    ]
+    added = 0
+    updated = 0
+    errors: list[str] = []
+    seen_ids: list[str] = []
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for cat_id, cat_name in CATEGORIES:
+            url = f"https://api-web.nhle.com/v1/draft/rankings/{req.year}/{cat_id}"
+            try:
+                r = await client.get(url)
+                if r.status_code != 200:
+                    errors.append(f"{cat_name}: HTTP {r.status_code}")
+                    continue
+                data = r.json()
+            except Exception as ex:
+                errors.append(f"{cat_name}: {ex}")
+                continue
+
+            rankings = data.get("rankings") or []
+            for p in rankings:
+                first = (p.get("firstName") or "").strip()
+                last = (p.get("lastName") or "").strip()
+                if not first and not last:
+                    continue
+                name = f"{first} {last}".strip()
+                position = (p.get("positionCode") or "").upper() or ("G" if "Goalie" in cat_name else "C")
+                team = p.get("lastAmateurClub") or p.get("lastAmateurLeague") or ""
+
+                # Look for an existing player by name + DOB (best dedup signal)
+                query: dict = {"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}}
+                if p.get("birthDate"):
+                    query["date_of_birth"] = p.get("birthDate")
+
+                existing = await _db().players.find_one(query)
+
+                doc_set = {
+                    "name": name,
+                    "position": position,
+                    "primary_position": position,
+                    "team": team,
+                    "league_status": "Draft Eligible",
+                    "player_type": "goalie" if "Goalie" in cat_name else "skater",
+                    "date_of_birth": p.get("birthDate"),
+                    "draft_year": req.year,
+                    "draft_category": cat_name,
+                    "draft_rank_midterm": p.get("midtermRank"),
+                    "draft_rank_final": p.get("finalRank"),
+                    "shoots_catches": p.get("shootsCatches"),
+                    "height_inches": p.get("heightInInches"),
+                    "weight_pounds": p.get("weightInPounds"),
+                    "birth_city": p.get("birthCity"),
+                    "birth_state": p.get("birthStateProvince"),
+                    "birth_country": p.get("birthCountry"),
+                    "source": "nhl_central_scouting",
+                }
+                if existing:
+                    if req.overwrite:
+                        await _db().players.update_one(
+                            {"_id": existing["_id"]}, {"$set": doc_set},
+                        )
+                        updated += 1
+                        seen_ids.append(str(existing["_id"]))
+                else:
+                    import secrets
+                    doc_set["nhl_id"] = 950_000_000 + secrets.randbelow(49_999_999)
+                    doc_set["created_at"] = _dt.now(_tz.utc).isoformat()
+                    doc_set["created_by"] = user.get("_id")
+                    res = await _db().players.insert_one(doc_set)
+                    added += 1
+                    seen_ids.append(str(res.inserted_id))
+
+    return {
+        "year": req.year,
+        "added": added,
+        "updated": updated,
+        "total_processed": added + updated,
+        "errors": errors,
+        "sample_ids": seen_ids[:5],
+    }

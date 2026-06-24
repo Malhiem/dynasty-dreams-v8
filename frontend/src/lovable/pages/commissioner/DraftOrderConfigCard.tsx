@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import HelpTooltip from "@/components/ui/help-tooltip";
 
 export const DRAFT_ORDER_METHOD_META: Record<string, { label: string; description: string }> = {
   nhl_lottery: {
@@ -182,8 +183,16 @@ export default function DraftOrderConfigCard({ leagueId, isCommish, onSaved, emb
 
       {(method === "lottery_generator" || method === "manual_entry") && (
         <div className="rounded-md border border-border p-3 space-y-2" data-testid="draft-order-league-block">
-          <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+          <Label className="text-xs uppercase tracking-wider text-muted-foreground flex items-center">
             {method === "lottery_generator" ? "Lottery Run Date" : "Pick Order Entry Date (optional)"}
+            <HelpTooltip
+              text={
+                method === "lottery_generator"
+                  ? "When the platform will run the live lottery animation. Leave blank to run the lottery manually whenever you're ready. Required if you've invited the league to watch the reveal."
+                  : "The date you've committed to publishing the final pick order. Used for league reminders and the Setup Progress tracker — does NOT lock the order. Leave blank when the timing is still TBD."
+              }
+              testId="help-pick-order-entry-date"
+            />
           </Label>
           <div className="flex items-center gap-2">
             <Input

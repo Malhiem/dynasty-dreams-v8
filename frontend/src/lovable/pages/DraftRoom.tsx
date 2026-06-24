@@ -926,7 +926,6 @@ export default function DraftRoom() {
       }
     })();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedPlayer?.id, activeLeagueCtx?.id]);
   const myTeam = useMemo(() => {
     if (!user || !liveTeams?.length) return null;
@@ -1118,14 +1117,14 @@ export default function DraftRoom() {
           toast.info("You're next up", {
             description: "Your team is on the clock after this pick. Get your queue ready.",
           });
-        } catch {}
+        } catch { /* toast lib missing — non-critical */ }
       } else if (curr === 0 && prev > 0) {
         draftSounds.playOnTheClock();
         try {
           toast.success("You're on the clock!", {
             description: "Make your pick before the timer expires.",
           });
-        } catch {}
+        } catch { /* toast lib missing — non-critical */ }
       }
     }
     prevPicksUntilRef.current = curr;

@@ -20,7 +20,7 @@
  * The dialog is dismissible only by submitting a choice — once
  * timer hit zero we keep nudging until the owner decides.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Bot, ListOrdered, Clock3, Loader2 } from "lucide-react";
 import {
@@ -60,6 +60,12 @@ export default function DeferPickDialog({
   pickNo,
   availableOptions,
   onResolved,
+  // Iter 228g — auto-resolve countdown (seconds). When > 0 and no
+  // choice has been made before it elapses, the dialog auto-submits
+  // `auto-best` so the draft never stalls on an AFK owner. Set to 0
+  // (or null) to disable the auto-resolve safety net.
+  autoResolveSeconds = 30,
+  autoResolveChoice = "auto-best",
 }: {
   open: boolean;
   onClose: () => void;
@@ -67,8 +73,25 @@ export default function DeferPickDialog({
   pickNo: number;
   availableOptions?: string[];
   onResolved?: (choice: string) => void;
+  autoResolveSeconds?: number;
+  autoResolveChoice?: string;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const [secondsLeft, setSecondsLeft] = useState(autoResolveSeconds);
+
+  // Iter 228g — Reset countdown each time the dialog opens
+  useEffect(() => {
+    if (!open) return;
+    setSecondsLeft(autoResolveSeconds);
+  }, [open, autoResolveSeconds, pickNo]);
+
+  // Iter 228g — Tick the countdown once per second while the dialog is open
+  useEffect(() => {
+    if (!open || autoResolveSeconds <= 0) return;
+    if (secondsLeft <= 0) return;
+    const t = setTimeout(() => setSecondsLeft((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [open, secondsLeft, autoResolveSeconds]);
 
   const choices = OPTIONS.filter((o) =>
     !availableOptions?.length || availableOptions.includes(o.value),
@@ -143,6 +166,24 @@ export default function DeferPickDialog({
         <p className="text-[11px] text-muted-foreground italic mt-3">
           Tip: you can save a default draft queue from the Players panel before the draft starts so &quot;Auto-select from queue&quot; always has a fallback ready.
         </p>
+        {/* Iter 228g — countdown safety net */}
+        {autoResolveSeconds > 0 && (
+          <div
+            className="flex items-center justify-between rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 mt-2 text-xs"
+            data-testid="defer-countdown-banner"
+          >
+            <span className="text-amber-200">
+              No choice yet — engine will auto-select
+              <strong className="mx-1 font-semibold">
+                {OPTIONS.find((o) => o.value === autoResolveChoice)?.label || autoResolveChoice}
+              </strong>
+              in
+            </span>
+            <span className="font-bold text-amber-100 tabular-nums" data-testid="defer-countdown-seconds">
+              {secondsLeft}s
+            </span>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
