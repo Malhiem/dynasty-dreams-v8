@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { TradeProposalModal } from "@/lovable/components/trade/TradeProposalModal";
 import TeamLink from "@/lovable/components/TeamLink";
+import TeamLogo from "@/lovable/components/TeamLogo";
 // Iter 207 — Report this user (flag icon next to owner name)
 import ReportUserButton from "@/components/ReportUserButton";
 
@@ -52,6 +53,8 @@ interface TradeBlockItem {
   owner: string;
   owner_id?: string;
   ownerAvatar: string;
+  // Iter 229k — Owner team's preset theme color (hex).
+  ownerThemeColor?: string | null;
   lookingFor: string[];
   trend: "up" | "down" | "stable";
   weeklyPoints?: number;
@@ -271,6 +274,12 @@ const TradeBlock = () => {
     const t = (leagueTeams || []).find(tt => tt.owner_id === ownerId);
     return t?.logo_abbr || "TBD";
   };
+  // Iter 229k — Surface the owner team's preset theme color so the
+  // trade-block owner chip renders in their brand tint (matches Standings).
+  const ownerThemeColorFor = (ownerId: string) => {
+    const t = (leagueTeams || []).find(tt => tt.owner_id === ownerId);
+    return t?.theme_color || null;
+  };
   const realTradeItems: TradeBlockItem[] = useMemo(() => (liveItems || []).map((it: any, idx: number) => ({
     id: it._id || idx,
     name: it.name || "Unknown",
@@ -283,6 +292,7 @@ const TradeBlock = () => {
     owner: ownerNameFor(it.owner_id),
     owner_id: it.owner_id,
     ownerAvatar: ownerAbbrFor(it.owner_id),
+    ownerThemeColor: ownerThemeColorFor(it.owner_id),
     lookingFor: (it.looking_for || []).length ? it.looking_for : ["Best Offer"],
     trend: "stable" as const,
     weeklyPoints: 0,
@@ -763,9 +773,14 @@ const TradeBlockCard = ({
 
           <div className="flex flex-col items-end gap-3">
             <div className="flex items-center gap-2">
-              <div className="h-8 w-8 rounded-full bg-secondary flex items-center justify-center text-xs font-bold">
-                {item.ownerAvatar}
-              </div>
+              {/* Iter 229k — Owner chip uses the team's saved theme_color */}
+              <TeamLogo
+                name={item.owner}
+                abbr={item.ownerAvatar}
+                themeColor={item.ownerThemeColor}
+                size="sm"
+                className="rounded-full"
+              />
               <span className="text-sm text-muted-foreground"><TeamLink name={item.owner} /></span>
               {/* Iter 207 — Report this trade-block owner */}
               {item.owner_id && (

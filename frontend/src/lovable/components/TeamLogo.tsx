@@ -1,4 +1,13 @@
 // @ts-nocheck
+/**
+ * Iter 229k — `theme_color` rendering. When a team has picked a
+ * preset palette (saved via iter 229i), surface it as the chip's
+ * background tint. Falls back to the original gradient when no color
+ * is set so existing teams render unchanged.
+ *
+ * Foreground letters auto-flip to white once a color is applied so
+ * the abbreviation remains legible on any of the 4 preset hues.
+ */
 import { cn } from "@/lib/utils";
 
 const sizeClasses = {
@@ -15,9 +24,10 @@ interface TeamLogoProps {
   abbr?: string;
   size?: keyof typeof sizeClasses;
   className?: string;
+  themeColor?: string | null;
 }
 
-const TeamLogo = ({ logo, name, abbr, size = "md", className }: TeamLogoProps) => {
+const TeamLogo = ({ logo, name, abbr, size = "md", className, themeColor }: TeamLogoProps) => {
   const initials = abbr || name.split(" ").map(w => w[0]).join("").slice(0, 3).toUpperCase();
 
   if (logo) {
@@ -30,13 +40,18 @@ const TeamLogo = ({ logo, name, abbr, size = "md", className }: TeamLogoProps) =
     );
   }
 
+  const hasTheme = !!themeColor;
   return (
     <div
       className={cn(
-        "rounded-lg bg-gradient-to-br from-secondary to-muted flex items-center justify-center font-bold flex-shrink-0",
+        "rounded-lg flex items-center justify-center font-bold flex-shrink-0",
+        !hasTheme && "bg-gradient-to-br from-secondary to-muted",
+        hasTheme && "text-white drop-shadow",
         sizeClasses[size],
-        className
+        className,
       )}
+      style={hasTheme ? { backgroundColor: themeColor } : undefined}
+      data-theme-color={themeColor || undefined}
     >
       {initials}
     </div>

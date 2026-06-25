@@ -77,8 +77,6 @@ import SelectedPlayerCard from "@/lovable/pages/draftroom/SelectedPlayerCard";
 // Iter 174 — Header strip (title + criteria popover + Trade Mode +
 // Trading Block toggles) extracted into its own component.
 import DraftHeaderActions from "@/lovable/pages/draftroom/DraftHeaderActions";
-// Iter 172 — Audio alerts for "next up" + "on the clock" transitions.
-import useDraftSounds, { useTabTitleAlert } from "@/hooks/use-draft-sounds";
 // Iter 174 — trade-block state-blob + polling extracted into a hook.
 import useDraftLiveState from "@/hooks/use-draft-live-state";
 // Iter 229d — three small effect-hooks extracted from DraftRoom to
@@ -88,6 +86,11 @@ import useDraftEligiblePlayers from "@/hooks/use-draft-eligible-players";
 import usePendingPickTrade from "@/hooks/use-pending-pick-trade";
 import useDraftCommissionerActions from "@/hooks/use-draft-commissioner-actions";
 import useDraftPickHandler from "@/hooks/use-draft-pick-handler";
+// Iter 229L — Additional extractions further trimming DraftRoom.tsx
+import useLivePicksByOrigKey from "@/hooks/use-live-picks-by-orig-key";
+import useExpandedPlayerFetch from "@/hooks/use-expanded-player-fetch";
+import useDraftQueueShortlistPersistence from "@/hooks/use-draft-queue-shortlist-persistence";
+import useDraftAudioAlerts from "@/hooks/use-draft-audio-alerts";
 // Iter 229j — Two more JSX bodies extracted from DraftRoom.tsx.
 import UpcomingDraftsPicker from "@/lovable/pages/draftroom/UpcomingDraftsPicker";
 import DraftRoomBottomGrid from "@/lovable/pages/draftroom/DraftRoomBottomGrid";
@@ -144,7 +147,7 @@ export default function DraftRoom() {
   // dedupe collisions (e.g. two CC teams in the same league) by
   // appending a suffix to the second occurrence so each board column
   // gets a stable, unique key.
-  const boardTeams = useMemo<Array<{ id?: string; name: string; abbr: string }>>(() => {
+  const boardTeams = useMemo<Array<{ id?: string; name: string; abbr: string; theme_color?: string | null }>>(() => {
     if (Array.isArray(liveTeams) && liveTeams.length > 0) {
       const seen = new Map<string, number>();
       return liveTeams.map((t: any) => {
@@ -155,10 +158,10 @@ export default function DraftRoom() {
         const count = seen.get(abbr) || 0;
         seen.set(abbr, count + 1);
         if (count > 0) abbr = `${abbr}${count + 1}`;
-        return { id: t.id || t._id, name: t.name, abbr };
+        return { id: t.id || t._id, name: t.name, abbr, theme_color: t.theme_color || null };
       });
     }
-    return mockLeagueTeams as Array<{ id?: string; name: string; abbr: string }>;
+    return mockLeagueTeams as Array<{ id?: string; name: string; abbr: string; theme_color?: string | null }>;
   }, [liveTeams]);
 
   const boardTeamAbbrs = useMemo(() => boardTeams.map((t) => t.abbr), [boardTeams]);
@@ -598,102 +601,16 @@ export default function DraftRoom() {
   // toggle. Empty set = "show all" (default).
   const [selectedOwnerAbbrs, setSelectedOwnerAbbrs] = useState<Set<string>>(new Set());
   // Iter 165 — Live draft picks (with trade_history) for provenance overlays.
-  // Keyed by `${round}|${original_team_id}` so the Draft Board's column-by-
-  // original-slot rendering can look up provenance per tile.
-  const [livePicksByOrigKey, setLivePicksByOrigKey] = useState<Record<string, any>>({});
+  // Iter 229L — Extracted to `useLivePicksByOrigKey` hook.
+  const livePicksByOrigKey = useLivePicksByOrigKey(activeLeagueCtx?.id, liveTeams);
   // Iter 161 — pull the league context BEFORE any effect that references
   // it. The expanded-player fetch hook below uses activeLeagueCtx in its
   // dep array, so it MUST be declared first (TDZ error otherwise).
   // (Iter 170b — hooks moved to component top; see header.)
-  // Iter 165 — Fetch real draft picks (with trade_history) for the active
-  // league + current draft year so provenance tooltips can populate.
-  useEffect(() => {
-    if (!activeLeagueCtx?.id) { setLivePicksByOrigKey({}); return; }
-    const year = new Date().getFullYear();
-    api.get(`/drafts/${activeLeagueCtx.id}/picks?year=${year}`)
-      .then((res) => {
-        const picks = (res.data?.picks || []) as any[];
-        const map: Record<string, any> = {};
-        // Compute all the abbr fallbacks the Draft Board's column header
-        // matcher uses, so picks resolve even when `ownerTeam` doesn't.
-        // Iter 170e — also include backend-derived `logo_abbr` from
-        // liveTeams (which honours `logo_abbr_override` + hyphen-splits)
-        // so chips like BAD (Ice Breakers) or FHF (Five-Hole Fighters)
-        // light up the right picks under the filter.
-        const computeAbbrs = (name: string, teamId?: string): string[] => {
-          if (!name && !teamId) return [];
-          const out: string[] = [];
-          if (teamId && Array.isArray(liveTeams)) {
-            const lt = liveTeams.find((t: any) => (t.id || t._id) === teamId);
-            if (lt?.logo_abbr) out.push(String(lt.logo_abbr).toUpperCase());
-          }
-          if (name) {
-            out.push(name.replace(/\s/g, "").slice(0, 3).toUpperCase());
-            out.push(name.split(" ").map((w) => w[0] || "").join("").toUpperCase());
-            out.push(name.replace(/-/g, " ").split(" ").map((w) => w[0] || "").join("").toUpperCase().slice(0, 4));
-          }
-          return Array.from(new Set(out.filter(Boolean)));
-        };
-        for (const p of picks) {
-          // Iter 166 — annotate each pick with its CURRENT owner's
-          // abbr list so the filter can highlight traded picks under
-          // the new owner.
-          const currentAbbrs = computeAbbrs(p.current_team_name || p.original_team_name || "", p.current_team_id || p.original_team_id);
-          const entry = { ...p, _currentOwnerAbbrs: currentAbbrs };
-          // Primary key — original_team_id
-          map[`${p.round}|${p.original_team_id}`] = entry;
-          // Secondary keys — every column-abbr derivation we might see
-          for (const ab of computeAbbrs(p.original_team_name || "", p.original_team_id)) {
-            map[`${p.round}|abbr:${ab}`] = entry;
-          }
-        }
-        setLivePicksByOrigKey(map);
-      })
-      .catch(() => setLivePicksByOrigKey({}));
-  }, [activeLeagueCtx?.id, liveTeams]);
   // Iter 154 — When the expanded player has a Mongo ObjectId, fetch the real
   // record (NHL stats, contract, schedule) and merge over the lean fallback.
-  useEffect(() => {
-    if (!expandedPlayer?.id) return;
-    // ObjectIds are 24 hex chars; mock IDs (e1, e2 …) don't match.
-    if (!/^[0-9a-fA-F]{24}$/.test(String(expandedPlayer.id))) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const apiClient = (await import("@/lib/api")).default;
-        const params = activeLeagueCtx?.id ? { league_id: activeLeagueCtx.id } : undefined;
-        const { data } = await apiClient.get(`/players/${expandedPlayer.id}`, { params });
-        if (cancelled || !data) return;
-        // Merge real fields onto the existing object — preserves headshot
-        // initials + adapted categoryBreakdown / statsByPeriod from the
-        // mock so the modal renders even on partial data.
-        setExpandedPlayer((prev: any) => ({
-          ...prev,
-          ...data,
-          id: prev.id, // keep the original id so the modal's expand-link href stays valid
-          // Refresh the structured maps with real numbers when available
-          categoryBreakdown: {
-            G:   data.goals ?? prev.categoryBreakdown?.G ?? 0,
-            A:   data.assists ?? prev.categoryBreakdown?.A ?? 0,
-            PTS: data.points ?? prev.categoryBreakdown?.PTS ?? 0,
-            PPP: data.power_play_points ?? prev.categoryBreakdown?.PPP ?? 0,
-            SOG: data.shots ?? prev.categoryBreakdown?.SOG ?? 0,
-            HIT: data.hits ?? prev.categoryBreakdown?.HIT ?? 0,
-            BLK: data.blocks ?? prev.categoryBreakdown?.BLK ?? 0,
-            PIM: data.penalty_minutes ?? prev.categoryBreakdown?.PIM ?? 0,
-          },
-          statsByPeriod: {
-            ...(prev.statsByPeriod || {}),
-            season: data.fantasy_points ?? data.points ?? prev.statsByPeriod?.season ?? 0,
-          },
-          points: data.fantasy_points ?? data.points ?? prev.points ?? 0,
-        }));
-      } catch {
-        /* silent — modal already has the fallback shape */
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [expandedPlayer?.id, activeLeagueCtx?.id]);
+  // Iter 229L — Extracted to `useExpandedPlayerFetch` hook.
+  useExpandedPlayerFetch(expandedPlayer, setExpandedPlayer, activeLeagueCtx?.id);
   const myTeam = useMemo(() => {
     if (!user || !liveTeams?.length) return null;
     const mine = liveTeams.find((t: any) => t.owner_id === user.id);
@@ -738,46 +655,16 @@ export default function DraftRoom() {
     isLeagueManager ||
     (!!myTeam && !!onTheClockBoardEntry && onTheClockBoardEntry.id === (myTeam as any).id);
 
-  // Iter 170j — Hydrate the persisted queue for the user's team on
-  // mount + persist back via PUT whenever the queue changes. Falls
-  // back silently when the user has no team (Storybook / demo).
-  const hasHydratedQueueRef = useRef(false);
-  const hasHydratedShortlistRef = useRef(false);
-  useEffect(() => {
-    if (!(myTeam as any)?.id) return;
-    hasHydratedQueueRef.current = false;
-    hasHydratedShortlistRef.current = false;
-    api.get(`/teams/${(myTeam as any).id}/draft-queue`)
-      .then(({ data }) => {
-        setQueue((data?.draft_queue || []).map(String));
-        hasHydratedQueueRef.current = true;
-      })
-      .catch(() => { hasHydratedQueueRef.current = true; });
-    // Iter 170m — hydrate persisted shortlist too.
-    api.get(`/teams/${(myTeam as any).id}/shortlist`)
-      .then(({ data }) => {
-        setShortlist((data?.shortlist || []).map(String));
-        hasHydratedShortlistRef.current = true;
-      })
-      .catch(() => { hasHydratedShortlistRef.current = true; });
-  }, [(myTeam as any)?.id]);
-  useEffect(() => {
-    if (!(myTeam as any)?.id || !hasHydratedQueueRef.current) return;
-    const t = setTimeout(() => {
-      api.put(`/teams/${(myTeam as any).id}/draft-queue`, { player_ids: queue })
-        .catch(() => {/* non-fatal */});
-    }, 400); // debounce
-    return () => clearTimeout(t);
-  }, [queue, (myTeam as any)?.id]);
-  // Iter 170m — debounced shortlist persist (same pattern).
-  useEffect(() => {
-    if (!(myTeam as any)?.id || !hasHydratedShortlistRef.current) return;
-    const t = setTimeout(() => {
-      api.put(`/teams/${(myTeam as any).id}/shortlist`, { player_ids: shortlist })
-        .catch(() => {/* non-fatal */});
-    }, 400);
-    return () => clearTimeout(t);
-  }, [shortlist, (myTeam as any)?.id]);
+  // Iter 170j — Hydrate the persisted queue + shortlist for the user's
+  // team on mount + debounce-persist on changes.
+  // Iter 229L — Extracted to `useDraftQueueShortlistPersistence` hook.
+  useDraftQueueShortlistPersistence({
+    myTeamId: (myTeam as any)?.id,
+    queue,
+    setQueue,
+    shortlist,
+    setShortlist,
+  });
 
   const handleAddDraftPickToTrade = (ownerAbbr: string, round: number, overall: number, player: any) => {
     if (!myTeam) { toast.error("Join a team in this league to propose trades"); return; }
@@ -860,45 +747,8 @@ export default function DraftRoom() {
     || { value: effectiveCriteria, label: effectiveCriteria === "open" ? "Open · NHL Players" : effectiveCriteria, description: "" };
 
   // ── Iter 172 — Draft Room audio alerts ───────────────────────────────────
-  // Two distinct synthesized tones so a manager who's tabbed away still
-  // hears their turn coming:
-  //   • picksUntilMyTurn transitions to 1 → soft "Next Up" chime
-  //   • picksUntilMyTurn transitions to 0 → urgent "On the Clock" arpeggio
-  // Plus a flashing browser-tab title while the user is on the clock.
-  const draftSounds = useDraftSounds();
-  const prevPicksUntilRef = useRef<number | null>(null);
-  useEffect(() => {
-    const prev = prevPicksUntilRef.current;
-    const curr = picksUntilMyTurn;
-    // Only react to actual transitions and only once a draft is live, so
-    // hydration + initial mount don't blast the user with a chime.
-    if (
-      draftConfig.draftStarted
-      && prev !== null
-      && curr !== null
-      && prev !== curr
-    ) {
-      if (curr === 1 && prev > 1) {
-        draftSounds.playNextUp();
-        try {
-          toast.info("You're next up", {
-            description: "Your team is on the clock after this pick. Get your queue ready.",
-          });
-        } catch { /* toast lib missing — non-critical */ }
-      } else if (curr === 0 && prev > 0) {
-        draftSounds.playOnTheClock();
-        try {
-          toast.success("You're on the clock!", {
-            description: "Make your pick before the timer expires.",
-          });
-        } catch { /* toast lib missing — non-critical */ }
-      }
-    }
-    prevPicksUntilRef.current = curr;
-  }, [picksUntilMyTurn, draftConfig.draftStarted, draftSounds]);
-  // Flash the browser tab title while the user is on the clock and not
-  // currently viewing the page.
-  useTabTitleAlert(draftConfig.draftStarted && picksUntilMyTurn === 0);
+  // Iter 229L — Extracted to `useDraftAudioAlerts` hook.
+  const draftSounds = useDraftAudioAlerts(draftConfig.draftStarted, picksUntilMyTurn);
 
   return (
     <AppLayout>

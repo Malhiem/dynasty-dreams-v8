@@ -126,21 +126,34 @@ export default function DraftBoard({
               style={{ gridTemplateColumns: `48px repeat(${totalTeams}, minmax(72px, 1fr))` }}
             >
               <div className="p-1.5 text-[10px] font-semibold text-muted-foreground uppercase">Rd</div>
-              {boardTeamAbbrs.map((abbr) => (
-                <div
-                  key={abbr}
-                  className={cn(
-                    "p-1.5 text-[10px] font-semibold text-center text-muted-foreground uppercase truncate rounded",
-                    abbr === onTheClockTeam && draftConfig.draftStarted
-                      ? "bg-primary/15 text-primary"
-                      : abbr === myTeam?.abbr
-                      ? "bg-accent/10 text-accent"
-                      : "bg-secondary/50",
-                  )}
-                >
-                  {abbr}
-                </div>
-              ))}
+              {boardTeamAbbrs.map((abbr) => {
+                const teamEntry = boardTeams.find((t) => t.abbr === abbr);
+                const themeColor = teamEntry?.theme_color || null;
+                const isLive = abbr === onTheClockTeam && draftConfig.draftStarted;
+                const isMine = abbr === myTeam?.abbr;
+                // Iter 229k — Render the column header with the team's saved
+                // theme_color when available; live/my-team highlights still
+                // win via ring + colored text to remain visible.
+                return (
+                  <div
+                    key={abbr}
+                    className={cn(
+                      "p-1.5 text-[10px] font-semibold text-center uppercase truncate rounded transition-colors",
+                      themeColor ? "text-white drop-shadow" : "text-muted-foreground",
+                      !themeColor && isLive && "bg-primary/15 text-primary",
+                      !themeColor && !isLive && isMine && "bg-accent/10 text-accent",
+                      !themeColor && !isLive && !isMine && "bg-secondary/50",
+                      themeColor && isLive && "ring-1 ring-primary/70",
+                      themeColor && !isLive && isMine && "ring-1 ring-accent/70",
+                    )}
+                    style={themeColor ? { backgroundColor: themeColor } : undefined}
+                    data-testid={`draft-board-col-header-${abbr}`}
+                    data-theme-color={themeColor || undefined}
+                  >
+                    {abbr}
+                  </div>
+                );
+              })}
             </div>
 
             {allPicks.map((roundPicks, rIdx) => {
