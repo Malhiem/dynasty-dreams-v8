@@ -108,5 +108,16 @@ export function useActiveLeague() {
     setTeamsReloadKey(k => k + 1);
   };
 
+  // Iter 229e — Listen for global "leagues-changed" events fired by
+  // the ClaimTeamInvite flow + any future onboarding paths so the
+  // sidebar dropdown reflects the new membership immediately, without
+  // requiring the user to manually open the dropdown.
+  useEffect(() => {
+    const handler = () => reloadMyLeagues();
+    window.addEventListener("dd:leagues-changed", handler);
+    return () => window.removeEventListener("dd:leagues-changed", handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return { loading, myLeagues, myTeamsByLeague, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague, reloadMyLeagues };
 }

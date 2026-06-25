@@ -38,7 +38,7 @@ import { useActiveLeague } from "@/hooks/use-active-league";
  */
 export default function CurrentLeagueDropdown({ collapsed = false }) {
   const navigate = useNavigate();
-  const { myLeagues, myTeamsByLeague, leagueId, league, myTeam, switchLeague } =
+  const { myLeagues, myTeamsByLeague, leagueId, league, myTeam, switchLeague, reloadMyLeagues } =
     useActiveLeague();
 
   if (!league) return null;
@@ -52,8 +52,15 @@ export default function CurrentLeagueDropdown({ collapsed = false }) {
     navigate(`/leagues/${id}`);
   };
 
+  // Iter 229e — Refresh the leagues list when the dropdown opens so
+  // newly joined leagues (e.g. via slot-locked invite acceptance)
+  // appear without requiring a full page reload.
+  const handleOpenChange = (open) => {
+    if (open && typeof reloadMyLeagues === "function") reloadMyLeagues();
+  };
+
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={handleOpenChange}>
       <DropdownMenuTrigger asChild>
         {collapsed ? (
           <button

@@ -13,7 +13,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import api from "@/lib/api";
+import api, { invalidateApiCache } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -73,6 +73,14 @@ export default function ClaimTeamInvite() {
       // dashboard / /team page falls back to the user's prior default
       // league and feels like the invite "did nothing".
       try { localStorage.setItem("dd_active_league_id", data.league_id); } catch { /* noop */ }
+      // Iter 229e — Bust the cached `/api/leagues?my_leagues=true`
+      // response so the global Current League dropdown in the sidebar
+      // shows the newly joined league the next time it opens.
+      // Also broadcast a custom event so any mounted `useActiveLeague`
+      // instance can self-refresh without needing the user to click
+      // "open dropdown" first.
+      try { invalidateApiCache(/leagues\?my_leagues=true/); } catch { /* noop */ }
+      try { window.dispatchEvent(new CustomEvent("dd:leagues-changed")); } catch { /* noop */ }
       toast.success(isCo
         ? `You've joined ${data.team_name} as a co-owner!`
         : `You've claimed ${data.team_name}!`);
