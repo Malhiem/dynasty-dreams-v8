@@ -85,6 +85,11 @@ import DraftHeaderActions from "@/lovable/pages/draftroom/DraftHeaderActions";
 import useDraftSounds, { useTabTitleAlert } from "@/hooks/use-draft-sounds";
 // Iter 174 — trade-block state-blob + polling extracted into a hook.
 import useDraftLiveState from "@/hooks/use-draft-live-state";
+// Iter 229d — three small effect-hooks extracted from DraftRoom to
+// keep this component focused on rendering + commissioner actions.
+import useUpcomingDrafts from "@/hooks/use-upcoming-drafts";
+import useDraftEligiblePlayers from "@/hooks/use-draft-eligible-players";
+import usePendingPickTrade from "@/hooks/use-pending-pick-trade";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 // Iter 194c — floating "Pick Trade Pending" review pill.
@@ -225,31 +230,13 @@ export default function DraftRoom() {
   // newly drafted player without a full page reload.
   const [rosterReloadTick, setRosterReloadTick] = useState(0);
 
-  // Iter 228n — Upcoming-drafts picker. When the league has 2+ scheduled
-  // drafts within the next 30 days, render a dropdown above the room so
+  // Iter 228n — Upcoming-drafts dropdown: list the next 30 days of
+  // scheduled drafts for this league so commissioners + league
   // managers can switch (e.g. mid-season trade deadline draft vs.
   // off-season rookie draft). Defaults to the soonest.
-  const [upcomingDrafts, setUpcomingDrafts] = useState<any[]>([]);
-  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!activeLeagueCtx?.id) { setUpcomingDrafts([]); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await api.get(`/leagues/${activeLeagueCtx.id}/upcoming-drafts?days=30`);
-        if (cancelled) return;
-        const list = Array.isArray(data?.drafts) ? data.drafts : [];
-        setUpcomingDrafts(list);
-        if (list.length > 0 && !selectedDraftId) {
-          // Default to the soonest scheduled draft.
-          setSelectedDraftId(list[0]._id || list[0].id);
-        }
-      } catch {
-        // Non-fatal — fall back to auto-init.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [activeLeagueCtx?.id]);
+  // Iter 229d — extracted into a dedicated hook.
+  const { upcomingDrafts, selectedDraftId, setSelectedDraftId } =
+    useUpcomingDrafts(activeLeagueCtx?.id);
   useEffect(() => {
     if (!activeLeagueCtx?.id) { setCurrentDraft(null); return; }
     let cancelled = false;
@@ -330,76 +317,18 @@ export default function DraftRoom() {
     return () => { cancelled = true; };
   }, [activeLeagueCtx?.id, selectedDraftId]);
 
-  // Iter 194c — On mount / league change, hydrate any pick trade  // already in `pending_draft_review` so a refreshed Draft Room still
+  // Iter 194c — On mount / league change, hydrate any pick trade
+  // already in `pending_draft_review` so a refreshed Draft Room still
   // shows the floating review pill. Simulates a freshly-received
   // `pick_trade_proposed` WS event for the pill.
-  useEffect(() => {
-    if (!activeLeagueCtx?.id) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await api.get(`/drafts/${activeLeagueCtx.id}/pick-trades/pending`);
-        const pending = (data?.pending || [])[0];
-        if (!cancelled && pending?.trade_id) {
-          setLastChatEvent({
-            type: "draft_chat",
-            kind: "pick_trade_proposed",
-            trade_id: pending.trade_id,
-            _rxAt: Date.now(),
-            _hydrated: true,
-          });
-        }
-      } catch { /* ignore — non-blocking */ }
-    })();
-    return () => { cancelled = true; };
-  }, [activeLeagueCtx?.id]);
-
+  // Iter 229d — extracted into a dedicated hook (moved BELOW
+  // `useDraftRoomSocket` so the destructured `setLastChatEvent` is
+  // initialized before this hook reads it).
   // Iter 170g — Fetch real eligible players for the active draft.
   // Replaces the mock list when a draft exists; the SelectedPlayerCard
   // will then render real NHL stats + headshot.
-  useEffect(() => {
-    if (!currentDraft?._id) return;
-    let cancelled = false;
-    api.get(`/drafts/${currentDraft._id}/eligible-players?limit=100`)
-      .then((res) => {
-        if (cancelled) return;
-        const real = (res.data?.players || []) as any[];
-        if (real.length === 0) return;
-        // Mark already-drafted players based on backend picks
-        const draftedIds = new Set(
-          (currentDraft.picks || [])
-            .map((p: any) => p.player_id)
-            .filter(Boolean)
-            .map(String),
-        );
-        setPlayers(real.map((p) => ({
-          id: p.id,
-          name: p.name,
-          position: p.position,
-          nhlTeam: p.nhlTeam || "—",
-          team_name: p.team_name || "",
-          age: p.age || 0,
-          league: p.league || "NHL",
-          gp: p.gp || 0,
-          g: p.g || 0,
-          a: p.a || 0,
-          pts: p.pts || 0,
-          ranking: p.ranking || 0,
-          drafted: draftedIds.has(String(p.id)),
-          headshot: p.headshot,
-          // SelectedPlayerCard reads headshot_url; alias for compatibility.
-          headshot_url: p.headshot,
-          nhl_id: p.nhl_id,
-          // Iter 173 — prospect / minor-eligibility passthrough so the
-          // Eligible row + SelectedPlayerCard can render the sprout badge
-          // when the league has minors_enabled.
-          player_type: p.player_type,
-          minor_eligible: !!p.minor_eligible,
-        }) as any));
-      })
-      .catch(() => { /* keep mock players */ });
-    return () => { cancelled = true; };
-  }, [currentDraft?._id]);
+  // Iter 229d — extracted into a dedicated hook.
+  useDraftEligiblePlayers(currentDraft, setPlayers);
 
   // Iter 170h — Commissioner check (drives undo/swap UI + ability to
   // pick for any team). `isLeagueManager` is kept for backward-compat
@@ -462,6 +391,10 @@ export default function DraftRoom() {
     boardTeams,
     lastSelfPickRef,
   });
+
+  // Iter 229d — Pending pick-trade hydration must run AFTER
+  // `useDraftRoomSocket` initializes `setLastChatEvent`.
+  usePendingPickTrade(activeLeagueCtx?.id, setLastChatEvent);
 
   // Iter 170h — Commissioner: undo the last N picks.
   const handleUndoPicks = async (count: number = 1) => {
