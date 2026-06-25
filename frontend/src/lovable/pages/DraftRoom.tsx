@@ -62,12 +62,8 @@ import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { toast } from "sonner";
-import DraftChatPanel from "@/lovable/pages/draftroom/DraftChatPanel";
-import TruncatedRosterPanel from "@/lovable/pages/draftroom/TruncatedRosterPanel";
 // Iter 170k — drag-to-reorder queue.
 import SortableQueue from "@/lovable/pages/draftroom/SortableQueue";
-// Iter 171 — Player Search tabs (Eligible / Queue / Shortlist) extracted.
-import PlayerSearchPanel from "@/lovable/pages/draftroom/PlayerSearchPanel";
 // Iter 171 — Draft Live tile + Draft Board extracted into their own files.
 import DraftLiveTile from "@/lovable/pages/draftroom/DraftLiveTile";
 import DraftBoard from "@/lovable/pages/draftroom/DraftBoard";
@@ -92,6 +88,9 @@ import useDraftEligiblePlayers from "@/hooks/use-draft-eligible-players";
 import usePendingPickTrade from "@/hooks/use-pending-pick-trade";
 import useDraftCommissionerActions from "@/hooks/use-draft-commissioner-actions";
 import useDraftPickHandler from "@/hooks/use-draft-pick-handler";
+// Iter 229j — Two more JSX bodies extracted from DraftRoom.tsx.
+import UpcomingDraftsPicker from "@/lovable/pages/draftroom/UpcomingDraftsPicker";
+import DraftRoomBottomGrid from "@/lovable/pages/draftroom/DraftRoomBottomGrid";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 // Iter 194c — floating "Pick Trade Pending" review pill.
@@ -918,40 +917,12 @@ export default function DraftRoom() {
           }}
         />
         <div className="space-y-4">
-          {/* Iter 228n — Upcoming-drafts dropdown. Renders only when the
-              league has 2+ scheduled drafts within the next 30 days.
-              Defaults to the soonest; switching reloads the room. */}
-          {upcomingDrafts.length > 1 && (
-            <div
-              className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2"
-              data-testid="draft-room-upcoming-picker"
-            >
-              <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                Upcoming drafts ({upcomingDrafts.length})
-              </span>
-              <select
-                className="bg-background border border-border rounded px-2 py-1 text-sm flex-1"
-                value={selectedDraftId || ""}
-                onChange={(e) => setSelectedDraftId(e.target.value)}
-                data-testid="draft-room-upcoming-select"
-              >
-                {upcomingDrafts.map((d: any) => {
-                  const id = d._id || d.id;
-                  const when = d.scheduled_time
-                    ? new Date(d.scheduled_time).toLocaleString(undefined, {
-                        month: "short", day: "numeric",
-                        hour: "numeric", minute: "2-digit",
-                      })
-                    : "TBD";
-                  return (
-                    <option key={id} value={id}>
-                      {d.name || "Untitled Draft"} · {when}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-          )}
+          {/* Iter 228n — Upcoming-drafts dropdown. Iter 229j — extracted. */}
+          <UpcomingDraftsPicker
+            upcomingDrafts={upcomingDrafts}
+            selectedDraftId={selectedDraftId}
+            setSelectedDraftId={setSelectedDraftId}
+          />
 
           {/* ── Header row ─────────────────────────────────────────────── */}
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
@@ -1095,82 +1066,42 @@ export default function DraftRoom() {
             players={players}
           />
 
-          {/* ── Bottom section: (LEFT) Player Search tabs · (CENTER) Truncated Roster · (RIGHT) Draft Chat ── */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-            {/* LEFT: Player Search (Iter 150 — Eligible | My Queue | Shortlist)
-                Iter 171 — extracted into PlayerSearchPanel. */}
-            <div className="lg:col-span-4">
-              <PlayerSearchPanel
-                filteredPlayers={filteredPlayers}
-                searchQuery={searchQuery}
-                setSearchQuery={setSearchQuery}
-                positionFilter={positionFilter}
-                setPositionFilter={setPositionFilter}
-                positions={positions}
-                positionColors={positionColors}
-                selectedPlayerId={selectedPlayerId}
-                setSelectedPlayerId={setSelectedPlayerId}
-                tradeBlockPlayerIds={tradeBlockPlayerIds}
-                minorsEnabled={!!(currentDraft as any)?.league_minors_enabled}
-                queue={queue}
-                shortlist={shortlist}
-                queuedPlayers={queuedPlayers}
-                shortlistedPlayers={shortlistedPlayers}
-                setQueue={setQueue}
-                setShortlist={setShortlist}
-                toggleQueue={toggleQueue}
-                toggleShortlist={toggleShortlist}
-                removeFromQueue={removeFromQueue}
-              />
-            </div>
-
-
-            {/* CENTER: Truncated Roster (Iter 150) */}
-            <div className="lg:col-span-4">
-              <TruncatedRosterPanel
-                leagueId={activeLeagueCtx?.id}
-                myTeamId={myTeam?.id}
-                reloadTrigger={rosterReloadTick}
-                teams={(liveTeams || []).map((t: any) => ({
-                  id: t.id,
-                  name: t.name,
-                }))}
-                tradeBlockItems={tradeBlockItems}
-                capEnabled={!!activeLeagueCtx?.cap_enabled}
-                onToggleTradeBlock={toggleMyTeamTradeBlock}
-                onPickPlayerForTrade={(team, player) => {
-                  if (!team || !player) return;
-                  if (!tradeBuilder.isOpen) {
-                    tradeBuilder.openBuilder({ leagueId: activeLeagueCtx?.id, myTeam });
-                  }
-                  tradeBuilder.addAsset({
-                    id: String(player.id),
-                    name: player.name,
-                    position: player.position,
-                    ownerTeamId: team.id,
-                    ownerTeamName: team.name,
-                    capHit: player.cap_hit,
-                  });
-                  toast.success(`Added ${player.name} to trade — ${team.name}`);
-                }}
-              />
-            </div>
-
-            {/* RIGHT: Chat */}
-            <div className="lg:col-span-4">
-              <DraftChatPanel
-                chatMessages={chatMessages}
-                chatInput={chatInput}
-                setChatInput={setChatInput}
-                onSendChat={handleSendChat}
-                mySender={myTeam?.name || "Team Frostbite"}
-                leagueId={activeLeagueCtx?.id}
-                myUserId={user?.id}
-                isCommissioner={!!(activeLeagueCtx?.is_commissioner || activeLeagueCtx?.commissioner_id === user?.id)}
-                league={activeLeagueCtx}
-              />
-            </div>
-          </div>
+          {/* ── Bottom section: PlayerSearch · TruncatedRoster · DraftChat ──
+              Iter 229j — extracted to DraftRoomBottomGrid. */}
+          <DraftRoomBottomGrid
+            filteredPlayers={filteredPlayers}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            positionFilter={positionFilter}
+            setPositionFilter={setPositionFilter}
+            positions={positions}
+            positionColors={positionColors}
+            selectedPlayerId={selectedPlayerId}
+            setSelectedPlayerId={setSelectedPlayerId}
+            tradeBlockPlayerIds={tradeBlockPlayerIds}
+            minorsEnabled={!!(currentDraft as any)?.league_minors_enabled}
+            queue={queue}
+            shortlist={shortlist}
+            queuedPlayers={queuedPlayers}
+            shortlistedPlayers={shortlistedPlayers}
+            setQueue={setQueue}
+            setShortlist={setShortlist}
+            toggleQueue={toggleQueue}
+            toggleShortlist={toggleShortlist}
+            removeFromQueue={removeFromQueue}
+            activeLeagueCtx={activeLeagueCtx}
+            myTeam={myTeam}
+            rosterReloadTick={rosterReloadTick}
+            liveTeams={liveTeams}
+            tradeBlockItems={tradeBlockItems}
+            toggleMyTeamTradeBlock={toggleMyTeamTradeBlock}
+            tradeBuilder={tradeBuilder}
+            chatMessages={chatMessages}
+            chatInput={chatInput}
+            setChatInput={setChatInput}
+            handleSendChat={handleSendChat}
+            user={user}
+          />
         </div>
 
         {/* Iter 153 — Expanded Player Card (window-within-window via PlayerCardModal) */}

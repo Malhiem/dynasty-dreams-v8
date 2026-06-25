@@ -60,6 +60,8 @@ class TeamResponse(BaseModel):
     live_points: float = 0.0
     logo_abbr: Optional[str] = None
     logo_url: Optional[str] = None
+    # Iter 229i — Optional preset theme color, hex e.g. "#0ea5e9".
+    theme_color: Optional[str] = None
     championship_won_at: Optional[datetime] = None
     division_winner_at: Optional[datetime] = None
     conference_winner_at: Optional[datetime] = None
@@ -107,6 +109,7 @@ def team_to_response(team: dict) -> TeamResponse:
         live_points=round(team.get("live_points", 0.0) or 0.0, 2),
         logo_abbr=abbr,
         logo_url=team.get("logo_url"),
+        theme_color=team.get("theme_color"),
         championship_won_at=team.get("championship_won_at"),
         division_winner_at=team.get("division_winner_at"),
         conference_winner_at=team.get("conference_winner_at"),
@@ -192,6 +195,24 @@ class TeamUpdateInput(BaseModel):
     logo_abbr: Optional[str] = Field(None, max_length=3)
     # URL-mode logo — accepts http(s) URLs. File uploads use POST /teams/{id}/logo.
     logo_url: Optional[str] = Field(None, max_length=4096)
+    # Iter 229i — Optional preset theme color (e.g. "#0ea5e9"). The
+    # frontend offers a 4-swatch picker so new owners can brand their
+    # franchise on claim. Stored on the team doc as `theme_color` and
+    # surfaced everywhere the team chip renders (standings, trade
+    # block, draft board).
+    theme_color: Optional[str] = Field(None, max_length=16)
+
+    @field_validator("theme_color")
+    @classmethod
+    def _validate_color(cls, v):
+        if v is None or v == "":
+            return None
+        v = v.strip().lower()
+        # Accept 3-char (#fff) or 6-char (#ffffff) hex.
+        import re as _re
+        if not _re.match(r"^#([0-9a-f]{3}|[0-9a-f]{6})$", v):
+            raise ValueError("theme_color must be a hex string like #0ea5e9")
+        return v
 
     @field_validator("logo_abbr")
     @classmethod
@@ -264,6 +285,10 @@ async def update_team(team_id: str, payload: TeamUpdateInput, request: Request):
     if payload.logo_url is not None and payload.logo_url != team.get("logo_url"):
         updates["logo_url"] = payload.logo_url
         changes["logo_url"] = {"from": bool(team.get("logo_url")), "to": bool(payload.logo_url)}
+    # Iter 229i — Preset theme color.
+    if payload.theme_color is not None and payload.theme_color != team.get("theme_color"):
+        updates["theme_color"] = payload.theme_color
+        changes["theme_color"] = {"from": team.get("theme_color"), "to": payload.theme_color}
 
     if not updates:
         return {"team_id": team_id, "updated": False, "changes": {}}

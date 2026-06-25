@@ -48,6 +48,17 @@ export default function ClaimTeamInvite() {
   const [newTeamName, setNewTeamName] = useState("");
   const [newTeamAbbr, setNewTeamAbbr] = useState("");
   const [savingName, setSavingName] = useState(false);
+  // Iter 229i — 4 preset palettes for the team theme color. Saved to
+  // `team.theme_color` and surfaced across standings / trade-block /
+  // draft-board chip backgrounds. Picked = null falls back to the
+  // app default (no per-team tint).
+  const COLOR_PRESETS: { id: string; label: string; hex: string }[] = [
+    { id: "ice", label: "Ice Blue", hex: "#0ea5e9" },
+    { id: "fire", label: "Forge Red", hex: "#ef4444" },
+    { id: "forest", label: "Pine Green", hex: "#22c55e" },
+    { id: "royal", label: "Royal Gold", hex: "#f59e0b" },
+  ];
+  const [pickedColor, setPickedColor] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,6 +116,7 @@ export default function ClaimTeamInvite() {
         const guess = (user?.name || user?.email || "").split(/\s|@/)[0];
         setNewTeamName(guess ? `${guess.charAt(0).toUpperCase()}${guess.slice(1)}'s Team` : "");
         setNewTeamAbbr("");
+        setPickedColor(null);
         setNameModalOpen(true);
       } else {
         navigate(`/leagues/${data.league_id}`);
@@ -128,6 +140,7 @@ export default function ClaimTeamInvite() {
       await api.put(`/teams/${claimedTeamId}`, {
         name,
         logo_abbr: abbr || undefined,
+        theme_color: pickedColor || undefined,
       });
       toast.success(`Welcome, ${name}!`);
       setNameModalOpen(false);
@@ -290,6 +303,53 @@ export default function ClaimTeamInvite() {
                 className="w-24"
                 data-testid="name-your-team-abbr-input"
               />
+            </div>
+
+            {/* Iter 229i — Team color picker. Picks a hex from the 4
+                presets and tints the live preview chip on the left so
+                the owner sees their brand take shape before saving. */}
+            <div className="space-y-2">
+              <Label>Team color <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <div className="flex items-center gap-3">
+                <div
+                  className="h-10 w-10 rounded-md flex items-center justify-center text-xs font-semibold border border-border"
+                  style={{ backgroundColor: pickedColor || "transparent" }}
+                  data-testid="name-your-team-color-preview"
+                >
+                  <span className={pickedColor ? "text-white drop-shadow" : "text-muted-foreground"}>
+                    {newTeamAbbr || "TEAM"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {COLOR_PRESETS.map((p) => {
+                    const isPicked = pickedColor === p.hex;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setPickedColor(isPicked ? null : p.hex)}
+                        className={`h-7 w-7 rounded-full ring-offset-2 ring-offset-background transition-all hover:scale-110 ${
+                          isPicked ? "ring-2 ring-white scale-110" : "ring-1 ring-border"
+                        }`}
+                        style={{ backgroundColor: p.hex }}
+                        aria-label={p.label}
+                        title={p.label}
+                        data-testid={`name-your-team-color-${p.id}`}
+                      />
+                    );
+                  })}
+                  {pickedColor && (
+                    <button
+                      type="button"
+                      onClick={() => setPickedColor(null)}
+                      className="text-xs text-muted-foreground hover:text-foreground underline"
+                      data-testid="name-your-team-color-clear"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-2">
