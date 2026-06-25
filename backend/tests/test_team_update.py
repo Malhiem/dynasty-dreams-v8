@@ -144,3 +144,59 @@ async def test_only_owner_or_commish_can_edit():
         )
         # Either succeed (commish) or 403
         assert r.status_code in (200, 403)
+
+
+
+@pytest.mark.asyncio
+async def test_theme_color_set_and_clear():
+    """Iter 229L — PUT /api/teams/{id} accepts theme_color as a hex string
+    AND supports explicit clearing via theme_color=null.
+    """
+    async with AsyncClient(base_url=BASE, timeout=20) as client:
+        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        team = await _my_team(client, token)
+        original = team.get("theme_color")
+
+        try:
+            # 1. Set a valid hex color.
+            r = await client.put(
+                f"/api/teams/{team['id']}",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"theme_color": "#0ea5e9"},
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["updated"] is True
+            assert body["changes"]["theme_color"]["to"] == "#0ea5e9"
+
+            fresh = (await client.get(f"/api/teams/{team['id']}")).json()
+            assert fresh["theme_color"] == "#0ea5e9"
+
+            # 2. Clear via explicit null.
+            r = await client.put(
+                f"/api/teams/{team['id']}",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"theme_color": None},
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["updated"] is True, body
+            assert body["changes"]["theme_color"]["to"] is None
+
+            fresh = (await client.get(f"/api/teams/{team['id']}")).json()
+            assert fresh.get("theme_color") in (None, "")
+
+            # 3. Reject invalid hex.
+            r = await client.put(
+                f"/api/teams/{team['id']}",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"theme_color": "not-a-color"},
+            )
+            assert r.status_code in (400, 422)
+        finally:
+            # Restore original value.
+            await client.put(
+                f"/api/teams/{team['id']}",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"theme_color": original},
+            )

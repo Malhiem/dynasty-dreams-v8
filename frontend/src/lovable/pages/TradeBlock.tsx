@@ -774,13 +774,15 @@ const TradeBlockCard = ({
           <div className="flex flex-col items-end gap-3">
             <div className="flex items-center gap-2">
               {/* Iter 229k — Owner chip uses the team's saved theme_color */}
-              <TeamLogo
-                name={item.owner}
-                abbr={item.ownerAvatar}
-                themeColor={item.ownerThemeColor}
-                size="sm"
-                className="rounded-full"
-              />
+              <div data-testid={`trade-block-owner-chip-${item.id}`}>
+                <TeamLogo
+                  name={item.owner}
+                  abbr={item.ownerAvatar}
+                  themeColor={item.ownerThemeColor}
+                  size="sm"
+                  className="rounded-full"
+                />
+              </div>
               <span className="text-sm text-muted-foreground"><TeamLink name={item.owner} /></span>
               {/* Iter 207 — Report this trade-block owner */}
               {item.owner_id && (

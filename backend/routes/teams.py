@@ -286,7 +286,11 @@ async def update_team(team_id: str, payload: TeamUpdateInput, request: Request):
         updates["logo_url"] = payload.logo_url
         changes["logo_url"] = {"from": bool(team.get("logo_url")), "to": bool(payload.logo_url)}
     # Iter 229i — Preset theme color.
-    if payload.theme_color is not None and payload.theme_color != team.get("theme_color"):
+    # Iter 229L — Allow explicit clearing by sending `theme_color: null` (or
+    # empty string, normalized to None by the validator). Detect "field was
+    # explicitly provided" via Pydantic's model_fields_set so we don't
+    # confuse "omitted" with "set to null".
+    if "theme_color" in payload.model_fields_set and payload.theme_color != team.get("theme_color"):
         updates["theme_color"] = payload.theme_color
         changes["theme_color"] = {"from": team.get("theme_color"), "to": payload.theme_color}
 
