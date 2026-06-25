@@ -91,6 +91,7 @@ import useUpcomingDrafts from "@/hooks/use-upcoming-drafts";
 import useDraftEligiblePlayers from "@/hooks/use-draft-eligible-players";
 import usePendingPickTrade from "@/hooks/use-pending-pick-trade";
 import useDraftCommissionerActions from "@/hooks/use-draft-commissioner-actions";
+import useDraftPickHandler from "@/hooks/use-draft-pick-handler";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 // Iter 194c — floating "Pick Trade Pending" review pill.
@@ -552,104 +553,9 @@ export default function DraftRoom() {
   // Iter 229g — handleEarlyStart + handleStartWithTimer were extracted
   // into `useDraftCommissionerActions` (above) alongside undo/swap.
 
-  // Iter 170f — Draft a player. If `chosen` is provided, that player is
-  // taken (used when a manager clicks Draft on the SelectedPlayerCard).
-  // Otherwise the top-ranked undrafted player is auto-picked (Simulate
-  // Pick). In both cases we:
-  //   • advance `currentPick` (clock + on-the-clock recompute)
-  //   • mark the player as drafted
-  //   • push to `picks` array + chat
-  //   • set `lastPickedPlayerId` so the Selected Player card defaults
-  //     to "live view" of the most-recent pick
-  // Iter 170g — When a backend draft exists and is active, POST the
-  // pick to `/drafts/{id}/pick` so it persists, broadcasts to other
-  // managers, and adds the player to the team's roster. Falls back to
-  // pure local state when no backend draft is available (Storybook /
-  // pre-draft demo mode).
-  const handleDraftPlayer = async (chosen?: DraftEligiblePlayer | null) => {
-    const totalPicks = totalTeams * draftConfig.totalRounds;
-    if (draftConfig.currentPick > totalPicks) {
-      toast.info("Draft is complete.");
-      return;
-    }
-    const teamAbbr = getTeamForPick(draftConfig.currentPick);
-    const teamFull = boardTeams.find((t) => t.abbr === teamAbbr);
-    const nextPlayer = chosen && !chosen.drafted
-      ? chosen
-      : players.find((p) => !p.drafted);
-    if (!nextPlayer) {
-      toast.warning("No eligible players left to draft.");
-      return;
-    }
-    const round = Math.ceil(draftConfig.currentPick / totalTeams);
-    const pickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
-
-    // Iter 170g — Backend round-trip when a real draft is active.
-    if (currentDraft?._id && isDraftActive && /^[0-9a-fA-F]{24}$/.test(String(nextPlayer.id))) {
-      try {
-        // Stamp the self-action so our own Socket.IO echo doesn't
-        // double-toast (Iter 170i).
-        lastSelfPickRef.current = `${draftConfig.currentPick}-${nextPlayer.id}`;
-        await api.post(`/drafts/${currentDraft._id}/pick`, { player_id: nextPlayer.id });
-        // Refetch the canonical state so picks + on-clock stay in sync.
-        const { data } = await api.get(`/drafts/${currentDraft._id}`);
-        setCurrentDraft(data);
-        setPicks((data.picks || []).map((p: any) => ({
-          round: p.round, pickInRound: p.pick_in_round, overall: p.overall,
-          team: p.team, player: p.player,
-          auto_picked: !!p.auto_picked, auto_pick_via: p.auto_pick_via,
-        })));
-        setDraftConfig((prev) => ({ ...prev, currentPick: data.current_pick }));
-        setPlayers((prev) =>
-          prev.map((p) => p.id === nextPlayer.id ? { ...p, drafted: true } : p),
-        );
-        setLastPickedPlayerId(String(nextPlayer.id));
-        setSelectedPlayerId(null);
-        setRosterReloadTick((t) => t + 1);
-        toast.success(`${teamFull?.name || teamAbbr} drafted ${nextPlayer.name}`);
-        return;
-      } catch (e: any) {
-        toast.error("Pick failed", { description: e?.response?.data?.detail || e?.message });
-        return;
-      }
-    }
-
-    // Fallback: local-only mock progression (used when no backend draft
-    // exists yet, e.g. before commissioner starts the draft).
-    setPlayers((prev) =>
-      prev.map((p) =>
-        p.id === nextPlayer.id
-          ? { ...p, drafted: true, draftedBy: teamAbbr, draftedRound: round, draftedPick: pickInRound }
-          : p,
-      ),
-    );
-    setPicks((prev) => [
-      ...prev,
-      {
-        round,
-        pickInRound,
-        overall: draftConfig.currentPick,
-        team: teamAbbr,
-        player: { ...nextPlayer, drafted: true, draftedBy: teamAbbr, draftedRound: round, draftedPick: pickInRound },
-      } as DraftPick,
-    ]);
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        id: `pick-${Date.now()}`,
-        type: "pick",
-        sender: "System",
-        text: `${teamFull?.name || teamAbbr} selects ${nextPlayer.name} (${nextPlayer.position}) at #${draftConfig.currentPick}`,
-        timestamp: new Date(),
-      },
-    ]);
-    setLastPickedPlayerId(String(nextPlayer.id));
-    setSelectedPlayerId(null);
-    setDraftConfig((prev) => ({ ...prev, currentPick: prev.currentPick + 1 }));
-  };
-
-  // Kept the old name for the Simulate Pick button binding.
-  const handleSimulatePick = () => handleDraftPlayer();
+  // Iter 170f — Draft a player. (See useDraftPickHandler call below
+  // — moved AFTER the `selectedPlayerId` + roster-reload-tick state
+  // are initialized so the hook's deps don't hit a TDZ.)
 
   // ─── Derived values ────────────────────────────────────────────────────────
 
@@ -664,6 +570,27 @@ export default function DraftRoom() {
   const [tradeBlockMode, setTradeBlockMode] = useState(false);
   // Iter 152 — Selected player for the inline card above the Draft Board
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+
+  // Iter 229h — `handleDraftPlayer` extracted into `useDraftPickHandler`.
+  // Located here (post-state-init) so all setters are defined.
+  const { handleDraftPlayer, handleSimulatePick } = useDraftPickHandler({
+    currentDraft,
+    isDraftActive,
+    draftConfig,
+    totalTeams,
+    players,
+    boardTeams,
+    getTeamForPick,
+    lastSelfPickRef,
+    setCurrentDraft,
+    setPicks,
+    setDraftConfig,
+    setPlayers,
+    setChatMessages,
+    setLastPickedPlayerId,
+    setSelectedPlayerId,
+    setRosterReloadTick,
+  });
   // Iter 153 — Window-within-window expanded player card (PlayerCardModal)
   const [expandedPlayer, setExpandedPlayer] = useState<any>(null);
   // Iter 164 — Draft Board team-ownership filter chips. When ≥1 team is
