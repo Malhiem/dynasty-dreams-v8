@@ -90,6 +90,7 @@ import useDraftLiveState from "@/hooks/use-draft-live-state";
 import useUpcomingDrafts from "@/hooks/use-upcoming-drafts";
 import useDraftEligiblePlayers from "@/hooks/use-draft-eligible-players";
 import usePendingPickTrade from "@/hooks/use-pending-pick-trade";
+import useDraftCommissionerActions from "@/hooks/use-draft-commissioner-actions";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 // Iter 194c — floating "Pick Trade Pending" review pill.
@@ -396,37 +397,20 @@ export default function DraftRoom() {
   // `useDraftRoomSocket` initializes `setLastChatEvent`.
   usePendingPickTrade(activeLeagueCtx?.id, setLastChatEvent);
 
-  // Iter 170h — Commissioner: undo the last N picks.
-  const handleUndoPicks = async (count: number = 1) => {
-    if (!currentDraft?._id) {
-      // Local-only fallback when no backend draft exists.
-      setPicks((prev) => prev.slice(0, Math.max(0, prev.length - count)));
-      setDraftConfig((prev) => ({ ...prev, currentPick: Math.max(1, prev.currentPick - count) }));
-      return;
-    }
-    try {
-      await api.post(`/drafts/${currentDraft._id}/undo`, { count });
-      await refreshDraftState();
-      toast.success(`Undid ${count} pick${count === 1 ? "" : "s"}`);
-    } catch (e: any) {
-      toast.error("Undo failed", { description: e?.response?.data?.detail || e?.message });
-    }
-  };
-
-  // Iter 170h — Commissioner: replace an existing pick's player.
-  const handleSwapPickPlayer = async (overall: number, newPlayerId: string) => {
-    if (!currentDraft?._id) {
-      toast.info("Swap requires an active backend draft.");
-      return;
-    }
-    try {
-      await api.patch(`/drafts/${currentDraft._id}/picks/${overall}`, { new_player_id: newPlayerId });
-      await refreshDraftState();
-      toast.success(`Pick #${overall} swapped`);
-    } catch (e: any) {
-      toast.error("Swap failed", { description: e?.response?.data?.detail || e?.message });
-    }
-  };
+  // Iter 229g — Four backend-touching commissioner actions extracted
+  // into a dedicated hook: undo, swap, start-early, start-with-timer.
+  const {
+    handleUndoPicks,
+    handleSwapPickPlayer,
+    handleEarlyStart,
+    handleStartWithTimer,
+  } = useDraftCommissionerActions({
+    currentDraft,
+    setCurrentDraft,
+    refreshDraftState,
+    setPicks,
+    setDraftConfig,
+  });
 
   // ─── Countdown ──────────────────────────────────────────────────────────────
 
@@ -565,38 +549,8 @@ export default function DraftRoom() {
   }, [picks, draftConfig.totalRounds, getDraftOrder, totalTeams]);
 
   // ─── Draft actions ─────────────────────────────────────────────────────────
-
-  const handleEarlyStart = async () => {
-    // Iter 170g — Backend-aware start: if a draft exists, transition
-    // it to active via /drafts/{id}/start so picks can be POSTed.
-    if (currentDraft?._id && currentDraft.status !== "active") {
-      try {
-        await api.post(`/drafts/${currentDraft._id}/start?early_start=true`);
-        const { data } = await api.get(`/drafts/${currentDraft._id}`);
-        setCurrentDraft(data);
-        setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: true, currentPick: data.current_pick }));
-        return;
-      } catch (e: any) {
-        toast.error("Couldn't start draft", { description: e?.response?.data?.detail || e?.message });
-      }
-    }
-    setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: true }));
-  };
-
-  const handleStartWithTimer = async () => {
-    if (currentDraft?._id && currentDraft.status !== "active") {
-      try {
-        await api.post(`/drafts/${currentDraft._id}/start?early_start=false`);
-        const { data } = await api.get(`/drafts/${currentDraft._id}`);
-        setCurrentDraft(data);
-        setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: false, currentPick: data.current_pick }));
-        return;
-      } catch (e: any) {
-        toast.error("Couldn't start draft", { description: e?.response?.data?.detail || e?.message });
-      }
-    }
-    setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: false }));
-  };
+  // Iter 229g — handleEarlyStart + handleStartWithTimer were extracted
+  // into `useDraftCommissionerActions` (above) alongside undo/swap.
 
   // Iter 170f — Draft a player. If `chosen` is provided, that player is
   // taken (used when a manager clicks Draft on the SelectedPlayerCard).

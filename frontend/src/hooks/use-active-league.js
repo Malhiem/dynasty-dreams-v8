@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { useEffect, useState } from 'react';
 import api, { invalidateApiCache } from '@/lib/api';
+import { useSocket } from '@/hooks/use-socket';
 
 const STORAGE_KEY = 'dd_active_league_id';
 
@@ -21,6 +22,11 @@ export function useActiveLeague() {
   const [myTeam, setMyTeam] = useState(null);
   const [leagueTeams, setLeagueTeams] = useState([]);
   const [teamsReloadKey, setTeamsReloadKey] = useState(0);
+  // Iter 229f — Capture the current user's id so the global socket
+  // listener (below) can subscribe to their personal notification
+  // room (`user_{userId}`) and surface membership-changed events
+  // anywhere in the app.
+  const [meId, setMeId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,12 +49,13 @@ export function useActiveLeague() {
         // round-tripping per click.
         try {
           const meRes = await api.get('/auth/me');
-          const meId = meRes.data?.id;
-          if (meId && Array.isArray(data) && data.length > 0) {
+          const meIdResolved = meRes.data?.id;
+          if (!cancelled && meIdResolved) setMeId(meIdResolved);
+          if (meIdResolved && Array.isArray(data) && data.length > 0) {
             const teamResults = await Promise.all(
               data.map(l =>
                 api.get(`/teams?league_id=${l.id}`)
-                  .then(r => [l.id, (r.data || []).find(t => t.owner_id === meId) || null])
+                  .then(r => [l.id, (r.data || []).find(t => t.owner_id === meIdResolved) || null])
                   .catch(() => [l.id, null]),
               ),
             );
@@ -118,6 +125,24 @@ export function useActiveLeague() {
     return () => window.removeEventListener("dd:leagues-changed", handler);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Iter 229f — Subscribe to the user's personal Socket.IO room
+  // (`user_{userId}`) so that membership changes broadcast by the
+  // backend (e.g. when a commissioner adds the user as a co-owner)
+  // are reflected in the sidebar dropdown instantly, no refresh
+  // required. The backend emits `team_membership_changed` to both
+  // `league_{id}` AND `user_{user_id}` (see `routes/team_invites.py
+  // :accept_team_invite`). This hook covers the user-scoped channel.
+  useSocket(
+    meId ? `user_${meId}` : null,
+    {
+      team_membership_changed: () => {
+        try { invalidateApiCache(/leagues\?my_leagues=true/); } catch { /* noop */ }
+        reloadMyLeagues();
+      },
+    },
+    meId,
+  );
 
   return { loading, myLeagues, myTeamsByLeague, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague, reloadMyLeagues };
 }

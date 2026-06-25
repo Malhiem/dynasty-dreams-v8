@@ -334,6 +334,19 @@ async def accept_team_invite(token: str, request: Request):
                 "user_id": user["_id"],
             },
         )
+        # Iter 229f — Also broadcast to the affected user's personal
+        # room so their global sidebar dropdown can self-refresh even
+        # if they're not actively viewing this league.
+        await broadcast_to_room(
+            f"user_{user['_id']}",
+            "team_membership_changed",
+            {
+                "team_id": inv["team_id"],
+                "league_id": inv["league_id"],
+                "role": role,
+                "user_id": user["_id"],
+            },
+        )
     except Exception:
         pass
 

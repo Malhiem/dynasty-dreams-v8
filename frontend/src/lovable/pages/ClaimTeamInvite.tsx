@@ -18,8 +18,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { ShieldCheck, AlertTriangle, Mail, Users } from "lucide-react";
+import { ShieldCheck, AlertTriangle, Mail, Users, Sparkles } from "lucide-react";
 
 const STATUS_BADGE = {
   pending: { label: "Pending — claim it", className: "border-emerald-500/50 text-emerald-300 bg-emerald-500/10" },
@@ -36,6 +39,15 @@ export default function ClaimTeamInvite() {
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState(null);
+  // Iter 229f — "Name your team" modal that appears immediately after
+  // an owner-role accept. Co-owners don't get this modal since they're
+  // joining a team the primary owner already named.
+  const [nameModalOpen, setNameModalOpen] = useState(false);
+  const [claimedTeamId, setClaimedTeamId] = useState(null);
+  const [claimedLeagueId, setClaimedLeagueId] = useState(null);
+  const [newTeamName, setNewTeamName] = useState("");
+  const [newTeamAbbr, setNewTeamAbbr] = useState("");
+  const [savingName, setSavingName] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,22 +86,62 @@ export default function ClaimTeamInvite() {
       // league and feels like the invite "did nothing".
       try { localStorage.setItem("dd_active_league_id", data.league_id); } catch { /* noop */ }
       // Iter 229e — Bust the cached `/api/leagues?my_leagues=true`
-      // response so the global Current League dropdown in the sidebar
-      // shows the newly joined league the next time it opens.
-      // Also broadcast a custom event so any mounted `useActiveLeague`
-      // instance can self-refresh without needing the user to click
-      // "open dropdown" first.
+      // response + broadcast a custom event so the sidebar dropdown
+      // shows the newly joined league immediately.
       try { invalidateApiCache(/leagues\?my_leagues=true/); } catch { /* noop */ }
       try { window.dispatchEvent(new CustomEvent("dd:leagues-changed")); } catch { /* noop */ }
+      const teamLabel = data.team_name || "your new team";
       toast.success(isCo
-        ? `You've joined ${data.team_name} as a co-owner!`
-        : `You've claimed ${data.team_name}!`);
-      navigate(`/leagues/${data.league_id}`);
+        ? `You've joined ${teamLabel} as a co-owner!`
+        : `You've claimed ${teamLabel}!`);
+      // Iter 229f — Owner-role: pop the "Name your team" modal so the
+      // new owner can replace the "Open Slot N" placeholder in one
+      // step. Co-owners skip — they're joining a team the primary
+      // owner already named.
+      if (!isCo) {
+        setClaimedTeamId(data.team_id);
+        setClaimedLeagueId(data.league_id);
+        // Pre-seed with the user's first name to give them a nudge.
+        const guess = (user?.name || user?.email || "").split(/\s|@/)[0];
+        setNewTeamName(guess ? `${guess.charAt(0).toUpperCase()}${guess.slice(1)}'s Team` : "");
+        setNewTeamAbbr("");
+        setNameModalOpen(true);
+      } else {
+        navigate(`/leagues/${data.league_id}`);
+      }
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Couldn't accept invite");
     } finally {
       setAccepting(false);
     }
+  };
+
+  // Iter 229f — Save the chosen team name + abbreviation via the
+  // existing `PUT /api/teams/{team_id}` whitelist endpoint.
+  const onSaveName = async () => {
+    if (!claimedTeamId) return;
+    const name = newTeamName.trim();
+    const abbr = newTeamAbbr.trim().toUpperCase();
+    if (!name) { toast.error("Pick a team name to continue"); return; }
+    setSavingName(true);
+    try {
+      await api.put(`/teams/${claimedTeamId}`, {
+        name,
+        logo_abbr: abbr || undefined,
+      });
+      toast.success(`Welcome, ${name}!`);
+      setNameModalOpen(false);
+      navigate(`/leagues/${claimedLeagueId}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't save team name");
+    } finally {
+      setSavingName(false);
+    }
+  };
+
+  const onSkipName = () => {
+    setNameModalOpen(false);
+    if (claimedLeagueId) navigate(`/leagues/${claimedLeagueId}`);
   };
 
   if (loading || authLoading) {
@@ -198,6 +250,67 @@ export default function ClaimTeamInvite() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Iter 229f — "Name your team" modal that appears right after
+          a successful owner-role accept. The new owner can set both
+          the team name + 3-char abbreviation in a single step instead
+          of hunting through League Admin > Teams & Owners afterward. */}
+      <Dialog open={nameModalOpen} onOpenChange={(open) => !open && onSkipName()}>
+        <DialogContent className="max-w-md" data-testid="name-your-team-modal">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-amber-300" />
+              Name your team
+            </DialogTitle>
+            <DialogDescription>
+              You&apos;ve claimed the seat. Give your franchise an identity — you can always rename it later from League Admin.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1">
+              <Label htmlFor="claim-team-name-input">Team name</Label>
+              <Input
+                id="claim-team-name-input"
+                value={newTeamName}
+                onChange={(e) => setNewTeamName(e.target.value)}
+                placeholder="e.g. Frostbite Phantoms"
+                maxLength={40}
+                autoFocus
+                data-testid="name-your-team-name-input"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="claim-team-abbr-input">Abbreviation <span className="text-muted-foreground text-xs">(optional, max 3 letters)</span></Label>
+              <Input
+                id="claim-team-abbr-input"
+                value={newTeamAbbr}
+                onChange={(e) => setNewTeamAbbr(e.target.value.toUpperCase().slice(0, 3))}
+                placeholder="FRO"
+                maxLength={3}
+                className="w-24"
+                data-testid="name-your-team-abbr-input"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              variant="ghost"
+              onClick={onSkipName}
+              disabled={savingName}
+              data-testid="name-your-team-skip"
+            >
+              Skip for now
+            </Button>
+            <Button
+              onClick={onSaveName}
+              disabled={savingName || !newTeamName.trim()}
+              data-testid="name-your-team-save"
+            >
+              {savingName ? "Saving…" : "Save & continue"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
