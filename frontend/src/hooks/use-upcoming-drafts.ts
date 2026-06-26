@@ -34,8 +34,16 @@ export function useUpcomingDrafts(leagueId: string | null | undefined) {
         if (cancelled) return;
         const list: UpcomingDraft[] = Array.isArray(data?.drafts) ? data.drafts : [];
         setUpcomingDrafts(list);
+        // Iter 230w — Prefer the ACTIVE draft (live / in-progress) as
+        // the default selection so the manager lands on the draft
+        // they're attending right now instead of a future scheduled
+        // one (e.g. TFHL had Inaugural=active + Winter=scheduled and
+        // the picker was auto-loading Winter). Falls back to the
+        // soonest scheduled draft when no active one exists.
         if (list.length > 0 && !selectedDraftId) {
-          setSelectedDraftId(list[0]._id || list[0].id || null);
+          const liveDraft = list.find((d) => d.status === "active");
+          const defaultDraft = liveDraft || list[0];
+          setSelectedDraftId(defaultDraft._id || defaultDraft.id || null);
         }
       } catch {
         // Non-fatal — fall back to auto-init in the parent.

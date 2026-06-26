@@ -1725,6 +1725,11 @@ async def get_upcoming_drafts(
     are scheduled close together. Returns drafts sorted by
     `scheduled_time` ASC (soonest first). Past drafts and archived
     drafts are excluded.
+
+    Iter 230w — Also surface `active` drafts (already started) so the
+    picker doesn't hide a live draft a manager is mid-way through.
+    Drafts are returned with ACTIVE first (most relevant to "where am
+    I right now?"), then scheduled drafts in chronological order.
     """
     from datetime import timedelta
     now = datetime.now(timezone.utc)
@@ -1732,13 +1737,25 @@ async def get_upcoming_drafts(
 
     query = {
         "league_id": league_id,
-        "status": "scheduled",
+        # Iter 230w — Include "active" drafts alongside "scheduled" so
+        # an in-progress draft remains visible in the picker (was
+        # silently dropped before, which made the Draft Room
+        # auto-select a future scheduled draft instead of the live
+        # one).
+        "status": {"$in": ["scheduled", "active"]},
     }
     cursor = _db().drafts.find(query, {"team_map": 0}).sort("scheduled_time", 1)
     raw = await cursor.to_list(50)
 
     upcoming = []
     for d in raw:
+        # Iter 230w — Active drafts always surface (a live draft can
+        # have a scheduled_time in the past). Scheduled drafts honour
+        # the rolling N-day horizon.
+        if d.get("status") == "active":
+            d["_id"] = str(d["_id"])
+            upcoming.append(d)
+            continue
         sched = d.get("scheduled_time")
         if not sched:
             # Drafts without a scheduled_time still surface — they're
@@ -1757,6 +1774,11 @@ async def get_upcoming_drafts(
             # ago still appear in the picker.
             d["_id"] = str(d["_id"])
             upcoming.append(d)
+
+    # Iter 230w — Active drafts first (most relevant for "where am I
+    # right now?"), then scheduled in chronological order. Within each
+    # bucket, preserve the original soonest-first ordering.
+    upcoming.sort(key=lambda d: (0 if d.get("status") == "active" else 1, d.get("scheduled_time") or ""))
 
     return {
         "league_id": league_id,
