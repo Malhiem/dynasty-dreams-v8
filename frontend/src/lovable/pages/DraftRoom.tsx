@@ -362,6 +362,29 @@ export default function DraftRoom() {
   // Iter 228f — missedPickAction / deferDialogOpen / deferAvailable
   // state hoisted above useDraftAutoInit; see top of component.
 
+  // ─── Draft order + pick grid ───────────────────────────────────────────────
+  // Iter 230v — `getDraftOrder` / `getTeamForPick` / `allPicks` /
+  // `currentRound` / `currentPickInRound` extracted to
+  // `useDraftPickGrid`. Hoisted above the `isMyPickActive` IIFE below
+  // so the hook's `getTeamForPick` is initialised before the IIFE
+  // reads it (avoids a TDZ "can't access lexical declaration
+  // 'getTeamForPick' before initialization" runtime error).
+  const {
+    getDraftOrder: _getDraftOrder,
+    getTeamForPick,
+    allPicks,
+    currentRound,
+    currentPickInRound,
+  } = useDraftPickGrid({
+    boardTeamAbbrs,
+    totalTeams,
+    snakeDraft: draftConfig.snakeDraft,
+    totalRounds: draftConfig.totalRounds,
+    currentPick: draftConfig.currentPick,
+    picks,
+  });
+  void _getDraftOrder; // exported only for future use; not consumed here.
+
   // Iter 228i — Determine whether the active pick belongs to the local
   // user's team WITHOUT referencing the `myTeam` useMemo (which is
   // declared further down the file → would trigger a Temporal Dead
@@ -390,26 +413,6 @@ export default function DraftRoom() {
     deferOnExpiry: shouldDefer,
     onTimerExpired: (_pickNo: number) => setDeferDialogOpen(true),
   });
-
-  // ─── Draft order + pick grid ───────────────────────────────────────────────
-  // Iter 230v — `getDraftOrder` / `getTeamForPick` / `allPicks` /
-  // `currentRound` / `currentPickInRound` extracted to
-  // `useDraftPickGrid`.
-  const {
-    getDraftOrder: _getDraftOrder,
-    getTeamForPick,
-    allPicks,
-    currentRound,
-    currentPickInRound,
-  } = useDraftPickGrid({
-    boardTeamAbbrs,
-    totalTeams,
-    snakeDraft: draftConfig.snakeDraft,
-    totalRounds: draftConfig.totalRounds,
-    currentPick: draftConfig.currentPick,
-    picks,
-  });
-  void _getDraftOrder; // exported only for future use; not consumed here.
 
   // ─── Shortlist & Queue ─────────────────────────────────────────────────────
   // Iter 230v — toggle handlers + memoised collections extracted to

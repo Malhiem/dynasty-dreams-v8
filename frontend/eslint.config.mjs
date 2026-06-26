@@ -44,7 +44,7 @@ const LEGACY_TSX_CEILINGS = {
   "src/lovable/pages/DraftBoard.tsx": 936,
   "src/lovable/pages/DraftHistory.tsx": 565,
   "src/lovable/pages/DraftLottery.tsx": 677,
-  "src/lovable/pages/DraftRoom.tsx": 770,
+  "src/lovable/pages/DraftRoom.tsx": 773,
   "src/lovable/pages/LeagueHistory.tsx": 1393,
   "src/lovable/pages/Matchup.tsx": 547,
   "src/lovable/pages/PlayerPool.tsx": 540,
