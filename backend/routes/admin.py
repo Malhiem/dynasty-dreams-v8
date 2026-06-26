@@ -13,7 +13,7 @@ import time
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Dict, Any
 from bson import ObjectId
 
 from metrics import snapshot as _metrics_snapshot
@@ -1149,3 +1149,51 @@ async def admin_trigger_player_status_change(
         "change_kind": req.change_kind,
         "notifications_sent": sent,
     }
+
+
+
+# ─── Iter 230d — NHL sync diff dispatcher ──────────────────────────────
+
+
+class PlayerDiffSyncRequest(BaseModel):
+    """Patches a player document, then auto-fires the right
+    notifications based on which status fields changed.
+
+    Used today by admins to manually push updates; future NHL data sync
+    workers (live-poll, daily roster scrape) will call the underlying
+    `apply_player_diff_and_notify` directly so they share the
+    "ingestion → notification" pipeline.
+    """
+    fields: Dict[str, Any] = Field(
+        ...,
+        description=(
+            "Player fields to write through. Status fields (injury_status, "
+            "league_status) trigger notifications when they transition."
+        ),
+    )
+
+
+@router.post("/admin/players/{player_id}/diff-sync")
+async def admin_player_diff_sync(
+    player_id: str,
+    req: PlayerDiffSyncRequest,
+    request: Request,
+):
+    """Patch a player + auto-emit notifications for status transitions.
+
+    The underlying `apply_player_diff_and_notify` is the same function
+    a future NHL data sync worker would call — this endpoint lets admins
+    drive it end-to-end today.
+    """
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+
+    from services.nhl_sync_dispatcher import apply_player_diff_and_notify
+    summary = await apply_player_diff_and_notify(
+        _db(),
+        player_id=player_id,
+        new_fields=req.fields,
+        create_notification=_deps.get("create_notification"),
+    )
+    return summary

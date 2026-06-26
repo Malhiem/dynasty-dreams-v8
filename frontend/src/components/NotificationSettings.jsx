@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
-import { Bell, X, RotateCcw, Mail, Smartphone, Megaphone } from "lucide-react";
+import { Bell, X, RotateCcw, Mail, Smartphone, Megaphone, Moon, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -33,14 +34,23 @@ export default function NotificationSettings({ open, onOpenChange }) {
   const [events, setEvents] = useState([]);
   const [categories, setCategories] = useState([]);
   const [prefs, setPrefs] = useState({});
+  const [quietHours, setQuietHours] = useState({ enabled: false, start: "22:00", end: "07:00", timezone_offset_minutes: 0 });
+  const [mutedLeagueIds, setMutedLeagueIds] = useState([]);
+  const [myLeagues, setMyLeagues] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/notifications/preferences");
+      const [{ data }, leaguesRes] = await Promise.all([
+        api.get("/notifications/preferences"),
+        api.get("/leagues?my_leagues=true").catch(() => ({ data: [] })),
+      ]);
       setEvents(data.events || []);
       setCategories(data.categories || []);
       setPrefs(data.preferences || {});
+      setQuietHours(data.quiet_hours || { enabled: false, start: "22:00", end: "07:00", timezone_offset_minutes: 0 });
+      setMutedLeagueIds(data.muted_league_ids || []);
+      setMyLeagues(leaguesRes.data || []);
     } catch (e) {
       toast.error("Couldn't load notification preferences");
     } finally {
@@ -72,6 +82,42 @@ export default function NotificationSettings({ open, onOpenChange }) {
     }
   };
 
+  // Iter 230d — Quiet Hours handlers
+  const saveQuietHours = async (next) => {
+    const prev = quietHours;
+    setQuietHours(next);
+    try {
+      // Always send the client's current UTC offset so the server can do
+      // local-time comparisons without storing user timezones.
+      const tz = -new Date().getTimezoneOffset();
+      await api.put("/notifications/preferences/quiet-hours", {
+        enabled: !!next.enabled,
+        start: next.start,
+        end: next.end,
+        timezone_offset_minutes: tz,
+      });
+    } catch (e) {
+      setQuietHours(prev);
+      toast.error(e?.response?.data?.detail || "Couldn't save Quiet Hours");
+    }
+  };
+
+  // Iter 230d — Per-league mute handler
+  const toggleLeagueMute = async (leagueId, muted) => {
+    const prev = mutedLeagueIds;
+    const next = muted
+      ? Array.from(new Set([...prev, leagueId]))
+      : prev.filter((id) => id !== leagueId);
+    setMutedLeagueIds(next);
+    try {
+      const { data } = await api.put("/notifications/preferences/league-mute", { league_id: leagueId, muted });
+      setMutedLeagueIds(data.muted_league_ids || next);
+    } catch (e) {
+      setMutedLeagueIds(prev);
+      toast.error("Couldn't update league mute");
+    }
+  };
+
   const eventsByCategory = categories.map((c) => ({
     ...c,
     events: events.filter((e) => e.category === c.id),
@@ -91,7 +137,7 @@ export default function NotificationSettings({ open, onOpenChange }) {
             <div>
               <DialogTitle className="text-lg">Notification Settings</DialogTitle>
               <DialogDescription className="text-xs text-[#A1A1AA]">
-                Choose how you'd like to hear from us. In-App fires today; Push & Email are saved for future delivery.
+                Choose how you&apos;d like to hear from us. In-App fires today; Push & Email are saved for future delivery.
               </DialogDescription>
             </div>
           </div>
@@ -125,6 +171,96 @@ export default function NotificationSettings({ open, onOpenChange }) {
             <div className="p-8 text-center text-sm text-[#A1A1AA]">Loading…</div>
           ) : (
             <div className="px-6 py-4 space-y-6">
+              {/* Iter 230d — Quiet Hours */}
+              <section
+                className="rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3"
+                data-testid="notif-quiet-hours-card"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+                      <Moon className="h-4 w-4 text-indigo-300" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">Quiet Hours</h4>
+                      <p className="text-[11px] text-[#71717A]">
+                        Silence in-app + push notifications during a daily window. Email still arrives.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={!!quietHours.enabled}
+                    onCheckedChange={(v) => saveQuietHours({ ...quietHours, enabled: v })}
+                    data-testid="notif-quiet-hours-enabled"
+                  />
+                </div>
+                {quietHours.enabled && (
+                  <div className="flex items-center gap-3 pl-12">
+                    <label className="flex items-center gap-2 text-xs text-[#A1A1AA]">
+                      Start
+                      <Input
+                        type="time"
+                        value={quietHours.start || "22:00"}
+                        onChange={(e) => setQuietHours({ ...quietHours, start: e.target.value })}
+                        onBlur={() => saveQuietHours(quietHours)}
+                        className="h-8 w-28 bg-white/5 border-white/10 text-white"
+                        data-testid="notif-quiet-hours-start"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-[#A1A1AA]">
+                      End
+                      <Input
+                        type="time"
+                        value={quietHours.end || "07:00"}
+                        onChange={(e) => setQuietHours({ ...quietHours, end: e.target.value })}
+                        onBlur={() => saveQuietHours(quietHours)}
+                        className="h-8 w-28 bg-white/5 border-white/10 text-white"
+                        data-testid="notif-quiet-hours-end"
+                      />
+                    </label>
+                  </div>
+                )}
+              </section>
+
+              {/* Iter 230d — Per-league mute */}
+              {myLeagues.length > 0 && (
+                <section
+                  className="rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3"
+                  data-testid="notif-league-mute-card"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-rose-500/15 flex items-center justify-center">
+                      <VolumeX className="h-4 w-4 text-rose-300" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">Mute leagues</h4>
+                      <p className="text-[11px] text-[#71717A]">
+                        Silence every notification for a specific league. They still appear in the bell dropdown.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pl-12">
+                    {myLeagues.map((lg) => {
+                      const muted = mutedLeagueIds.includes(lg.id);
+                      return (
+                        <div
+                          key={lg.id}
+                          className="flex items-center justify-between gap-3 p-2 rounded border border-white/5 hover:border-white/10 transition-colors"
+                          data-testid={`notif-league-mute-row-${lg.id}`}
+                        >
+                          <span className="text-sm text-white truncate">{lg.name}</span>
+                          <Switch
+                            checked={muted}
+                            onCheckedChange={(v) => toggleLeagueMute(lg.id, v)}
+                            data-testid={`notif-league-mute-toggle-${lg.id}`}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
               {eventsByCategory.map((cat) => (
                 <section key={cat.id} data-testid={`notif-cat-${cat.id}`}>
                   <h3 className="text-sm font-semibold text-cyan-300 mb-2 uppercase tracking-wider">

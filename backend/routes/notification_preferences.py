@@ -35,6 +35,68 @@ class PreferenceUpdateInput(BaseModel):
     email: Optional[bool] = None
 
 
+# Iter 230d — Quiet Hours + per-league mute
+class QuietHoursInput(BaseModel):
+    enabled: bool
+    start: Optional[str] = None  # "HH:MM" 24-hour local time
+    end: Optional[str] = None    # "HH:MM" 24-hour local time
+    timezone_offset_minutes: Optional[int] = None  # client's UTC offset
+
+
+class LeagueMuteInput(BaseModel):
+    league_id: str
+    muted: bool
+
+
+def _default_quiet_hours() -> dict:
+    return {
+        "enabled": False,
+        "start": "22:00",
+        "end": "07:00",
+        "timezone_offset_minutes": 0,
+    }
+
+
+def _hhmm_to_minutes(value: str) -> Optional[int]:
+    if not value or ":" not in value:
+        return None
+    try:
+        h, m = value.split(":", 1)
+        h_i = int(h)
+        m_i = int(m)
+        if 0 <= h_i < 24 and 0 <= m_i < 60:
+            return h_i * 60 + m_i
+    except Exception:
+        return None
+    return None
+
+
+def _is_in_quiet_window(quiet: dict) -> bool:
+    """Returns True if the user's current local time is inside the
+    configured quiet-hours window. Cross-midnight windows are supported
+    (e.g. start=22:00, end=07:00). All math is done in the user's
+    self-reported local minutes-of-day so the server doesn't need to
+    care about timezones beyond storing the offset.
+    """
+    if not quiet or not quiet.get("enabled"):
+        return False
+    from datetime import datetime, timezone
+    tz_off = int(quiet.get("timezone_offset_minutes") or 0)
+    now_utc = datetime.now(timezone.utc)
+    # Convert "now" to the user's local minutes-of-day.
+    local_minute = (now_utc.hour * 60 + now_utc.minute - tz_off) % (24 * 60)
+    start_m = _hhmm_to_minutes(quiet.get("start") or "22:00")
+    end_m = _hhmm_to_minutes(quiet.get("end") or "07:00")
+    if start_m is None or end_m is None:
+        return False
+    if start_m == end_m:
+        return False  # Zero-length window = disabled in practice.
+    if start_m < end_m:
+        return start_m <= local_minute < end_m
+    # Cross-midnight window: start > end.
+    return local_minute >= start_m or local_minute < end_m
+
+
 async def _load_or_init(user_id: str) -> Dict[str, Dict[str, bool]]:
     db = _deps["db"]
     doc = await db.notification_preferences.find_one({"user_id": user_id})
@@ -61,16 +123,94 @@ async def _load_or_init(user_id: str) -> Dict[str, Dict[str, bool]]:
     return prefs
 
 
+async def _load_full_doc(user_id: str) -> dict:
+    """Iter 230d — Reads the user's full preference doc (events + quiet
+    hours + muted leagues). Lazy-initializes missing structural sections.
+    """
+    db = _deps["db"]
+    doc = await db.notification_preferences.find_one({"user_id": user_id}) or {}
+    preferences = doc.get("preferences")
+    if not isinstance(preferences, dict):
+        preferences = await _load_or_init(user_id)
+        doc["preferences"] = preferences
+    quiet = doc.get("quiet_hours")
+    if not isinstance(quiet, dict):
+        quiet = _default_quiet_hours()
+    muted = doc.get("muted_league_ids") or []
+    return {
+        "preferences": preferences,
+        "quiet_hours": quiet,
+        "muted_league_ids": list(muted),
+    }
+
+
 @router.get("/notifications/preferences")
 async def get_preferences(request: Request):
     get_current_user = _deps["get_current_user"]
     user = await get_current_user(request)
-    prefs = await _load_or_init(user["_id"])
+    full = await _load_full_doc(user["_id"])
     return {
-        "preferences": prefs,
+        "preferences": full["preferences"],
+        "quiet_hours": full["quiet_hours"],
+        "muted_league_ids": full["muted_league_ids"],
         "events": EVENTS,
         "categories": CATEGORIES,
     }
+
+
+@router.put("/notifications/preferences/quiet-hours")
+async def update_quiet_hours(input: QuietHoursInput, request: Request):
+    """Iter 230d — Set quiet hours (HH:MM start + end + timezone offset).
+    Both `start` and `end` are required when `enabled=True`. The window
+    may cross midnight (e.g. 22:00 → 07:00)."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    quiet = _default_quiet_hours()
+    quiet["enabled"] = bool(input.enabled)
+    if input.start:
+        if _hhmm_to_minutes(input.start) is None:
+            raise HTTPException(status_code=422, detail="start must be HH:MM 24-hour")
+        quiet["start"] = input.start
+    if input.end:
+        if _hhmm_to_minutes(input.end) is None:
+            raise HTTPException(status_code=422, detail="end must be HH:MM 24-hour")
+        quiet["end"] = input.end
+    if input.timezone_offset_minutes is not None:
+        quiet["timezone_offset_minutes"] = int(input.timezone_offset_minutes)
+    await db.notification_preferences.update_one(
+        {"user_id": user["_id"]},
+        {"$set": {"user_id": user["_id"], "quiet_hours": quiet}},
+        upsert=True,
+    )
+    return {"quiet_hours": quiet}
+
+
+@router.put("/notifications/preferences/league-mute")
+async def update_league_mute(input: LeagueMuteInput, request: Request):
+    """Iter 230d — Toggle mute state for a single league. Muting a league
+    silences ALL in-app + push + email notifications scoped to that
+    league_id (the user can still see them after-the-fact in the bell
+    dropdown — they just don't get the live toast/badge bump)."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    if input.muted:
+        await db.notification_preferences.update_one(
+            {"user_id": user["_id"]},
+            {"$set": {"user_id": user["_id"]},
+             "$addToSet": {"muted_league_ids": input.league_id}},
+            upsert=True,
+        )
+    else:
+        await db.notification_preferences.update_one(
+            {"user_id": user["_id"]},
+            {"$set": {"user_id": user["_id"]},
+             "$pull": {"muted_league_ids": input.league_id}},
+            upsert=True,
+        )
+    full = await _load_full_doc(user["_id"])
+    return {"muted_league_ids": full["muted_league_ids"]}
 
 
 @router.put("/notifications/preferences")
@@ -110,19 +250,42 @@ async def reset_preferences(request: Request):
     return {"preferences": prefs}
 
 
-async def channel_enabled(user_id: str, event_id: str, channel: str) -> bool:
+async def channel_enabled(user_id: str, event_id: str, channel: str, league_id: Optional[str] = None) -> bool:
     """Helper used by the emitter side. Returns True if `channel` is enabled
-    for this user+event. Unknown events default to True (don't accidentally
-    swallow notifications added before the catalog catches up). Channels
-    not in the saved doc fall back to the event's default_channels list.
+    for this user+event+league. Unknown events default to True (don't
+    accidentally swallow notifications added before the catalog catches
+    up). Channels not in the saved doc fall back to the event's
+    default_channels list.
+
+    Iter 230d — Now ALSO honours:
+      • Quiet Hours (gate `in_app` + `push` deliveries while the user's
+        local clock is in their configured quiet window).
+      • Per-league mute (gate ALL channels when `league_id` is in the
+        user's `muted_league_ids` list).
     """
-    if event_id not in EVENT_IDS:
-        return True
     db = _deps.get("db")
     if db is None:
         return True
+    if event_id not in EVENT_IDS:
+        return True
+
     doc = await db.notification_preferences.find_one({"user_id": user_id})
-    prefs = (doc or {}).get("preferences") or {}
+    full_doc = doc or {}
+    prefs = full_doc.get("preferences") or {}
+
+    # Per-league mute kills every channel.
+    if league_id:
+        muted = full_doc.get("muted_league_ids") or []
+        if league_id in muted:
+            return False
+
+    # Quiet hours mute in_app + push (email still gets through —
+    # treated like a digest).
+    if channel in ("in_app", "push"):
+        quiet = full_doc.get("quiet_hours")
+        if isinstance(quiet, dict) and _is_in_quiet_window(quiet):
+            return False
+
     cfg = prefs.get(event_id)
     if cfg is None:
         # Fall back to catalog defaults.

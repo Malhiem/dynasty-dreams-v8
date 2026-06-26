@@ -2833,8 +2833,8 @@ async def create_notification(user_id: str, notif_type: str, title: str, message
     push_on = True
     if channel_enabled is not None:
         try:
-            in_app_on = await channel_enabled(user_id, notif_type, "in_app")
-            push_on = await channel_enabled(user_id, notif_type, "push")
+            in_app_on = await channel_enabled(user_id, notif_type, "in_app", league_id)
+            push_on = await channel_enabled(user_id, notif_type, "push", league_id)
         except Exception as e:
             logger.debug(f"channel_enabled check failed: {e}")
 
