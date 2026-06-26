@@ -66,7 +66,7 @@ export default function LiveTeamHeader() {
               <span className="text-[10px] uppercase tracking-widest text-[#00D2FF]">LIVE · {league?.name}</span>
             </div>
             <Link
-              to={`/teams/${myTeam.id}`}
+              to="/roster"
               className="font-heading text-3xl font-bold text-white tracking-tight hover:text-[#00D2FF] transition-colors block"
             >
               {myTeam.name}

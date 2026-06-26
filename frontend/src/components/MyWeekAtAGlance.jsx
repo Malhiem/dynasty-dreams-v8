@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import api from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Calendar, TrendingUp, TrendingDown, Minus, Flame, ArrowRight, Loader2 } from 'lucide-react';
 import { useGlobalSocketEvent } from '@/hooks/use-global-socket';
+import { useActiveLeague } from '@/hooks/use-active-league';
 
 function RankDelta({ delta }) {
   if (delta > 0) {
@@ -28,6 +29,21 @@ function RankDelta({ delta }) {
 }
 
 export default function MyWeekAtAGlance() {
+  const navigate = useNavigate();
+  const { switchLeague, leagueId: activeLeagueId } = useActiveLeague();
+
+  // Iter 230r — Clicking one of my own teams should land me on the
+  // Lovable Roster page (`/roster`) for THAT team, not the legacy
+  // `/teams/{id}` page. If the team belongs to a different league
+  // than the currently active one, switch the active league first so
+  // the Roster page renders the right roster on arrival.
+  const openOwnTeam = (e, s) => {
+    e.preventDefault();
+    if (s.league_id && s.league_id !== activeLeagueId && typeof switchLeague === "function") {
+      switchLeague(s.league_id);
+    }
+    navigate("/roster");
+  };
   const [summaries, setSummaries] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -86,7 +102,8 @@ export default function MyWeekAtAGlance() {
                   {s.league_name}
                 </Link>
                 <Link
-                  to={`/teams/${s.team_id}`}
+                  to="/roster"
+                  onClick={(e) => openOwnTeam(e, s)}
                   data-testid={`week-glance-team-link-${s.team_id}`}
                   className="text-white font-bold text-base hover:text-[#00D2FF] transition-colors truncate block"
                 >
@@ -202,7 +219,8 @@ export default function MyWeekAtAGlance() {
             )}
 
             <Link
-              to={`/teams/${s.team_id}`}
+              to="/roster"
+              onClick={(e) => openOwnTeam(e, s)}
               data-testid={`week-glance-open-team-${s.team_id}`}
               className="mt-3 text-[#00D2FF] text-xs font-semibold flex items-center gap-1 hover:gap-2 transition-all"
             >
