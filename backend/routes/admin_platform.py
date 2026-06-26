@@ -45,6 +45,41 @@ def _iso(dt) -> str | None:
     return dt.isoformat() if hasattr(dt, "isoformat") else str(dt)
 
 
+
+# ─────────────────────────────────────────────────────────────────────
+# Iter 230m — Security threat-model doc surfaced inside admin dashboard
+# ─────────────────────────────────────────────────────────────────────
+import os as _os
+from pathlib import Path as _Path
+
+_SECURITY_DOC_PATH = _Path(__file__).resolve().parents[2] / "SECURITY.md"
+
+
+@router.get("/security-doc")
+async def security_doc(request: Request):
+    """Returns the repo-root SECURITY.md as raw markdown for the admin
+    dashboard "Security" tab. Admins only — the doc references internal
+    audit findings and remediation patterns we don't want to expose to
+    league members or to anonymous traffic.
+    """
+    await _require_admin(request)
+    try:
+        text = _SECURITY_DOC_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="SECURITY.md not found on disk")
+    return {
+        "path": str(_SECURITY_DOC_PATH),
+        "bytes": len(text.encode("utf-8")),
+        "modified_at": (
+            datetime.fromtimestamp(
+                _os.path.getmtime(_SECURITY_DOC_PATH), tz=timezone.utc,
+            ).isoformat()
+            if _SECURITY_DOC_PATH.exists() else None
+        ),
+        "content": text,
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 1. Platform Metrics — high-level counts + 14-day timeseries
 # ─────────────────────────────────────────────────────────────────────

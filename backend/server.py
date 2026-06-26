@@ -125,10 +125,15 @@ def create_impersonation_token(
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 def create_refresh_token(user_id: str) -> str:
+    # SEC P3 — Include `iat` (issued-at). The refresh endpoint compares
+    # this against the user's `password_changed_at` so a password reset
+    # invalidates every refresh token issued before the change.
+    now = datetime.now(timezone.utc)
     payload = {
         "sub": user_id,
-        "exp": datetime.now(timezone.utc) + timedelta(days=7),
-        "type": "refresh"
+        "iat": now,
+        "exp": now + timedelta(days=7),
+        "type": "refresh",
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
@@ -160,6 +165,18 @@ async def get_current_user(request: Request) -> dict:
             exp = payload.get("exp")
             if exp:
                 user["_impersonation_expires_at"] = datetime.fromtimestamp(exp, tz=timezone.utc).isoformat()
+            # SEC P3 — Enforce read-only impersonation. Block ALL state-
+            # changing HTTP methods (POST/PUT/PATCH/DELETE) so an admin
+            # in "view-as" mode cannot accidentally take destructive
+            # actions on the target user's behalf. Safe methods
+            # (GET/HEAD/OPTIONS) fall through.
+            if user["_impersonation_mode"] == "read_only" and request.method.upper() not in (
+                "GET", "HEAD", "OPTIONS",
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Impersonation session is read-only — writes are blocked.",
+                )
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")

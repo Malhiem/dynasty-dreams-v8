@@ -42,10 +42,18 @@ async def register(request: Request, response: Response):
     email = input.email.lower()
     username = input.username.strip()
 
-    if await db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    if await db.users.find_one({"username": username}):
-        raise HTTPException(status_code=400, detail="Username already taken")
+    # SEC P3 — Account-enumeration hardening. Previously the two
+    # branches below leaked which field collided (email vs username),
+    # letting an attacker enumerate one or the other. Now both
+    # collisions return a single generic error.
+    existing = await db.users.find_one(
+        {"$or": [{"email": email}, {"username": username}]}
+    )
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Email or username is already in use",
+        )
 
     # Iter 206 — Content Moderation Phase 3: scan username against
     # banned keywords. If hit, auto-queue for admin review (but allow
@@ -350,6 +358,33 @@ async def refresh_token_endpoint(request: Request, response: Response):
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
 
+        # SEC P3 — Reject refresh tokens minted before the user's most
+        # recent password change. Stops a stolen 7-day refresh token
+        # from outliving a password reset.
+        changed_at = user.get("password_changed_at")
+        token_iat = payload.get("iat")
+        if changed_at and token_iat:
+            # PyJWT exposes iat as int (epoch seconds).
+            if isinstance(token_iat, (int, float)):
+                token_iat_dt = datetime.fromtimestamp(int(token_iat), tz=timezone.utc)
+            else:
+                token_iat_dt = token_iat
+            if isinstance(changed_at, str):
+                try:
+                    changed_at = datetime.fromisoformat(changed_at)
+                except Exception:
+                    changed_at = None
+            # Mongo returns naive UTC; coerce to aware before compare.
+            if changed_at and getattr(changed_at, "tzinfo", None) is None:
+                changed_at = changed_at.replace(tzinfo=timezone.utc)
+            if changed_at and token_iat_dt < changed_at:
+                # Clear the stale cookies so the client re-authenticates.
+                response.delete_cookie("access_token", path="/")
+                response.delete_cookie("refresh_token", path="/")
+                raise HTTPException(
+                    status_code=401, detail="Session revoked — please sign in again",
+                )
+
         user_id = str(user["_id"])
         access_token = create_access_token(user_id, user["email"])
         response.set_cookie(key="access_token", value=access_token, httponly=True,
@@ -370,6 +405,46 @@ async def forgot_password(request: Request):
     db = _db()
     logger = _logger()
     email = input.email.lower()
+
+    # SEC P3 — Rate limit. Per-email (5/h, 1/min) + per-IP (10/h, 3/min)
+    # throttle so the endpoint cannot be used to spam the mail provider
+    # or to enumerate accounts via timing. We always return the same
+    # generic message to preserve the audit-mandated non-enumeration
+    # behavior, even when throttled.
+    now = datetime.now(timezone.utc)
+    client_ip = (
+        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    hour_ago = now - timedelta(hours=1)
+    minute_ago = now - timedelta(minutes=1)
+    email_count_h = await db.password_reset_throttle.count_documents(
+        {"email": email, "ts": {"$gte": hour_ago}}
+    )
+    email_count_m = await db.password_reset_throttle.count_documents(
+        {"email": email, "ts": {"$gte": minute_ago}}
+    )
+    ip_count_h = await db.password_reset_throttle.count_documents(
+        {"ip": client_ip, "ts": {"$gte": hour_ago}}
+    )
+    ip_count_m = await db.password_reset_throttle.count_documents(
+        {"ip": client_ip, "ts": {"$gte": minute_ago}}
+    )
+    if email_count_h >= 5 or email_count_m >= 1 or ip_count_h >= 10 or ip_count_m >= 3:
+        logger.warning(
+            f"forgot-password throttled email={email} ip={client_ip} "
+            f"e/h={email_count_h} e/m={email_count_m} ip/h={ip_count_h} ip/m={ip_count_m}"
+        )
+        # Same response shape as the success branch so attackers can't
+        # use this to enumerate accounts.
+        return {"message": "If an account exists, a reset link has been sent"}
+
+    # Record the attempt FIRST so even a non-existent email contributes
+    # to throttle counts (otherwise enumeration via 429 timing is back).
+    await db.password_reset_throttle.insert_one({
+        "email": email, "ip": client_ip, "ts": now,
+    })
+
     user = await db.users.find_one({"email": email})
     if not user:
         return {"message": "If an account exists, a reset link has been sent"}
@@ -377,7 +452,7 @@ async def forgot_password(request: Request):
     await db.password_reset_tokens.insert_one({
         "token": token,
         "user_id": str(user["_id"]),
-        "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+        "expires_at": now + timedelta(hours=1),
         "used": False,
     })
     logger.info(f"Password reset link: /reset-password?token={token}")
@@ -385,7 +460,7 @@ async def forgot_password(request: Request):
 
 
 @router.post("/auth/reset-password")
-async def reset_password(request: Request):
+async def reset_password(request: Request, response: Response):
     M = _models()
     body = await request.json()
     input = M["ResetPassword"](**body)
@@ -394,11 +469,27 @@ async def reset_password(request: Request):
     token_doc = await db.password_reset_tokens.find_one({"token": input.token, "used": False})
     if not token_doc:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
-    if datetime.now(timezone.utc) > token_doc["expires_at"]:
+    # Mongo returns naive UTC datetimes; coerce to aware before compare.
+    expires_at = token_doc["expires_at"]
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expires_at:
         raise HTTPException(status_code=400, detail="Token expired")
+    # SEC P3 — Invalidate ALL existing sessions on reset. We stamp
+    # `password_changed_at` on the user doc; the refresh endpoint
+    # rejects any refresh token whose `iat` is older. Also clears the
+    # caller's own cookies so the UI flow isn't left in a half-broken
+    # state (next request will 401 → redirect to login).
+    now = datetime.now(timezone.utc)
     await db.users.update_one(
         {"_id": ObjectId(token_doc["user_id"])},
-        {"$set": {"password_hash": hash_password(input.new_password)}},
+        {"$set": {
+            "password_hash": hash_password(input.new_password),
+            "password_changed_at": now,
+        }},
     )
     await db.password_reset_tokens.update_one({"token": input.token}, {"$set": {"used": True}})
+    # Best-effort cookie clear (no harm if the caller wasn't logged in).
+    response.delete_cookie("access_token", path="/")
+    response.delete_cookie("refresh_token", path="/")
     return {"message": "Password reset successfully"}

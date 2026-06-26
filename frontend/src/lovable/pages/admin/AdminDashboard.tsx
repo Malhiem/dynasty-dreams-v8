@@ -21,7 +21,7 @@ import {
   Users, ListChecks, TrendingUp, Activity, Shield, RotateCcw, Clock, Filter,
   ArrowLeftRight, AlertTriangle, UserX, Monitor, BarChart3, Heart, ScrollText,
   Headphones, ServerCog, DollarSign, Goal, Wrench, Flag, MessageSquare, Gavel,
-  User, Archive, Home,
+  User, Archive, Home, ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +60,8 @@ import { RecentAdminActionsFeed } from "./components/RecentAdminActionsFeed";
 // Iter 228e — Archived drafts + Player verification panels
 import ArchivedDraftsPanel from "./components/ArchivedDraftsPanel";
 import PlayerVerifyPanel from "./components/PlayerVerifyPanel";
+// Iter 230m — Security threat-model + audit conventions reference.
+import SecurityDocPanel from "./components/SecurityDocPanel";
 export { ModNotesPanel } from "./components/ModNotesPanel";
 import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_shared";
 
@@ -173,6 +175,7 @@ export default function AdminDashboard() {
             <SidebarTab value="sync" icon={Activity} label="Sync Monitor" testid="admin-tab-sync" />
             <SidebarTab value="support" icon={Headphones} label="Support" testid="admin-tab-support" />
             <SidebarTab value="ops" icon={ServerCog} label="Server Ops" testid="admin-tab-ops" />
+            <SidebarTab value="security" icon={ShieldCheck} label="Security" testid="admin-tab-security" />
             <SidebarTab value="analytics" icon={BarChart3} label="Analytics" testid="admin-tab-analytics" />
             <SidebarTab value="ux-analytics" icon={Activity} label="UX Analytics" testid="admin-tab-ux-analytics" />
             <SidebarTab value="archived-drafts" icon={Archive} label="Archived Drafts" testid="admin-tab-archived-drafts" />
@@ -279,6 +282,11 @@ export default function AdminDashboard() {
           {/* ─── Server Ops (Iter 209) ─── */}
           <TabsContent value="ops" className="space-y-3 mt-0">
             <ServerOpsPanel />
+          </TabsContent>
+
+          {/* ─── Security (Iter 230m) — repo SECURITY.md rendered live ─── */}
+          <TabsContent value="security" className="space-y-3 mt-0">
+            <SecurityDocPanel />
           </TabsContent>
 
           {/* ─── Platform Analytics (Iter 211) ─── */}
