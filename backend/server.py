@@ -242,14 +242,160 @@ fastapi_app = FastAPI(title="Dynasty Dreams API", version="1.0.0")
 api_router = APIRouter(prefix="/api")
 
 # Socket.IO Setup
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
+# SEC-001 fix — restrict CORS to the same FRONTEND_URL used by REST, and
+# require credentials (cookies) so the auth handshake below can read the
+# httpOnly access_token. Wildcard '*' would (a) allow any site to open a
+# socket and (b) browsers refuse to send cookies with `*` so the
+# handshake-auth path would silently break.
+_SOCKET_CORS_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        "SOCKET_CORS_ORIGINS",
+        os.environ.get("FRONTEND_URL", "http://localhost:3000"),
+    ).split(",")
+    if o.strip()
+]
+sio = socketio.AsyncServer(
+    async_mode="asgi",
+    cors_allowed_origins=_SOCKET_CORS_ORIGINS,
+    cors_credentials=True,
+)
 
 # Connected users tracking
 connected_users: Dict[str, Dict[str, Any]] = {}
 
+
+# ─── SEC-001: socket auth helpers ──────────────────────────────────────────
+def _read_access_token_from_environ(environ: dict, auth: Optional[dict]) -> Optional[str]:
+    """Extracts the access_token sent by the client during the Socket.IO
+    handshake. Supports three transports, in order:
+      1. Explicit `auth: { token: "<jwt>" }` payload from `io(url, { auth })`.
+      2. `Authorization: Bearer <jwt>` header (used by mobile clients).
+      3. Cookie header `access_token=<jwt>` (web — httpOnly so JS can't
+         read it but the browser still sends it on same-origin handshake).
+    """
+    if auth and isinstance(auth, dict):
+        tok = auth.get("token") or auth.get("access_token")
+        if tok:
+            return tok
+    auth_header = environ.get("HTTP_AUTHORIZATION", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+    cookie_header = environ.get("HTTP_COOKIE", "")
+    for part in cookie_header.split(";"):
+        part = part.strip()
+        if part.startswith("access_token="):
+            return part[len("access_token=") :]
+    return None
+
+
+async def _authenticate_socket(environ: dict, auth: Optional[dict]) -> Optional[dict]:
+    """Resolves the (verified) user behind this socket handshake.
+
+    Returns `{"user_id": "...", "email": "...", "roles": [...]}` on
+    success, or None when no/invalid token. We DO NOT raise here — the
+    caller decides whether to refuse or downgrade.
+    """
+    token = _read_access_token_from_environ(environ, auth)
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        return None
+    except jwt.InvalidTokenError:
+        return None
+    if payload.get("type") not in ("access", "impersonation"):
+        return None
+    uid = payload.get("sub")
+    if not uid:
+        return None
+    return {
+        "user_id": str(uid),
+        "email": payload.get("email"),
+        "token_type": payload.get("type"),
+    }
+
+
+async def _user_can_join_room(user_id: str, room_id: str) -> bool:
+    """Server-side room membership check.
+
+    • `user_{X}`  — only X itself may join.
+    • `league_{X}` — caller must own a team in the league, be a co-owner,
+                     or be the league commissioner.
+    • `draft_{X}`  — caller must be in the parent league of that draft.
+    • Anything else (admin-broadcast rooms, etc.) — denied by default.
+    """
+    if not room_id:
+        return False
+
+    if room_id.startswith("user_"):
+        return room_id == f"user_{user_id}"
+
+    if room_id.startswith("league_"):
+        league_id = room_id[len("league_") :]
+        return await _is_league_member(user_id, league_id)
+
+    if room_id.startswith("draft_"):
+        draft_id = room_id[len("draft_") :]
+        draft = None
+        if ObjectId.is_valid(draft_id):
+            draft = await db.drafts.find_one(
+                {"_id": ObjectId(draft_id)}, {"league_id": 1}
+            )
+        if not draft:
+            return False
+        return await _is_league_member(user_id, str(draft.get("league_id") or ""))
+
+    # Unknown room namespace — deny. A future maintainer adding a new
+    # room must explicitly extend this allowlist.
+    return False
+
+
+async def _is_league_member(user_id: str, league_id: str) -> bool:
+    if not league_id:
+        return False
+    # Commissioner / admins of the league always count as members.
+    lg = None
+    if ObjectId.is_valid(league_id):
+        lg = await db.leagues.find_one(
+            {"_id": ObjectId(league_id)},
+            {"commissioner_id": 1, "admin_ids": 1, "owner_id": 1},
+        )
+    if lg:
+        if str(lg.get("commissioner_id") or "") == user_id:
+            return True
+        if str(lg.get("owner_id") or "") == user_id:
+            return True
+        admin_ids = [str(a) for a in (lg.get("admin_ids") or [])]
+        if user_id in admin_ids:
+            return True
+    # Otherwise: must own a team or be a co-owner.
+    team = await db.teams.find_one(
+        {
+            "league_id": league_id,
+            "$or": [{"owner_id": user_id}, {"co_owner_ids": user_id}],
+        },
+        {"_id": 1},
+    )
+    return team is not None
+
+
 @sio.event
-async def connect(sid, environ):
-    logger.info(f"Client connected: {sid}")
+async def connect(sid, environ, auth=None):
+    """SEC-001 — reject unauthenticated socket connections.
+
+    Raising ConnectionRefusedError causes socket.io to send a CONNECT
+    error to the client (which our hooks already swallow), preventing
+    the socket from ever entering the server's room registry.
+    """
+    user = await _authenticate_socket(environ, auth)
+    if not user:
+        logger.warning(f"Socket connect rejected (no/invalid token): {sid}")
+        raise socketio.exceptions.ConnectionRefusedError("authentication required")
+    # Stash the verified user on the session so join_room can trust it.
+    await sio.save_session(sid, {"user_id": user["user_id"], "email": user.get("email")})
+    logger.info(f"Client connected: {sid} (user_id={user['user_id']})")
 
 @sio.event
 async def disconnect(sid):
@@ -270,29 +416,56 @@ async def disconnect(sid):
 
 @sio.event
 async def join_room(sid, data):
+    """SEC-001 — authoritative room-join.
+
+    The `user_id` field in `data` is IGNORED — we use the verified
+    user_id from `sio.save_session(sid, ...)` set during `connect`.
+    The caller must pass server-side membership checks for the
+    requested `room_id`.
+    """
     room_id = data.get("room_id")
-    user_id = data.get("user_id")
     if not room_id:
         logger.warning(f"join_room called without room_id for {sid}")
         return
-    await sio.enter_room(sid, room_id)
-    # Also join personal notification room
-    if user_id:
-        await sio.enter_room(sid, f"user_{user_id}")
-    connected_users[sid] = {"room_id": room_id, "user_id": user_id}
-    logger.info(f"Client {sid} joined room {room_id}")
-    # Iter 140 — send the joining client a snapshot of who is already in the room
-    if user_id:
-        existing = {
-            v.get("user_id")
-            for k, v in connected_users.items()
-            if k != sid and v.get("room_id") == room_id and v.get("user_id")
-        }
+
+    session = await sio.get_session(sid)
+    user_id = (session or {}).get("user_id")
+    if not user_id:
+        # Should be impossible after `connect`'s refuse path, but defend
+        # in depth: refuse the join + force the client to reconnect.
+        logger.warning(f"join_room from sid={sid} without authenticated session")
+        await sio.disconnect(sid)
+        return
+
+    if not await _user_can_join_room(user_id, room_id):
+        logger.warning(
+            f"join_room denied: user_id={user_id} room_id={room_id} sid={sid}"
+        )
+        # Tell the client so it doesn't sit waiting for events.
         await sio.emit(
-            'presence_state',
-            {"room_id": room_id, "user_ids": list(existing)},
+            "room_join_denied",
+            {"room_id": room_id, "reason": "not_authorized"},
             to=sid,
         )
+        return
+
+    await sio.enter_room(sid, room_id)
+    # Personal notification room is always the AUTHENTICATED user's room
+    # (never a client-supplied id) — prevents notification eavesdropping.
+    await sio.enter_room(sid, f"user_{user_id}")
+    connected_users[sid] = {"room_id": room_id, "user_id": user_id}
+    logger.info(f"Client {sid} joined room {room_id} (user_id={user_id})")
+    # Iter 140 — send the joining client a snapshot of who is already in the room
+    existing = {
+        v.get("user_id")
+        for k, v in connected_users.items()
+        if k != sid and v.get("room_id") == room_id and v.get("user_id")
+    }
+    await sio.emit(
+        'presence_state',
+        {"room_id": room_id, "user_ids": list(existing)},
+        to=sid,
+    )
     await sio.emit('user_joined', {"user_id": user_id, "room_id": room_id}, room=room_id)
 
 @sio.event

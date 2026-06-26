@@ -36,6 +36,52 @@ def setup(deps: dict) -> None:
     _deps.update(deps)
 
 
+# ─── SEC-002: auth + league-membership helpers ───────────────────────
+async def _require_league_member_for_team(request: Request, team: dict) -> dict:
+    """Returns the authenticated caller iff they belong to the team's
+    league (team owner / co-owner, league commissioner / admin, or
+    platform admin). Raises 401/403 otherwise."""
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    if "admin" in (user.get("roles") or []):
+        return user
+    uid = str(user["_id"])
+    if str(team.get("owner_id") or "") == uid:
+        return user
+    if uid in [str(c) for c in (team.get("co_owner_ids") or [])]:
+        return user
+    db = _deps["db"]
+    league_id = team.get("league_id")
+    if league_id:
+        try:
+            league_oid = ObjectId(league_id)
+        except Exception:
+            league_oid = None
+        if league_oid:
+            lg = await db.leagues.find_one(
+                {"_id": league_oid},
+                {"commissioner_id": 1, "admin_ids": 1, "owner_id": 1},
+            )
+            if lg:
+                if str(lg.get("commissioner_id") or "") == uid:
+                    return user
+                if str(lg.get("owner_id") or "") == uid:
+                    return user
+                if uid in [str(a) for a in (lg.get("admin_ids") or [])]:
+                    return user
+        # Last resort: ANY team in the league owned/co-owned by the caller.
+        peer = await db.teams.find_one(
+            {
+                "league_id": str(league_id),
+                "$or": [{"owner_id": uid}, {"co_owner_ids": uid}],
+            },
+            {"_id": 1},
+        )
+        if peer:
+            return user
+    raise HTTPException(status_code=403, detail="Not a member of this league")
+
+
 # ─── Helpers ────────────────────────────────────────────────────
 
 
@@ -129,14 +175,19 @@ class RosterAction(BaseModel):
 
 
 @router.get("/roster/{team_id}")
-async def get_roster(team_id: str):
+async def get_roster(team_id: str, request: Request):
     """Light list — used by player-picker selects + trade modals."""
     db = _deps["db"]
     calculate_fantasy_points = _deps["calculate_fantasy_points"]
+    # SEC-002 — auth first to avoid existence probing.
+    get_current_user = _deps["get_current_user"]
+    await get_current_user(request)
 
     team = await db.teams.find_one({"_id": ObjectId(team_id)})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    # SEC-002 — gate to league members.
+    await _require_league_member_for_team(request, team)
 
     roster_players = team.get("roster", [])
     lineup = team.get("lineup") or {}
@@ -289,7 +340,7 @@ def _synthesize_contract(*, is_g: bool, fpts_season: float, points: int, nhl_id,
 
 
 @router.get("/roster/{team_id}/detail")
-async def get_roster_detail(team_id: str):
+async def get_roster_detail(team_id: str, request: Request):
     """Rich roster payload for the Lovable Team page.
 
     Returns per-player season + live stats, category breakdown, synthesized
@@ -299,10 +350,15 @@ async def get_roster_detail(team_id: str):
     db = _deps["db"]
     calculate_fantasy_points = _deps["calculate_fantasy_points"]
     _safe_object_id = _deps["_safe_object_id"]
+    # SEC-002 — auth first to avoid existence probing.
+    get_current_user = _deps["get_current_user"]
+    await get_current_user(request)
 
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    # SEC-002 — gate to league members.
+    await _require_league_member_for_team(request, team)
 
     league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
     config = await db.scoring_configs.find_one({"league_id": team["league_id"]})

@@ -33,6 +33,53 @@ def setup(deps: dict) -> None:
     _deps.update(deps)
 
 
+# ─── SEC-002: auth + league-membership helpers ───────────────────────
+async def _require_user(request: Request) -> dict:
+    """Resolves the caller via the shared `get_current_user` dependency
+    injected by server.py. Raises 401 when unauthenticated."""
+    get_current_user = _deps["get_current_user"]
+    return await get_current_user(request)
+
+
+async def _require_league_member(request: Request, league_id: str) -> dict:
+    """Returns the authenticated user iff they belong to `league_id`
+    (own/co-own a team, or are the commissioner / a league admin /
+    a platform admin). Raises 403 otherwise."""
+    user = await _require_user(request)
+    if (user.get("roles") or []) and "admin" in (user.get("roles") or []):
+        return user  # platform admins bypass per-league checks
+    db = _deps["db"]
+    _safe_object_id = _deps["_safe_object_id"]
+    uid = str(user["_id"])
+    league_oid = None
+    try:
+        league_oid = _safe_object_id(league_id, "league_id")
+    except HTTPException:
+        league_oid = None
+    if league_oid is not None:
+        lg = await db.leagues.find_one(
+            {"_id": league_oid},
+            {"commissioner_id": 1, "admin_ids": 1, "owner_id": 1},
+        )
+        if lg:
+            if str(lg.get("commissioner_id") or "") == uid:
+                return user
+            if str(lg.get("owner_id") or "") == uid:
+                return user
+            if uid in [str(a) for a in (lg.get("admin_ids") or [])]:
+                return user
+    team = await db.teams.find_one(
+        {
+            "league_id": str(league_id),
+            "$or": [{"owner_id": uid}, {"co_owner_ids": uid}],
+        },
+        {"_id": 1},
+    )
+    if team:
+        return user
+    raise HTTPException(status_code=403, detail="Not a member of this league")
+
+
 # ─── Pydantic models (extracted from server.py iter 108) ─────────────
 class TeamCreate(BaseModel):
     name: str
@@ -171,7 +218,14 @@ async def create_team(input: TeamCreate, request: Request):
 
 
 @router.get("/teams", response_model=List[TeamResponse])
-async def get_teams(league_id: Optional[str] = None, request: Request = None):
+async def get_teams(request: Request, league_id: Optional[str] = None):
+    # SEC-002 — list-teams is a per-league read; require league
+    # membership when scoped to one league, and require any
+    # authenticated user otherwise (used by the user dashboard).
+    if league_id:
+        await _require_league_member(request, league_id)
+    else:
+        await _require_user(request)
     db = _deps["db"]
     query = {}
     if league_id:
@@ -181,12 +235,17 @@ async def get_teams(league_id: Optional[str] = None, request: Request = None):
 
 
 @router.get("/teams/{team_id}", response_model=TeamResponse)
-async def get_team(team_id: str):
+async def get_team(team_id: str, request: Request):
+    # SEC-002 — require auth BEFORE the team lookup so attackers can't
+    # probe team-id existence via the 404-vs-401 difference.
+    await _require_user(request)
     db = _deps["db"]
     _safe_object_id = _deps["_safe_object_id"]
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    # ...and then enforce league membership.
+    await _require_league_member(request, str(team.get("league_id") or ""))
     return team_to_response(team)
 
 
@@ -649,11 +708,15 @@ async def get_dead_cap_schedule(team_id: str, request: Request):
     per-year entries here using each player's `yearsRemaining` so they show up
     on the Dead Cap tile/dropdown and the By-Year bar chart alongside buyouts.
     """
+    # SEC-002 — auth first to avoid existence probing.
+    await _require_user(request)
     db = _deps["db"]
     _safe_object_id = _deps["_safe_object_id"]
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    # SEC-002 — dead-cap exposes contract data; gate to league members.
+    await _require_league_member(request, str(team.get("league_id") or ""))
     schedule = list(team.get("dead_cap_schedule") or [])
 
     # ── Iter 113 — Inline salary-retention rows for *legacy* trades that
@@ -778,11 +841,15 @@ async def save_depth_projections(team_id: str, payload: DepthProjectionsInput, r
 
 @router.get("/teams/{team_id}/depth-projections")
 async def get_depth_projections(team_id: str, request: Request):
+    # SEC-002 — auth first.
+    await _require_user(request)
     db = _deps["db"]
     _safe_object_id = _deps["_safe_object_id"]
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    # SEC-002 — gate to league members.
+    await _require_league_member(request, str(team.get("league_id") or ""))
     return {"team_id": team_id, "projections": team.get("depth_projections") or {}}
 
 
@@ -823,11 +890,15 @@ async def save_depth_lineup(team_id: str, payload: DepthLineupInput, request: Re
 
 @router.get("/teams/{team_id}/depth-lineup")
 async def get_depth_lineup(team_id: str, request: Request):
+    # SEC-002 — auth first.
+    await _require_user(request)
     db = _deps["db"]
     _safe_object_id = _deps["_safe_object_id"]
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    # SEC-002 — gate to league members.
+    await _require_league_member(request, str(team.get("league_id") or ""))
     return {"team_id": team_id, "lineups": team.get("depth_lineup") or {}}
 
 
@@ -854,10 +925,14 @@ async def get_team_roster_truncated(
     db = _deps["db"]
     _safe_object_id = _deps["_safe_object_id"]
     calculate_fantasy_points = _deps.get("calculate_fantasy_points")
+    # SEC-002 — auth first.
+    await _require_user(request)
 
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    # SEC-002 — gate to league members.
+    await _require_league_member(request, str(team.get("league_id") or ""))
 
     # 1) Canonical: team.roster (list[str ids]) — matches /api/roster/{team_id}
     player_ids = list(team.get("roster") or [])
