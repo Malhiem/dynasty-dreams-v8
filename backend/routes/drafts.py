@@ -2129,7 +2129,70 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
     await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": system_msg}})
     await _broadcast(f"draft_{draft_id}", "draft_chat", system_msg)
 
+    # Iter 230y — When a commissioner starts a draft EARLY without a
+    # clock, notify the on-the-clock manager (pick #1's owner) so they
+    # know it's their turn AND that the clock will auto-activate at the
+    # originally-scheduled time. Without this hook, no notification
+    # fires until the first pick is made — which can leave the #1
+    # manager unaware they're up until someone in chat pings them.
+    if early_start:
+        try:
+            from routes.notification_events import EVT_DRAFT_YOUR_TURN
+            updated_draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+            clock_hint = await _early_start_clock_msg(updated_draft or draft)
+            team_abbrs = (updated_draft or draft).get("team_abbrs") or []
+            first_abbr = team_abbrs[0] if team_abbrs else None
+            team_map = (updated_draft or draft).get("team_map") or {}
+            first_team_id = (team_map.get(first_abbr) or {}).get("id") if first_abbr else None
+            if first_team_id:
+                first_team = await _db().teams.find_one(
+                    {"_id": ObjectId(first_team_id)},
+                    {"owner_id": 1, "co_owner_ids": 1, "name": 1},
+                )
+                if first_team:
+                    owners = [first_team.get("owner_id")] + list(first_team.get("co_owner_ids") or [])
+                    league_id_str = str(draft["league_id"])
+                    for uid in [u for u in owners if u]:
+                        await create_notification(
+                            uid,
+                            EVT_DRAFT_YOUR_TURN,
+                            "You're on the clock!",
+                            "Pick #1 — make your selection." + clock_hint,
+                            league_id_str,
+                            "/draft-room",
+                        )
+        except Exception as e:
+            logger.debug(f"start_draft early_start notification skipped: {e}")
+
     return {"message": "Draft started", "early_start": early_start}
+
+
+async def _early_start_clock_msg(draft: dict) -> str:
+    """Iter 230y — Render the per-notification clock-activation hint
+    used when the commissioner starts a draft with `early_start=True`.
+
+    Returns the empty string if the clock isn't going to auto-activate
+    (no `scheduled_time` set or it's already in the past). Otherwise
+    returns a short ` Clock activates HH:MM (your time) — pick now if
+    you want to, or wait for the clock.` suffix the caller appends to
+    the standard `You're on the clock!` body.
+    """
+    if not draft.get("early_start"):
+        return ""
+    sched = draft.get("scheduled_time")
+    if not sched:
+        return ""
+    try:
+        sched_dt = datetime.fromisoformat(str(sched).replace("Z", "+00:00"))
+    except Exception:
+        return ""
+    if sched_dt <= datetime.now(timezone.utc):
+        return ""
+    iso = sched_dt.isoformat().replace("+00:00", "Z")
+    return (
+        " The clock will start at " + iso +
+        " — pick now if you want to, or wait."
+    )
 
 @router.post("/drafts/{draft_id}/pick")
 async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: Request):
@@ -2276,6 +2339,12 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         # 2. Look ahead — find the next 5 picks and notify their owners
         # with progressively-targeted events (turn → on deck → coming up).
         if new_status == "active":
+            # Iter 230y — When the draft is running in early-start /
+            # no-clock mode, append the clock-activation hint to the
+            # "your turn" body so the on-the-clock manager knows they
+            # can take their time until the originally-scheduled clock
+            # kicks in (or pick early if they want to).
+            early_clock_hint = await _early_start_clock_msg(draft)
             for offset in range(0, 5):
                 future_pick = next_pick + offset
                 if future_pick > total_picks:
@@ -2288,7 +2357,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
                 if offset == 0:
                     event = EVT_DRAFT_YOUR_TURN
                     title = "You're on the clock!"
-                    body = f"Pick #{future_pick} — make your selection."
+                    body = f"Pick #{future_pick} — make your selection." + early_clock_hint
                 elif offset == 1:
                     event = EVT_DRAFT_ON_DECK
                     title = "You're on deck"

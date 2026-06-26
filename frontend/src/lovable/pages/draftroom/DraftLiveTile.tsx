@@ -154,6 +154,24 @@ export default function DraftLiveTile({
               <p className="text-xs text-muted-foreground">
                 Round {currentRound}, Pick {currentPickInRound} (#{draftConfig.currentPick} overall)
               </p>
+              {/* Iter 230y — No-clock heads-up for the team on the clock.
+                  Tells the manager when the clock will auto-activate and
+                  that they may pick now if they wish. */}
+              {draftConfig.earlyStart && countdown > 0
+                && !!myTeam && onTheClockTeamFull?.id === myTeam.id && (
+                <div
+                  className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-200 text-left flex items-start gap-1.5"
+                  data-testid="draft-room-early-start-banner"
+                >
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-300" />
+                  <span>
+                    <span className="font-semibold text-amber-100">You&apos;re up!</span>{" "}
+                    The clock activates in{" "}
+                    <span className="font-mono font-semibold text-amber-100">{formatCountdown(countdown)}</span>
+                    {" "}— pick now if you want, or wait.
+                  </span>
+                </div>
+              )}
               {currentDraft?.player_criteria && (
                 <p
                   className="text-[10px] uppercase tracking-wider text-muted-foreground/70"

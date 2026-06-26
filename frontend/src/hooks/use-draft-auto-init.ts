@@ -93,6 +93,11 @@ export default function useDraftAutoInit({
           ...prev,
           currentPick: typeof d.current_pick === "number" ? d.current_pick : prev.currentPick,
           draftStarted: d.status === "active",
+          // Iter 230y — Hydrate `early_start` so the no-clock UX
+          // (DraftLiveTile banner, `isClockActive` short-circuit,
+          // "No Clock" badge in the countdown ribbon) renders
+          // correctly when a manager refreshes mid-draft.
+          earlyStart: !!d.early_start,
           totalRounds: d.total_rounds || prev.totalRounds,
           pickTimerSeconds: d.time_per_pick || prev.pickTimerSeconds,
           // Iter 228n — Anchor the "Draft starts in" countdown.
