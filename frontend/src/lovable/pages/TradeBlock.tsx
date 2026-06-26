@@ -1,51 +1,28 @@
 // @ts-nocheck
-import { useState, useMemo, useEffect } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
 import { useTradeBlockUiPrefs } from "@/hooks/use-trade-block-ui-prefs";
-import { useSocket } from "@/hooks/use-socket";
 import { useAuth } from "@/contexts/AuthContext";
-import api from "@/lib/api";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
-import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Plus, ArrowRightLeft, MessageSquare, TrendingUp, TrendingDown, Crown,
-  X, ArrowUp, ArrowDown, EyeOff,
-} from "lucide-react";
+import { Plus } from "lucide-react";
 import { TradeProposalModal } from "@/lovable/components/trade/TradeProposalModal";
-import TeamLink from "@/lovable/components/TeamLink";
-import TeamLogo from "@/lovable/components/TeamLogo";
-// Iter 207 — Report this user (flag icon next to owner name)
-import ReportUserButton from "@/components/ReportUserButton";
 // Iter 230 — Tile + List view extracted into their own components.
 import TradeBlockCard from "@/lovable/pages/trade-block/TradeBlockCard";
 import TradeBlockListView from "@/lovable/pages/trade-block/TradeBlockListView";
 // Iter 230i — Types, mocks, MyPlayersTab, FiltersBar extracted.
-import type { TradeBlockItem, ItemType } from "@/lovable/pages/trade-block/types";
-import { tradeBlockItemsMock as tradeBlockItems, POSITIONS as positions } from "@/lovable/pages/trade-block/mocks";
+import type { TradeBlockItem } from "@/lovable/pages/trade-block/types";
+import { POSITIONS as positions, tradeBlockItemsMock as tradeBlockItems } from "@/lovable/pages/trade-block/mocks";
 import MyPlayersTab from "@/lovable/pages/trade-block/MyPlayersTab";
 import TradeBlockFiltersBar from "@/lovable/pages/trade-block/TradeBlockFiltersBar";
+// Iter 230j — Data layer + sort/filter pipeline extracted to hooks.
+import useTradeBlockData from "@/hooks/use-trade-block-data";
+import useTradeBlockSortFilter from "@/hooks/use-trade-block-sort-filter";
 
 // Iter 230i — `TradeBlockItem` / `ItemType` types + the static
 // `tradeBlockItems` seed array + the `POSITIONS` constant are all
@@ -71,169 +48,27 @@ const TradeBlock = () => {
   // "want" side in the proposal modal. Optional; falls back to "show all
   // players from this team" when null (legacy "owner-level" Trade button).
   const [prefilledIds, setPrefilledIds] = useState<number[]>([]);
-  const [liveItems, setLiveItems] = useState<any[]>([]);
-  const [myRoster, setMyRoster] = useState<any[]>([]);
 
-  // Fetch real trade-block items
-  // Iter 228z — Bump a tick to re-fetch whenever a `trade_block_changed`
-  // socket event arrives, so the page lights up the instant any league
-  // member adds/removes/updates a listing.
-  const [tradeBlockTick, setTradeBlockTick] = useState(0);
-  useEffect(() => {
-    if (!league?.id) return;
-    let cancelled = false;
-    api.get(`/trade-block?league_id=${league.id}`).then(({ data }) => {
-      if (cancelled) return;
-      setLiveItems(Array.isArray(data) ? data : []);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [league?.id, tradeBlockTick]);
+  // Iter 230j — Data fetching + ownership decoration + derived
+  // collections moved into `useTradeBlockData`.
+  const { realTradeItems, realOwners, myOnBlockPlayers } = useTradeBlockData({
+    leagueId: league?.id,
+    leagueTeams,
+    myTeamId: myTeam?.id,
+    userIdForSocket: user?.id || (user as any)?._id,
+  });
 
-  useSocket(
-    league?.id ? `league_${league.id}` : null,
-    { trade_block_changed: () => setTradeBlockTick((t) => t + 1) },
-    user?.id || user?._id,
-  );
-
-  // My roster (for "My Players" tab)
-  useEffect(() => {
-    if (!myTeam?.id) return;
-    let cancelled = false;
-    api.get(`/roster/${myTeam.id}/detail`).then(({ data }) => {
-      if (!cancelled) setMyRoster(data?.players || []);
-    }).catch(() => {});
-    return () => { cancelled = true; };
-  }, [myTeam?.id]);
-
-  // Map backend trade-block rows into the card shape expected by the UI
-  const ownerNameFor = (ownerId: string) => {
-    const t = (leagueTeams || []).find(tt => tt.owner_id === ownerId);
-    return t?.name || "Unknown";
-  };
-  const ownerAbbrFor = (ownerId: string) => {
-    const t = (leagueTeams || []).find(tt => tt.owner_id === ownerId);
-    return t?.logo_abbr || "TBD";
-  };
-  // Iter 229k — Surface the owner team's preset theme color so the
-  // trade-block owner chip renders in their brand tint (matches Standings).
-  const ownerThemeColorFor = (ownerId: string) => {
-    const t = (leagueTeams || []).find(tt => tt.owner_id === ownerId);
-    return t?.theme_color || null;
-  };
-  const realTradeItems: TradeBlockItem[] = useMemo(() => (liveItems || []).map((it: any, idx: number) => ({
-    id: it._id || idx,
-    name: it.name || "Unknown",
-    position: it.position || "—",
-    team: it.nhl_team || (it.item_type === "pick" ? "Own" : ""),
-    team_id: it.team_id,
-    age: it.age || undefined,
-    aav: it.aav || null,
-    dynastyValue: Math.round(((it.points || 0) * 80) + 1000),
-    owner: ownerNameFor(it.owner_id),
-    owner_id: it.owner_id,
-    ownerAvatar: ownerAbbrFor(it.owner_id),
-    ownerThemeColor: ownerThemeColorFor(it.owner_id),
-    lookingFor: (it.looking_for || []).length ? it.looking_for : ["Best Offer"],
-    trend: "stable" as const,
-    weeklyPoints: 0,
-    type: (it.item_type || "player") as ItemType,
-    year: it.pick_year,
-    round: it.pick_round,
-    gp: it.games_played, g: it.goals, a: it.assists,
-    plusMinus: it.plus_minus,
-    sog: it.points, // placeholder; real sog not stored on trade-block row
-  })), [liveItems, leagueTeams]);
-
-  // Dynamic owner list from real leagueTeams
-  const realOwners = useMemo(
-    () => ["All Teams", ...((leagueTeams || []).map(t => t.name))],
-    [leagueTeams]
-  );
-
-  // ── "My Players" tab data ──
-  // Single source of truth: backend `db.trade_block`. We surface ONLY this
-  // user's currently-listed players (filtered by owner_id) so the tab is in
-  // lockstep with the roster-page bullhorn toggle. When a trade executes,
-  // the backend wipes those rows, so this list updates automatically.
-  const myOnBlockPlayers = useMemo(() => {
-    if (!myTeam?.id) return [];
-    const rosterById = new Map((myRoster || []).map((p: any) => [String(p.player_id || p.id), p]));
-    return (liveItems || [])
-      .filter((it: any) => it.team_id === myTeam.id && it.player_id)
-      .map((it: any) => {
-        const r = rosterById.get(String(it.player_id));
-        return {
-          id: it._id || it.player_id,
-          player_id: String(it.player_id),
-          name: it.name || r?.name || "Unknown",
-          position: it.position || r?.position || "—",
-          team: it.nhl_team || r?.nhl_team || "",
-          nhl_team: r?.nhl_team,
-          lookingFor: it.looking_for || [],
-        };
-      });
-  }, [liveItems, myRoster, myTeam?.id]);
-
-  const sortedAndFilteredItems = useMemo(() => {
-    // Prefer live items; fall back to seeded mock when league has no trade-block entries
-    let items = realTradeItems.length > 0 ? [...realTradeItems] : [...tradeBlockItems];
-
-    // Filter by position
-    if (positionFilter !== "All") {
-      if (positionFilter === "Prospect") {
-        items = items.filter((item) => item.type === "prospect");
-      } else if (positionFilter === "Pick") {
-        items = items.filter((item) => item.type === "pick");
-      } else {
-        items = items.filter((item) => item.position === positionFilter && item.type === "player");
-      }
-    }
-
-    // Filter by owner
-    if (ownerFilter !== "All Teams") {
-      items = items.filter((item) => item.owner === ownerFilter);
-    }
-
-    // ── Sort ──
-    // List view: respect the user's chosen sort key + direction.
-    // Tile view: always use the default highest-FP → prospect → pick ordering
-    //   (sortable columns only make sense in list/table view).
-    if (prefs.viewMode === "list") {
-      const { key, dir } = prefs.sort || { key: "weeklyPoints", dir: "desc" };
-      const factor = dir === "asc" ? 1 : -1;
-      items.sort((a, b) => {
-        const av = a[key];
-        const bv = b[key];
-        if (typeof av === "string" || typeof bv === "string") {
-          return String(av || "").localeCompare(String(bv || "")) * factor;
-        }
-        return ((av ?? 0) - (bv ?? 0)) * factor;
-      });
-    } else {
-      const typeOrder = { player: 0, prospect: 1, pick: 2 };
-      items.sort((a, b) => {
-        if (typeOrder[a.type] !== typeOrder[b.type]) {
-          return typeOrder[a.type] - typeOrder[b.type];
-        }
-        if (a.type === "player" && b.type === "player") {
-          return (b.weeklyPoints || 0) - (a.weeklyPoints || 0);
-        }
-        return b.dynastyValue - a.dynastyValue;
-      });
-    }
-
-    return items;
-  }, [positionFilter, ownerFilter, realTradeItems, prefs.viewMode, prefs.sort]);
-
-  // Tile view honors the per-league hidden list; list view always shows all.
-  const visibleItems = useMemo(() => {
-    if (prefs.viewMode !== "tile") return sortedAndFilteredItems;
-    return sortedAndFilteredItems.filter((it) => !prefs.isHidden(it.id));
-  }, [sortedAndFilteredItems, prefs.viewMode, prefs.hiddenIds]);
-
-  const hiddenCountAfterFilters = useMemo(() => (
-    sortedAndFilteredItems.length - visibleItems.length
-  ), [sortedAndFilteredItems, visibleItems]);
+  // Iter 230j — Filter + sort + hidden-card pipeline extracted to
+  // `useTradeBlockSortFilter`.
+  const { sortedAndFilteredItems, visibleItems, hiddenCountAfterFilters } =
+    useTradeBlockSortFilter({
+      realTradeItems,
+      positionFilter,
+      ownerFilter,
+      viewMode: prefs.viewMode,
+      sort: prefs.sort,
+      isHidden: prefs.isHidden,
+    });
 
   const handleProposeTrade = (owner: string, prefilledItem?: TradeBlockItem) => {
     // Real trade items (preferred) take priority over the seeded mock. The

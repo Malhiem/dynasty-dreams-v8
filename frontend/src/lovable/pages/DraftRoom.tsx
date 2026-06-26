@@ -92,12 +92,15 @@ import useDraftAudioAlerts from "@/hooks/use-draft-audio-alerts";
 // Iter 230i — Auto-init + state-refresh hook + picks-until-my-turn memo.
 import useDraftAutoInit from "@/hooks/use-draft-auto-init";
 import useDraftPicksUntilMyTurn from "@/hooks/use-draft-picks-until-my-turn";
+// Iter 230j — Trade-pick handler hook + expanded-player modal wrapper.
+import useAddDraftPickToTrade from "@/hooks/use-add-draft-pick-to-trade";
+import ExpandedPlayerModal from "@/lovable/pages/draftroom/ExpandedPlayerModal";
 // Iter 229j — Two more JSX bodies extracted from DraftRoom.tsx.
 import UpcomingDraftsPicker from "@/lovable/pages/draftroom/UpcomingDraftsPicker";
 import DraftRoomBottomGrid from "@/lovable/pages/draftroom/DraftRoomBottomGrid";
 // Iter 230c — Player preview panel extracted.
 import DraftPreviewPanel from "@/lovable/pages/draftroom/DraftPreviewPanel";
-import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
+// Iter 230j — PlayerCardModal now consumed via ExpandedPlayerModal wrapper.
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 // Iter 194c — floating "Pick Trade Pending" review pill.
 import PickTradeReviewPill from "@/lovable/pages/draftroom/PickTradeReviewPill";
@@ -589,27 +592,14 @@ export default function DraftRoom() {
     setShortlist,
   });
 
-  const handleAddDraftPickToTrade = (ownerAbbr: string, round: number, overall: number, player: any) => {
-    if (!myTeam) { toast.error("Join a team in this league to propose trades"); return; }
-    if (!activeLeagueCtx?.id) { toast.error("League context missing"); return; }
-    tradeBuilder.openBuilder({ leagueId: activeLeagueCtx.id, myTeam });
-    const ownerTeam = (liveTeams || []).find(
-      (t: any) => (t.logo_abbr || (t.name || "").slice(0, 3).toUpperCase()) === ownerAbbr,
-    );
-    const year = new Date().getFullYear();
-    tradeBuilder.addPick({
-      id: `draft-room-pick-${overall}`,
-      year,
-      round,
-      ownerTeamId: ownerTeam?.id,
-      ownerTeamName: ownerTeam?.name || ownerAbbr,
-      originalTeamId: ownerTeam?.id,
-      originalTeamName: ownerAbbr,
-      label: player?.name
-        ? `${year} R${round} · #${overall} (${ownerAbbr} — ${player.name})`
-        : `${year} R${round} · #${overall} (${ownerAbbr})`,
-    });
-  };
+  // Iter 230j — `handleAddDraftPickToTrade` extracted to
+  // `useAddDraftPickToTrade` hook.
+  const handleAddDraftPickToTrade = useAddDraftPickToTrade({
+    myTeam,
+    leagueId: activeLeagueCtx?.id,
+    liveTeams,
+    tradeBuilder,
+  });
   const currentRound = Math.ceil(draftConfig.currentPick / totalTeams);
   const currentPickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
   // Iter 170b — Picks-until-my-turn counter. Iter 230i — extracted to
@@ -810,37 +800,8 @@ export default function DraftRoom() {
           />
         </div>
 
-        {/* Iter 153 — Expanded Player Card (window-within-window via PlayerCardModal) */}
-        {expandedPlayer && (
-          <PlayerCardModal
-            open={!!expandedPlayer}
-            onOpenChange={(o) => !o && setExpandedPlayer(null)}
-            player={{
-              id: expandedPlayer.id,
-              name: expandedPlayer.name,
-              team: expandedPlayer.team || expandedPlayer.nhl_team || expandedPlayer.league || "—",
-              position: expandedPlayer.position,
-              age: expandedPlayer.age ?? 19,
-              points: expandedPlayer.pts || 0,
-              contract: { type: "Rookie", salary: 0, yearsRemaining: 0 },
-              schedule: [],
-              categoryBreakdown: {
-                G:  expandedPlayer.g || 0,
-                A:  expandedPlayer.a || 0,
-                PTS: expandedPlayer.pts || 0,
-                PPP: 0,
-                SOG: expandedPlayer.shots || 0,
-                HIT: 0,
-                BLK: 0,
-                PIM: expandedPlayer.pim || 0,
-              },
-              statsByPeriod: {
-                "1d": 0, "7d": 0, "14d": 0, "30d": 0,
-                "60d": 0, "100d": 0, season: expandedPlayer.pts || 0,
-              },
-            } as any}
-          />
-        )}
+        {/* Iter 153 — Expanded Player Card. Iter 230j — extracted. */}
+        <ExpandedPlayerModal player={expandedPlayer} onClose={() => setExpandedPlayer(null)} />
         {/* Iter 194c — floating pick-trade review pill (top-right). */}
         {activeLeagueCtx?.id && (
           <PickTradeReviewPill
