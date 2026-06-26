@@ -12,6 +12,11 @@ function getSocket() {
       path: '/api/socket.io',
       transports: ['websocket', 'polling'],
       autoConnect: false,
+      // Iter 230q — SEC-001 made the socket auth handshake mandatory.
+      // The server reads the access_token from the httpOnly cookie set
+      // at login, but cookies only flow on a WS handshake when the
+      // socket.io client opts in to credentials.
+      withCredentials: true,
     });
   }
   return socketInstance;

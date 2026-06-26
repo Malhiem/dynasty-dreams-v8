@@ -17,6 +17,8 @@ export function useGlobalSocketEvent(eventName, handler) {
     const socket = io(BACKEND_URL, {
       path: '/api/socket.io',
       transports: ['websocket', 'polling'],
+      // Iter 230q — SEC-001 requires the auth cookie on the handshake.
+      withCredentials: true,
     });
     const onConnect = () => setConnected(true);
     const onDisconnect = () => setConnected(false);
