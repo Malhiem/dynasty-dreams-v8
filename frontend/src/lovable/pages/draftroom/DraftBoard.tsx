@@ -22,7 +22,6 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +40,8 @@ import {
   ArrowRightLeft,
   Megaphone,
   Repeat,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
@@ -214,16 +215,36 @@ export default function DraftBoard({
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea
+        {/* Iter 230ah — Native horizontal-scrolling container for the
+            draft board. Radix `ScrollArea` was suppressing touch-pan
+            on mobile, so users on phones could see HC..OS14 but not
+            scroll past — the board's 25-team grid is intrinsically
+            ~1900px wide. Native `overflow-auto` with `touch-pan-x`
+            restores touch momentum scrolling on iOS/Android while
+            still rendering perfectly on desktop. The grid itself
+            keeps its `min-w-[700px]` so it remains horizontally
+            scrollable on every device. */}
+        <div
           className={cn(
-            "w-full",
+            "w-full overflow-auto touch-pan-x",
             // Iter 230x — Cap full-mode height so the Player List /
             // Roster / Chat below remain visible above the fold even
             // for 25-team boards. Compressed mode is naturally short
             // (5 rounds) and doesn't need the cap.
             !compressed && "max-h-[60vh]",
           )}
+          data-testid="draft-board-scroll"
         >
+          {/* Iter 230ah — Mobile "← swipe →" affordance. Hidden on
+              md+ where horizontal scroll-bars are visible on hover. */}
+          <div
+            className="md:hidden sticky top-0 z-20 bg-card/95 backdrop-blur px-4 pt-2 pb-1 flex items-center justify-end gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground"
+            data-testid="draft-board-swipe-hint"
+          >
+            <ChevronLeft className="h-3 w-3" />
+            swipe to see all {totalTeams} teams
+            <ChevronRight className="h-3 w-3" />
+          </div>
           <div className="min-w-[700px] p-4 pt-0">
             <div
               className="grid gap-1 mb-1 sticky top-0 bg-card z-10 pt-2"
@@ -557,7 +578,7 @@ export default function DraftBoard({
               ))}
             </div>
           </div>
-        </ScrollArea>
+        </div>
       </CardContent>
     </Card>
   );

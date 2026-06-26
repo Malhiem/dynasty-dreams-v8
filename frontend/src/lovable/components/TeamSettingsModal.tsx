@@ -21,12 +21,26 @@ const MAX_BYTES = 1 * 1024 * 1024;
  * upload, DELETE /teams/{id}/logo to remove.
  */
 const COLOR_PRESETS: { id: string; label: string; hex: string }[] = [
-  { id: "ice", label: "Ice Blue", hex: "#0ea5e9" },
-  { id: "fire", label: "Forge Red", hex: "#ef4444" },
-  { id: "forest", label: "Pine Green", hex: "#22c55e" },
-  { id: "royal", label: "Royal Gold", hex: "#f59e0b" },
-  { id: "violet", label: "Twilight", hex: "#8b5cf6" },
-  { id: "rose", label: "Sunset", hex: "#f43f5e" },
+  // Iter 230ai — Expanded palette: 6 → 16 swatches covering the main
+  // colour wheel plus warm/cool greys. Users can also drop any hex
+  // via the custom `<input type="color">` next to the presets, so the
+  // total addressable space is the full 24-bit gamut.
+  { id: "ice",        label: "Ice Blue",    hex: "#0ea5e9" },
+  { id: "navy",       label: "Navy",         hex: "#1e3a8a" },
+  { id: "fire",       label: "Forge Red",    hex: "#ef4444" },
+  { id: "crimson",    label: "Crimson",      hex: "#9f1239" },
+  { id: "forest",     label: "Pine Green",   hex: "#22c55e" },
+  { id: "emerald",    label: "Emerald",      hex: "#047857" },
+  { id: "teal",       label: "Teal",         hex: "#0d9488" },
+  { id: "royal",      label: "Royal Gold",   hex: "#f59e0b" },
+  { id: "sunshine",   label: "Sunshine",     hex: "#fde047" },
+  { id: "orange",     label: "Burnt Orange", hex: "#ea580c" },
+  { id: "violet",     label: "Twilight",     hex: "#8b5cf6" },
+  { id: "magenta",    label: "Magenta",      hex: "#c026d3" },
+  { id: "rose",       label: "Sunset",       hex: "#f43f5e" },
+  { id: "pink",       label: "Bubblegum",    hex: "#ec4899" },
+  { id: "slate",      label: "Slate",        hex: "#475569" },
+  { id: "graphite",   label: "Graphite",     hex: "#27272a" },
 ];
 
 export default function TeamSettingsModal({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
@@ -226,6 +240,31 @@ export default function TeamSettingsModal({ open, onOpenChange }: { open: boolea
                       />
                     );
                   })}
+                  {/* Iter 230ai — Free-form custom colour via native
+                      color input. Sits next to the preset row so users
+                      can match a team's exact brand hex even if it's
+                      not in the curated palette. */}
+                  <label
+                    className="relative inline-flex items-center justify-center h-7 w-7 rounded-full ring-1 ring-white/20 cursor-pointer hover:scale-110 transition-transform overflow-hidden"
+                    title="Custom colour"
+                    data-testid="team-settings-color-custom-label"
+                  >
+                    <div
+                      className="absolute inset-0"
+                      style={{
+                        background:
+                          "conic-gradient(from 0deg, #ef4444, #f59e0b, #fde047, #22c55e, #0d9488, #0ea5e9, #8b5cf6, #ec4899, #ef4444)",
+                      }}
+                    />
+                    <input
+                      type="color"
+                      value={themeColor || "#0ea5e9"}
+                      onChange={(e) => setThemeColor(e.target.value)}
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      data-testid="team-settings-color-custom"
+                      aria-label="Custom colour"
+                    />
+                  </label>
                   {themeColor && (
                     <button
                       type="button"
@@ -238,8 +277,13 @@ export default function TeamSettingsModal({ open, onOpenChange }: { open: boolea
                   )}
                 </div>
               </div>
+              {themeColor && (
+                <p className="text-[10px] text-[#A1A1AA] mt-1 font-mono" data-testid="team-settings-color-hex">
+                  {themeColor.toUpperCase()}
+                </p>
+              )}
               <p className="text-xs text-[#A1A1AA] mt-1">
-                Used as a background tint when no logo is uploaded.
+                Used as a background tint when no logo is uploaded. Pick a preset above or click the rainbow swatch for any custom colour.
               </p>
             </div>
 

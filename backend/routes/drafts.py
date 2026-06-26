@@ -2328,58 +2328,66 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
     # manager unaware they're up until someone in chat pings them.
     if early_start:
         try:
-            from routes.notification_events import EVT_DRAFT_YOUR_TURN
+            from routes.notification_events import EVT_DRAFT_YOUR_TURN, EVT_DRAFT_ON_DECK
             updated_draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
             clock_hint = await _early_start_clock_msg(updated_draft or draft)
             team_abbrs = (updated_draft or draft).get("team_abbrs") or []
-            first_abbr = team_abbrs[0] if team_abbrs else None
             team_map = (updated_draft or draft).get("team_map") or {}
-            first_team_id = (team_map.get(first_abbr) or {}).get("id") if first_abbr else None
             league_name = (updated_draft or draft).get("league_name") or ""
             draft_name = (updated_draft or draft).get("name") or "your draft"
-            if first_team_id:
-                first_team = await _db().teams.find_one(
-                    {"_id": ObjectId(first_team_id)},
+            league_id_str = str(draft["league_id"])
+
+            # Iter 230aj — Notify BOTH pick #1 (your turn) AND pick #2
+            # (on deck) when the commissioner starts early without a
+            # clock. The on-deck manager needs the same heads-up so
+            # they can prep their pick before the clock activates.
+            # Each (event, pick_number, body_prefix) tuple drives a
+            # single notification + email pair.
+            picks_to_notify = [
+                (EVT_DRAFT_YOUR_TURN, 1, "You're on the clock!",   "Pick #1 — make your selection."),
+                (EVT_DRAFT_ON_DECK,   2, "On deck",                 "Pick #2 — you're up next."),
+            ]
+            for (event, pick_no, title, body_prefix) in picks_to_notify:
+                if pick_no > len(team_abbrs):
+                    continue  # tiny league — skip whichever notify is OOB.
+                abbr = team_abbrs[pick_no - 1]
+                team_id = (team_map.get(abbr) or {}).get("id")
+                if not team_id:
+                    continue
+                team_doc = await _db().teams.find_one(
+                    {"_id": ObjectId(team_id)},
                     {"owner_id": 1, "co_owner_ids": 1, "name": 1},
                 )
-                if first_team:
-                    owners = [first_team.get("owner_id")] + list(first_team.get("co_owner_ids") or [])
-                    league_id_str = str(draft["league_id"])
-                    body_text = "Pick #1 — make your selection." + clock_hint
-                    for uid in [u for u in owners if u]:
-                        await create_notification(
-                            uid,
-                            EVT_DRAFT_YOUR_TURN,
-                            "You're on the clock!",
-                            body_text,
-                            league_id_str,
-                            "/draft-room",
+                if not team_doc:
+                    continue
+                owners = [team_doc.get("owner_id")] + list(team_doc.get("co_owner_ids") or [])
+                body_text = body_prefix + clock_hint
+                for uid in [u for u in owners if u]:
+                    await create_notification(
+                        uid, event, title, body_text, league_id_str, "/draft-room",
+                    )
+                    # Iter 230ab — Email pipe (only for the "your turn"
+                    # event — on-deck stays in-app to avoid email noise
+                    # before the manager is actually on the clock).
+                    if event != EVT_DRAFT_YOUR_TURN:
+                        continue
+                    try:
+                        owner_doc = await _db().users.find_one(
+                            {"_id": ObjectId(uid)},
+                            {"email": 1, "name": 1},
                         )
-                        # Iter 230ab — Also fire an email for early-start
-                        # mode. The in-app banner / bell only help
-                        # managers who currently have the tab open; a
-                        # tab-closed user otherwise wouldn't know the
-                        # commissioner started early until they happen
-                        # to check the app. The email closes that gap.
-                        # Best-effort: any SendGrid failure is silently
-                        # swallowed so the start path is never blocked.
-                        try:
-                            owner_doc = await _db().users.find_one(
-                                {"_id": ObjectId(uid)},
-                                {"email": 1, "name": 1},
+                        if owner_doc and owner_doc.get("email"):
+                            subj = f"You're on the clock — {draft_name}"
+                            html = (
+                                f"<p>Hi {owner_doc.get('name') or 'manager'},</p>"
+                                f"<p>The commissioner has started <b>{draft_name}</b>"
+                                f"{(' in ' + league_name) if league_name else ''} <b>without the clock</b>.</p>"
+                                f"<p>You're up for <b>Pick #{pick_no}</b>. {clock_hint.strip() or 'Make your selection.'}</p>"
+                                f"<p><a href=\"/draft-room\">Open the Draft Room →</a></p>"
                             )
-                            if owner_doc and owner_doc.get("email"):
-                                subj = f"You're on the clock — {draft_name}"
-                                html = (
-                                    f"<p>Hi {owner_doc.get('name') or 'manager'},</p>"
-                                    f"<p>The commissioner has started <b>{draft_name}</b>"
-                                    f"{(' in ' + league_name) if league_name else ''} <b>without the clock</b>.</p>"
-                                    f"<p>You're up for <b>Pick #1</b>. {clock_hint.strip() or 'Make your selection.'}</p>"
-                                    f"<p><a href=\"/draft-room\">Open the Draft Room →</a></p>"
-                                )
-                                _send_email(owner_doc["email"], subj, html)
-                        except Exception as e:
-                            logger.debug(f"start_draft early_start email skipped for {uid}: {e}")
+                            _send_email(owner_doc["email"], subj, html)
+                    except Exception as e:
+                        logger.debug(f"start_draft early_start email skipped for {uid}: {e}")
         except Exception as e:
             logger.debug(f"start_draft early_start notification skipped: {e}")
 
