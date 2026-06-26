@@ -1014,6 +1014,37 @@ async def _execute_trade(trade: dict) -> dict:
         })
     except Exception:
         pass
+
+    # Iter 230 — Fan out "any trade processed" league-wide.
+    try:
+        from routes.notification_events import EVT_TRADE_PROCESSED
+        teams = await _db().teams.find(
+            {"league_id": league_id},
+            {"owner_id": 1, "co_owner_ids": 1},
+        ).to_list(200)
+        recipients: set = set()
+        for t in teams:
+            if t.get("owner_id"):
+                recipients.add(t["owner_id"])
+            for co in (t.get("co_owner_ids") or []):
+                if co:
+                    recipients.add(co)
+        msg = f"{trade['proposer_team_name']} ↔ {trade['target_team_name']}"
+        for uid in recipients:
+            try:
+                await _create_notification(
+                    uid,
+                    EVT_TRADE_PROCESSED,
+                    "Trade processed",
+                    msg,
+                    league_id=league_id,
+                    link="/transactions",
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        _logger().debug(f"trade_processed fanout skipped: {e}")
+
     await _post_trade_chat_messages(trade, moves)
     refreshed = await _db().trades.find_one({"_id": trade["_id"]})
     if refreshed:

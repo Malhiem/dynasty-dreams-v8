@@ -2067,6 +2067,41 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
             "diff": diff,
             "created_at": datetime.now(timezone.utc),
         })
+        # Iter 230 — Notify league members that a commissioner changed a rule.
+        try:
+            create_notif = _deps.get("create_notification")
+            if create_notif and diff:
+                from routes.notification_events import EVT_RULE_CHANGED
+                teams_for_notif = await db.teams.find(
+                    {"league_id": league_id},
+                    {"owner_id": 1, "co_owner_ids": 1},
+                ).to_list(200)
+                recipients: set = set()
+                for t in teams_for_notif:
+                    if t.get("owner_id"):
+                        recipients.add(t["owner_id"])
+                    for co in (t.get("co_owner_ids") or []):
+                        if co:
+                            recipients.add(co)
+                recipients.discard(user["_id"])  # Don't ping the actor
+                # Up to 3 changed field names in the body for context.
+                changed_fields = list(diff.keys())[:3]
+                body = ", ".join(changed_fields) if changed_fields else "league settings"
+                actor_name = user.get("name") or user.get("email") or "Commissioner"
+                for uid in recipients:
+                    try:
+                        await create_notif(
+                            uid,
+                            EVT_RULE_CHANGED,
+                            "League rule changed",
+                            f"{actor_name} updated: {body}",
+                            league_id,
+                            f"/leagues/{league_id}",
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     fresh = await db.leagues.find_one({"_id": league["_id"]})
     out = {

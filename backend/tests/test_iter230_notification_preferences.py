@@ -147,3 +147,58 @@ async def test_in_app_disabled_blocks_notification_creation():
             "/api/notifications/preferences/reset",
             headers={"Authorization": f"Bearer {token}"},
         )
+
+
+
+@pytest.mark.asyncio
+async def test_admin_player_status_change_fans_out():
+    """POST /api/admin/players/{id}/status-change emits per-rostering-team
+    notifications and respects the change_kind whitelist."""
+    async with AsyncClient(base_url=BASE, timeout=20) as client:
+        admin_token = await _login(client, "admin@dynastydreams.com", "Admin123!")
+        # Find any player that's rostered by at least one team.
+        from motor.motor_asyncio import AsyncIOMotorClient
+        c = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        db = c[os.environ.get("DB_NAME", "test_database")]
+        team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+        assert team, "no rostered team to test against"
+        player_id = team["roster"][0]
+
+        # Trigger an injury status change.
+        r = await client.post(
+            f"/api/admin/players/{player_id}/status-change",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"change_kind": "injured", "detail_message": "Test — lower body"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["player_id"] == player_id
+        assert body["change_kind"] == "injured"
+        assert body["notifications_sent"] >= 1
+
+        # Invalid change_kind is rejected at the Pydantic layer (422).
+        r = await client.post(
+            f"/api/admin/players/{player_id}/status-change",
+            headers={"Authorization": f"Bearer {admin_token}"},
+            json={"change_kind": "exploded"},
+        )
+        assert r.status_code == 422, r.text
+
+
+@pytest.mark.asyncio
+async def test_admin_player_status_change_requires_admin():
+    """Non-admin callers get 403."""
+    async with AsyncClient(base_url=BASE, timeout=20) as client:
+        chris_token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        from motor.motor_asyncio import AsyncIOMotorClient
+        c = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        db = c[os.environ.get("DB_NAME", "test_database")]
+        team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+        assert team
+        player_id = team["roster"][0]
+        r = await client.post(
+            f"/api/admin/players/{player_id}/status-change",
+            headers={"Authorization": f"Bearer {chris_token}"},
+            json={"change_kind": "injured"},
+        )
+        assert r.status_code == 403, r.text

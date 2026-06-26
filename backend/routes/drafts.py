@@ -1278,6 +1278,34 @@ async def create_draft(input: CreateDraftRequest, request: Request):
                 f"Failed to auto-generate draft picks for {result.inserted_id}: {ex}")
             draft_doc["picks_generated"] = 0
 
+    # Iter 230 — Notify the league that a draft has been scheduled.
+    try:
+        from routes.notification_events import EVT_DRAFT_SCHEDULED
+        teams_for_notif = await _db().teams.find(
+            {"league_id": input.league_id},
+            {"owner_id": 1, "co_owner_ids": 1},
+        ).to_list(200)
+        recipients: set = set()
+        for t in teams_for_notif:
+            if t.get("owner_id"):
+                recipients.add(t["owner_id"])
+            for co in (t.get("co_owner_ids") or []):
+                if co:
+                    recipients.add(co)
+        when_str = scheduled or "TBD"
+        draft_label = input.name or f"{input.draft_type or 'Draft'}"
+        for uid in recipients:
+            await create_notification(
+                uid,
+                EVT_DRAFT_SCHEDULED,
+                "Draft scheduled",
+                f"{draft_label} — {when_str}",
+                input.league_id,
+                "/draft-room",
+            )
+    except Exception as e:
+        logger.debug(f"draft_scheduled notify skipped: {e}")
+
     return draft_doc
 
 

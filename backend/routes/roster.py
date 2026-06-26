@@ -842,4 +842,55 @@ async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
             "week": int((league or {}).get("current_week") or 1),
         },
     )
+
+    # Iter 230 — Fan out `player_dropped` + `player_to_waivers` league-wide.
+    # `player_to_waivers` fires when the league uses a waiver system AND the
+    # drop puts the player into the waiver pool (the default behaviour when
+    # waivers are enabled and the player isn't a free agent rights holder).
+    try:
+        create_notif = _deps.get("create_notification")
+        if create_notif:
+            from routes.notification_events import EVT_PLAYER_DROPPED, EVT_PLAYER_TO_WAIVERS
+            teams_for_notif = await db.teams.find(
+                {"league_id": team["league_id"]},
+                {"owner_id": 1, "co_owner_ids": 1},
+            ).to_list(200)
+            recipients: set = set()
+            for t in teams_for_notif:
+                if t.get("owner_id"):
+                    recipients.add(t["owner_id"])
+                for co in (t.get("co_owner_ids") or []):
+                    if co:
+                        recipients.add(co)
+            recipients.discard(user["_id"])  # Don't ping the actor
+            for uid in recipients:
+                try:
+                    await create_notif(
+                        uid,
+                        EVT_PLAYER_DROPPED,
+                        "Player dropped",
+                        f"{team['name']} dropped {name}",
+                        team["league_id"],
+                        "/players",
+                    )
+                except Exception:
+                    pass
+            # If the league uses a waiver system, treat this as "to waivers".
+            waiver_enabled = bool(((league or {}).get("transactions_config") or {}).get("waiver", {}).get("enabled"))
+            if waiver_enabled:
+                for uid in recipients:
+                    try:
+                        await create_notif(
+                            uid,
+                            EVT_PLAYER_TO_WAIVERS,
+                            "Player on waivers",
+                            f"{name} is now on waivers",
+                            team["league_id"],
+                            "/waivers",
+                        )
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
     return {"message": f"Dropped {name} from roster"}

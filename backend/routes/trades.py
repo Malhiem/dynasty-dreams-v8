@@ -1470,6 +1470,29 @@ async def vote_on_trade(trade_id: str, input: TradeVote, request: Request):
             "trade_vetoed",
             {"trade_id": trade_id, "veto_count": counts["veto"]},
         )
+        # Iter 230 — Notify the trade's parties (declined_or_vetoed_mine) AND
+        # the rest of the league (trade_vetoed_any).
+        try:
+            party_ids = list(filter(None, [trade.get("proposer_id"), trade.get("target_owner_id")]))
+            for uid in set(party_ids):
+                await _create_notification(
+                    uid,
+                    EVT_TRADE_DECLINED_OR_VETOED_MINE,
+                    "Trade vetoed by league",
+                    f"Your trade between {trade.get('proposer_team_name')} and {trade.get('target_team_name')} was vetoed by league vote.",
+                    trade["league_id"],
+                    "/transactions",
+                )
+            await _notify_league_event(
+                trade["league_id"],
+                EVT_TRADE_VETOED_ANY,
+                "Trade vetoed in league",
+                f"{trade.get('proposer_team_name')} ↔ {trade.get('target_team_name')} — vetoed by league vote",
+                link="/transactions",
+                exclude_user_ids=party_ids,
+            )
+        except Exception as e:
+            _logger().debug(f"trade_vetoed notify skipped: {e}")
         return {
             "message": "Trade vetoed by league vote",
             "status": "vetoed",

@@ -1074,3 +1074,78 @@ async def admin_bulk_import_players(req: BulkImportRequest, request: Request):
         "skipped": skipped,
         "errors": errors,
     }
+
+
+
+# ─── Iter 230 — Player status change notification trigger ─────────
+
+
+class PlayerStatusChangeRequest(BaseModel):
+    """Admin endpoint payload — kicks off a fanout to all rostering teams."""
+    change_kind: str = Field(
+        ...,
+        pattern=r"^(injured|recovered|sent_down|called_up|injury_status_changed)$",
+        description="Which downstream notification event to emit.",
+    )
+    detail_message: Optional[str] = Field(
+        default=None,
+        max_length=240,
+        description="Optional human-readable detail appended to the notification body.",
+    )
+    update_player_doc: bool = Field(
+        default=False,
+        description=(
+            "When True AND change_kind is injury-related, also patch the "
+            "player's injury_status on the players collection so the rest "
+            "of the app reflects the change."
+        ),
+    )
+    new_injury_status: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Used when update_player_doc=True and change_kind is injury-related.",
+    )
+
+
+@router.post("/admin/players/{player_id}/status-change")
+async def admin_trigger_player_status_change(
+    player_id: str,
+    req: PlayerStatusChangeRequest,
+    request: Request,
+):
+    """Trigger a player status change notification fanout.
+
+    Iter 230 — Single hook the future NHL data ingestion worker will call
+    when a real-world status update lands. Today admins can drive it
+    manually so the UX surfaces end-to-end without needing the ingestion
+    job. Notifies every team currently rostering the player.
+    """
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+
+    # Optionally write through to the player doc so the rest of the app
+    # (rosters, lineup checks, injury widgets) reflects the change.
+    if req.update_player_doc and req.new_injury_status is not None:
+        try:
+            await _db().players.update_one(
+                {"_id": ObjectId(player_id)},
+                {"$set": {"injury_status": req.new_injury_status}},
+            )
+        except Exception:
+            pass
+
+    from services.player_status_notifier import notify_player_status_change
+
+    sent = await notify_player_status_change(
+        _db(),
+        player_id=player_id,
+        change_kind=req.change_kind,
+        create_notification=_deps.get("create_notification"),
+        detail_message=req.detail_message,
+    )
+    return {
+        "player_id": player_id,
+        "change_kind": req.change_kind,
+        "notifications_sent": sent,
+    }
