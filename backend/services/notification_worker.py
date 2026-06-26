@@ -96,6 +96,23 @@ async def _league_recipients(db, league_id: str) -> list:
     return list(recipients)
 
 
+# Iter 230h+ hardening — skip leagues that are clearly junk (archived,
+# explicitly archived status, or a leftover automated-test fixture).
+# Mirrors the iter 230g Week-at-a-Glance filter so the worker doesn't
+# spam reminders into TEST_*/archived leagues.
+def _is_skippable_league(lg: dict) -> bool:
+    if not lg:
+        return True
+    if lg.get("archived") is True:
+        return True
+    if (lg.get("status") or "").lower() == "archived":
+        return True
+    name = lg.get("name") or ""
+    if name.startswith("TEST_"):
+        return True
+    return False
+
+
 async def _emit_to_recipients(
     create_notification,
     recipients,
@@ -104,11 +121,24 @@ async def _emit_to_recipients(
     body,
     league_id,
     link,
+    reason: Optional[dict] = None,
 ):
+    """Iter 230h+ — Forwards an optional `reason` dict so each emission
+    carries provenance ("Why am I being notified?" Info popover reads
+    this). Falls back to a positional call when the downstream
+    `create_notification` doesn't accept the kwarg (older test stubs)."""
     if not create_notification:
         return
     for uid in recipients:
         try:
+            if reason is not None:
+                try:
+                    await create_notification(uid, event_id, title, body, league_id, link, reason=reason)
+                    continue
+                except TypeError:
+                    # Stub didn't accept `reason=` — fall through to the
+                    # legacy positional form so we still deliver.
+                    pass
             await create_notification(uid, event_id, title, body, league_id, link)
         except Exception:
             pass
@@ -149,8 +179,12 @@ async def run_once(db, create_notification: Callable[..., Awaitable]) -> dict:
     # ── Lineup lock reminders + lineup problem detection ────────────────
     async for league in db.leagues.find(
         {"matchup_lock_at": {"$exists": True, "$ne": None}},
-        {"_id": 1, "name": 1, "matchup_lock_at": 1},
+        {"_id": 1, "name": 1, "matchup_lock_at": 1, "archived": 1, "status": 1},
     ):
+        # Iter 230h+ — Skip junk/archived leagues so the worker never
+        # fans out reminders into TEST_*/archived fixtures.
+        if _is_skippable_league(league):
+            continue
         league_id = str(league["_id"])
         lock_at = _parse_iso(league.get("matchup_lock_at"))
         if not lock_at:
@@ -173,6 +207,14 @@ async def run_once(db, create_notification: Callable[..., Awaitable]) -> dict:
                 body,
                 league_id,
                 "/rosters",
+                reason={
+                    "kind": "lineup_lock_reminder",
+                    "league_id": league_id,
+                    "league_name": league.get("name"),
+                    "lock_at": target_iso,
+                    "minutes_until_lock": mins,
+                    "source": "notification_worker",
+                },
             )
             await _mark_fired(db, league_id, EVT_LINEUP_LOCK_REMINDER, target_iso)
             counts["lineup_lock_reminders"] += len(recipients)
@@ -185,24 +227,35 @@ async def run_once(db, create_notification: Callable[..., Awaitable]) -> dict:
             team_key = f"{EVT_LINEUP_PROBLEM}:{team['_id']}"
             if await _already_fired(db, league_id, team_key, target_iso):
                 continue
-            owners = []
+            # Dedupe owners (owner could also be co_owner historically).
+            owners: set = set()
             if team.get("owner_id"):
-                owners.append(team["owner_id"])
+                owners.add(team["owner_id"])
             for co in (team.get("co_owner_ids") or []):
                 if co:
-                    owners.append(co)
+                    owners.add(co)
+            owners_list = list(owners)
             body = f"{team.get('name') or 'Your team'} has empty or invalid active-lineup slots before lock."
             await _emit_to_recipients(
                 create_notification,
-                owners,
+                owners_list,
                 EVT_LINEUP_PROBLEM,
                 "Fix your lineup",
                 body,
                 league_id,
                 f"/teams/{team['_id']}",
+                reason={
+                    "kind": "lineup_problem",
+                    "league_id": league_id,
+                    "league_name": league.get("name"),
+                    "team_id": str(team["_id"]),
+                    "team_name": team.get("name"),
+                    "lock_at": target_iso,
+                    "source": "notification_worker",
+                },
             )
             await _mark_fired(db, league_id, team_key, target_iso)
-            counts["lineup_problems"] += len(owners)
+            counts["lineup_problems"] += len(owners_list)
 
     # ── Important reminders: drafts + trade deadlines + season starts ────
     # Drafts within 24h.
@@ -220,6 +273,14 @@ async def run_once(db, create_notification: Callable[..., Awaitable]) -> dict:
         if delta <= timedelta(0) or delta > REMINDER_WINDOW:
             continue
         league_id = str(draft["league_id"])
+        # Iter 230h+ — Skip junk leagues here too. One extra read but
+        # cached by the driver; safer than the alternative.
+        parent = await db.leagues.find_one(
+            {"_id": ObjectId(league_id) if ObjectId.is_valid(league_id) else league_id},
+            {"name": 1, "archived": 1, "status": 1},
+        )
+        if _is_skippable_league(parent):
+            continue
         target_iso = sched.isoformat()
         family_key = f"draft:{draft['_id']}"
         if await _already_fired(db, league_id, family_key, target_iso):
@@ -232,6 +293,17 @@ async def run_once(db, create_notification: Callable[..., Awaitable]) -> dict:
             EVT_REMINDER_IMPORTANT,
             "Draft starting soon",
             body, league_id, "/draft-room",
+            reason={
+                "kind": "reminder_important",
+                "milestone": "draft",
+                "league_id": league_id,
+                "league_name": (parent or {}).get("name"),
+                "draft_id": str(draft["_id"]),
+                "draft_name": draft.get("name"),
+                "target_at": target_iso,
+                "hours_until": hrs,
+                "source": "notification_worker",
+            },
         )
         await _mark_fired(db, league_id, family_key, target_iso)
         counts["reminders_important"] += len(recipients)
@@ -244,8 +316,10 @@ async def run_once(db, create_notification: Callable[..., Awaitable]) -> dict:
                 {"season_start_at": {"$exists": True, "$ne": None}},
             ],
         },
-        {"_id": 1, "name": 1, "trade_deadline_at": 1, "season_start_at": 1},
+        {"_id": 1, "name": 1, "trade_deadline_at": 1, "season_start_at": 1, "archived": 1, "status": 1},
     ):
+        if _is_skippable_league(lg):
+            continue
         league_id = str(lg["_id"])
         for field, label, link in [
             ("trade_deadline_at", "Trade deadline", "/transactions"),
@@ -269,6 +343,15 @@ async def run_once(db, create_notification: Callable[..., Awaitable]) -> dict:
                 EVT_REMINDER_IMPORTANT,
                 f"{label} approaching",
                 body, league_id, link,
+                reason={
+                    "kind": "reminder_important",
+                    "milestone": field,
+                    "league_id": league_id,
+                    "league_name": lg.get("name"),
+                    "target_at": target_iso,
+                    "hours_until": hrs,
+                    "source": "notification_worker",
+                },
             )
             await _mark_fired(db, league_id, family_key, target_iso)
             counts["reminders_important"] += len(recipients)
@@ -278,15 +361,39 @@ async def run_once(db, create_notification: Callable[..., Awaitable]) -> dict:
 
 async def notification_worker_loop(db, create_notification, interval_seconds: int = 1800):
     """Long-running asyncio task. Sleeps `interval_seconds` between passes
-    (default 30 min)."""
+    (default 30 min).
+
+    Iter 230h+ — Writes a `notification_worker_runs` heartbeat doc every
+    pass for observability (last run timestamp, counts, error if any).
+    Always upserts so the most recent state is queryable from admin
+    tools without needing log file access.
+    """
     import asyncio
     import logging
     log = logging.getLogger("notification_worker")
     while True:
+        started_at = datetime.now(timezone.utc)
+        counts: dict = {"lineup_lock_reminders": 0, "lineup_problems": 0, "reminders_important": 0}
+        error_msg: Optional[str] = None
         try:
             counts = await run_once(db, create_notification)
             if any(counts.values()):
                 log.info(f"notification_worker: emitted {counts}")
         except Exception as e:
+            error_msg = str(e)
             log.error(f"notification_worker loop error: {e}")
+        try:
+            await db.notification_worker_runs.update_one(
+                {"_id": "latest"},
+                {"$set": {
+                    "_id": "latest",
+                    "started_at": started_at.isoformat(),
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "counts": counts,
+                    "error": error_msg,
+                }},
+                upsert=True,
+            )
+        except Exception:
+            pass  # heartbeat write must never crash the worker
         await asyncio.sleep(interval_seconds)

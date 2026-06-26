@@ -89,6 +89,9 @@ import useLivePicksByOrigKey from "@/hooks/use-live-picks-by-orig-key";
 import useExpandedPlayerFetch from "@/hooks/use-expanded-player-fetch";
 import useDraftQueueShortlistPersistence from "@/hooks/use-draft-queue-shortlist-persistence";
 import useDraftAudioAlerts from "@/hooks/use-draft-audio-alerts";
+// Iter 230i — Auto-init + state-refresh hook + picks-until-my-turn memo.
+import useDraftAutoInit from "@/hooks/use-draft-auto-init";
+import useDraftPicksUntilMyTurn from "@/hooks/use-draft-picks-until-my-turn";
 // Iter 229j — Two more JSX bodies extracted from DraftRoom.tsx.
 import UpcomingDraftsPicker from "@/lovable/pages/draftroom/UpcomingDraftsPicker";
 import DraftRoomBottomGrid from "@/lovable/pages/draftroom/DraftRoomBottomGrid";
@@ -234,6 +237,15 @@ export default function DraftRoom() {
   // newly drafted player without a full page reload.
   const [rosterReloadTick, setRosterReloadTick] = useState(0);
 
+  // Iter 228f — Defer-to-User missed-pick dialog state. Iter 230i —
+  // hoisted above useDraftAutoInit so the auto-init hook can read the
+  // setters without a TDZ.
+  const [missedPickAction, setMissedPickAction] = useState<string>("auto-select");
+  const [deferDialogOpen, setDeferDialogOpen] = useState(false);
+  const [deferAvailable, setDeferAvailable] = useState<string[]>([
+    "auto-best", "auto-queue", "pick-anytime",
+  ]);
+
   // Iter 228n — Upcoming-drafts dropdown: list the next 30 days of
   // scheduled drafts for this league so commissioners + league
   // managers can switch (e.g. mid-season trade deadline draft vs.
@@ -241,85 +253,23 @@ export default function DraftRoom() {
   // Iter 229d — extracted into a dedicated hook.
   const { upcomingDrafts, selectedDraftId, setSelectedDraftId } =
     useUpcomingDrafts(activeLeagueCtx?.id);
-  useEffect(() => {
-    if (!activeLeagueCtx?.id) { setCurrentDraft(null); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        // Iter 228n — When the user picked a specific draft from the
-        // upcoming-drafts dropdown, load that one directly instead of
-        // auto-init (which always returns the most-recent draft).
-        let data;
-        if (selectedDraftId) {
-          const r = await api.get(`/drafts/${selectedDraftId}`);
-          data = { draft: r.data, created: false };
-        } else {
-          const r = await api.post(`/drafts/auto-init/${activeLeagueCtx.id}`);
-          data = r.data;
-        }
-        if (cancelled) return;
-        const d = data?.draft;
-        if (!d) return;
-        setCurrentDraft(d);
-        // Hydrate picks + currentPick from backend if any picks exist
-        if (Array.isArray(d.picks) && d.picks.length > 0) {
-          setPicks(d.picks.map((p: any) => ({
-            // Iter 228i — Stable unique key per pick. Was previously
-            // derived from `pick-${Date.now()}` shared across rapid hydrates,
-            // causing duplicate React keys when re-render fired twice.
-            id: p.id || p._id || `pick-${p.round}-${p.pick_in_round || p.overall}`,
-            round: p.round,
-            pickInRound: p.pick_in_round,
-            overall: p.overall,
-            team: p.team,
-            player: p.player,
-            auto_picked: !!p.auto_picked,
-            auto_pick_via: p.auto_pick_via,
-          })));
-          const lastPlayerId = d.picks[d.picks.length - 1]?.player_id;
-          if (lastPlayerId) setLastPickedPlayerId(String(lastPlayerId));
-        }
-        // Iter 228j — Always hydrate totalRounds / pickTimerSeconds from
-        // the backend even when current_pick is absent (scheduled drafts
-        // pre-iter228 may not carry a numeric current_pick). Previously
-        // this guard caused the Draft Board to stay stuck on the React
-        // default of 5 rounds for legacy drafts.
-        setDraftConfig((prev) => ({
-          ...prev,
-          currentPick: typeof d.current_pick === "number" ? d.current_pick : prev.currentPick,
-          draftStarted: d.status === "active",
-          totalRounds: d.total_rounds || prev.totalRounds,
-          pickTimerSeconds: d.time_per_pick || prev.pickTimerSeconds,
-          // Iter 228n — Anchor the "Draft starts in" countdown to the
-          // backend's scheduled_time (set in League Admin > Drafts).
-          // Previously this stayed pinned to the React default of
-          // `Date.now() + 2h`, so the countdown showed the wrong ETA.
-          scheduledTime: d.scheduled_time
-            ? new Date(d.scheduled_time)
-            : prev.scheduledTime,
-        }));
-        // Iter 228f — Hydrate missed_pick_action + defer_user_options
-        // so the timer hook can decide whether to surface the dialog.
-        if (d.missed_pick_action) setMissedPickAction(d.missed_pick_action);
-        if (Array.isArray(d.defer_user_options) && d.defer_user_options.length) {
-          setDeferAvailable(d.defer_user_options);
-        }
-        // Iter 170m — hydrate historic chat (picks + system messages
-        // including auto-pick badges) so a reload preserves the
-        // narrative arc of the draft.
-        if (Array.isArray(d.chat_messages) && d.chat_messages.length > 0) {
-          setChatMessages(d.chat_messages.map((m: any) => ({
-            ...m,
-            timestamp: new Date(m.timestamp || Date.now()),
-          })));
-        }
-      } catch (e) {
-        // Non-commissioners get 403 → fall back to mock/local-only flow
-        if (!cancelled) setCurrentDraft(null);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [activeLeagueCtx?.id, selectedDraftId]);
+
+  // Iter 230i — Auto-init + state refresh extracted. The 79-line
+  // hydration useEffect + 23-line refreshDraftState callback now live
+  // in `use-draft-auto-init.ts`.
+  const { refreshDraftState } = useDraftAutoInit({
+    leagueId: activeLeagueCtx?.id,
+    selectedDraftId,
+    currentDraftId: currentDraft?._id,
+    setCurrentDraft,
+    setPicks,
+    setDraftConfig,
+    setLastPickedPlayerId,
+    setMissedPickAction: (s) => setMissedPickAction(s),
+    setDeferAvailable: (a) => setDeferAvailable(a),
+    setChatMessages,
+    setRosterReloadTick,
+  });
 
   // Iter 194c — On mount / league change, hydrate any pick trade
   // already in `pending_draft_review` so a refreshed Draft Room still
@@ -350,33 +300,9 @@ export default function DraftRoom() {
   // (Iter 170h — onTheClockBoardEntry + canPickForCurrentTurn moved
   // below `onTheClockTeam` declaration to avoid TDZ; see below.)
 
-  // Iter 170h — Refetch the canonical draft state + bump roster reload
-  // tick. Called from the Socket.IO `draft_pick` / `draft_undo` /
-  // `draft_pick_swapped` handlers so every connected manager sees the
-  // board update in real time without polling.
-  const refreshDraftState = useCallback(async () => {
-    if (!currentDraft?._id) return;
-    try {
-      const { data } = await api.get(`/drafts/${currentDraft._id}`);
-      setCurrentDraft(data);
-      setPicks((data.picks || []).map((p: any) => ({
-        round: p.round, pickInRound: p.pick_in_round, overall: p.overall,
-        team: p.team, player: p.player,
-        auto_picked: !!p.auto_picked, auto_pick_via: p.auto_pick_via,
-      })));
-      setDraftConfig((prev) => ({ ...prev, currentPick: data.current_pick }));
-      setRosterReloadTick((t) => t + 1);
-      // Iter 170m — Keep chat in sync with backend on every refresh
-      // (undo / swap / remote pick) so the Picks tab always reflects
-      // the canonical message log.
-      if (Array.isArray(data.chat_messages)) {
-        setChatMessages(data.chat_messages.map((m: any) => ({
-          ...m,
-          timestamp: new Date(m.timestamp || Date.now()),
-        })));
-      }
-    } catch { /* ignore — will retry on next event */ }
-  }, [currentDraft?._id]);
+  // Iter 230i — refreshDraftState extracted into useDraftAutoInit; the
+  // hook returns the canonical refetcher consumed by Socket.IO events
+  // below.
 
   // Iter 170h — Subscribe to the draft's Socket.IO room. Listeners fire
   // for every pick / undo / swap broadcast by the backend.
@@ -433,12 +359,9 @@ export default function DraftRoom() {
 
   const isClockActive = draftConfig.draftStarted && !draftConfig.earlyStart;
 
-  // Iter 228f — Defer-to-User missed-pick dialog state
-  const [missedPickAction, setMissedPickAction] = useState<string>("auto-select");
-  const [deferDialogOpen, setDeferDialogOpen] = useState(false);
-  const [deferAvailable, setDeferAvailable] = useState<string[]>([
-    "auto-best", "auto-queue", "pick-anytime",
-  ]);
+  // Iter 228f — missedPickAction / deferDialogOpen / deferAvailable
+  // state hoisted above useDraftAutoInit; see top of component.
+
   // Iter 228i — Determine whether the active pick belongs to the local
   // user's team WITHOUT referencing the `myTeam` useMemo (which is
   // declared further down the file → would trigger a Temporal Dead
@@ -689,46 +612,17 @@ export default function DraftRoom() {
   };
   const currentRound = Math.ceil(draftConfig.currentPick / totalTeams);
   const currentPickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
-  // Iter 170b — Picks-until-my-turn counter. With real-league wiring
-  // (Iter 170b), `boardTeams` carries the real team `id`s when the
-  // user is attached to a league, so we can match `myTeam.id` directly
-  // against the board team for each pick. The legacy abbr/index
-  // fallback only kicks in when the board is running on mock data
-  // (no liveTeams) — used by Storybook / standalone demo.
-  const picksUntilMyTurn: number | null = useMemo(() => {
-    if (!myTeam) return null;
-    // Fast path: real-league mode — match by team id.
-    const myBoardEntry = boardTeams.find((t) => t.id && t.id === (myTeam as any).id);
-    const myAbbrCandidates = new Set<string>();
-    if (myBoardEntry) {
-      myAbbrCandidates.add(myBoardEntry.abbr);
-    } else {
-      // Mock-data fallback path
-      [
-        (myTeam as any).abbr,
-        (myTeam as any).logo_abbr,
-        myTeam.name?.replace(/\s/g, "").slice(0, 3).toUpperCase(),
-        myTeam.name?.split(" ").map((w: string) => w[0] || "").join("").toUpperCase(),
-      ]
-        .filter(Boolean)
-        .forEach((a: string) => {
-          if (boardTeamAbbrs.includes(a)) myAbbrCandidates.add(a);
-        });
-      if (myAbbrCandidates.size === 0) {
-        const firstLetter = myTeam.name?.charAt(0).toUpperCase();
-        const fallback = boardTeamAbbrs.find((a) => a.startsWith(firstLetter || ""));
-        if (fallback) myAbbrCandidates.add(fallback);
-        else if (boardTeamAbbrs.length > 0) myAbbrCandidates.add(boardTeamAbbrs[boardTeamAbbrs.length - 1]);
-      }
-    }
-    const totalPicks = totalTeams * draftConfig.totalRounds;
-    for (let n = draftConfig.currentPick; n <= totalPicks; n++) {
-      if (myAbbrCandidates.has(getTeamForPick(n))) {
-        return n - draftConfig.currentPick;
-      }
-    }
-    return null;
-  }, [myTeam, boardTeams, boardTeamAbbrs, draftConfig.currentPick, draftConfig.totalRounds, totalTeams, getTeamForPick]);
+  // Iter 170b — Picks-until-my-turn counter. Iter 230i — extracted to
+  // `useDraftPicksUntilMyTurn` hook (34-line memo + mock fallback).
+  const picksUntilMyTurn: number | null = useDraftPicksUntilMyTurn({
+    myTeam,
+    boardTeams,
+    boardTeamAbbrs,
+    currentPick: draftConfig.currentPick,
+    totalRounds: draftConfig.totalRounds,
+    totalTeams,
+    getTeamForPick,
+  });
 
   const positions = [
     { value: "all", label: "All Positions" },

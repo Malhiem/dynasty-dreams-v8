@@ -30,8 +30,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
-  Plus, ArrowRightLeft, MessageSquare, TrendingUp, TrendingDown, Filter, Crown,
-  LayoutGrid, List as ListIcon, X, ArrowUp, ArrowDown, EyeOff, Eye,
+  Plus, ArrowRightLeft, MessageSquare, TrendingUp, TrendingDown, Crown,
+  X, ArrowUp, ArrowDown, EyeOff,
 } from "lucide-react";
 import { TradeProposalModal } from "@/lovable/components/trade/TradeProposalModal";
 import TeamLink from "@/lovable/components/TeamLink";
@@ -41,178 +41,15 @@ import ReportUserButton from "@/components/ReportUserButton";
 // Iter 230 — Tile + List view extracted into their own components.
 import TradeBlockCard from "@/lovable/pages/trade-block/TradeBlockCard";
 import TradeBlockListView from "@/lovable/pages/trade-block/TradeBlockListView";
+// Iter 230i — Types, mocks, MyPlayersTab, FiltersBar extracted.
+import type { TradeBlockItem, ItemType } from "@/lovable/pages/trade-block/types";
+import { tradeBlockItemsMock as tradeBlockItems, POSITIONS as positions } from "@/lovable/pages/trade-block/mocks";
+import MyPlayersTab from "@/lovable/pages/trade-block/MyPlayersTab";
+import TradeBlockFiltersBar from "@/lovable/pages/trade-block/TradeBlockFiltersBar";
 
-type ItemType = "player" | "prospect" | "pick";
-
-interface TradeBlockItem {
-  id: number;
-  name: string;
-  position: string;
-  team: string;
-  team_id?: string;
-  age?: number;
-  dynastyValue: number;
-  aav?: number | null;
-  owner: string;
-  owner_id?: string;
-  ownerAvatar: string;
-  // Iter 229k — Owner team's preset theme color (hex).
-  ownerThemeColor?: string | null;
-  lookingFor: string[];
-  trend: "up" | "down" | "stable";
-  weeklyPoints?: number;
-  type: ItemType;
-  year?: number;
-  round?: string;
-  // Skater stats
-  gp?: number;
-  g?: number;
-  a?: number;
-  plusMinus?: number;
-  ppp?: number;
-  shp?: number;
-  gwg?: number;
-  sog?: number;
-  hit?: number;
-  blk?: number;
-  fow?: number;
-  fol?: number;
-  // Goalie stats
-  w?: number;
-  l?: number;
-  sol?: number;
-  sv?: number;
-  ga?: number;
-  so?: number;
-}
-
-const tradeBlockItems: TradeBlockItem[] = [
-  {
-    id: 1,
-    name: "Adam Fox",
-    position: "D",
-    team: "NYR",
-    age: 25,
-    dynastyValue: 8500,
-    owner: "Frozen Thunder",
-    ownerAvatar: "FT",
-    lookingFor: ["Young D-man", "Multiple Assets"],
-    trend: "up",
-    weeklyPoints: 42.5,
-    type: "player",
-    gp: 52, g: 8, a: 36, plusMinus: 14, ppp: 10, shp: 0, gwg: 2, sog: 124, hit: 42, blk: 88, fow: 0, fol: 0,
-  },
-  {
-    id: 2,
-    name: "Mitch Marner",
-    position: "RW",
-    team: "TOR",
-    age: 26,
-    dynastyValue: 7800,
-    owner: "Glacier Kings",
-    ownerAvatar: "GK",
-    lookingFor: ["Elite Center", "2+ Picks"],
-    trend: "up",
-    weeklyPoints: 38.2,
-    type: "player",
-    gp: 50, g: 14, a: 42, plusMinus: 8, ppp: 16, shp: 1, gwg: 3, sog: 132, hit: 22, blk: 16, fow: 0, fol: 0,
-  },
-  {
-    id: 3,
-    name: "Sidney Crosby",
-    position: "C",
-    team: "PIT",
-    age: 36,
-    dynastyValue: 5100,
-    owner: "Puck Masters",
-    ownerAvatar: "PM",
-    lookingFor: ["1st Round Pick", "Proven Scorer"],
-    trend: "stable",
-    weeklyPoints: 28.7,
-    type: "player",
-    gp: 48, g: 18, a: 30, plusMinus: 6, ppp: 12, shp: 0, gwg: 5, sog: 168, hit: 36, blk: 12, fow: 528, fol: 396,
-  },
-  {
-    id: 4,
-    name: "Alex Ovechkin",
-    position: "LW",
-    team: "WSH",
-    age: 38,
-    dynastyValue: 4200,
-    owner: "Ice Crushers",
-    ownerAvatar: "IC",
-    lookingFor: ["Draft Picks", "Young Forwards"],
-    trend: "down",
-    weeklyPoints: 22.1,
-    type: "player",
-    gp: 44, g: 24, a: 12, plusMinus: -4, ppp: 10, shp: 2, gwg: 4, sog: 210, hit: 86, blk: 8, fow: 0, fol: 0,
-  },
-  {
-    id: 5,
-    name: "Connor Bedard",
-    position: "C",
-    team: "CHI",
-    age: 18,
-    dynastyValue: 6500,
-    owner: "Blizzard FC",
-    ownerAvatar: "BF",
-    lookingFor: ["Established Star", "Picks"],
-    trend: "up",
-    weeklyPoints: 0,
-    type: "prospect",
-  },
-  {
-    id: 6,
-    name: "Matvei Michkov",
-    position: "RW",
-    team: "PHI",
-    age: 19,
-    dynastyValue: 5800,
-    owner: "Ice Crushers",
-    ownerAvatar: "IC",
-    lookingFor: ["NHL Ready Forward"],
-    trend: "up",
-    weeklyPoints: 0,
-    type: "prospect",
-  },
-  {
-    id: 7,
-    name: "2025 1st Round",
-    position: "Pick",
-    team: "Own",
-    dynastyValue: 3500,
-    owner: "Glacier Kings",
-    ownerAvatar: "GK",
-    lookingFor: ["Young Player"],
-    trend: "stable",
-    type: "pick",
-    year: 2025,
-    round: "1st",
-  },
-  {
-    id: 8,
-    name: "2025 2nd Round",
-    position: "Pick",
-    team: "Own",
-    dynastyValue: 1800,
-    owner: "Puck Masters",
-    ownerAvatar: "PM",
-    lookingFor: ["Depth Player"],
-    trend: "stable",
-    type: "pick",
-    year: 2025,
-    round: "2nd",
-  },
-];
-
-const myAvailablePlayers = [
-  { id: 1, name: "Nathan MacKinnon", position: "C", team: "COL", dynastyValue: 9200, onBlock: false },
-  { id: 2, name: "Cale Makar", position: "D", team: "COL", dynastyValue: 9500, onBlock: false },
-  { id: 3, name: "Igor Shesterkin", position: "G", team: "NYR", dynastyValue: 7200, onBlock: true },
-];
-
-const positions = ["All", "C", "LW", "RW", "D", "G", "Prospect", "Pick"];
-const owners = ["All Teams", "Frozen Thunder", "Glacier Kings", "Puck Masters", "Ice Crushers", "Blizzard FC"];
+// Iter 230i — `TradeBlockItem` / `ItemType` types + the static
+// `tradeBlockItems` seed array + the `POSITIONS` constant are all
+// extracted to `trade-block/types.ts` and `trade-block/mocks.ts`.
 
 const TradeBlock = () => {
   const { league, leagueTeams, myTeam } = useActiveLeague();
@@ -452,80 +289,21 @@ const TradeBlock = () => {
           </TabsList>
 
           <TabsContent value="league">
-            {/* Filters */}
-            <div className="flex items-center gap-4 mb-4">
-              <div className="flex items-center gap-2">
-                <Filter className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Filter:</span>
-              </div>
-              <Select value={positionFilter} onValueChange={setPositionFilter}>
-                <SelectTrigger className="w-36 bg-secondary border-border">
-                  <SelectValue placeholder="Position" />
-                </SelectTrigger>
-                <SelectContent>
-                  {positions.map((pos) => (
-                    <SelectItem key={pos} value={pos}>
-                      {pos === "All" ? "All Positions" : pos}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select value={ownerFilter} onValueChange={setOwnerFilter}>
-                <SelectTrigger className="w-44 bg-secondary border-border" data-testid="trade-block-owner-filter">
-                  <SelectValue placeholder="Team" />
-                </SelectTrigger>
-                <SelectContent>
-                  {realOwners.map((owner) => (
-                    <SelectItem key={owner} value={owner}>
-                      {owner}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Badge variant="outline" className="ml-auto" data-testid="trade-block-count">
-                {visibleItems.length} items{hiddenCountAfterFilters > 0 && (
-                  <span className="ml-1 text-muted-foreground/70">· {hiddenCountAfterFilters} hidden</span>
-                )}
-              </Badge>
-              {/* View toggle — list ↔ tile. Selection persists per-league. */}
-              <div
-                className="inline-flex items-center rounded-md border border-border bg-secondary/40 overflow-hidden"
-                data-testid="trade-block-view-toggle"
-              >
-                <button
-                  type="button"
-                  onClick={() => prefs.setViewMode("tile")}
-                  data-testid="trade-block-view-tile"
-                  aria-pressed={prefs.viewMode === "tile"}
-                  className={`flex items-center gap-1 px-2.5 py-1 text-xs ${prefs.viewMode === "tile" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                  title="Tile view"
-                >
-                  <LayoutGrid className="h-3.5 w-3.5" /> Tile
-                </button>
-                <button
-                  type="button"
-                  onClick={() => prefs.setViewMode("list")}
-                  data-testid="trade-block-view-list"
-                  aria-pressed={prefs.viewMode === "list"}
-                  className={`flex items-center gap-1 px-2.5 py-1 text-xs border-l border-border ${prefs.viewMode === "list" ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
-                  title="List view"
-                >
-                  <ListIcon className="h-3.5 w-3.5" /> List
-                </button>
-              </div>
-              {prefs.viewMode === "tile" && prefs.hiddenIds.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={prefs.clearHidden}
-                  data-testid="trade-block-show-hidden"
-                  className="text-xs h-7"
-                >
-                  <Eye className="h-3.5 w-3.5 mr-1" />
-                  Show {prefs.hiddenIds.length} hidden
-                </Button>
-              )}
-            </div>
+            {/* Iter 230i — Filters + view-toggle bar extracted. */}
+            <TradeBlockFiltersBar
+              positions={positions}
+              realOwners={realOwners}
+              positionFilter={positionFilter}
+              setPositionFilter={setPositionFilter}
+              ownerFilter={ownerFilter}
+              setOwnerFilter={setOwnerFilter}
+              visibleCount={visibleItems.length}
+              hiddenCountAfterFilters={hiddenCountAfterFilters}
+              viewMode={prefs.viewMode}
+              setViewMode={prefs.setViewMode}
+              hiddenIds={prefs.hiddenIds}
+              clearHidden={prefs.clearHidden}
+            />
 
             {prefs.viewMode === "list" ? (
               <TradeBlockListView
@@ -562,89 +340,8 @@ const TradeBlock = () => {
           </TabsContent>
 
           <TabsContent value="my-players">
-            <Card className="bg-card border-border">
-              <CardHeader className="flex flex-row items-start justify-between gap-2">
-                <div>
-                  <CardTitle>My Trade-Block Players</CardTitle>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Players you've shopped from your roster. To add or remove
-                    listings, use the trade-block toggle on the{" "}
-                    {myTeam ? (
-                      <Link
-                        to={`/teams/${myTeam.id}`}
-                        className="text-primary hover:underline"
-                        data-testid="my-players-roster-link"
-                      >
-                        Roster page
-                      </Link>
-                    ) : "Roster page"}
-                    .
-                  </p>
-                </div>
-                <Badge variant="outline" data-testid="my-players-count">
-                  {myOnBlockPlayers.length} on block
-                </Badge>
-              </CardHeader>
-              <CardContent>
-                {myOnBlockPlayers.length === 0 ? (
-                  <div
-                    className="text-center py-10 text-sm text-muted-foreground"
-                    data-testid="my-players-empty"
-                  >
-                    None of your players are on the trade block yet.
-                    <div className="mt-2">
-                      {myTeam && (
-                        <Button asChild variant="outline" size="sm">
-                          <Link
-                            to={`/teams/${myTeam.id}`}
-                            data-testid="my-players-go-to-roster"
-                          >
-                            Go to Roster →
-                          </Link>
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {myOnBlockPlayers.map((player: any) => (
-                      <div
-                        key={player.id}
-                        data-testid={`my-players-row-${player.id}`}
-                        className="flex items-center justify-between p-4 rounded-lg bg-secondary/30 hover:bg-secondary/50 transition-colors"
-                      >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className="h-10 w-10 rounded-lg bg-secondary flex items-center justify-center text-xs font-bold shrink-0">
-                            {player.team || player.nhl_team || "?"}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="font-medium truncate flex items-center gap-1.5">
-                              {player.name}
-                              <MinorEligibleBadge eligible={(player as any).minor_eligible || (player as any).player_type === "prospect"} />
-                            </p>
-                            <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-1">
-                              <span>{player.position}</span>
-                              {(player.lookingFor || []).length > 0 && (
-                                <>
-                                  <span className="text-muted-foreground/60">·</span>
-                                  <span className="text-xs">Looking for:</span>
-                                  {(player.lookingFor || []).slice(0, 3).map((r: string, i: number) => (
-                                    <Badge key={i} variant="secondary" className="text-[10px] py-0 px-1.5">{r}</Badge>
-                                  ))}
-                                </>
-                              )}
-                            </p>
-                          </div>
-                        </div>
-                        <Button asChild variant="outline" size="sm" data-testid={`my-players-manage-${player.id}`}>
-                          <Link to={`/teams/${myTeam?.id}`}>Manage on Roster →</Link>
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            {/* Iter 230i — My Players tab extracted. */}
+            <MyPlayersTab players={myOnBlockPlayers} myTeam={myTeam} />
           </TabsContent>
         </Tabs>
       </div>
