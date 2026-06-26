@@ -74,20 +74,61 @@ def setup(deps: dict) -> None:
 
 @router.get("/users/me/week-at-a-glance")
 async def get_my_week_at_a_glance(request: Request):
-    """Week-at-a-glance for every team owned by the current user."""
+    """Week-at-a-glance for every team owned by the current user.
+
+    Iter 230g — Bug fix: filter out teams whose league is archived OR
+    whose league name starts with the `TEST_` automated-test prefix so
+    stale test artifacts (left behind by integration runs) don't bleed
+    into a real user's dashboard. Also include teams where the user is
+    a co-owner (`co_owner_ids`) — those belong on the dashboard just
+    like primary-owner teams.
+    """
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
     get_team_week_summary = _deps["get_team_week_summary"]
 
     user = await get_current_user(request)
     teams = await db.teams.find(
-        {"owner_id": user["_id"]},
+        {"$or": [
+            {"owner_id": user["_id"]},
+            {"co_owner_ids": user["_id"]},
+        ]},
         {"_id": 1, "league_id": 1, "name": 1},
-    ).to_list(50)
+    ).to_list(200)
     if not teams:
         return {"summaries": []}
+
+    # Resolve every league referenced and apply the filter in one pass.
+    league_ids: set = set()
+    for t in teams:
+        if t.get("league_id"):
+            league_ids.add(t["league_id"])
+    real_league_ids: set = set()
+    if league_ids:
+        oid_list = []
+        for lid in league_ids:
+            try:
+                oid_list.append(ObjectId(lid))
+            except Exception:
+                continue
+        if oid_list:
+            async for lg in db.leagues.find(
+                {"_id": {"$in": oid_list}},
+                {"_id": 1, "archived": 1, "status": 1, "name": 1},
+            ):
+                if lg.get("archived"):
+                    continue
+                if (lg.get("status") or "").lower() == "archived":
+                    continue
+                name = lg.get("name") or ""
+                if name.startswith("TEST_"):
+                    continue
+                real_league_ids.add(str(lg["_id"]))
+
     summaries = []
     for t in teams:
+        if t.get("league_id") not in real_league_ids:
+            continue
         try:
             res = await get_team_week_summary(str(t["_id"]), request)
             summaries.append(res)

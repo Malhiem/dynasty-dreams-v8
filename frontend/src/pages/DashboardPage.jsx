@@ -25,13 +25,20 @@ export default function DashboardPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const [leaguesRes] = await Promise.all([
+        // Iter 230g — `/teams?owner_id=me` returns the user's actual teams
+        // (including co-owned, excluding archived/test leagues), so the
+        // "Total Teams" stat reflects the dashboard's Week at a Glance
+        // exactly. Falls back to summing league.current_teams ONLY if
+        // the dedicated endpoint isn't available.
+        const [leaguesRes, wagRes] = await Promise.all([
           api.get('/leagues?my_leagues=true'),
+          api.get('/users/me/week-at-a-glance').catch(() => ({ data: { summaries: [] } })),
         ]);
         setLeagues(leaguesRes.data);
+        const myTeamsCount = (wagRes.data?.summaries || []).length;
         setStats({
           leagues: leaguesRes.data.length,
-          teams: leaguesRes.data.reduce((acc, l) => acc + (l.current_teams || 0), 0),
+          teams: myTeamsCount,
           upcoming: leaguesRes.data.filter(l => l.status === 'setup').length
         });
       } catch (err) {
