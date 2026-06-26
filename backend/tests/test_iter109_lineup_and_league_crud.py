@@ -149,9 +149,13 @@ async def test_compliance_returns_full_shape(isolated_app):
         r = await ac.get(f"/api/teams/{team_id}/compliance")
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["compliant"] is True
-        assert body["reasons"] == []
+        # Iter 230o — a seeded team with zero players is now intentionally
+        # surfaced as non-compliant via the `empty_roster` reason so the
+        # Roster Status tile doesn't silently lie about expansion teams.
+        assert body["compliant"] is False
         assert body["roster_count"] == 0
+        codes = [r.get("code") for r in body["reasons"]]
+        assert codes == ["empty_roster"]
         assert body["salary_retention_slots_total"] == 3
         assert body["injury_reserve_compliance_mode"] == "none"
 

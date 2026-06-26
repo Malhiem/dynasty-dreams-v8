@@ -350,7 +350,18 @@ async def get_team_compliance(team_id: str):
     roster_count = len(roster_ids)
     max_roster = int((league or {}).get("roster_spots") or 25)
 
-    if roster_count > max_roster:
+    # Iter 230o — empty rosters must surface as non-compliant. A team
+    # with zero players cannot field a lineup and skips every other
+    # downstream check (salary cap, IR, minors) silently, which used
+    # to mis-render expansion / abandoned teams (e.g. Hamilton Coyotes)
+    # as "Compliant" in the Roster Status tile.
+    if roster_count == 0:
+        reasons.append({
+            "code": "empty_roster",
+            "label": "Roster is empty",
+            "detail": f"Team has 0 players on the roster (league requires up to {max_roster}). Draft or claim players to field a lineup.",
+        })
+    elif roster_count > max_roster:
         reasons.append({
             "code": "too_many_players",
             "label": "Too many players on the roster",
