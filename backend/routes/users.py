@@ -98,6 +98,15 @@ async def get_my_week_at_a_glance(request: Request):
     if not teams:
         return {"summaries": []}
 
+    # Iter 230h — Honour the user's per-league "hide from dashboard"
+    # preference. Hidden leagues won't appear here even if real.
+    hidden_ids: set = set()
+    try:
+        from routes.notification_preferences import get_hidden_league_ids
+        hidden_ids = set(await get_hidden_league_ids(user["_id"]))
+    except Exception:
+        hidden_ids = set()
+
     # Resolve every league referenced and apply the filter in one pass.
     league_ids: set = set()
     for t in teams:
@@ -128,6 +137,8 @@ async def get_my_week_at_a_glance(request: Request):
     summaries = []
     for t in teams:
         if t.get("league_id") not in real_league_ids:
+            continue
+        if t.get("league_id") in hidden_ids:
             continue
         try:
             res = await get_team_week_summary(str(t["_id"]), request)

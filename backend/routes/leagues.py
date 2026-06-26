@@ -383,6 +383,7 @@ async def get_leagues(
     my_leagues: bool = False,  # kept for backward compat (same as default)
     discover: bool = False,
     all: bool = False,
+    include_hidden: bool = False,
 ):
     """Iter 221 — Privacy hardening. By default the endpoint only returns
     leagues the current user is a member of (team owner or commissioner).
@@ -446,6 +447,18 @@ async def get_leagues(
         ]
     }
     leagues = await db.leagues.find(query).to_list(200)
+    # Iter 230h — Filter out leagues the user has explicitly hidden from
+    # their dashboard. Hidden leagues are reversible from the Settings
+    # modal so this is a soft-hide, not a deletion. Caller may opt out
+    # via `include_hidden=true` so the unhide UI can list everything.
+    if not include_hidden:
+        try:
+            from routes.notification_preferences import get_hidden_league_ids
+            hidden_ids = set(await get_hidden_league_ids(user["_id"]))
+        except Exception:
+            hidden_ids = set()
+        if hidden_ids:
+            leagues = [lg for lg in leagues if str(lg["_id"]) not in hidden_ids]
     return [_league_to_response(league) for league in leagues]
 
 

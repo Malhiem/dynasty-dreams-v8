@@ -165,7 +165,7 @@ async def test_nhl_roster_sync_diff_routes_through_dispatcher():
 
         calls: list = []
 
-        async def recorder(user_id, event_id, title, body, league_id=None, link=None):
+        async def recorder(user_id, event_id, title, body, league_id=None, link=None, reason=None):
             calls.append(event_id)
 
         with patch.object(worker_mod, "_fetch_team_codes", fake_team_codes), \

@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '@/lib/api';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
-import { GripVertical, Loader2, Trophy, Users as UsersIcon, ArrowRight } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { GripVertical, Loader2, Trophy, Users as UsersIcon, ArrowRight, MoreVertical, EyeOff } from 'lucide-react';
 
 const ORDER_KEY = 'dd_league_order_v1';
 
@@ -72,6 +79,26 @@ export default function MyLeaguesOrderedList() {
     setDragOverId(null);
   };
   const onDragEnd = () => { setDragId(null); setDragOverId(null); };
+
+  // Iter 230h — Hide league from dashboard. Persists to the user's
+  // notification_preferences.hidden_league_ids list and immediately
+  // removes the row locally so the surface decltters without a refetch.
+  const handleHideLeague = async (leagueId, leagueName) => {
+    const prev = leagues;
+    setLeagues((cur) => cur.filter((l) => l.id !== leagueId));
+    try {
+      await api.put('/notifications/preferences/league-hide', {
+        league_id: leagueId,
+        hidden: true,
+      });
+      toast.success(`${leagueName || 'League'} hidden from dashboard`, {
+        description: 'Restore any time from Notification Settings.',
+      });
+    } catch (e) {
+      setLeagues(prev);
+      toast.error("Couldn't hide that league");
+    }
+  };
 
   if (loading) {
     return (
@@ -170,6 +197,36 @@ export default function MyLeaguesOrderedList() {
               >
                 Open <ArrowRight size={12} />
               </Link>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  asChild
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    data-testid={`my-leagues-menu-btn-${lg.id}`}
+                    aria-label="League options"
+                    className="h-7 w-7 rounded-md text-[#52525B] hover:text-white hover:bg-white/5 flex items-center justify-center shrink-0 transition-colors"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    draggable={false}
+                  >
+                    <MoreVertical size={14} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="end"
+                  className="bg-[#141414] border border-white/10 text-white"
+                >
+                  <DropdownMenuItem
+                    onSelect={() => handleHideLeague(lg.id, lg.name)}
+                    data-testid={`my-leagues-hide-${lg.id}`}
+                    className="text-rose-300 focus:bg-rose-500/10 focus:text-rose-200 cursor-pointer"
+                  >
+                    <EyeOff size={14} className="mr-2" />
+                    Hide from my dashboard
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           );
         })}

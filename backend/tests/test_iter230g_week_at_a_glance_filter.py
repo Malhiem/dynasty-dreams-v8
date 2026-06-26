@@ -134,7 +134,7 @@ async def test_week_at_a_glance_includes_co_owner_teams():
     """A co-owner of a team should also see it in their own dashboard."""
     db = _db_sync()
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@live.com", "TempPass123!")
+        token = await _login(client, "chriszarek@live.com", "Chris2026!")
         live_user = await db.users.find_one({"email": "chriszarek@live.com"})
         live_uid = str(live_user["_id"])
 

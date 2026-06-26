@@ -50,6 +50,14 @@ class LeagueMuteInput(BaseModel):
     muted: bool
 
 
+# Iter 230h — Per-user "hide from dashboard" preference. Hidden leagues
+# disappear from /users/me/week-at-a-glance + the sidebar's "My Leagues"
+# list. The user can still resurface them via the Settings modal.
+class LeagueHideInput(BaseModel):
+    league_id: str
+    hidden: bool
+
+
 def _default_quiet_hours() -> dict:
     return {
         "enabled": False,
@@ -139,10 +147,12 @@ async def _load_full_doc(user_id: str) -> dict:
     if not isinstance(quiet, dict):
         quiet = _default_quiet_hours()
     muted = doc.get("muted_league_ids") or []
+    hidden = doc.get("hidden_league_ids") or []
     return {
         "preferences": preferences,
         "quiet_hours": quiet,
         "muted_league_ids": list(muted),
+        "hidden_league_ids": list(hidden),
     }
 
 
@@ -155,6 +165,7 @@ async def get_preferences(request: Request):
         "preferences": full["preferences"],
         "quiet_hours": full["quiet_hours"],
         "muted_league_ids": full["muted_league_ids"],
+        "hidden_league_ids": full["hidden_league_ids"],
         "events": EVENTS,
         "categories": CATEGORIES,
     }
@@ -213,6 +224,44 @@ async def update_league_mute(input: LeagueMuteInput, request: Request):
         )
     full = await _load_full_doc(user["_id"])
     return {"muted_league_ids": full["muted_league_ids"]}
+
+
+@router.put("/notifications/preferences/league-hide")
+async def update_league_hide(input: LeagueHideInput, request: Request):
+    """Iter 230h — Hide a league from the dashboard (Week at a Glance +
+    My Leagues sidebar). Reversible: the user can unhide from the
+    Settings modal at any time. Distinct from `league-mute` which only
+    silences notifications — `league-hide` actually removes the league
+    from the user's day-to-day surface area."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    if input.hidden:
+        await db.notification_preferences.update_one(
+            {"user_id": user["_id"]},
+            {"$set": {"user_id": user["_id"]},
+             "$addToSet": {"hidden_league_ids": input.league_id}},
+            upsert=True,
+        )
+    else:
+        await db.notification_preferences.update_one(
+            {"user_id": user["_id"]},
+            {"$set": {"user_id": user["_id"]},
+             "$pull": {"hidden_league_ids": input.league_id}},
+            upsert=True,
+        )
+    full = await _load_full_doc(user["_id"])
+    return {"hidden_league_ids": full["hidden_league_ids"]}
+
+
+async def get_hidden_league_ids(user_id: str) -> list:
+    """Iter 230h — Helper used by other routes (week-at-a-glance,
+    leagues) to apply the hidden-league filter consistently."""
+    db = _deps.get("db")
+    if db is None:
+        return []
+    doc = await db.notification_preferences.find_one({"user_id": user_id})
+    return list((doc or {}).get("hidden_league_ids") or [])
 
 
 @router.put("/notifications/preferences")

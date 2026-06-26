@@ -111,7 +111,7 @@ async def test_scraper_dispatches_injury_signal_end_to_end():
 
     calls: list = []
 
-    async def recorder(user_id, event_id, title, body, league_id=None, link=None):
+    async def recorder(user_id, event_id, title, body, league_id=None, link=None, reason=None):
         calls.append(event_id)
 
     try:
@@ -206,7 +206,7 @@ async def test_scraper_recovery_headline_fires_player_recovered():
 
     calls: list = []
 
-    async def recorder(user_id, event_id, title, body, league_id=None, link=None):
+    async def recorder(user_id, event_id, title, body, league_id=None, link=None, reason=None):
         calls.append(event_id)
 
     try:

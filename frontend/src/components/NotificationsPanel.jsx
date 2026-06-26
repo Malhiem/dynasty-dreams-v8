@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Bell, Check, CheckCheck, ArrowRightLeft, Clock, Trophy, Users, Calendar, Settings, AlertTriangle, Megaphone } from "lucide-react";
+import { Bell, Check, CheckCheck, ArrowRightLeft, Clock, Trophy, Users, Calendar, Settings, AlertTriangle, Megaphone, Info, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -59,6 +60,43 @@ const colorMap = {
   lineup_problem: "text-[#FF3B30]",
   player_injured: "text-[#FF3B30]",
   league_chat_message: "text-[#A1A1AA]",
+};
+
+// Iter 230h — "Why am I being notified?" reason map. Mirrors the
+// `description` field from /app/backend/routes/notification_events.py
+// so users can click the (i) icon and immediately understand which
+// event subscription fired this alert. Keep in lock-step with the
+// backend catalog.
+const reasonMap = {
+  trade_proposed: "You're subscribed to trade offers in this league.",
+  trade_accepted: "A trade involving your team reached the accepted state.",
+  trade_accepted_mine: "A trade involving your team reached the accepted state.",
+  trade_accepted_any: "You're subscribed to all accepted league trades.",
+  trade_declined_or_vetoed_mine: "A trade you proposed was rejected, vetoed by a league vote, or overruled by the commissioner.",
+  trade_vetoed_any: "A trade in your league was vetoed.",
+  trade_processed: "A trade in your league finished processing — assets have swapped.",
+  trade_block_updated: "Another manager added or removed a listing on the league trade block.",
+  draft_pick_made: "You're subscribed to every pick made in your league's draft.",
+  draft_your_turn: "Your team is on the clock — the timer has started.",
+  draft_on_deck: "Your team picks immediately after the active pick.",
+  draft_coming_up: "Your team picks within the next 5 picks.",
+  draft_scheduled: "The commissioner created or rescheduled a draft in this league.",
+  draft_started: "A draft you're in just started.",
+  draft_pick: "A pick was made in this draft.",
+  waiver_claim_success: "Your waiver claim was successfully processed.",
+  player_to_waivers: "A player you were watching entered the waiver pool.",
+  player_dropped: "A manager dropped a player to free agency.",
+  lineup_lock_reminder: "Your weekly/daily lineup locks soon — last chance to set it.",
+  lineup_problem: "Your active lineup has empty or invalid slots before lock.",
+  player_injured: "One of your active players was placed on IR or marked OUT.",
+  player_recovered: "One of your players has returned to active duty.",
+  player_injury_status: "Status update on a rostered player (e.g. day-to-day → IR-LT).",
+  player_sent_down: "One of your players was demoted to the minors.",
+  player_called_up: "One of your minor-league players was promoted.",
+  reminder_important: "Upcoming draft, trade deadline, or season start.",
+  rule_changed: "The commissioner modified a league rule or setting.",
+  league_admin_action: "The commissioner performed an action affecting the league.",
+  league_chat_message: "A new message was posted in your league chat.",
 };
 
 function timeAgo(dateStr) {
@@ -201,6 +239,7 @@ export function NotificationsPanel() {
                 {notifications.map(n => {
                   const Icon = iconMap[n.type] || Bell;
                   const color = colorMap[n.type] || "text-[#A1A1AA]";
+                  const reason = n.reason || reasonMap[n.type] || "You're subscribed to this notification type. Update your preferences any time.";
                   return (
                     <div
                       key={n._id}
@@ -219,6 +258,46 @@ export function NotificationsPanel() {
                         <p className="text-xs text-[#A1A1AA] truncate">{n.message}</p>
                         <p className="text-[10px] text-[#52525B] mt-0.5">{timeAgo(n.created_at)}</p>
                       </div>
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <button
+                            type="button"
+                            aria-label="Why am I being notified?"
+                            title="Why am I being notified?"
+                            onClick={(e) => e.stopPropagation()}
+                            data-testid={`notif-why-btn-${n._id}`}
+                            className="h-6 w-6 rounded-md text-[#52525B] hover:text-[#00D2FF] hover:bg-white/5 flex items-center justify-center shrink-0 transition-colors self-start"
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </button>
+                        </PopoverTrigger>
+                        <PopoverContent
+                          align="end"
+                          side="left"
+                          className="w-72 bg-[#141414] border border-white/10 text-white p-3"
+                          onClick={(e) => e.stopPropagation()}
+                          data-testid={`notif-why-popover-${n._id}`}
+                        >
+                          <div className="flex items-start gap-2 mb-2">
+                            <Info className="h-4 w-4 text-[#00D2FF] shrink-0 mt-0.5" />
+                            <div className="text-sm font-semibold text-white">Why am I being notified?</div>
+                          </div>
+                          <p className="text-xs text-[#A1A1AA] leading-relaxed">{reason}</p>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpen(false);
+                              setSettingsOpen(true);
+                            }}
+                            data-testid={`notif-why-manage-${n._id}`}
+                            className="mt-3 inline-flex items-center gap-1 text-[11px] font-semibold text-[#00D2FF] hover:underline"
+                          >
+                            Manage notification preferences
+                            <ExternalLink className="h-3 w-3" />
+                          </button>
+                        </PopoverContent>
+                      </Popover>
                     </div>
                   );
                 })}

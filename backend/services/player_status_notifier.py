@@ -57,12 +57,18 @@ async def notify_player_status_change(
     change_kind: str,
     create_notification: Optional[Callable[..., Awaitable]] = None,
     detail_message: Optional[str] = None,
+    source: Optional[dict] = None,
 ) -> int:
     """Fan out a per-event notification to every team that currently
     rosters this player. Returns the number of notifications emitted.
 
     No-ops silently if `create_notification` is None or the change_kind
     isn't recognised — keeps callers safe from import-cycle pitfalls.
+
+    Iter 230h — `source` (optional dict) flows into the notification
+    `reason` field so the "Why am I being notified?" UI can explain
+    where the signal came from (e.g. `{"kind": "injury_news",
+    "publisher": "Yahoo Sports", "url": "https://..."}`).
     """
     if create_notification is None or change_kind not in _CHANGE_KIND_TO_EVENT:
         return 0
@@ -95,6 +101,20 @@ async def notify_player_status_change(
             if co:
                 recipients.add(co)
         team_body = f"{player_name} — {body}" if detail_message else f"{player_name} on {team.get('name', 'your team')}"
+        # Per-recipient reason payload — includes the team-rostering
+        # context plus the source signal so the UI can render the full
+        # "why" sentence.
+        reason = {
+            "kind": "player_status_change",
+            "change_kind": change_kind,
+            "player_id": player_id,
+            "player_name": player_name,
+            "team_id": str(team["_id"]),
+            "team_name": team.get("name"),
+            "league_id": league_id,
+        }
+        if source:
+            reason["source"] = source
         for uid in recipients:
             try:
                 await create_notification(
@@ -104,6 +124,7 @@ async def notify_player_status_change(
                     team_body,
                     league_id,
                     f"/players/{player_id}",
+                    reason=reason,
                 )
                 sent += 1
             except Exception:

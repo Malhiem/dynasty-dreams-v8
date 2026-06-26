@@ -245,6 +245,13 @@ async def scrape_news_and_dispatch(
                             player_id=m["player_id"],
                             new_fields={"injury_status": suggested_status},
                             create_notification=create_notification,
+                            source={
+                                "kind": "injury_news",
+                                "publisher": source,
+                                "url": link,
+                                "headline": title,
+                                "signal_type": change_kind,
+                            },
                         )
                         if summary.get("notifications_sent", 0) > 0 or summary.get("updated"):
                             counts["dispatched"] += 1

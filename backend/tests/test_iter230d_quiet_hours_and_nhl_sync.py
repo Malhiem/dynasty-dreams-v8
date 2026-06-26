@@ -215,7 +215,7 @@ async def test_nhl_sync_dispatcher_classifies_injury_transitions():
 
     calls: list = []
 
-    async def recorder(user_id, event_id, title, body, league_id=None, link=None):
+    async def recorder(user_id, event_id, title, body, league_id=None, link=None, reason=None):
         calls.append({"user_id": user_id, "event_id": event_id, "title": title})
 
     try:
@@ -278,7 +278,7 @@ async def test_nhl_sync_dispatcher_classifies_league_status_transitions():
 
     calls: list = []
 
-    async def recorder(user_id, event_id, title, body, league_id=None, link=None):
+    async def recorder(user_id, event_id, title, body, league_id=None, link=None, reason=None):
         calls.append(event_id)
 
     try:

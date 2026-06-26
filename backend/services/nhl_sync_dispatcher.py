@@ -66,6 +66,7 @@ async def apply_player_diff_and_notify(
     player_id: str,
     new_fields: Dict,
     create_notification: Optional[Callable[..., Awaitable]] = None,
+    source: Optional[Dict] = None,
 ) -> Dict:
     """Apply an NHL-data-sourced update to a player doc + fan out any
     triggered status-change notifications. Returns a summary dict for
@@ -75,6 +76,11 @@ async def apply_player_diff_and_notify(
     "stats": {...}}). Only the fields that actually differ from current
     state are written, and only `injury_status` / `league_status`
     transitions trigger notifications.
+
+    Iter 230h — `source` (optional dict) is forwarded into each
+    notification's `reason` so the "Why am I being notified?" UI can
+    show the originating signal (e.g. `{"kind": "injury_news",
+    "publisher": "Yahoo Sports", "url": ..., "headline": ...}`).
     """
     try:
         oid = ObjectId(player_id)
@@ -124,6 +130,7 @@ async def apply_player_diff_and_notify(
             change_kind=change_kind,
             create_notification=create_notification,
             detail_message=detail,
+            source=source,
         )
         total_sent += sent
 

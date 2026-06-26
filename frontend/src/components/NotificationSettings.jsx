@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Bell, X, RotateCcw, Mail, Smartphone, Megaphone, Moon, VolumeX, ShieldAlert } from "lucide-react";
+import { Bell, X, RotateCcw, Mail, Smartphone, Megaphone, Moon, VolumeX, ShieldAlert, EyeOff, Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -41,21 +41,31 @@ export default function NotificationSettings({ open, onOpenChange }) {
   const [prefs, setPrefs] = useState({});
   const [quietHours, setQuietHours] = useState({ enabled: false, start: "22:00", end: "07:00", timezone_offset_minutes: 0 });
   const [mutedLeagueIds, setMutedLeagueIds] = useState([]);
+  const [hiddenLeagueIds, setHiddenLeagueIds] = useState([]);
   const [myLeagues, setMyLeagues] = useState([]);
+  // Iter 230h — Track ALL of the user's leagues (including hidden) so the
+  // unhide UI can render rows for leagues that the /leagues endpoint
+  // omits because they're currently hidden.
+  const [allLeagues, setAllLeagues] = useState([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data }, leaguesRes] = await Promise.all([
+      const [{ data }, leaguesRes, allLeaguesRes] = await Promise.all([
         api.get("/notifications/preferences"),
         api.get("/leagues?my_leagues=true").catch(() => ({ data: [] })),
+        // include_hidden=true returns the user's leagues regardless of
+        // the hidden filter so the unhide UI can list everything.
+        api.get("/leagues?my_leagues=true&include_hidden=true").catch(() => ({ data: [] })),
       ]);
       setEvents(data.events || []);
       setCategories(data.categories || []);
       setPrefs(data.preferences || {});
       setQuietHours(data.quiet_hours || { enabled: false, start: "22:00", end: "07:00", timezone_offset_minutes: 0 });
       setMutedLeagueIds(data.muted_league_ids || []);
+      setHiddenLeagueIds(data.hidden_league_ids || []);
       setMyLeagues(leaguesRes.data || []);
+      setAllLeagues(allLeaguesRes.data?.length ? allLeaguesRes.data : leaguesRes.data || []);
     } catch (e) {
       toast.error("Couldn't load notification preferences");
     } finally {
@@ -120,6 +130,24 @@ export default function NotificationSettings({ open, onOpenChange }) {
     } catch (e) {
       setMutedLeagueIds(prev);
       toast.error("Couldn't update league mute");
+    }
+  };
+
+  // Iter 230h — Per-league HIDE handler (different from mute — actually
+  // removes the league from the dashboard surface area).
+  const toggleLeagueHide = async (leagueId, hidden) => {
+    const prev = hiddenLeagueIds;
+    const next = hidden
+      ? Array.from(new Set([...prev, leagueId]))
+      : prev.filter((id) => id !== leagueId);
+    setHiddenLeagueIds(next);
+    try {
+      const { data } = await api.put("/notifications/preferences/league-hide", { league_id: leagueId, hidden });
+      setHiddenLeagueIds(data.hidden_league_ids || next);
+      toast.success(hidden ? "League hidden from dashboard" : "League restored to dashboard");
+    } catch (e) {
+      setHiddenLeagueIds(prev);
+      toast.error("Couldn't update league visibility");
     }
   };
 
@@ -254,11 +282,66 @@ export default function NotificationSettings({ open, onOpenChange }) {
                           data-testid={`notif-league-mute-row-${lg.id}`}
                         >
                           <span className="text-sm text-white truncate">{lg.name}</span>
-                          <Switch
-                            checked={muted}
-                            onCheckedChange={(v) => toggleLeagueMute(lg.id, v)}
-                            data-testid={`notif-league-mute-toggle-${lg.id}`}
-                          />
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Switch
+                              checked={muted}
+                              onCheckedChange={(v) => toggleLeagueMute(lg.id, v)}
+                              data-testid={`notif-league-mute-toggle-${lg.id}`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => toggleLeagueHide(lg.id, true)}
+                              title="Hide this league from your dashboard"
+                              className="h-7 w-7 rounded-md text-[#71717A] hover:text-rose-300 hover:bg-rose-500/10 flex items-center justify-center transition-colors"
+                              data-testid={`notif-league-hide-btn-${lg.id}`}
+                            >
+                              <EyeOff className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {/* Iter 230h — Hidden leagues, with an unhide affordance. */}
+              {hiddenLeagueIds.length > 0 && (
+                <section
+                  className="rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3"
+                  data-testid="notif-hidden-leagues-card"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-amber-500/15 flex items-center justify-center">
+                      <Eye className="h-4 w-4 text-amber-300" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">Hidden leagues ({hiddenLeagueIds.length})</h4>
+                      <p className="text-[11px] text-[#71717A]">
+                        These leagues are hidden from your dashboard + sidebar. Restore them any time.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pl-12">
+                    {hiddenLeagueIds.map((id) => {
+                      const lg = allLeagues.find((x) => x.id === id) || { id, name: `League ${id.slice(-6)}` };
+                      return (
+                        <div
+                          key={id}
+                          className="flex items-center justify-between gap-3 p-2 rounded border border-amber-500/20 bg-amber-500/[0.03]"
+                          data-testid={`notif-hidden-league-row-${id}`}
+                        >
+                          <span className="text-sm text-white truncate">{lg.name}</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => toggleLeagueHide(id, false)}
+                            data-testid={`notif-league-unhide-btn-${id}`}
+                            className="h-7 text-[11px] border-amber-500/30 text-amber-200 hover:bg-amber-500/10"
+                          >
+                            <Eye className="h-3 w-3 mr-1" />
+                            Unhide
+                          </Button>
                         </div>
                       );
                     })}

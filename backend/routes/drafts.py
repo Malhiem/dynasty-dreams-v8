@@ -2815,12 +2815,18 @@ class NotificationType(str, Enum):
     TEAM_JOINED = "team_joined"
 
 
-async def create_notification(user_id: str, notif_type: str, title: str, message: str, league_id: str = None, link: str = None):
+async def create_notification(user_id: str, notif_type: str, title: str, message: str, league_id: str = None, link: str = None, reason: dict = None):
     """Create a notification and broadcast it via WebSocket + Expo push.
 
     Iter 230 — Honours per-user preferences from `notification_preferences`.
     The `in_app` channel gates the DB write + socket broadcast; `push` gates
     the Expo task. The catalog's default_channels list seeds new users.
+
+    Iter 230h — `reason` (optional dict) is persisted alongside the
+    notification so the frontend's "Why am I being notified?" affordance
+    can explain the source: signal type, originating service, player
+    matched, team rostering, etc. Free-form, no schema enforcement so
+    each emitter can include whatever helps the user.
     """
     # Lazy import to avoid an init-time cycle (notification_preferences may
     # not be wired yet during module import).
@@ -2849,6 +2855,7 @@ async def create_notification(user_id: str, notif_type: str, title: str, message
         "message": message,
         "league_id": league_id,
         "link": link,
+        "reason": reason or None,
         "read": False,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
