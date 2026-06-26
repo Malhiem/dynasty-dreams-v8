@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
-import { ShieldCheck, FileText, ExternalLink, Loader2, Clock } from "lucide-react";
+import { ShieldCheck, FileText, ExternalLink, Loader2, Clock, Download } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -198,6 +198,32 @@ export default function SecurityDocPanel() {
   const [doc, setDoc] = useState<DocResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  // Iter 230o — Export PDF button state.
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportPdf = async () => {
+    setExporting(true);
+    try {
+      const res = await api.get("/admin/platform/security-export.pdf", {
+        responseType: "blob",
+      });
+      const blob = new Blob([res.data], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      a.download = `dynasty-dreams-security-${stamp}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Security audit bundle downloaded");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to export PDF");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -243,8 +269,21 @@ export default function SecurityDocPanel() {
             </div>
           </div>
           {doc?.modified_at && (
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 shrink-0">
-              <Clock className="h-3 w-3" /> Updated {new Date(doc.modified_at).toLocaleString()}
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Clock className="h-3 w-3" /> Updated {new Date(doc.modified_at).toLocaleString()}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportPdf}
+                disabled={exporting}
+                data-testid="security-doc-export-pdf"
+                className="gap-1.5"
+              >
+                {exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                Export PDF
+              </Button>
             </div>
           )}
         </div>

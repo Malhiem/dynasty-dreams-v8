@@ -18,6 +18,7 @@ from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import Response as FastAPIResponse
 
 router = APIRouter(prefix="/admin/platform", tags=["admin-platform"])
 
@@ -195,6 +196,290 @@ async def list_security_audits(request: Request):
                 totals[s] += 1
         out.append(r)
     return {"audits": out, "totals": totals}
+
+
+
+@router.get("/security-export.pdf")
+async def security_export_pdf(request: Request):
+    """Iter 230o — SOC2/ISO-ready PDF bundle: cover page + audit
+    timeline + the rendered SECURITY.md content. Returned as a real
+    `application/pdf` attachment so reviewers can take it offline
+    without needing dashboard access.
+
+    Admin-only — same gate as /security-doc + /security-audits.
+    """
+    await _require_admin(request)
+    db = _deps["db"]
+    await _ensure_audit_seed(db)
+    audits = await db.security_audits.find({}).sort("audited_at", -1).to_list(200)
+    # Totals across all findings.
+    totals = {"open": 0, "in_progress": 0, "fixed": 0}
+    for a in audits:
+        for f in (a.get("findings") or []):
+            s = (f.get("status") or "open").lower()
+            if s in totals:
+                totals[s] += 1
+    # Read SECURITY.md (defensively — file may move).
+    md_text = ""
+    try:
+        md_text = _SECURITY_DOC_PATH.read_text(encoding="utf-8")
+    except Exception:
+        md_text = "_(SECURITY.md not found on disk)_"
+
+    pdf_bytes = _render_security_pdf(audits=audits, totals=totals, md_text=md_text)
+    filename = f"dynasty-dreams-security-{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
+    return FastAPIResponse(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _render_security_pdf(*, audits: list[dict], totals: dict, md_text: str) -> bytes:
+    """Compose the export with reportlab Platypus. Kept in one
+    function so the route stays terse; future enhancements (logo,
+    cover image) extend here."""
+    import io
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        PageBreak, KeepTogether,
+    )
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=LETTER,
+        leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+        topMargin=0.75 * inch, bottomMargin=0.75 * inch,
+        title="Dynasty Dreams — Security Audit Bundle",
+        author="Dynasty Dreams Platform Admin",
+    )
+    styles = getSampleStyleSheet()
+    # Custom styles — kept minimal so reportlab stays the only dep.
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=18, spaceAfter=10, textColor=colors.HexColor("#0c4a6e"))
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], fontSize=14, spaceBefore=14, spaceAfter=6, textColor=colors.HexColor("#0c4a6e"))
+    h3 = ParagraphStyle("h3", parent=styles["Heading3"], fontSize=11, spaceBefore=8, spaceAfter=4, textColor=colors.HexColor("#0c4a6e"))
+    body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=9, leading=12, spaceAfter=6)
+    mono = ParagraphStyle("mono", parent=styles["Code"], fontSize=8, leading=10, textColor=colors.HexColor("#0e7490"))
+
+    story: list = []
+    story.append(Paragraph("Dynasty Dreams — Security Audit Bundle", h1))
+    gen_dt = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    story.append(Paragraph(f"Generated {gen_dt} · Confidential — Admin Distribution Only", body))
+    story.append(Spacer(1, 6))
+
+    # ── Summary tile ────────────────────────────────────────────────
+    summary_tbl = Table(
+        [["FIXED", "IN PROGRESS", "OPEN"],
+         [str(totals["fixed"]), str(totals["in_progress"]), str(totals["open"])]],
+        colWidths=[1.8 * inch] * 3,
+    )
+    summary_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e0f2fe")),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), colors.HexColor("#0c4a6e")),
+        ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE",   (0, 0), (-1, 0), 9),
+        ("FONTSIZE",   (0, 1), (-1, 1), 20),
+        ("FONTNAME",   (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("ALIGN",      (0, 0), (-1, -1), "CENTER"),
+        ("BOX",        (0, 0), (-1, -1), 0.5, colors.HexColor("#0c4a6e")),
+        ("INNERGRID",  (0, 0), (-1, -1), 0.25, colors.HexColor("#7dd3fc")),
+        ("TEXTCOLOR",  (0, 1), (0, 1), colors.HexColor("#047857")),
+        ("TEXTCOLOR",  (1, 1), (1, 1), colors.HexColor("#b45309")),
+        ("TEXTCOLOR",  (2, 1), (2, 1), colors.HexColor("#be123c")),
+        ("BOTTOMPADDING", (0, 1), (-1, 1), 8),
+        ("TOPPADDING",    (0, 1), (-1, 1), 8),
+    ]))
+    story.append(summary_tbl)
+    story.append(Spacer(1, 16))
+
+    # ── Audit Timeline ──────────────────────────────────────────────
+    story.append(Paragraph("Audit Timeline", h2))
+    if not audits:
+        story.append(Paragraph("<i>No audits recorded.</i>", body))
+    for a in audits:
+        block: list = []
+        title = f"<b>{_pdf_esc(a.get('iteration') or '?')}</b> · {_pdf_esc((a.get('audited_at') or '')[:10])}"
+        if a.get("auditor"):
+            title += f" · <i>by {_pdf_esc(a['auditor'])}</i>"
+        block.append(Paragraph(title, h3))
+        if a.get("scope"):
+            block.append(Paragraph(_pdf_esc(a["scope"]), body))
+        if a.get("verdict"):
+            block.append(Paragraph(f"<font color='#047857'><i>{_pdf_esc(a['verdict'])}</i></font>", body))
+        findings = a.get("findings") or []
+        if findings:
+            rows = [["ID", "Sev", "Status", "Title", "Closed in"]]
+            for f in findings:
+                rows.append([
+                    _pdf_esc(f.get("id", "")),
+                    _pdf_esc(f.get("severity", "")),
+                    _pdf_esc((f.get("status") or "").replace("_", " ")),
+                    _pdf_esc(f.get("title", "")),
+                    _pdf_esc(f.get("remediated_in") or ""),
+                ])
+            tbl = Table(
+                rows,
+                colWidths=[0.65 * inch, 0.55 * inch, 0.7 * inch, 3.6 * inch, 0.7 * inch],
+                repeatRows=1,
+            )
+            tbl.setStyle(TableStyle([
+                ("BACKGROUND",  (0, 0), (-1, 0), colors.HexColor("#0c4a6e")),
+                ("TEXTCOLOR",   (0, 0), (-1, 0), colors.white),
+                ("FONTNAME",    (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE",    (0, 0), (-1, -1), 8),
+                ("BOX",         (0, 0), (-1, -1), 0.4, colors.HexColor("#0c4a6e")),
+                ("INNERGRID",   (0, 0), (-1, -1), 0.25, colors.HexColor("#bae6fd")),
+                ("VALIGN",      (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING",(0, 0), (-1, -1), 4),
+                ("TOPPADDING",  (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING",(0, 0), (-1, -1), 3),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+                 [colors.white, colors.HexColor("#f0f9ff")]),
+            ]))
+            block.append(tbl)
+        if a.get("regression_tests"):
+            block.append(Paragraph(
+                f"<font size='7' color='#0e7490'>Tests: {_pdf_esc(' · '.join(a['regression_tests']))}</font>",
+                body,
+            ))
+        block.append(Spacer(1, 8))
+        story.append(KeepTogether(block))
+
+    # ── SECURITY.md content rendered as a structured section ────────
+    story.append(PageBreak())
+    story.append(Paragraph("SECURITY.md — Threat Model &amp; Conventions", h2))
+    _md_to_platypus(md_text, story, h2=h2, h3=h3, body=body, mono=mono)
+
+    doc.build(story)
+    return buf.getvalue()
+
+
+def _pdf_esc(s) -> str:
+    """Escape XML special chars so reportlab's mini-HTML parser doesn't choke."""
+    if s is None:
+        return ""
+    return (
+        str(s)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _md_to_platypus(md: str, story: list, *, h2, h3, body, mono) -> None:
+    """Tiny markdown→platypus translator: H2/H3, paragraphs, ul, fenced
+    code, inline `code`. Mirrors the frontend renderer so the PDF and
+    the dashboard panel stay visually consistent. Tables get rendered
+    as preformatted text (acceptable — they're only used once in the
+    threat-model intro)."""
+    from reportlab.platypus import Paragraph, Preformatted, Spacer
+
+    lines = md.split("\n")
+    i = 0
+    bullet_buf: list[str] = []
+
+    def flush_bullets():
+        nonlocal bullet_buf
+        if bullet_buf:
+            for b in bullet_buf:
+                story.append(Paragraph("&nbsp;&nbsp;• " + _inline_md(b), body))
+            bullet_buf = []
+
+    while i < len(lines):
+        ln = lines[i]
+        stripped = ln.strip()
+        if stripped.startswith("```"):
+            flush_bullets()
+            buf = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                buf.append(lines[i])
+                i += 1
+            i += 1
+            story.append(Preformatted("\n".join(buf) or " ", mono))
+            story.append(Spacer(1, 4))
+            continue
+        if ln.startswith("### "):
+            flush_bullets()
+            story.append(Paragraph(_inline_md(ln[4:]), h3))
+            i += 1
+            continue
+        if ln.startswith("## "):
+            flush_bullets()
+            story.append(Paragraph(_inline_md(ln[3:]), h2))
+            i += 1
+            continue
+        if ln.startswith("# "):
+            flush_bullets()
+            story.append(Paragraph(_inline_md(ln[2:]), h2))
+            i += 1
+            continue
+        if stripped.startswith("> "):
+            flush_bullets()
+            story.append(Paragraph(
+                f"<i><font color='#0e7490'>{_inline_md(stripped[2:])}</font></i>", body,
+            ))
+            i += 1
+            continue
+        if stripped.startswith("* ") or stripped.startswith("- "):
+            bullet_buf.append(stripped[2:])
+            i += 1
+            continue
+        if stripped.startswith("|"):
+            # Render the table row as preformatted text to preserve
+            # alignment without writing a markdown-table → reportlab
+            # Table converter. Acceptable for the one threat-model table.
+            flush_bullets()
+            tbl_buf = [ln]
+            i += 1
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                tbl_buf.append(lines[i])
+                i += 1
+            story.append(Preformatted("\n".join(tbl_buf), mono))
+            story.append(Spacer(1, 4))
+            continue
+        if stripped == "---" or stripped == "***":
+            flush_bullets()
+            story.append(Spacer(1, 6))
+            i += 1
+            continue
+        if stripped == "":
+            flush_bullets()
+            i += 1
+            continue
+        story.append(Paragraph(_inline_md(stripped), body))
+        i += 1
+    flush_bullets()
+
+
+def _inline_md(s: str) -> str:
+    """Convert inline markdown (**bold**, `code`, [text](url)) into
+    reportlab's <b>/<font>/<a> mini-HTML. Escapes XML chars FIRST so
+    we don't break the parser on `<` in code-spans."""
+    import re
+    s = _pdf_esc(s)
+    # Code spans `…`
+    s = re.sub(
+        r"`([^`]+)`",
+        lambda m: f"<font face='Courier' color='#0e7490'>{m.group(1)}</font>",
+        s,
+    )
+    # Bold **…**
+    s = re.sub(r"\*\*([^*]+)\*\*", r"<b>\1</b>", s)
+    # Links [text](url) — reportlab supports <link href="…">
+    s = re.sub(
+        r"\[([^\]]+)\]\(([^)]+)\)",
+        lambda m: f"<link href='{m.group(2)}' color='#0e7490'>{m.group(1)}</link>",
+        s,
+    )
+    return s
+
+
 
 
 
