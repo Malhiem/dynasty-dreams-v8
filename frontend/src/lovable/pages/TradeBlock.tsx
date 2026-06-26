@@ -99,7 +99,7 @@ const TradeBlock = () => {
   const handleTradeForPlayer = (item: TradeBlockItem) => {
     const ownerTeam = (leagueTeams || []).find((t: any) => t.name === item.owner);
     handleProposeTrade(item.owner, item);
-    if (ownerTeam?.id) navigate(`/teams/${ownerTeam.id}`);
+    if (ownerTeam?.id) navigate(`/roster?team_id=${ownerTeam.id}`);
   };
 
   return (

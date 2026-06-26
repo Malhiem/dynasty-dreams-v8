@@ -25,7 +25,7 @@ export default function MyPlayersTab({ players, myTeam }: Props) {
             listings, use the trade-block toggle on the{" "}
             {myTeam ? (
               <Link
-                to={`/teams/${myTeam.id}`}
+                to="/roster"
                 className="text-primary hover:underline"
                 data-testid="my-players-roster-link"
               >
@@ -51,7 +51,7 @@ export default function MyPlayersTab({ players, myTeam }: Props) {
             <div className="mt-2">
               {myTeam && (
                 <Button asChild variant="outline" size="sm">
-                  <Link to={`/teams/${myTeam.id}`} data-testid="my-players-go-to-roster">
+                  <Link to="/roster" data-testid="my-players-go-to-roster">
                     Go to Roster →
                   </Link>
                 </Button>
@@ -102,7 +102,7 @@ export default function MyPlayersTab({ players, myTeam }: Props) {
                   size="sm"
                   data-testid={`my-players-manage-${player.id}`}
                 >
-                  <Link to={`/teams/${myTeam?.id}`}>Manage on Roster →</Link>
+                  <Link to="/roster">Manage on Roster →</Link>
                 </Button>
               </div>
             ))}

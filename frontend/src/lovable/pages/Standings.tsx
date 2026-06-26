@@ -333,7 +333,7 @@ const StandingsTable = ({
                       className={`font-medium cursor-pointer hover:underline ${team.isUser ? "text-primary" : "text-foreground"}`}
                       onClick={() => {
                         const slug = team.name.toLowerCase().replace(/\s+/g, "-");
-                        navigate(team.teamId ? `/teams/${team.teamId}` : `/team?team=${slug}`);
+                        navigate(team.teamId ? `/roster?team_id=${team.teamId}` : `/team?team=${slug}`);
                       }}
                     >
                       {team.name}

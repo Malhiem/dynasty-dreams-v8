@@ -510,7 +510,7 @@ export const PlayoffBracketView = ({ leagueId }: { leagueId?: string | null }) =
               {bracket.consolation_bracket.seeds.map((t) => (
                 <button
                   key={t.team_id}
-                  onClick={() => navigate(`/teams/${t.team_id}`)}
+                  onClick={() => navigate(`/roster?team_id=${t.team_id}`)}
                   className="flex items-center gap-2 rounded-md px-2.5 py-1.5 bg-secondary/30 border border-border hover:bg-secondary/50 transition-colors text-xs"
                   data-testid={`consolation-seed-chip-${t.seed}`}
                 >
