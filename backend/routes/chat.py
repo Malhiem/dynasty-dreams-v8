@@ -363,6 +363,42 @@ async def post_message(channel_id: str, payload: dict, request: Request):
         # @mention push is best-effort; never break message posting.
         pass
 
+    # Iter 230 — Fan out a `league_chat_message` in-app notification to all
+    # league members for non-DM channels (off by default in the user's
+    # preferences — they have to opt in to get noisier chat pings).
+    try:
+        if chan.get("kind") != "dm":
+            create_notif = _deps.get("create_notification")
+            if create_notif:
+                from routes.notification_events import EVT_LEAGUE_CHAT_MESSAGE
+                teams = await db.teams.find(
+                    {"league_id": chan["league_id"]},
+                    {"owner_id": 1, "co_owner_ids": 1},
+                ).to_list(200)
+                recipients: set = set()
+                for t in teams:
+                    if t.get("owner_id"):
+                        recipients.add(t["owner_id"])
+                    for co in (t.get("co_owner_ids") or []):
+                        if co:
+                            recipients.add(co)
+                recipients.discard(user["_id"])
+                preview = text if len(text) <= 80 else text[:77] + "…"
+                for uid in recipients:
+                    try:
+                        await create_notif(
+                            uid,
+                            EVT_LEAGUE_CHAT_MESSAGE,
+                            f"{sender_name} in league chat",
+                            preview,
+                            chan["league_id"],
+                            f"/chat?channel={channel_id}",
+                        )
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
     return _serialize(msg)
 
 

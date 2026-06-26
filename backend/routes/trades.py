@@ -36,6 +36,38 @@ async def _execute_trade(trade): return await _deps["_execute_trade"](trade)
 async def _evaluate_conditions(trade): return await _deps["_evaluate_conditions"](trade)
 
 
+# Iter 230 — League-wide notification fanout for "any trade …" events.
+# Looks up all team owners + co-owners in a league and emits the same
+# notification to each (minus an optional exclusion list, typically the
+# trade's direct counterparties who already got a targeted notification).
+async def _notify_league_event(
+    league_id: str,
+    event_type: str,
+    title: str,
+    message: str,
+    link: Optional[str] = None,
+    exclude_user_ids: Optional[list] = None,
+) -> None:
+    exclude = set(filter(None, exclude_user_ids or []))
+    db = _db()
+    teams = await db.teams.find(
+        {"league_id": league_id},
+        {"owner_id": 1, "co_owner_ids": 1},
+    ).to_list(200)
+    recipients: set = set()
+    for t in teams:
+        if t.get("owner_id"):
+            recipients.add(t["owner_id"])
+        for co in (t.get("co_owner_ids") or []):
+            if co:
+                recipients.add(co)
+    for uid in recipients - exclude:
+        try:
+            await _create_notification(uid, event_type, title, message, league_id, link)
+        except Exception as e:
+            _logger().debug(f"league fanout {event_type} → {uid} skipped: {e}")
+
+
 def _enforce_trade_deadline(league: dict) -> None:
     """Reject new trade proposals once the league's trade deadline has passed.
 
@@ -93,8 +125,18 @@ def _enforce_trade_deadline(league: dict) -> None:
 
 
 # Notification type literals (kept as strings to avoid importing the server enum)
-NT_TRADE_PROPOSED = "trade_proposed"
-NT_TRADE_ACCEPTED = "trade_accepted"
+# Iter 230 — Source of truth lives in `routes/notification_events.py`. We
+# re-export the trade-related constants here for backward-compat with the
+# existing call-sites.
+from routes.notification_events import (
+    EVT_TRADE_PROPOSED as NT_TRADE_PROPOSED,
+    EVT_TRADE_ACCEPTED_MINE as NT_TRADE_ACCEPTED,
+    EVT_TRADE_ACCEPTED_ANY,
+    EVT_TRADE_DECLINED_OR_VETOED_MINE,
+    EVT_TRADE_VETOED_ANY,
+    EVT_TRADE_PROCESSED,
+    EVT_TRADE_BLOCK_UPDATED,
+)
 
 
 # ── Iter 193 — Foundation for in-draft pick trade flow ──────────
@@ -1013,6 +1055,19 @@ async def accept_trade(trade_id: str, request: Request):
         "/transactions",
     )
 
+    # Iter 230 — Notify the rest of the league with the "any trade accepted"
+    # event (skip the two parties already covered by the targeted accept).
+    try:
+        await _notify_league_event(
+            trade["league_id"],
+            EVT_TRADE_ACCEPTED_ANY,
+            "Trade accepted in league",
+            f"{trade['proposer_team_name']} ↔ {trade['target_team_name']}",
+            link="/transactions",
+            exclude_user_ids=[trade.get("proposer_id"), trade.get("target_owner_id")],
+        )
+    except Exception as e:
+        _logger().debug(f"trade_accepted_any fanout skipped: {e}")
     return {"message": "Trade accepted", "status": "accepted", "executed": bool(executed and executed.get("executed"))}
 
 
@@ -1032,6 +1087,18 @@ async def reject_trade(trade_id: str, request: Request):
         {"_id": ObjectId(trade_id)},
         {"$set": {"status": "rejected", "responded_at": datetime.now(timezone.utc).isoformat()}},
     )
+    # Iter 230 — Tell the proposer their trade was declined.
+    try:
+        await _create_notification(
+            trade["proposer_id"],
+            EVT_TRADE_DECLINED_OR_VETOED_MINE,
+            "Trade declined",
+            f"{trade['target_team_name']} declined your trade proposal",
+            trade["league_id"],
+            "/transactions",
+        )
+    except Exception as e:
+        _logger().debug(f"trade_declined notify skipped: {e}")
     return {"message": "Trade rejected", "status": "rejected"}
 
 

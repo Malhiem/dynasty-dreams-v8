@@ -155,6 +155,46 @@ async def add_to_trade_block(input: TradeBlockItemCreate, request: Request):
             "trade_block_changed",
             {"action": "added", "item_id": str(result.inserted_id)},
         )
+        # Iter 230 — Notify the rest of the league (event=trade_block_updated).
+        try:
+            create_notif = _deps.get("create_notification")
+            if create_notif:
+                from routes.notification_events import EVT_TRADE_BLOCK_UPDATED
+                # Owner team name for the message body
+                team = None
+                if resolved_team_id:
+                    try:
+                        team = await db.teams.find_one({"_id": ObjectId(resolved_team_id)})
+                    except Exception:
+                        team = None
+                owner_name = (team or {}).get("name") or "A team"
+                teams = await db.teams.find(
+                    {"league_id": input.league_id},
+                    {"owner_id": 1, "co_owner_ids": 1},
+                ).to_list(200)
+                recipients: set = set()
+                for t in teams:
+                    if t.get("owner_id"):
+                        recipients.add(t["owner_id"])
+                    for co in (t.get("co_owner_ids") or []):
+                        if co:
+                            recipients.add(co)
+                recipients.discard(user["_id"])  # Don't notify the actor
+                asset_label = item_doc.get("name") or "an asset"
+                for uid in recipients:
+                    try:
+                        await create_notif(
+                            uid,
+                            EVT_TRADE_BLOCK_UPDATED,
+                            "Trade Block updated",
+                            f"{owner_name} listed {asset_label}",
+                            input.league_id,
+                            "/trade-block",
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
     return item_doc
 
 

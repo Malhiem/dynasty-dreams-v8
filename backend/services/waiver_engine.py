@@ -251,6 +251,7 @@ async def process_pending_claims(
     log_activity: Optional[Callable] = None,
     broadcast: Optional[Callable] = None,
     now: Optional[datetime] = None,
+    create_notification: Optional[Callable] = None,
 ) -> dict:
     """One pass of waiver processing for a league.
 
@@ -508,6 +509,36 @@ async def process_pending_claims(
             "losers": [ls["team_name"] for ls in losers],
         })
         processed_count += 1
+
+        # Iter 230 — Notify the winning team's owner + co-owners.
+        if create_notification:
+            try:
+                winner_team_doc = await db.teams.find_one(
+                    {"_id": ObjectId(winner["team_id"])},
+                    {"owner_id": 1, "co_owner_ids": 1, "name": 1},
+                )
+                recipients: set = set()
+                if winner_team_doc:
+                    if winner_team_doc.get("owner_id"):
+                        recipients.add(winner_team_doc["owner_id"])
+                    for co in (winner_team_doc.get("co_owner_ids") or []):
+                        if co:
+                            recipients.add(co)
+                from routes.notification_events import EVT_WAIVER_CLAIM_SUCCESS
+                msg = f"You won the claim for {winner['player_name']}"
+                if winner.get("bid_amount") is not None:
+                    msg += f" — bid ${winner['bid_amount']}"
+                for uid in recipients:
+                    await create_notification(
+                        uid,
+                        EVT_WAIVER_CLAIM_SUCCESS,
+                        "Waiver claim won",
+                        msg,
+                        league_id,
+                        "/waivers",
+                    )
+            except Exception as ex:
+                log.warning(f"waiver win notify failed: {ex}")
 
     if broadcast and results:
         try:

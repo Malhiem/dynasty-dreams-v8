@@ -2184,6 +2184,81 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         "draft_complete": new_status == "completed",
     })
 
+    # Iter 230 — In-app notifications for draft events. Fan out
+    # "any pick made" league-wide (off-by-default), then the targeted
+    # "your turn"/"on deck"/"coming up within 5" notifications for
+    # the upcoming pickers.
+    try:
+        from routes.notification_events import (
+            EVT_DRAFT_PICK_MADE,
+            EVT_DRAFT_YOUR_TURN,
+            EVT_DRAFT_ON_DECK,
+            EVT_DRAFT_COMING_UP,
+        )
+        league_id_str = str(draft["league_id"])
+        all_team_docs = await _db().teams.find(
+            {"league_id": league_id_str},
+            {"_id": 1, "owner_id": 1, "co_owner_ids": 1, "name": 1},
+        ).to_list(200)
+        team_by_id = {str(t["_id"]): t for t in all_team_docs}
+
+        def _owners(team_doc: dict) -> list:
+            out: list = []
+            if team_doc.get("owner_id"):
+                out.append(team_doc["owner_id"])
+            for co in (team_doc.get("co_owner_ids") or []):
+                if co:
+                    out.append(co)
+            return out
+
+        # 1. "Any pick made" fanout (default OFF in user prefs).
+        for t in all_team_docs:
+            for uid in _owners(t):
+                await create_notification(
+                    uid,
+                    EVT_DRAFT_PICK_MADE,
+                    "Draft pick made",
+                    pick_msg["text"],
+                    league_id_str,
+                    f"/draft-room",
+                )
+
+        # 2. Look ahead — find the next 5 picks and notify their owners
+        # with progressively-targeted events (turn → on deck → coming up).
+        if new_status == "active":
+            for offset in range(0, 5):
+                future_pick = next_pick + offset
+                if future_pick > total_picks:
+                    break
+                future_abbr = get_team_for_pick(draft["team_abbrs"], future_pick, draft["snake_draft"])
+                future_team_id = (draft.get("team_map") or {}).get(future_abbr, {}).get("id")
+                future_team = team_by_id.get(future_team_id) if future_team_id else None
+                if not future_team:
+                    continue
+                if offset == 0:
+                    event = EVT_DRAFT_YOUR_TURN
+                    title = "You're on the clock!"
+                    body = f"Pick #{future_pick} — make your selection."
+                elif offset == 1:
+                    event = EVT_DRAFT_ON_DECK
+                    title = "You're on deck"
+                    body = f"Your pick (#{future_pick}) is up next."
+                else:
+                    event = EVT_DRAFT_COMING_UP
+                    title = f"Your pick is in {offset} picks"
+                    body = f"Pick #{future_pick} is coming up — get your queue ready."
+                for uid in _owners(future_team):
+                    await create_notification(
+                        uid,
+                        event,
+                        title,
+                        body,
+                        league_id_str,
+                        "/draft-room",
+                    )
+    except Exception as e:
+        logger.debug(f"draft pick notifications skipped: {e}")
+
     # System chat for the pick
     pick_msg = {
         "id": f"pick-{current_pick}",
@@ -2713,7 +2788,32 @@ class NotificationType(str, Enum):
 
 
 async def create_notification(user_id: str, notif_type: str, title: str, message: str, league_id: str = None, link: str = None):
-    """Create a notification and broadcast it via WebSocket + Expo push."""
+    """Create a notification and broadcast it via WebSocket + Expo push.
+
+    Iter 230 — Honours per-user preferences from `notification_preferences`.
+    The `in_app` channel gates the DB write + socket broadcast; `push` gates
+    the Expo task. The catalog's default_channels list seeds new users.
+    """
+    # Lazy import to avoid an init-time cycle (notification_preferences may
+    # not be wired yet during module import).
+    try:
+        from routes.notification_preferences import channel_enabled
+    except Exception:
+        channel_enabled = None  # type: ignore
+
+    in_app_on = True
+    push_on = True
+    if channel_enabled is not None:
+        try:
+            in_app_on = await channel_enabled(user_id, notif_type, "in_app")
+            push_on = await channel_enabled(user_id, notif_type, "push")
+        except Exception as e:
+            logger.debug(f"channel_enabled check failed: {e}")
+
+    if not in_app_on:
+        # User opted out — don't persist or broadcast in-app.
+        return None
+
     doc = {
         "user_id": user_id,
         "type": notif_type,
@@ -2733,17 +2833,19 @@ async def create_notification(user_id: str, notif_type: str, title: str, message
             await sio.emit("notification", doc, room=f"user_{user_id}")
         except Exception as e:
             logger.debug(f"sio notify skipped: {e}")
-    # Fire an Expo push in parallel (non-blocking best-effort)
-    try:
-        from routes.push import send_push
-        asyncio.create_task(send_push(
-            [user_id],
-            title=title,
-            body=message,
-            data={"type": notif_type, "league_id": league_id, "link": link, "notification_id": doc["_id"]},
-        ))
-    except Exception as e:
-        logger.debug(f"push notify skipped: {e}")
+    # Fire an Expo push in parallel (non-blocking best-effort) — only when
+    # the user has the push channel enabled for this event type.
+    if push_on:
+        try:
+            from routes.push import send_push
+            asyncio.create_task(send_push(
+                [user_id],
+                title=title,
+                body=message,
+                data={"type": notif_type, "league_id": league_id, "link": link, "notification_id": doc["_id"]},
+            ))
+        except Exception as e:
+            logger.debug(f"push notify skipped: {e}")
     return doc
 
 

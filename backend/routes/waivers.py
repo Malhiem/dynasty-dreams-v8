@@ -746,6 +746,7 @@ async def process_waivers(league_id: str, request: Request, force: bool = False)
         log_activity=_log_activity,
         broadcast=_broadcast,
         now=now_for_engine,
+        create_notification=_deps.get("create_notification"),
     )
 
 
@@ -801,4 +802,5 @@ async def process_due_waivers(league_id: str, request: Request):
         league_id,
         log_activity=_log_activity,
         broadcast=_broadcast,
+        create_notification=_deps.get("create_notification"),
     )
