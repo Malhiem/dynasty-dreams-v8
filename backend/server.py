@@ -1058,6 +1058,16 @@ async def startup():
         asyncio.create_task(notification_worker_loop(db, create_notification))
     except Exception as e:
         logger.error(f"notification_worker failed to start: {e}")
+
+    # Iter 230e — NHL roster sync worker. Polls live NHL rosters every
+    # 6h, routes diffs through the sync dispatcher so NHL ↔ AHL moves
+    # auto-fire `player_sent_down` / `player_called_up` notifications
+    # to every team that rosters the player.
+    try:
+        from services.nhl_roster_sync_worker import nhl_roster_sync_loop
+        asyncio.create_task(nhl_roster_sync_loop(db, create_notification))
+    except Exception as e:
+        logger.error(f"nhl_roster_sync_worker failed to start: {e}")
     
     # Write test credentials
     import os as os_module

@@ -187,11 +187,28 @@ EVENT_IDS = {e["id"] for e in EVENTS}
 
 def default_preferences() -> Dict[str, Dict[str, bool]]:
     """Returns the default preference map for a brand-new user."""
+    # Iter 230e — Events seeded with `critical: true` get a free "bypass
+    # Quiet Hours" pass when the user enables this channel. We only mark
+    # the highest-stakes events critical by default so users in many
+    # leagues don't get pinged through their sleep window for low-stakes
+    # stuff.
+    _DEFAULT_CRITICAL: set = {
+        "trade_proposed",
+        "trade_accepted_mine",
+        "trade_declined_or_vetoed_mine",
+        "draft_your_turn",
+        "draft_on_deck",
+        "lineup_lock_reminder",
+        "lineup_problem",
+        "waiver_claim_success",
+        "reminder_important",
+    }
     return {
         e["id"]: {
             "in_app": "in_app" in e["default_channels"],
             "push":   "push"   in e["default_channels"],
             "email":  "email"  in e["default_channels"],
+            "critical": e["id"] in _DEFAULT_CRITICAL,
         }
         for e in EVENTS
     }

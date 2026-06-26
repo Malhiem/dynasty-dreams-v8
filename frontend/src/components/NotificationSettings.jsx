@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Bell, X, RotateCcw, Mail, Smartphone, Megaphone, Moon, VolumeX } from "lucide-react";
+import { Bell, X, RotateCcw, Mail, Smartphone, Megaphone, Moon, VolumeX, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
@@ -21,12 +21,17 @@ import { cn } from "@/lib/utils";
  * Each toggle PUTs `/api/notifications/preferences` with a single
  * event_id + channel update so we don't ship the entire blob on every
  * click. A "Reset to defaults" button calls POST /preferences/reset.
+ *
+ * Iter 230e — A 4th column (Critical) lets users opt-in to events that
+ * bypass Quiet Hours. The backend defaults this to True for the
+ * highest-stakes events (e.g. draft_your_turn, lineup_lock_reminder).
  */
 
 const CHANNEL_META = {
-  in_app: { label: "In-App", icon: Megaphone, color: "text-cyan-300" },
-  push:   { label: "Push",   icon: Smartphone, color: "text-violet-300" },
-  email:  { label: "Email",  icon: Mail,       color: "text-emerald-300" },
+  in_app:   { label: "In-App",   icon: Megaphone,   color: "text-cyan-300" },
+  push:     { label: "Push",     icon: Smartphone,  color: "text-violet-300" },
+  email:    { label: "Email",    icon: Mail,        color: "text-emerald-300" },
+  critical: { label: "Critical", icon: ShieldAlert, color: "text-amber-300" },
 };
 
 export default function NotificationSettings({ open, onOpenChange }) {
@@ -153,12 +158,12 @@ export default function NotificationSettings({ open, onOpenChange }) {
           </Button>
         </DialogHeader>
 
-        <div className="px-6 pt-3 pb-2 grid grid-cols-[1fr_repeat(3,72px)] gap-2 text-[10px] uppercase tracking-wider text-[#71717A] border-b border-white/5">
+        <div className="px-6 pt-3 pb-2 grid grid-cols-[1fr_repeat(4,68px)] gap-2 text-[10px] uppercase tracking-wider text-[#71717A] border-b border-white/5">
           <span>Event</span>
           {Object.entries(CHANNEL_META).map(([key, meta]) => {
             const Icon = meta.icon;
             return (
-              <span key={key} className="flex items-center justify-center gap-1">
+              <span key={key} className="flex items-center justify-center gap-1" title={key === "critical" ? "Bypass Quiet Hours for this event" : undefined}>
                 <Icon className={cn("h-3 w-3", meta.color)} />
                 {meta.label}
               </span>
@@ -271,18 +276,18 @@ export default function NotificationSettings({ open, onOpenChange }) {
                   </h3>
                   <div className="divide-y divide-white/5">
                     {cat.events.map((ev) => {
-                      const p = prefs[ev.id] || { in_app: false, push: false, email: false };
+                      const p = prefs[ev.id] || { in_app: false, push: false, email: false, critical: false };
                       return (
                         <div
                           key={ev.id}
-                          className="grid grid-cols-[1fr_repeat(3,72px)] gap-2 items-center py-2.5"
+                          className="grid grid-cols-[1fr_repeat(4,68px)] gap-2 items-center py-2.5"
                           data-testid={`notif-row-${ev.id}`}
                         >
                           <div className="min-w-0">
                             <p className="text-sm text-white truncate">{ev.label}</p>
                             <p className="text-[11px] text-[#71717A] truncate">{ev.description}</p>
                           </div>
-                          {["in_app", "push", "email"].map((ch) => (
+                          {["in_app", "push", "email", "critical"].map((ch) => (
                             <div key={ch} className="flex justify-center">
                               <Switch
                                 checked={!!p[ch]}

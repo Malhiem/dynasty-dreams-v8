@@ -33,6 +33,8 @@ class PreferenceUpdateInput(BaseModel):
     in_app: Optional[bool] = None
     push: Optional[bool] = None
     email: Optional[bool] = None
+    # Iter 230e — Critical override (bypasses Quiet Hours when True).
+    critical: Optional[bool] = None
 
 
 # Iter 230d — Quiet Hours + per-league mute
@@ -221,13 +223,15 @@ async def update_preference(input: PreferenceUpdateInput, request: Request):
     if input.event_id not in EVENT_IDS:
         raise HTTPException(status_code=422, detail=f"Unknown event_id: {input.event_id}")
     prefs = await _load_or_init(user["_id"])
-    current = prefs.get(input.event_id, {"in_app": False, "push": False, "email": False})
+    current = prefs.get(input.event_id, {"in_app": False, "push": False, "email": False, "critical": False})
     if input.in_app is not None:
         current["in_app"] = bool(input.in_app)
     if input.push is not None:
         current["push"] = bool(input.push)
     if input.email is not None:
         current["email"] = bool(input.email)
+    if input.critical is not None:
+        current["critical"] = bool(input.critical)
     prefs[input.event_id] = current
     await db.notification_preferences.update_one(
         {"user_id": user["_id"]},
@@ -280,13 +284,31 @@ async def channel_enabled(user_id: str, event_id: str, channel: str, league_id: 
             return False
 
     # Quiet hours mute in_app + push (email still gets through —
-    # treated like a digest).
+    # treated like a digest). Iter 230e — Per-event `critical` flag
+    # bypasses the quiet-hours gate when the user has opted in (e.g.
+    # "I never want to miss being on the clock during a draft").
+    cfg = prefs.get(event_id)
     if channel in ("in_app", "push"):
         quiet = full_doc.get("quiet_hours")
         if isinstance(quiet, dict) and _is_in_quiet_window(quiet):
-            return False
+            is_critical = bool((cfg or {}).get("critical", False)) if cfg else False
+            # When the saved config is missing entirely, fall back to the
+            # catalog's "default_critical" set so brand-new users still
+            # get the right behaviour out of the box.
+            if cfg is None:
+                for e in EVENTS:
+                    if e["id"] == event_id:
+                        is_critical = event_id in {
+                            "trade_proposed", "trade_accepted_mine",
+                            "trade_declined_or_vetoed_mine", "draft_your_turn",
+                            "draft_on_deck", "lineup_lock_reminder",
+                            "lineup_problem", "waiver_claim_success",
+                            "reminder_important",
+                        }
+                        break
+            if not is_critical:
+                return False
 
-    cfg = prefs.get(event_id)
     if cfg is None:
         # Fall back to catalog defaults.
         for e in EVENTS:

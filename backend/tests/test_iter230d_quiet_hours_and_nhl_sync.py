@@ -130,7 +130,8 @@ async def test_quiet_hours_blocks_in_app_via_helper():
     assert user
     user_id = str(user["_id"])
 
-    # Set quiet hours to cover the current local clock.
+    # Set quiet hours to cover the current local clock + force the
+    # event under test to be non-critical so it doesn't bypass.
     now = datetime.now(timezone.utc)
     # 00:00 → 23:59 always covers "now" — use that to force the gate.
     await db.notification_preferences.update_one(
@@ -142,6 +143,11 @@ async def test_quiet_hours_blocks_in_app_via_helper():
                 "start": "00:00",
                 "end": "23:59",
                 "timezone_offset_minutes": 0,
+            },
+            # Iter 230e — trade_proposed defaults critical=True now.
+            # Force it OFF here so the quiet-hours gate is observed.
+            "preferences.trade_proposed": {
+                "in_app": True, "push": True, "email": True, "critical": False,
             },
         }},
         upsert=True,
