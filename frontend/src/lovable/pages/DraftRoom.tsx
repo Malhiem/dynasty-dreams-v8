@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useRef } from "react";
 // Iter 170h — Socket.IO subscription for live draft updates.
 // Iter 203 — extracted into a dedicated hook.
 import useDraftRoomSocket from "@/hooks/use-draft-room-socket";
@@ -95,6 +95,10 @@ import useDraftPicksUntilMyTurn from "@/hooks/use-draft-picks-until-my-turn";
 // Iter 230j — Trade-pick handler hook + expanded-player modal wrapper.
 import useAddDraftPickToTrade from "@/hooks/use-add-draft-pick-to-trade";
 import ExpandedPlayerModal from "@/lovable/pages/draftroom/ExpandedPlayerModal";
+// Iter 230v — Countdown ticker + pick-grid + player-filter derivation hooks.
+import useDraftCountdown from "@/hooks/use-draft-countdown";
+import useDraftPickGrid from "@/hooks/use-draft-pick-grid";
+import useDraftPlayerFilters from "@/hooks/use-draft-player-filters";
 // Iter 229j — Two more JSX bodies extracted from DraftRoom.tsx.
 import UpcomingDraftsPicker from "@/lovable/pages/draftroom/UpcomingDraftsPicker";
 import DraftRoomBottomGrid from "@/lovable/pages/draftroom/DraftRoomBottomGrid";
@@ -200,11 +204,10 @@ export default function DraftRoom() {
   const [swapSearch, setSwapSearch] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [positionFilter, setPositionFilter] = useState("all");
-  const [countdown, setCountdown] = useState<number>(0);
+  // Iter 230v — Countdown ticker extracted into `useDraftCountdown`.
   // Iter 204 — `pickTimeLeft`/`timerPaused` moved into `usePickTimer`
   // hook (declared further down after currentDraft is available).
   const [selectedCriteria, setSelectedCriteria] = useState("entry");
-
   // Chat state
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { id: "sys1", type: "pick", sender: "System", text: "Draft room is open. Good luck!", timestamp: new Date(Date.now() - 120000) },
@@ -345,18 +348,12 @@ export default function DraftRoom() {
   });
 
   // ─── Countdown ──────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (!draftConfig.scheduledTime) return;
-    const interval = setInterval(() => {
-      const diff = draftConfig.scheduledTime!.getTime() - Date.now();
-      setCountdown(Math.max(0, diff));
-      if (diff <= 0 && !draftConfig.draftStarted) {
-        setDraftConfig((prev) => ({ ...prev, draftStarted: true, earlyStart: false }));
-      }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [draftConfig.scheduledTime, draftConfig.draftStarted]);
+  // Iter 230v — Extracted to `useDraftCountdown` hook.
+  const countdown = useDraftCountdown({
+    scheduledTime: draftConfig.scheduledTime,
+    draftStarted: draftConfig.draftStarted,
+    setDraftConfig,
+  });
 
   // ─── Pick timer ─────────────────────────────────────────────────────────────
 
@@ -394,88 +391,45 @@ export default function DraftRoom() {
     onTimerExpired: (_pickNo: number) => setDeferDialogOpen(true),
   });
 
-  // ─── Draft order ────────────────────────────────────────────────────────────
-
-  const getDraftOrder = useCallback(
-    (round: number): string[] => {
-      if (draftConfig.snakeDraft && round % 2 === 0) return [...boardTeamAbbrs].reverse();
-      return boardTeamAbbrs;
-    },
-    [draftConfig.snakeDraft, boardTeamAbbrs]
-  );
-
-  const getTeamForPick = useCallback(
-    (overall: number): string => {
-      const round = Math.ceil(overall / totalTeams);
-      const pickInRound = (overall - 1) % totalTeams;
-      const order = getDraftOrder(round);
-      return order[pickInRound];
-    },
-    [getDraftOrder, totalTeams]
-  );
+  // ─── Draft order + pick grid ───────────────────────────────────────────────
+  // Iter 230v — `getDraftOrder` / `getTeamForPick` / `allPicks` /
+  // `currentRound` / `currentPickInRound` extracted to
+  // `useDraftPickGrid`.
+  const {
+    getDraftOrder: _getDraftOrder,
+    getTeamForPick,
+    allPicks,
+    currentRound,
+    currentPickInRound,
+  } = useDraftPickGrid({
+    boardTeamAbbrs,
+    totalTeams,
+    snakeDraft: draftConfig.snakeDraft,
+    totalRounds: draftConfig.totalRounds,
+    currentPick: draftConfig.currentPick,
+    picks,
+  });
+  void _getDraftOrder; // exported only for future use; not consumed here.
 
   // ─── Shortlist & Queue ─────────────────────────────────────────────────────
-
-  const toggleShortlist = (playerId: string) => {
-    setShortlist((prev) =>
-      prev.includes(playerId) ? prev.filter((id) => id !== playerId) : [...prev, playerId]
-    );
-  };
-
-  // (Iter 170j — queue hydrate/persist effects moved below `myTeam`
-  // declaration to avoid TDZ; see below.)
-
-  const toggleQueue = (playerId: string) => {
-    setQueue((prev) =>
-      prev.includes(playerId) ? prev.filter((id) => id !== playerId) : [...prev, playerId]
-    );
-  };
-
-  const removeFromQueue = (playerId: string) => {
-    setQueue((prev) => prev.filter((id) => id !== playerId));
-  };
-
-  // ─── Filtered players ──────────────────────────────────────────────────────
-
-  const filteredPlayers = useMemo(() => {
-    return players
-      .filter((p) => !p.drafted)
-      .filter((p) => {
-        const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
-        const matchesPos = positionFilter === "all" || p.position === positionFilter;
-        return matchesSearch && matchesPos;
-      })
-      .sort((a, b) => a.ranking - b.ranking);
-  }, [players, searchQuery, positionFilter]);
-
-  const shortlistedPlayers = useMemo(() => {
-    // Iter 170l — preserve the manager's drag-ordered shortlist (was
-    // sorted by global ranking before, which made drag-to-reorder
-    // visually no-op).
-    return shortlist
-      .map((id) => players.find((p) => p.id === id))
-      .filter((p): p is DraftEligiblePlayer => !!p && !p.drafted);
-  }, [players, shortlist]);
-
-  const queuedPlayers = useMemo(() => {
-    return queue.map((id) => players.find((p) => p.id === id)).filter((p): p is DraftEligiblePlayer => !!p && !p.drafted);
-  }, [queue, players]);
-
-  // ─── Pick grid ─────────────────────────────────────────────────────────────
-
-  const allPicks = useMemo(() => {
-    const grid: DraftPick[][] = [];
-    for (let r = 1; r <= draftConfig.totalRounds; r++) {
-      const order = getDraftOrder(r);
-      const roundPicks: DraftPick[] = order.map((team, idx) => {
-        const overall = (r - 1) * totalTeams + idx + 1;
-        const existing = picks.find((p) => p.overall === overall);
-        return existing || { round: r, pickInRound: idx + 1, overall, team };
-      });
-      grid.push(roundPicks);
-    }
-    return grid;
-  }, [picks, draftConfig.totalRounds, getDraftOrder, totalTeams]);
+  // Iter 230v — toggle handlers + memoised collections extracted to
+  // `useDraftPlayerFilters`.
+  const {
+    filteredPlayers,
+    shortlistedPlayers,
+    queuedPlayers,
+    toggleShortlist,
+    toggleQueue,
+    removeFromQueue,
+  } = useDraftPlayerFilters({
+    players,
+    searchQuery,
+    positionFilter,
+    shortlist,
+    setShortlist,
+    queue,
+    setQueue,
+  });
 
   // ─── Draft actions ─────────────────────────────────────────────────────────
   // Iter 229g — handleEarlyStart + handleStartWithTimer were extracted
@@ -600,10 +554,10 @@ export default function DraftRoom() {
     liveTeams,
     tradeBuilder,
   });
-  const currentRound = Math.ceil(draftConfig.currentPick / totalTeams);
-  const currentPickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
   // Iter 170b — Picks-until-my-turn counter. Iter 230i — extracted to
   // `useDraftPicksUntilMyTurn` hook (34-line memo + mock fallback).
+  // `currentRound` / `currentPickInRound` are now provided by
+  // `useDraftPickGrid` (iter 230v).
   const picksUntilMyTurn: number | null = useDraftPicksUntilMyTurn({
     myTeam,
     boardTeams,

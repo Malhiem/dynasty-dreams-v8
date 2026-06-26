@@ -35,6 +35,54 @@ async def _login(client, email, password):
     return r.json()["access_token"]
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _ensure_league_cap_state():
+    """Iter 230u — Self-healing fixture: the salary-cap suite asserts the
+    league has `salary_cap_enabled=True` and `salary_cap=$88M`. Real users
+    edit league settings between test runs, so the seed value drifts.
+    This fixture PUTs the expected state before the module's tests run
+    and restores the original config after, so the assertions are immune
+    to commissioner UI activity in the same database.
+    """
+    import asyncio
+
+    async def _setup():
+        async with AsyncClient(base_url=BASE, timeout=30) as client:
+            token = await _login(client, USER_EMAIL, USER_PASSWORD)
+            h = {"Authorization": f"Bearer {token}"}
+            current = await client.get(f"/api/leagues/{LEAGUE_ID}", headers=h)
+            assert current.status_code == 200, current.text
+            cur = current.json()
+            original = {
+                "salary_cap_enabled": bool(cur.get("salary_cap_enabled")),
+                "salary_cap": cur.get("salary_cap"),
+            }
+            r = await client.put(
+                f"/api/leagues/{LEAGUE_ID}/admin/cap-settings",
+                headers=h,
+                json={"salary_cap_enabled": True, "salary_cap": 88_000_000},
+            )
+            assert r.status_code == 200, f"cap-settings PUT failed: {r.status_code} {r.text[:200]}"
+            return original
+
+    async def _restore(original):
+        async with AsyncClient(base_url=BASE, timeout=30) as client:
+            tok = await _login(client, USER_EMAIL, USER_PASSWORD)
+            h = {"Authorization": f"Bearer {tok}"}
+            await client.put(
+                f"/api/leagues/{LEAGUE_ID}/admin/cap-settings",
+                headers=h,
+                json=original,
+            )
+
+    original = asyncio.run(_setup())
+    yield
+    try:
+        asyncio.run(_restore(original))
+    except Exception:
+        pass
+
+
 @pytest.mark.asyncio
 async def test_compliance_returns_live_salary_used():
     async with AsyncClient(base_url=BASE, timeout=30) as client:

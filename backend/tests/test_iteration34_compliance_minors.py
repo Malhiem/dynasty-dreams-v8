@@ -28,6 +28,39 @@ def admin_session():
     return s
 
 
+@pytest.fixture(scope="module", autouse=True)
+def _ensure_roster_over_cap():
+    """Iter 230u — Self-healing fixture: `test_zarek_too_many_players`
+    asserts Zarek's roster count exceeds `max_roster`. Real-user activity
+    (drops, settings tweaks) can push `roster_spots` above the live roster
+    size and break the assertion. This fixture inspects Zarek's roster
+    count, sets `roster_spots = roster_count - 1` (forcing over-cap) before
+    the module's tests run, and restores the original value afterwards.
+    """
+    s = requests.Session()
+    s.post(f"{BASE_URL}/api/auth/login", json={"email": ZAREK_EMAIL, "password": ZAREK_PASS})
+    team = s.get(f"{BASE_URL}/api/teams/{ZAREK_TEAM_ID}").json()
+    roster_count = len(team.get("roster") or [])
+    league = s.get(f"{BASE_URL}/api/leagues/{LEAGUE_ID}").json()
+    original_spots = league.get("roster_spots")
+    # Need at least 2 players to make the test meaningful; skip the patch
+    # entirely if the roster is empty so the empty_roster rule (iter 230s)
+    # is what's asserted instead.
+    if roster_count >= 2:
+        target_spots = max(2, roster_count - 1)
+        r = s.put(
+            f"{BASE_URL}/api/leagues/{LEAGUE_ID}",
+            json={"roster_spots": target_spots},
+        )
+        assert r.status_code == 200, f"roster_spots PUT failed: {r.status_code} {r.text[:200]}"
+    yield
+    if original_spots is not None:
+        try:
+            s.put(f"{BASE_URL}/api/leagues/{LEAGUE_ID}", json={"roster_spots": original_spots})
+        except Exception:
+            pass
+
+
 # -------- Minors seed validation --------
 class TestMinorsSeed:
     def test_zarek_team_lineup_has_minors(self, zarek_session):
