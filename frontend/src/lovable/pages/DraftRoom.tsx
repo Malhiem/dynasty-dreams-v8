@@ -55,7 +55,6 @@ import {
   Megaphone,
   ArrowRightLeft,
   RotateCcw,
-  Activity,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
@@ -73,7 +72,6 @@ import {
   formatCountdown,
   formatPickTimer,
 } from "@/lovable/pages/draftroom/draftConstants";
-import SelectedPlayerCard from "@/lovable/pages/draftroom/SelectedPlayerCard";
 // Iter 174 — Header strip (title + criteria popover + Trade Mode +
 // Trading Block toggles) extracted into its own component.
 import DraftHeaderActions from "@/lovable/pages/draftroom/DraftHeaderActions";
@@ -94,6 +92,8 @@ import useDraftAudioAlerts from "@/hooks/use-draft-audio-alerts";
 // Iter 229j — Two more JSX bodies extracted from DraftRoom.tsx.
 import UpcomingDraftsPicker from "@/lovable/pages/draftroom/UpcomingDraftsPicker";
 import DraftRoomBottomGrid from "@/lovable/pages/draftroom/DraftRoomBottomGrid";
+// Iter 230c — Player preview panel extracted.
+import DraftPreviewPanel from "@/lovable/pages/draftroom/DraftPreviewPanel";
 import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 // Iter 194c — floating "Pick Trade Pending" review pill.
@@ -787,60 +787,22 @@ export default function DraftRoom() {
                 tradeBlockItems={tradeBlockItems}
               />
 
-            {/* Iter 153 — SelectedPlayerCard sits *inside* the left flex item so
-                it ends where the draft clock begins (not under it) and can grow
-                taller to fill the open space.
-                Iter 170f — Default to the LAST DRAFTED player when nothing
-                else is being previewed. A small "Live View" pill above
-                the card reverts back to that default after a manager
-                clicks a player's card to preview them. */}
-            {(() => {
-              const previewId = selectedPlayerId ?? lastPickedPlayerId;
-              const isCustomPreview = !!selectedPlayerId && selectedPlayerId !== lastPickedPlayerId;
-              const previewPlayer = previewId
-                ? players.find((p) => String(p.id) === String(previewId)) || null
-                : null;
-              return (
-                <>
-                  <div className="flex items-center justify-between mb-1 px-1">
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {isCustomPreview
-                        ? "Previewing"
-                        : lastPickedPlayerId
-                        ? "Live View · Last Pick"
-                        : "Player Preview"}
-                    </span>
-                    {isCustomPreview && lastPickedPlayerId && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-5 px-2 text-[10px] gap-1"
-                        onClick={() => setSelectedPlayerId(null)}
-                        data-testid="draft-room-live-view-btn"
-                      >
-                        <Activity className="h-3 w-3" />
-                        Live View
-                      </Button>
-                    )}
-                  </div>
-                  <SelectedPlayerCard
-                    player={previewPlayer}
-                    isOnTheClock={draftConfig.draftStarted}
-                    isQueued={!!previewId && queue.includes(String(previewId))}
-                    isShortlisted={!!previewId && shortlist.includes(String(previewId))}
-                    canPick={canPickForCurrentTurn}
-                    minorsEnabled={!!(currentDraft as any)?.league_minors_enabled}
-                    onDraftPlayer={(p) => {
-                      handleDraftPlayer(p as DraftEligiblePlayer);
-                    }}
-                    onToggleQueue={(id) => toggleQueue(String(id))}
-                    onToggleShortlist={(id) => toggleShortlist(String(id))}
-                    onClose={() => setSelectedPlayerId(null)}
-                    onExpand={(p) => setExpandedPlayer(p)}
-                  />
-                </>
-              );
-            })()}
+            {/* Iter 153 / 170f — Player preview tile. Iter 230c — extracted. */}
+            <DraftPreviewPanel
+              players={players}
+              selectedPlayerId={selectedPlayerId}
+              setSelectedPlayerId={setSelectedPlayerId}
+              lastPickedPlayerId={lastPickedPlayerId}
+              draftStarted={draftConfig.draftStarted}
+              queue={queue}
+              shortlist={shortlist}
+              canPickForCurrentTurn={canPickForCurrentTurn}
+              minorsEnabled={!!(currentDraft as any)?.league_minors_enabled}
+              onDraftPlayer={(p) => handleDraftPlayer(p as DraftEligiblePlayer)}
+              toggleQueue={toggleQueue}
+              toggleShortlist={toggleShortlist}
+              setExpandedPlayer={setExpandedPlayer}
+            />
             </div>
 
             {/* Draft Live tile (Iter 171 extracted) */}

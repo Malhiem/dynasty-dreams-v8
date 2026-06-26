@@ -1050,6 +1050,14 @@ async def startup():
                 logger.error(f"draft-class monthly sync error: {e}")
             await asyncio.sleep(86400)  # daily check
     asyncio.create_task(_draft_class_monthly_sync())
+
+    # Iter 230c — Notifications worker. Fires lineup_lock_reminder,
+    # lineup_problem, and reminder_important on a 30-minute cadence.
+    try:
+        from services.notification_worker import notification_worker_loop
+        asyncio.create_task(notification_worker_loop(db, create_notification))
+    except Exception as e:
+        logger.error(f"notification_worker failed to start: {e}")
     
     # Write test credentials
     import os as os_module
