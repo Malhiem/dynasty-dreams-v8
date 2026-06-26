@@ -1926,9 +1926,10 @@ async def get_draft_stats(draft_id: str):
     # with status approved/completed that mention this draft.
     league_id = draft.get("league_id")
     floor_trades = 0
+    latest_floor_trade = None
     if league_id:
         try:
-            floor_trades = await _db().trades.count_documents({
+            trade_query = {
                 "league_id": str(league_id),
                 "status": {"$in": ["approved", "completed", "auto_approved"]},
                 "$or": [
@@ -1938,9 +1939,63 @@ async def get_draft_stats(draft_id: str):
                     # during the draft window — best-effort fallback.
                     {"assets": {"$elemMatch": {"type": "draft_pick", "league_id": str(league_id)}}},
                 ],
-            })
+            }
+            floor_trades = await _db().trades.count_documents(trade_query)
+            # Iter 230ag — Pull the single most recent floor trade so
+            # the Draft Live tile can render a "Latest: …" tooltip
+            # without a second API call. Sort by approved/completed
+            # timestamp (falls back to created_at).
+            if floor_trades > 0:
+                latest = await _db().trades.find_one(
+                    trade_query,
+                    sort=[("updated_at", -1), ("created_at", -1)],
+                )
+                if latest:
+                    # Render the abbr-by-abbr summary client-side so we
+                    # don't have to fan out N team lookups here. Just
+                    # pass through the raw shape the stats consumer needs.
+                    assets = latest.get("assets") or []
+                    team_a_id = latest.get("team_a_id") or latest.get("proposer_team_id")
+                    team_b_id = latest.get("team_b_id") or latest.get("target_team_id")
+                    # Resolve abbrs via the draft's `team_map` (already
+                    # in memory) — falls back to the team's full name.
+                    team_map = draft.get("team_map") or {}
+                    abbr_by_team_id: dict[str, str] = {}
+                    for a, meta in team_map.items():
+                        tid = (meta or {}).get("id")
+                        if tid:
+                            abbr_by_team_id[str(tid)] = a
+                    a_abbr = abbr_by_team_id.get(str(team_a_id) if team_a_id else "", "")
+                    b_abbr = abbr_by_team_id.get(str(team_b_id) if team_b_id else "", "")
+                    # Compact "TEAM-A picks ↔ TEAM-B picks" summary.
+                    a_picks = [
+                        f"#{x.get('pick_number') or x.get('overall') or '?'}"
+                        for x in assets
+                        if x.get("type") == "draft_pick" and (str(x.get("from_team_id") or "") == str(team_a_id))
+                    ]
+                    b_picks = [
+                        f"#{x.get('pick_number') or x.get('overall') or '?'}"
+                        for x in assets
+                        if x.get("type") == "draft_pick" and (str(x.get("from_team_id") or "") == str(team_b_id))
+                    ]
+                    ts = latest.get("updated_at") or latest.get("created_at")
+                    seconds_ago = None
+                    if ts:
+                        try:
+                            ts_dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                            seconds_ago = max(0, int((datetime.now(timezone.utc) - ts_dt).total_seconds()))
+                        except Exception:
+                            pass
+                    latest_floor_trade = {
+                        "team_a_abbr": a_abbr or None,
+                        "team_b_abbr": b_abbr or None,
+                        "team_a_picks": a_picks,
+                        "team_b_picks": b_picks,
+                        "seconds_ago": seconds_ago,
+                    }
         except Exception:
             floor_trades = 0
+            latest_floor_trade = None
 
     return {
         "current_pick": int(draft.get("current_pick") or 1),
@@ -1950,6 +2005,7 @@ async def get_draft_stats(draft_id: str):
         "fastest": fastest,
         "slowest": slowest,
         "floor_trades": int(floor_trades),
+        "latest_floor_trade": latest_floor_trade,
     }
 
 

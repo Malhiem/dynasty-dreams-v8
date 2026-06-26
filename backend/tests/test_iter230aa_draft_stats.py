@@ -101,8 +101,9 @@ async def test_draft_stats_aggregates_per_team_and_overall():
             assert abs(s["slowest"]["avg_seconds"] - 390.0) < 0.5, s["slowest"]
             assert s["slowest"]["picks"] == 2
 
-            # No trades seeded → 0.
+            # No trades seeded → 0, latest is null.
             assert s["floor_trades"] == 0
+            assert s.get("latest_floor_trade") is None
     finally:
         await db.drafts.delete_one({"_id": draft_id})
 

@@ -139,11 +139,26 @@ def create_refresh_token(user_id: str) -> str:
 
 # Auth Helper
 async def get_current_user(request: Request) -> dict:
-    token = request.cookies.get("access_token")
-    if not token:
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
+    # Iter 230ac — Prefer the explicit `Authorization: Bearer …` header
+    # over the `access_token` cookie. Two user-facing bugs surfaced
+    # without this precedence:
+    #   1. chriszarek1 (live) saw chriszarek (gmail)'s notifications
+    #      because the browser still had gmail's `access_token` cookie
+    #      from an earlier never-logged-out session in the same
+    #      browser — the cookie won over chriszarek1's Bearer header.
+    #   2. The Team page rendered Toronto Singularity (gmail's team)
+    #      for chriszarek1 for the same reason.
+    # The explicit header is what the frontend manages per-user
+    # (localStorage); the cookie is shared browser-wide and gets
+    # stale. Making the header the source of truth means a fresh
+    # login as user B can't accidentally render user A's private data
+    # just because user A's cookie is still in the jar.
+    bearer = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        bearer = auth_header[7:]
+    cookie_token = request.cookies.get("access_token")
+    token = bearer or cookie_token
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:

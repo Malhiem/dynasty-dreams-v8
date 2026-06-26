@@ -16,13 +16,24 @@ const MAX_BYTES = 1 * 1024 * 1024;
 
 /**
  * TeamSettingsModal — edit team name, abbreviation (max 3 chars),
- * and logo (URL or file upload). Wired to PUT /teams/{id} for name/abbr/url
- * and POST /teams/{id}/logo for file upload, DELETE /teams/{id}/logo to remove.
+ * theme colour, and logo (URL or file upload). Wired to PUT /teams/{id}
+ * for name/abbr/url/theme_color and POST /teams/{id}/logo for file
+ * upload, DELETE /teams/{id}/logo to remove.
  */
+const COLOR_PRESETS: { id: string; label: string; hex: string }[] = [
+  { id: "ice", label: "Ice Blue", hex: "#0ea5e9" },
+  { id: "fire", label: "Forge Red", hex: "#ef4444" },
+  { id: "forest", label: "Pine Green", hex: "#22c55e" },
+  { id: "royal", label: "Royal Gold", hex: "#f59e0b" },
+  { id: "violet", label: "Twilight", hex: "#8b5cf6" },
+  { id: "rose", label: "Sunset", hex: "#f43f5e" },
+];
+
 export default function TeamSettingsModal({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const { myTeam, reloadTeams } = useActiveLeague();
   const [name, setName] = useState("");
   const [abbr, setAbbr] = useState("");
+  const [themeColor, setThemeColor] = useState<string | null>(null);
   const [logoUrl, setLogoUrl] = useState("");
   const [previewLogo, setPreviewLogo] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -31,6 +42,7 @@ export default function TeamSettingsModal({ open, onOpenChange }: { open: boolea
     if (myTeam && open) {
       setName(myTeam.name || "");
       setAbbr(myTeam.logo_abbr || "");
+      setThemeColor(myTeam.theme_color || null);
       setLogoUrl("");
       setPreviewLogo(myTeam.logo_url || null);
     }
@@ -42,7 +54,7 @@ export default function TeamSettingsModal({ open, onOpenChange }: { open: boolea
         <DialogContent className="bg-[#141414] border-white/10" data-testid="team-settings-modal">
           <DialogHeader>
             <DialogTitle className="text-white">Team Settings</DialogTitle>
-            <DialogDescription>You don't have a team in any league yet.</DialogDescription>
+            <DialogDescription>You don&apos;t have a team in any league yet.</DialogDescription>
           </DialogHeader>
         </DialogContent>
       </Dialog>
@@ -55,6 +67,10 @@ export default function TeamSettingsModal({ open, onOpenChange }: { open: boolea
       const payload: any = {};
       if (name && name !== myTeam.name) payload.name = name;
       if (abbr !== (myTeam.logo_abbr || "")) payload.logo_abbr = abbr;
+      // Iter 230ae — Theme colour persisted alongside name/abbr.
+      // Sending `null` explicitly clears any previously-set colour.
+      const currentColor = myTeam.theme_color || null;
+      if (themeColor !== currentColor) payload.theme_color = themeColor;
       if (Object.keys(payload).length === 0) {
         toast.info("No changes to save");
         setBusy(false);
@@ -173,6 +189,60 @@ export default function TeamSettingsModal({ open, onOpenChange }: { open: boolea
                 Shown on standings tables, scoreboards, and trade cards. Letters and digits only.
               </p>
             </div>
+
+            {/* Iter 230ae — Theme colour picker. Persists to
+                `team.theme_color` (already supported by TeamUpdateInput);
+                surfaces wherever TeamLogo renders (standings,
+                trade-block, draft board) as the background tint when no
+                uploaded logo is present. Owners can re-pick or clear
+                at any time. */}
+            <div>
+              <Label className="text-white">Team colour</Label>
+              <div className="flex items-center gap-3 mt-1.5">
+                <div
+                  className="h-10 w-10 rounded-md flex items-center justify-center text-xs font-semibold border border-white/10"
+                  style={{ backgroundColor: themeColor || "transparent" }}
+                  data-testid="team-settings-color-preview"
+                >
+                  <span className={themeColor ? "text-white drop-shadow" : "text-[#52525B]"}>
+                    {abbr || myTeam.logo_abbr || "TEAM"}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {COLOR_PRESETS.map((p) => {
+                    const isPicked = themeColor === p.hex;
+                    return (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setThemeColor(isPicked ? null : p.hex)}
+                        className={`h-7 w-7 rounded-full ring-offset-2 ring-offset-[#141414] transition-all hover:scale-110 ${
+                          isPicked ? "ring-2 ring-white scale-110" : "ring-1 ring-white/20"
+                        }`}
+                        style={{ backgroundColor: p.hex }}
+                        aria-label={p.label}
+                        title={p.label}
+                        data-testid={`team-settings-color-${p.id}`}
+                      />
+                    );
+                  })}
+                  {themeColor && (
+                    <button
+                      type="button"
+                      onClick={() => setThemeColor(null)}
+                      className="text-xs text-[#A1A1AA] hover:text-white underline"
+                      data-testid="team-settings-color-clear"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-[#A1A1AA] mt-1">
+                Used as a background tint when no logo is uploaded.
+              </p>
+            </div>
+
             <DialogFooter>
               <Button variant="ghost" onClick={() => onOpenChange(false)} className="text-white" data-testid="team-settings-cancel">Cancel</Button>
               <Button

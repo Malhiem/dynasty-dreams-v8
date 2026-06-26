@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowRight, Flame, Radio, ListOrdered } from "lucide-react";
 import TeamLogo from "@/lovable/components/TeamLogo";
+import TeamLogoUploader from "@/lovable/components/TeamLogoUploader";
 import TeamClaimCounter from "@/lovable/components/dashboard/TeamClaimCounter";
 import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
 
@@ -16,7 +17,7 @@ import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
  * real roster size, live fpts, rank, and a "View full roster" CTA.
  */
 export default function LiveTeamHeader() {
-  const { league, leagueTeams, myTeam, myLeagues, leagueId, switchLeague } = useActiveLeague();
+  const { league, leagueTeams, myTeam, myLeagues, leagueId, switchLeague, reloadTeams } = useActiveLeague();
   const { streaks } = useSeasonStreaks(leagueId);
   const [live, setLive] = useState(null);
   const [week, setWeek] = useState(null);
@@ -44,16 +45,31 @@ export default function LiveTeamHeader() {
   useEffect(() => {
     if (!leagueId) { setWaiver(null); return; }
     let cancelled = false;
-    api.get(`/leagues/${leagueId}/waiver-priority`)
-      .then((r) => { if (!cancelled) setWaiver(r.data); })
-      .catch(() => { if (!cancelled) setWaiver(null); });
-    return () => { cancelled = true; };
+    const fetchWaiver = () => {
+      api.get(`/leagues/${leagueId}/waiver-priority`)
+        .then((r) => { if (!cancelled) setWaiver(r.data); })
+        .catch(() => { if (!cancelled) setWaiver(null); });
+    };
+    fetchWaiver();
+    // Iter 230af — Refetch the waiver chip on tab focus + visibility
+    // change so commissioners who flip "Enable waiver wire" in the
+    // Transactions Config card see the chip update next time they
+    // come back to the page, without a hard refresh.
+    const onFocus = () => fetchWaiver();
+    const onVisible = () => { if (document.visibilityState === "visible") fetchWaiver(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [leagueId]);
 
   if (!myTeam) {
     return (
       <div className="surface p-5 mb-6 border border-white/5 text-sm text-[#A1A1AA]">
-        You don't own a team in any demo league yet. Visit <Link to="/leagues" className="text-[#00D2FF]">/leagues</Link> to join one.
+        You don&apos;t own a team in any demo league yet. Visit <Link to="/leagues" className="text-[#00D2FF]">/leagues</Link> to join one.
       </div>
     );
   }
@@ -67,12 +83,27 @@ export default function LiveTeamHeader() {
     >
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-start gap-4 flex-1 min-w-[240px]">
-          <TeamLogo
-            logo={myTeam.logo_url}
+          {/* Iter 230ad — Restore logo editing on the Team page. iter
+              230z dedupe accidentally removed the only `TeamLogoUploader`
+              instance on the page; this LiveTeamHeader now hosts it for
+              the user's own team (camera-on-hover → file picker).
+              Read-only <TeamLogo /> is still used for other-team views
+              (where the LiveTeamHeader is rendered but the user has no
+              edit rights to it — `myTeam` is always the requester's
+              team here, so the uploader is safe to mount). */}
+          <TeamLogoUploader
+            teamId={myTeam.id}
             name={myTeam.name}
             abbr={myTeam.logo_abbr}
+            logo={myTeam.logo_url}
             size="lg"
-            className="rounded-full mt-1"
+            onChange={() => {
+              // Iter 230ad — Hard reload the active-league hook so the
+              // new logo_url is reflected immediately on the page
+              // (matches what Team.tsx's uploader call site did via
+              // `reloadTeams?.()`).
+              try { reloadTeams?.(); } catch { /* non-fatal */ }
+            }}
           />
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-2">

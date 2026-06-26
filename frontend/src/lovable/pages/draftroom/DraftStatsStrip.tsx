@@ -30,6 +30,13 @@ interface Stats {
   fastest: { team: string; avg_seconds: number; picks: number } | null;
   slowest: { team: string; avg_seconds: number; picks: number } | null;
   floor_trades: number;
+  latest_floor_trade?: {
+    team_a_abbr: string | null;
+    team_b_abbr: string | null;
+    team_a_picks: string[];
+    team_b_picks: string[];
+    seconds_ago: number | null;
+  } | null;
 }
 
 function _fmtSeconds(s: number | null | undefined): string {
@@ -38,6 +45,24 @@ function _fmtSeconds(s: number | null | undefined): string {
   const m = Math.floor(s / 60);
   const r = Math.round(s - m * 60);
   return `${m}:${r.toString().padStart(2, "0")}`;
+}
+
+function _fmtAgo(s: number | null | undefined): string {
+  if (s == null) return "";
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function _summariseFloorTrade(t: Stats["latest_floor_trade"]): string {
+  if (!t) return "";
+  const a = t.team_a_abbr || "?";
+  const b = t.team_b_abbr || "?";
+  const aPicks = t.team_a_picks?.length ? t.team_a_picks.join(", ") : "—";
+  const bPicks = t.team_b_picks?.length ? t.team_b_picks.join(", ") : "—";
+  const ago = t.seconds_ago != null ? ` · ${_fmtAgo(t.seconds_ago)}` : "";
+  return `Latest: ${a}/${b} swap ${aPicks} ↔ ${bPicks}${ago}`;
 }
 
 export default function DraftStatsStrip({
@@ -108,7 +133,18 @@ export default function DraftStatsStrip({
         </div>
       )}
       <div className="flex items-center justify-between gap-2">
-        <span className="inline-flex items-center gap-1 text-muted-foreground" data-testid="draft-stats-floor-trades">
+        <span
+          className="inline-flex items-center gap-1 text-muted-foreground"
+          data-testid="draft-stats-floor-trades"
+          // Iter 230ag — Tooltip shows the most recent floor-trade
+          // summary so the count isn't just a number — managers can
+          // see WHAT just happened on the draft floor at a glance.
+          title={
+            stats.latest_floor_trade
+              ? _summariseFloorTrade(stats.latest_floor_trade)
+              : (stats.floor_trades > 0 ? `${stats.floor_trades} pick trade(s) so far` : "No in-draft pick trades yet")
+          }
+        >
           <ArrowRightLeft className="h-3 w-3" />
           Floor trades <span className="text-white font-semibold tabular-nums">{stats.floor_trades}</span>
         </span>
