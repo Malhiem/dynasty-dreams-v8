@@ -81,6 +81,126 @@ async def security_doc(request: Request):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Iter 230n — Security audit history widget (compliance-review-friendly)
+# ─────────────────────────────────────────────────────────────────────
+# Seed history. Each row represents one audit + its remediation pass.
+# `severity` follows the audit report's CRITICAL/HIGH/MEDIUM/LOW/INFO
+# taxonomy. `status` is one of: open, in_progress, fixed.
+#
+# Persisted once on first read via `_ensure_audit_seed()` so the
+# collection survives DB resets. Append future audits below or via
+# POST /admin/platform/security-audits — the GET endpoint returns
+# everything sorted by `audited_at` desc.
+_SECURITY_AUDIT_SEED: list[dict] = [
+    {
+        "iteration": "audit-2026-02",
+        "audited_at": "2026-02-27T00:00:00+00:00",
+        "auditor": "security_audit_agent (read-only)",
+        "scope": "Full app — auth, authz, Socket.IO, payments, scraper, deps.",
+        "verdict": "FAIL — action required",
+        "findings": [
+            {"id": "SEC-001", "severity": "HIGH",   "status": "fixed",
+             "title": "Unauthenticated Socket.IO leaks private notifications & league data",
+             "remediated_in": "230L"},
+            {"id": "SEC-002", "severity": "MEDIUM", "status": "fixed",
+             "title": "Team/roster reads exposed without authentication",
+             "remediated_in": "230L"},
+            {"id": "P3a", "severity": "LOW", "status": "fixed",
+             "title": "Register endpoint leaks email-vs-username collision",
+             "remediated_in": "230m"},
+            {"id": "P3b", "severity": "LOW", "status": "fixed",
+             "title": "No rate limit on /api/auth/forgot-password",
+             "remediated_in": "230m"},
+            {"id": "P3c", "severity": "LOW", "status": "fixed",
+             "title": "Password reset doesn't revoke existing refresh tokens",
+             "remediated_in": "230m"},
+            {"id": "P3d", "severity": "LOW", "status": "fixed",
+             "title": "Impersonation read-only mode not enforced on writes",
+             "remediated_in": "230m"},
+        ],
+    },
+    {
+        "iteration": "230L",
+        "audited_at": "2026-02-27T17:43:00+00:00",
+        "auditor": "main agent (remediation)",
+        "scope": "P1+P2 fixes from audit-2026-02.",
+        "verdict": "PASS — SEC-001 + SEC-002 closed",
+        "findings": [
+            {"id": "SEC-001", "severity": "HIGH",   "status": "fixed",
+             "title": "Socket.IO auth handshake + room allowlist (server.py)",
+             "remediated_in": "230L"},
+            {"id": "SEC-002", "severity": "MEDIUM", "status": "fixed",
+             "title": "Auth gate added to 8 GET team/roster endpoints (auth-first ordering)",
+             "remediated_in": "230L"},
+        ],
+        "regression_tests": ["test_iter230L_security_fixes.py"],
+    },
+    {
+        "iteration": "230m",
+        "audited_at": "2026-02-27T18:08:00+00:00",
+        "auditor": "main agent (remediation)",
+        "scope": "P3 hardening from audit-2026-02.",
+        "verdict": "PASS — register enumeration, forgot-pw throttle, refresh revocation, impersonation read-only all closed",
+        "findings": [
+            {"id": "P3a", "severity": "LOW", "status": "fixed",
+             "title": "Register collision: single generic error",
+             "remediated_in": "230m"},
+            {"id": "P3b", "severity": "LOW", "status": "fixed",
+             "title": "Forgot-password per-email + per-IP throttle",
+             "remediated_in": "230m"},
+            {"id": "P3c", "severity": "LOW", "status": "fixed",
+             "title": "Refresh tokens revoked on password reset (iat + password_changed_at)",
+             "remediated_in": "230m"},
+            {"id": "P3d", "severity": "LOW", "status": "fixed",
+             "title": "Impersonation read-only globally enforced in get_current_user",
+             "remediated_in": "230m"},
+        ],
+        "regression_tests": ["test_iter230m_p3_hardening.py"],
+    },
+]
+
+
+async def _ensure_audit_seed(db) -> None:
+    """Idempotently writes the seed audit history. Uses `iteration` as
+    the natural key so re-running over an existing DB is a no-op."""
+    for row in _SECURITY_AUDIT_SEED:
+        await db.security_audits.update_one(
+            {"iteration": row["iteration"]},
+            {"$setOnInsert": {**row, "created_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+
+
+@router.get("/security-audits")
+async def list_security_audits(request: Request):
+    """Returns the compliance-friendly history of security audits +
+    remediation passes for the Security tab widget. Admin-only.
+
+    Response shape:
+      { audits: [{iteration, audited_at, auditor, scope, verdict, findings, ...}],
+        totals: { open, in_progress, fixed } }
+    """
+    await _require_admin(request)
+    db = _deps["db"]
+    await _ensure_audit_seed(db)
+    rows = await db.security_audits.find({}).sort("audited_at", -1).to_list(200)
+    # Strip _id before returning.
+    out = []
+    totals = {"open": 0, "in_progress": 0, "fixed": 0}
+    for r in rows:
+        r.pop("_id", None)
+        for f in (r.get("findings") or []):
+            s = (f.get("status") or "open").lower()
+            if s in totals:
+                totals[s] += 1
+        out.append(r)
+    return {"audits": out, "totals": totals}
+
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────
 # 1. Platform Metrics — high-level counts + 14-day timeseries
 # ─────────────────────────────────────────────────────────────────────
 @router.get("/metrics")

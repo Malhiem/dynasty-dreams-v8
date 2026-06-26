@@ -62,6 +62,8 @@ import ArchivedDraftsPanel from "./components/ArchivedDraftsPanel";
 import PlayerVerifyPanel from "./components/PlayerVerifyPanel";
 // Iter 230m — Security threat-model + audit conventions reference.
 import SecurityDocPanel from "./components/SecurityDocPanel";
+// Iter 230n — Security audit history widget (compliance cadence view).
+import SecurityAuditHistory from "./components/SecurityAuditHistory";
 export { ModNotesPanel } from "./components/ModNotesPanel";
 import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_shared";
 
@@ -286,6 +288,7 @@ export default function AdminDashboard() {
 
           {/* ─── Security (Iter 230m) — repo SECURITY.md rendered live ─── */}
           <TabsContent value="security" className="space-y-3 mt-0">
+            <SecurityAuditHistory />
             <SecurityDocPanel />
           </TabsContent>
 
