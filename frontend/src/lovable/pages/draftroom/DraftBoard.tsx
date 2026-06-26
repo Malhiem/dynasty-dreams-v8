@@ -10,9 +10,17 @@
  *     traded-pick overlays, auto-pick badge, commissioner Swap popover,
  *     trade-block megaphone, trade-mode quick-add buttons.
  *
+ * Iter 230x — Compressed view for massive drafts (>10 rounds). Defaults
+ * to a sliding 5-round window centered on the current pick so the
+ * Player List / My Roster / Draft Chat below stay visible without
+ * scrolling. A "Show all rounds" toggle expands to the full grid. When
+ * expanded, the inner scroll area is capped at 60vh so the bottom
+ * panels remain reachable in a single page-down.
+ *
  * Pure presentational. All state lives in the parent (DraftRoom) and is
  * forwarded via props; events flow back through the supplied callbacks.
  */
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -28,13 +36,27 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Clock, ArrowRightLeft, Megaphone, Repeat } from "lucide-react";
+import {
+  Clock,
+  ArrowRightLeft,
+  Megaphone,
+  Repeat,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
+import DraftBoardCompressedControls from "@/lovable/pages/draftroom/DraftBoardCompressedControls";
 import {
   positionColors,
   positionTints,
 } from "@/lovable/pages/draftroom/draftConstants";
+
+// Iter 230x — Number of rounds rendered when the board is compressed.
+// Centered on the current pick's round. 5 rows fits comfortably above
+// the bottom grid on a 1080-px viewport without scrolling.
+const COMPRESSED_WINDOW = 5;
+// Rounds beyond this auto-collapse the board on first mount. Smaller
+// drafts (e.g. an 8-round entry draft) stay fully expanded by default.
+const COMPRESS_AUTO_THRESHOLD = 10;
 
 export default function DraftBoard({
   // grid shape
@@ -67,11 +89,84 @@ export default function DraftBoard({
   handleSwapPickPlayer,
   players,
 }) {
+  // Iter 230x — Compressed view state. Auto-collapses on first mount
+  // for drafts with more than COMPRESS_AUTO_THRESHOLD rounds so the
+  // page-load doesn't push the Player List / Roster / Chat below the
+  // fold. The toggle button lets the user flip between modes at any
+  // time without losing scroll position.
+  const totalRounds = allPicks.length;
+  const [compressed, setCompressed] = useState(totalRounds > COMPRESS_AUTO_THRESHOLD);
+  // One-shot auto-collapse the first time we learn the real round
+  // count (DraftRoom's draftConfig starts at 5 and is overwritten
+  // after the backend response, so the initial useState above sees
+  // the stale default). After this fires once, the user is in full
+  // control via the toggle button.
+  const autoCollapsedRef = useRef(false);
+  useEffect(() => {
+    if (!autoCollapsedRef.current && totalRounds > COMPRESS_AUTO_THRESHOLD) {
+      setCompressed(true);
+      autoCollapsedRef.current = true;
+    }
+  }, [totalRounds]);
+
+  // Round currently on the clock — drives the compressed-window
+  // centering. Derived from `draftConfig.currentPick` / `totalTeams`
+  // (snake-aware order doesn't matter for ROUND number).
+  const currentRound = Math.max(
+    1,
+    Math.min(totalRounds, Math.ceil((draftConfig?.currentPick || 1) / Math.max(1, totalTeams))),
+  );
+  const [centerRound, setCenterRound] = useState(currentRound);
+
+  // Keep the compressed window following the live pick. When the user
+  // manually paginates (prev/next round), `centerRound` diverges from
+  // `currentRound` — a "Jump to live" affordance lets them snap back.
+  useEffect(() => {
+    if (compressed) setCenterRound(currentRound);
+  }, [compressed, currentRound]);
+
+  // Slice the rounds to render. When compressed, show a sliding window
+  // of COMPRESSED_WINDOW rounds clamped to the draft's actual range.
+  const visibleRounds = useMemo(() => {
+    if (!compressed) return allPicks;
+    const half = Math.floor(COMPRESSED_WINDOW / 2);
+    let start = Math.max(0, centerRound - 1 - half);
+    let end = Math.min(totalRounds, start + COMPRESSED_WINDOW);
+    start = Math.max(0, end - COMPRESSED_WINDOW); // re-clamp if we hit the tail
+    return allPicks.slice(start, end);
+  }, [compressed, allPicks, centerRound, totalRounds]);
+
+  const windowStart = compressed
+    ? Math.max(1, centerRound - Math.floor(COMPRESSED_WINDOW / 2))
+    : 1;
+  const windowEnd = compressed
+    ? Math.min(totalRounds, windowStart + visibleRounds.length - 1)
+    : totalRounds;
+  const canStepBack = compressed && windowStart > 1;
+  const canStepFwd = compressed && windowEnd < totalRounds;
+  const isFollowingLive = compressed && centerRound === currentRound;
+
   return (
     <Card className="border-border">
       <CardHeader className="pb-2 space-y-2">
         <div className="flex items-center justify-between gap-2 flex-wrap">
-          <CardTitle className="text-base">Draft Board</CardTitle>
+          <div className="flex items-center gap-2 flex-wrap">
+            <CardTitle className="text-base">Draft Board</CardTitle>
+            <DraftBoardCompressedControls
+              totalRounds={totalRounds}
+              compressedWindow={COMPRESSED_WINDOW}
+              compressed={compressed}
+              setCompressed={setCompressed}
+              windowStart={windowStart}
+              windowEnd={windowEnd}
+              canStepBack={canStepBack}
+              canStepFwd={canStepFwd}
+              isFollowingLive={isFollowingLive}
+              draftStarted={!!draftConfig?.draftStarted}
+              currentRound={currentRound}
+              setCenterRound={setCenterRound}
+            />
+          </div>
           <div className="flex items-center gap-1 flex-wrap" data-testid="draft-board-owner-filter">
             <span className="text-[10px] uppercase text-muted-foreground tracking-wider mr-1">
               {selectedOwnerAbbrs.size === 0
@@ -119,7 +214,16 @@ export default function DraftBoard({
         </div>
       </CardHeader>
       <CardContent className="p-0">
-        <ScrollArea className="w-full">
+        <ScrollArea
+          className={cn(
+            "w-full",
+            // Iter 230x — Cap full-mode height so the Player List /
+            // Roster / Chat below remain visible above the fold even
+            // for 25-team boards. Compressed mode is naturally short
+            // (5 rounds) and doesn't need the cap.
+            !compressed && "max-h-[60vh]",
+          )}
+        >
           <div className="min-w-[700px] p-4 pt-0">
             <div
               className="grid gap-1 mb-1 sticky top-0 bg-card z-10 pt-2"
@@ -156,8 +260,11 @@ export default function DraftBoard({
               })}
             </div>
 
-            {allPicks.map((roundPicks, rIdx) => {
-              const round = rIdx + 1;
+            {visibleRounds.map((roundPicks, vIdx) => {
+              // Iter 230x — When compressed, the slice starts at
+              // `windowStart`, so the displayed round number maps from
+              // the visible index back to the absolute draft round.
+              const round = compressed ? windowStart + vIdx : vIdx + 1;
               return (
                 <div
                   key={round}
