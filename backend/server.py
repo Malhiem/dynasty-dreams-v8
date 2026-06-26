@@ -1068,6 +1068,16 @@ async def startup():
         asyncio.create_task(nhl_roster_sync_loop(db, create_notification))
     except Exception as e:
         logger.error(f"nhl_roster_sync_worker failed to start: {e}")
+
+    # Iter 230f — Injury news scraper. Pulls public NHL RSS feeds every
+    # 15 min, matches headlines to rostered players, and dispatches
+    # `player_injured` / `player_recovered` / `player_injury_status`
+    # notifications via the shared NHL sync dispatcher pipeline.
+    try:
+        from services.injury_news_scraper import injury_news_loop
+        asyncio.create_task(injury_news_loop(db, create_notification))
+    except Exception as e:
+        logger.error(f"injury_news_scraper failed to start: {e}")
     
     # Write test credentials
     import os as os_module
