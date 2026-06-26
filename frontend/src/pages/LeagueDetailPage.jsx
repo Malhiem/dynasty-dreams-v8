@@ -195,7 +195,7 @@ export default function LeagueDetailPage() {
       label: 'Team',
       render: (v, row) => (
         <Link
-          to={`/teams/${row.team_id}`}
+          to={`/roster?team_id=${row.team_id}`}
           data-testid={`league-detail-team-link-${row.team_id}`}
           className="text-white hover:text-[#00D2FF]"
         >
@@ -347,7 +347,7 @@ export default function LeagueDetailPage() {
                     const homeScore = (typeof m.home_score === 'number' ? m.home_score : 0).toFixed(1);
                     const awayScore = (typeof m.away_score === 'number' ? m.away_score : 0).toFixed(1);
                     const TeamRow = ({ t, name, rec, score, won, side }) => (
-                      <Link to={`/teams/${m[`${side}_team_id`]}`} className="flex items-center gap-3 group">
+                      <Link to={`/roster?team_id=${m[`${side}_team_id`]}`} className="flex items-center gap-3 group">
                         {t.logo_url ? (
                           <img src={t.logo_url} alt={name} className="h-9 w-9 rounded-md object-cover shrink-0" />
                         ) : (
@@ -417,7 +417,7 @@ export default function LeagueDetailPage() {
                   {standings.map((s, i) => (
                     <Link
                       key={s.team_id}
-                      to={`/teams/${s.team_id}`}
+                      to={`/roster?team_id=${s.team_id}`}
                       className="px-3 py-2 flex items-center gap-3 hover:bg-white/[0.02] transition-colors"
                       data-testid={`standings-row-${s.team_id}`}
                     >
@@ -591,7 +591,7 @@ export default function LeagueDetailPage() {
                             data-testid={`pending-trade-party-${t._id}-${p.team_id}`}
                           >
                             <Link
-                              to={`/teams/${p.team_id}`}
+                              to={`/roster?team_id=${p.team_id}`}
                               className="font-semibold text-white truncate hover:underline"
                             >
                               {p.team_name}
@@ -623,11 +623,11 @@ export default function LeagueDetailPage() {
                       </div>
                     ) : (
                       <div className="flex items-center justify-between gap-2 text-sm">
-                        <Link to={`/teams/${t.proposer_team_id}`} className="font-semibold text-white truncate hover:underline">
+                        <Link to={`/roster?team_id=${t.proposer_team_id}`} className="font-semibold text-white truncate hover:underline">
                           {t.proposer_team_name || 'Team A'}
                         </Link>
                         <span className="text-[#52525B]">↔</span>
-                        <Link to={`/teams/${t.target_team_id}`} className="font-semibold text-white truncate hover:underline">
+                        <Link to={`/roster?team_id=${t.target_team_id}`} className="font-semibold text-white truncate hover:underline">
                           {t.target_team_name || 'Team B'}
                         </Link>
                       </div>
@@ -767,7 +767,7 @@ export default function LeagueDetailPage() {
                               {I.label}
                             </span>
                             {tx.team_name && (
-                              <Link to={`/teams/${tx.team_id}`} className="text-sm font-semibold text-white hover:underline truncate">
+                              <Link to={`/roster?team_id=${tx.team_id}`} className="text-sm font-semibold text-white hover:underline truncate">
                                 {tx.team_name}
                               </Link>
                             )}
@@ -805,7 +805,7 @@ export default function LeagueDetailPage() {
                               ROSTER MOVES
                             </span>
                             {g.team_name && (
-                              <Link to={`/teams/${g.team_id}`} className="text-sm font-semibold text-white hover:underline truncate">
+                              <Link to={`/roster?team_id=${g.team_id}`} className="text-sm font-semibold text-white hover:underline truncate">
                                 {g.team_name}
                               </Link>
                             )}

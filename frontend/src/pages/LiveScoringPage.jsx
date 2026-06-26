@@ -223,7 +223,7 @@ export default function LiveScoringPage() {
                   <div className="text-right">
                     <div className="text-xs text-[#A1A1AA] mb-1">ME</div>
                     <Link
-                      to={`/teams/${currentMatchup.me.id}`}
+                      to={`/roster?team_id=${currentMatchup.me.id}`}
                       className="text-white text-lg font-bold hover:text-[#00D2FF]"
                       data-testid="live-matchup-me-link"
                     >
@@ -248,7 +248,7 @@ export default function LiveScoringPage() {
                   <div className="text-left">
                     <div className="text-xs text-[#A1A1AA] mb-1">OPPONENT</div>
                     <Link
-                      to={`/teams/${currentMatchup.opponent.id}`}
+                      to={`/roster?team_id=${currentMatchup.opponent.id}`}
                       className="text-white text-lg font-bold hover:text-[#00D2FF]"
                       data-testid="live-matchup-opp-link"
                     >
@@ -381,7 +381,7 @@ export default function LiveScoringPage() {
                             <td className="px-4 py-3 text-white font-semibold">{rowIdx + 1}</td>
                             <td className="px-4 py-3">
                               <Link
-                                to={`/teams/${r.team_id}`}
+                                to={`/roster?team_id=${r.team_id}`}
                                 data-testid={`live-leaderboard-team-${r.team_id}`}
                                 className="text-white hover:text-[#00D2FF]"
                               >
@@ -504,7 +504,7 @@ function TopPerformersPanel({ leagueId }) {
               <td className="px-4 py-3 text-[#A1A1AA]">{p.position}</td>
               <td className="px-4 py-3">
                 <Link
-                  to={`/teams/${p.team_id}`}
+                  to={`/roster?team_id=${p.team_id}`}
                   data-testid={`top-performer-owner-${p.player_id}`}
                   className="text-[#A1A1AA] hover:text-[#00D2FF] text-sm"
                 >

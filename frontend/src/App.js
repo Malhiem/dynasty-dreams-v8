@@ -33,7 +33,6 @@ import PlayerDetailPage from "@/pages/PlayerDetailPage";
 import ComparePage from "@/pages/ComparePage";
 import TradeAnalyzerPage from "@/pages/TradeAnalyzerPage";
 import LiveScoringPage from "@/pages/LiveScoringPage";
-import TeamDetailPage from "@/pages/TeamDetailPage";
 
 // Lovable-ported pages (design migration)
 import LovableIndex from "@/lovable/pages/Index";
@@ -114,7 +113,7 @@ function App() {
           <Route path="/auction-draft/:id" element={<ProtectedRoute><AuctionDraftPage /></ProtectedRoute>} />
           <Route path="/commissioner" element={<ProtectedRoute><CommissionerPage /></ProtectedRoute>} />
           <Route path="/live" element={<ProtectedRoute><LiveScoringPage /></ProtectedRoute>} />
-          <Route path="/teams/:id" element={<ProtectedRoute><TeamDetailPage /></ProtectedRoute>} />
+          {/* Iter 230t — `/teams/:id` retired; LovableTeam at `/roster?team_id=…` is the single roster surface. */}
           <Route path="/payment/success" element={<ProtectedRoute><PaymentSuccessPage /></ProtectedRoute>} />
           <Route path="/payment/setup" element={<ProtectedRoute><PaymentSetupPage /></ProtectedRoute>} />
           <Route path="/payment/cancel" element={<ProtectedRoute><PaymentCancelPage /></ProtectedRoute>} />

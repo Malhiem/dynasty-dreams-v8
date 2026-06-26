@@ -171,7 +171,7 @@ function OwnedCell({ player }) {
   }
   return (
     <Link
-      to={`/teams/${player.owned_by_team_id}`}
+      to={`/roster?team_id=${player.owned_by_team_id}`}
       className="text-cyan-300 text-xs font-bold hover:underline"
       title={player.owned_by_team_name}
     >

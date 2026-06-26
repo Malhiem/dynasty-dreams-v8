@@ -404,7 +404,7 @@ export default function ProfilePage() {
                 return (
                   <Link
                     key={t.team_id}
-                    to={`/teams/${t.team_id}`}
+                    to={`/roster?team_id=${t.team_id}`}
                     data-testid={`profile-active-league-link-${t.team_id}`}
                     className="block bg-white/5 border border-white/10 rounded-xl p-4 hover:border-[#00D2FF]/40 transition-colors"
                   >
@@ -466,7 +466,7 @@ export default function ProfilePage() {
               return (
                 <Link
                   key={t.team_id}
-                  to={`/teams/${t.team_id}`}
+                  to={`/roster?team_id=${t.team_id}`}
                   data-testid={`profile-team-link-${t.team_id}`}
                   className="block bg-white/5 border border-white/10 rounded-xl p-4 hover:border-[#00D2FF]/40 transition-colors"
                 >
