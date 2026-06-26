@@ -47,6 +47,23 @@ async def _broadcast(room, event, payload):
 def _calculate_fantasy_points(*a, **kw): return _deps["calculate_fantasy_points"](*a, **kw)
 
 
+def _send_email(to_email: str, subject: str, html_content: str) -> dict:
+    """Iter 230y / 230ab — Thin wrapper around the SendGrid send fn
+    registered on `_deps`. Falls back to a mocked `{status: skipped}`
+    if the dependency wasn't injected (test envs, server startup
+    before `_deps` is populated). Used by the early-start
+    notification path to email the on-the-clock manager.
+    """
+    fn = _deps.get("send_sendgrid_email")
+    if not fn:
+        return {"status": "skipped", "reason": "send_sendgrid_email not injected"}
+    try:
+        return fn(to_email, subject, html_content)
+    except Exception as e:
+        logger.debug(f"_send_email failed for {to_email}: {e}")
+        return {"status": "error", "error": str(e)}
+
+
 # ─── Iter 170g — Team abbr derivation aligned with the frontend ────────
 # Matches `team_to_response` (routes/teams.py) which honours
 # `logo_abbr_override` then hyphen-aware initials, AND dedupes collisions
@@ -1818,6 +1835,124 @@ async def get_draft_board(draft_id: str):
         "on_the_clock": get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"]) if draft["team_abbrs"] else None
     }
 
+
+@router.get("/drafts/{draft_id}/stats")
+async def get_draft_stats(draft_id: str):
+    """Iter 230aa — Compact stats summary for the Draft Live tile.
+
+    Returns a single JSON blob the frontend can drop into a small
+    sidebar strip without N round-trips. All metrics use the picks'
+    `timestamp` field (set when the pick is committed) — the delta
+    between consecutive timestamps is the proxy for "time taken to
+    pick", and per-team aggregates surface the fastest/slowest manager.
+
+    Shape:
+    {
+      "current_pick": 5,
+      "total_picks": 240,
+      "picks_made": 4,
+      "avg_seconds_per_pick": 42.0,
+      "fastest": {"team": "TOR", "avg_seconds": 18.5, "picks": 3},
+      "slowest": {"team": "HC",  "avg_seconds": 201.0, "picks": 2},
+      "floor_trades": 4
+    }
+
+    Fields that can't be computed (e.g. no picks yet → no deltas) are
+    returned as `None` rather than omitted so the frontend has stable
+    keys.
+    """
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    team_abbrs = draft.get("team_abbrs") or []
+    total_rounds = int(draft.get("total_rounds") or 0)
+    total_picks = total_rounds * len(team_abbrs)
+    picks: list[dict] = draft.get("picks") or []
+    picks_made = len(picks)
+
+    # Parse pick timestamps once.
+    def _parse(ts) -> Optional[datetime]:
+        if not ts:
+            return None
+        try:
+            return datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    # Anchor for the FIRST pick's elapsed time: the draft's started_at
+    # if present, otherwise scheduled_time, otherwise skip (delta is
+    # undefined). Pick #N's elapsed = pick[N].timestamp - prev_anchor.
+    started_at = _parse(draft.get("started_at")) or _parse(draft.get("scheduled_time"))
+
+    # Sort picks by overall just in case storage order ever drifts.
+    sorted_picks = sorted(picks, key=lambda p: int(p.get("overall") or 0))
+
+    deltas: list[float] = []
+    per_team_deltas: dict[str, list[float]] = {}
+    prev_ts = started_at
+    for p in sorted_picks:
+        ts = _parse(p.get("timestamp"))
+        if ts and prev_ts:
+            d = (ts - prev_ts).total_seconds()
+            if 0 < d < 24 * 3600:  # ignore absurd gaps (>24h pauses)
+                deltas.append(d)
+                team = p.get("team")
+                if team:
+                    per_team_deltas.setdefault(team, []).append(d)
+        if ts:
+            prev_ts = ts
+
+    avg = (sum(deltas) / len(deltas)) if deltas else None
+
+    fastest = slowest = None
+    if per_team_deltas:
+        per_team_avg = [
+            (team, sum(arr) / len(arr), len(arr))
+            for team, arr in per_team_deltas.items()
+            if arr
+        ]
+        if per_team_avg:
+            f = min(per_team_avg, key=lambda x: x[1])
+            s = max(per_team_avg, key=lambda x: x[1])
+            fastest = {"team": f[0], "avg_seconds": round(f[1], 1), "picks": f[2]}
+            slowest = {"team": s[0], "avg_seconds": round(s[1], 1), "picks": s[2]}
+
+    # Floor trades — completed trades whose `assets` include any draft-
+    # pick reference for this league/draft. We count distinct trade docs
+    # with status approved/completed that mention this draft.
+    league_id = draft.get("league_id")
+    floor_trades = 0
+    if league_id:
+        try:
+            floor_trades = await _db().trades.count_documents({
+                "league_id": str(league_id),
+                "status": {"$in": ["approved", "completed", "auto_approved"]},
+                "$or": [
+                    {"draft_id": draft_id},
+                    {"draft_id": str(draft_id)},
+                    # Legacy: trades carrying any pick asset on this league
+                    # during the draft window — best-effort fallback.
+                    {"assets": {"$elemMatch": {"type": "draft_pick", "league_id": str(league_id)}}},
+                ],
+            })
+        except Exception:
+            floor_trades = 0
+
+    return {
+        "current_pick": int(draft.get("current_pick") or 1),
+        "total_picks": total_picks,
+        "picks_made": picks_made,
+        "avg_seconds_per_pick": round(avg, 1) if avg is not None else None,
+        "fastest": fastest,
+        "slowest": slowest,
+        "floor_trades": int(floor_trades),
+    }
+
+
 @router.get("/drafts/{draft_id}/eligible-players")
 async def get_draft_eligible_players(
     draft_id: str,
@@ -2144,6 +2279,8 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
             first_abbr = team_abbrs[0] if team_abbrs else None
             team_map = (updated_draft or draft).get("team_map") or {}
             first_team_id = (team_map.get(first_abbr) or {}).get("id") if first_abbr else None
+            league_name = (updated_draft or draft).get("league_name") or ""
+            draft_name = (updated_draft or draft).get("name") or "your draft"
             if first_team_id:
                 first_team = await _db().teams.find_one(
                     {"_id": ObjectId(first_team_id)},
@@ -2152,15 +2289,41 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
                 if first_team:
                     owners = [first_team.get("owner_id")] + list(first_team.get("co_owner_ids") or [])
                     league_id_str = str(draft["league_id"])
+                    body_text = "Pick #1 — make your selection." + clock_hint
                     for uid in [u for u in owners if u]:
                         await create_notification(
                             uid,
                             EVT_DRAFT_YOUR_TURN,
                             "You're on the clock!",
-                            "Pick #1 — make your selection." + clock_hint,
+                            body_text,
                             league_id_str,
                             "/draft-room",
                         )
+                        # Iter 230ab — Also fire an email for early-start
+                        # mode. The in-app banner / bell only help
+                        # managers who currently have the tab open; a
+                        # tab-closed user otherwise wouldn't know the
+                        # commissioner started early until they happen
+                        # to check the app. The email closes that gap.
+                        # Best-effort: any SendGrid failure is silently
+                        # swallowed so the start path is never blocked.
+                        try:
+                            owner_doc = await _db().users.find_one(
+                                {"_id": ObjectId(uid)},
+                                {"email": 1, "name": 1},
+                            )
+                            if owner_doc and owner_doc.get("email"):
+                                subj = f"You're on the clock — {draft_name}"
+                                html = (
+                                    f"<p>Hi {owner_doc.get('name') or 'manager'},</p>"
+                                    f"<p>The commissioner has started <b>{draft_name}</b>"
+                                    f"{(' in ' + league_name) if league_name else ''} <b>without the clock</b>.</p>"
+                                    f"<p>You're up for <b>Pick #1</b>. {clock_hint.strip() or 'Make your selection.'}</p>"
+                                    f"<p><a href=\"/draft-room\">Open the Draft Room →</a></p>"
+                                )
+                                _send_email(owner_doc["email"], subj, html)
+                        except Exception as e:
+                            logger.debug(f"start_draft early_start email skipped for {uid}: {e}")
         except Exception as e:
             logger.debug(f"start_draft early_start notification skipped: {e}")
 

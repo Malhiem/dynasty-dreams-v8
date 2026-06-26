@@ -721,6 +721,15 @@ const Team = () => {
       <div className="container py-8 space-y-6" data-testid="team-page">
         <LiveTeamHeader />
         <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+          {/* Iter 230z — When viewing your own team, the team
+              logo/name/subtitle/claims chip are already rendered by
+              `LiveTeamHeader` above. Suppress this duplicate hero
+              block in that case (commissioner-mode switch + team
+              switcher stay rendered on the right). When viewing
+              ANOTHER team (`!isOwnTeam`), the LiveTeamHeader still
+              shows my team — so we keep this hero rendered as the
+              "viewing: {other team}" surface. */}
+          {!isOwnTeam ? (
           <div className="flex items-center gap-4">
             {(isOwnTeam || commissionerMode) ? (
               <TeamLogoUploader
@@ -750,6 +759,7 @@ const Team = () => {
               </div>
             </div>
           </div>
+          ) : <div className="hidden sm:block" />}
 
           <div className="flex items-center gap-4">
             <TooltipProvider>

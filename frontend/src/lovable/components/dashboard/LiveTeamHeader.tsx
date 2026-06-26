@@ -5,8 +5,9 @@ import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowRight, Flame, Radio } from "lucide-react";
+import { ArrowRight, Flame, Radio, ListOrdered } from "lucide-react";
 import TeamLogo from "@/lovable/components/TeamLogo";
+import TeamClaimCounter from "@/lovable/components/dashboard/TeamClaimCounter";
 import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
 
 /**
@@ -19,6 +20,10 @@ export default function LiveTeamHeader() {
   const { streaks } = useSeasonStreaks(leagueId);
   const [live, setLive] = useState(null);
   const [week, setWeek] = useState(null);
+  // Iter 230z — Waiver pick rank chip. Only renders when the league
+  // actually has waivers enabled AND the requesting user owns a team
+  // in that league (the endpoint returns `my_rank: null` for outsiders).
+  const [waiver, setWaiver] = useState(null);
 
   useEffect(() => {
     if (!myTeam?.id) return;
@@ -35,6 +40,15 @@ export default function LiveTeamHeader() {
       .catch(() => {});
     return () => { cancelled = true; };
   }, [myTeam?.id]);
+
+  useEffect(() => {
+    if (!leagueId) { setWaiver(null); return; }
+    let cancelled = false;
+    api.get(`/leagues/${leagueId}/waiver-priority`)
+      .then((r) => { if (!cancelled) setWaiver(r.data); })
+      .catch(() => { if (!cancelled) setWaiver(null); });
+    return () => { cancelled = true; };
+  }, [leagueId]);
 
   if (!myTeam) {
     return (
@@ -96,6 +110,27 @@ export default function LiveTeamHeader() {
               Roster <span className="text-white">{(myTeam.roster || []).length} players</span>
               {' · '}
               Rank <span className="text-white">#{week?.rank || '—'}/{week?.total_teams || leagueTeams?.length || '?'}</span>
+              {/* Iter 230z — Waiver pick rank when applicable. */}
+              {waiver?.enabled && waiver?.my_rank ? (
+                <>
+                  {' · '}
+                  <span
+                    data-testid="live-team-header-waiver-rank"
+                    title={`Waiver priority order: ${waiver.priority_order || 'reverse_standings_serpentine'}`}
+                    className="inline-flex items-center gap-1"
+                  >
+                    <ListOrdered className="inline h-3 w-3 -mt-0.5" />
+                    Waiver <span className="text-white">#{waiver.my_rank}/{waiver.total_teams || leagueTeams?.length || '?'}</span>
+                  </span>
+                </>
+              ) : null}
+            </div>
+            {/* Iter 230z — Claims chip moved up from the duplicate team
+                hero into this header (single source of truth on the
+                Team page). Renders `Claims · Season N · Week M` when
+                visible per the league's claim_rules.pending_visibility. */}
+            <div className="mt-2" data-testid="live-team-header-claims-row">
+              <TeamClaimCounter teamId={myTeam.id} />
             </div>
           </div>
         </div>

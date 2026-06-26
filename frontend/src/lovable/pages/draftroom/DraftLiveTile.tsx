@@ -25,6 +25,7 @@ import {
 import { Clock, Play, Pause, Timer, AlertCircle, RotateCcw, Volume2, VolumeX } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCountdown, formatPickTimer } from "@/lovable/pages/draftroom/draftConstants";
+import DraftStatsStrip from "@/lovable/pages/draftroom/DraftStatsStrip";
 
 export default function DraftLiveTile({
   draftConfig,
@@ -290,6 +291,14 @@ export default function DraftLiveTile({
                 Clock activates in {formatCountdown(countdown)}
               </p>
             )}
+            {/* Iter 230aa — Compact stats strip: current pick / total
+                picks, avg time per pick, fastest + slowest team, and
+                in-draft floor trades. Hidden until the backend returns
+                a stats payload (no picks yet → no avg → strip waits). */}
+            <DraftStatsStrip
+              draftId={currentDraft?._id}
+              currentPick={draftConfig.currentPick}
+            />
           </>
         )}
       </CardContent>
