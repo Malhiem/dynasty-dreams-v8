@@ -21,7 +21,12 @@ function loadSavedOrder() {
 }
 
 function saveOrder(ids) {
-  try { localStorage.setItem(ORDER_KEY, JSON.stringify(ids)); } catch {}
+  try { localStorage.setItem(ORDER_KEY, JSON.stringify(ids)); } catch (e) { /* noop */ }
+  // Iter 230am — Persist server-side too so the order follows the
+  // user across devices. Best-effort; localStorage still has it on
+  // failure.
+  api.put('/notifications/preferences/league-order', { ordered_ids: ids })
+    .catch(() => { /* noop */ });
 }
 
 function fmtScoring(v) {
@@ -35,13 +40,23 @@ export default function MyLeaguesOrderedList() {
   const [dragOverId, setDragOverId] = useState(null);
 
   useEffect(() => {
-    api
-      .get('/leagues?my_leagues=true')
-      .then(({ data }) => {
-        const savedOrder = loadSavedOrder();
+    // Iter 230am — Fetch leagues + the server-side order preference
+    // in parallel. Server order wins; localStorage is the fallback.
+    Promise.all([
+      api.get('/leagues?my_leagues=true&exclude_archived=true&exclude_test=true'),
+      api.get('/notifications/preferences').catch(() => ({ data: null })),
+    ])
+      .then(([leaguesRes, prefsRes]) => {
+        const data = leaguesRes.data;
+        const serverOrder = prefsRes.data?.league_order;
+        const savedOrder = Array.isArray(serverOrder) && serverOrder.length
+          ? serverOrder
+          : loadSavedOrder();
+        if (Array.isArray(serverOrder) && serverOrder.length) {
+          try { localStorage.setItem(ORDER_KEY, JSON.stringify(serverOrder)); } catch (e) { /* noop */ }
+        }
         const byId = {};
         (data || []).forEach(l => { byId[l.id] = l; });
-        // Start with saved order (filtered to existing), append any new leagues at the end
         const ordered = [
           ...savedOrder.map(id => byId[id]).filter(Boolean),
           ...(data || []).filter(l => !savedOrder.includes(l.id)),

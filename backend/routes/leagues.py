@@ -377,6 +377,23 @@ def _league_to_response(league: dict) -> LeagueResponse:
     )
 
 
+def _is_test_artifact_league(name: Optional[str]) -> bool:
+    """Iter 230al — Returns True when the league name matches one of the
+    automated-test seed patterns (`TEST_*` or `IterN ... test`). These
+    artefacts shouldn't bleed into a real user's league switcher / "My
+    Leagues" surfaces. Matches the convention already applied in
+    `/users/me/week-at-a-glance`.
+    """
+    if not name:
+        return False
+    if name.startswith("TEST_"):
+        return True
+    import re as _re
+    if _re.match(r"^Iter\d+", name) and "test" in name.lower():
+        return True
+    return False
+
+
 @router.get("/leagues", response_model=List[LeagueResponse])
 async def get_leagues(
     request: Request,
@@ -384,6 +401,8 @@ async def get_leagues(
     discover: bool = False,
     all: bool = False,
     include_hidden: bool = False,
+    exclude_archived: bool = False,
+    exclude_test: bool = False,
 ):
     """Iter 221 — Privacy hardening. By default the endpoint only returns
     leagues the current user is a member of (team owner or commissioner).
@@ -447,6 +466,18 @@ async def get_leagues(
         ]
     }
     leagues = await db.leagues.find(query).to_list(200)
+    # Iter 230al — Opt-in filters used by the league switcher / "My
+    # Leagues" surfaces so users don't see archived or automated-test
+    # artefacts in their day-to-day view. Backend tests + admin tools
+    # leave both flags off so historical behaviour is preserved.
+    if exclude_archived:
+        leagues = [
+            lg for lg in leagues
+            if not lg.get("archived")
+            and (lg.get("status") or "").lower() != "archived"
+        ]
+    if exclude_test:
+        leagues = [lg for lg in leagues if not _is_test_artifact_league(lg.get("name"))]
     # Iter 230h — Filter out leagues the user has explicitly hidden from
     # their dashboard. Hidden leagues are reversible from the Settings
     # modal so this is a soft-hide, not a deletion. Caller may opt out

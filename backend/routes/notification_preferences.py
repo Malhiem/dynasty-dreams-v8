@@ -58,6 +58,17 @@ class LeagueHideInput(BaseModel):
     hidden: bool
 
 
+# Iter 230am — Per-user league display order. Persisted server-side so
+# the user's preferred ordering follows them across devices instead of
+# living only in localStorage. The frontend writes the full ordered
+# list on every reorder.
+from typing import List
+
+
+class LeagueOrderInput(BaseModel):
+    ordered_ids: List[str]
+
+
 def _default_quiet_hours() -> dict:
     return {
         "enabled": False,
@@ -148,11 +159,13 @@ async def _load_full_doc(user_id: str) -> dict:
         quiet = _default_quiet_hours()
     muted = doc.get("muted_league_ids") or []
     hidden = doc.get("hidden_league_ids") or []
+    league_order = doc.get("league_order") or []
     return {
         "preferences": preferences,
         "quiet_hours": quiet,
         "muted_league_ids": list(muted),
         "hidden_league_ids": list(hidden),
+        "league_order": list(league_order),
     }
 
 
@@ -166,6 +179,7 @@ async def get_preferences(request: Request):
         "quiet_hours": full["quiet_hours"],
         "muted_league_ids": full["muted_league_ids"],
         "hidden_league_ids": full["hidden_league_ids"],
+        "league_order": full["league_order"],
         "events": EVENTS,
         "categories": CATEGORIES,
     }
@@ -262,6 +276,31 @@ async def get_hidden_league_ids(user_id: str) -> list:
         return []
     doc = await db.notification_preferences.find_one({"user_id": user_id})
     return list((doc or {}).get("hidden_league_ids") or [])
+
+
+@router.put("/notifications/preferences/league-order")
+async def update_league_order(input: LeagueOrderInput, request: Request):
+    """Iter 230am — Persist the user's preferred league display order
+    server-side so it follows them across devices. The frontend sends
+    the full ordered list of league_ids on every reorder; we replace
+    the stored list wholesale. Empty list is allowed (clears the order
+    → consumers fall back to default sort)."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    # De-dup while preserving order (defensive — clients may glitch).
+    seen = set()
+    cleaned: list = []
+    for lid in input.ordered_ids:
+        if lid and lid not in seen:
+            seen.add(lid)
+            cleaned.append(lid)
+    await db.notification_preferences.update_one(
+        {"user_id": user["_id"]},
+        {"$set": {"user_id": user["_id"], "league_order": cleaned}},
+        upsert=True,
+    )
+    return {"league_order": cleaned}
 
 
 @router.put("/notifications/preferences")

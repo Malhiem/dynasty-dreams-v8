@@ -4,6 +4,33 @@ import api, { invalidateApiCache } from '@/lib/api';
 import { useSocket } from '@/hooks/use-socket';
 
 const STORAGE_KEY = 'dd_active_league_id';
+const ORDER_KEY = 'dd_league_order_v1';
+
+// Iter 230al + 230am — Apply the user's saved league order so every
+// consumer of `myLeagues` renders in the same sequence. Server-side
+// preference (returned by `/notifications/preferences`) takes
+// precedence; localStorage is used as a same-session fast path AND a
+// fallback when the server hasn't been hit yet on initial mount.
+function _readSavedOrder(serverOrder) {
+  if (Array.isArray(serverOrder) && serverOrder.length) return serverOrder;
+  try {
+    const raw = localStorage.getItem(ORDER_KEY);
+    const order = raw ? JSON.parse(raw) : [];
+    return Array.isArray(order) ? order : [];
+  } catch {
+    return [];
+  }
+}
+
+function _applyOrder(leagues, order) {
+  if (!Array.isArray(order) || !order.length) return leagues;
+  const byId = {};
+  (leagues || []).forEach((l) => { byId[l.id] = l; });
+  return [
+    ...order.map((id) => byId[id]).filter(Boolean),
+    ...(leagues || []).filter((l) => !order.includes(l.id)),
+  ];
+}
 
 /**
  * Resolves "the league I'm currently viewing" for multi-league users.
@@ -33,12 +60,27 @@ export function useActiveLeague() {
     const init = async () => {
       setLoading(true);
       try {
-        const { data } = await api.get('/leagues?my_leagues=true');
+        // Iter 230am — Fetch both the league list AND the server-side
+        // order preference in parallel. Server order wins; localStorage
+        // is the fallback for cold starts before the prefs call lands.
+        const [leaguesRes, prefsRes] = await Promise.all([
+          api.get('/leagues?my_leagues=true&exclude_archived=true&exclude_test=true'),
+          api.get('/notifications/preferences').catch(() => ({ data: null })),
+        ]);
         if (cancelled) return;
-        setMyLeagues(data || []);
+        const data = leaguesRes.data;
+        const serverOrder = prefsRes.data?.league_order;
+        const effectiveOrder = _readSavedOrder(serverOrder);
+        // Keep localStorage in lock-step with the server so the next
+        // cold start renders the right order before the prefs RTT.
+        if (Array.isArray(serverOrder) && serverOrder.length) {
+          try { localStorage.setItem(ORDER_KEY, JSON.stringify(serverOrder)); } catch { /* noop */ }
+        }
+        const ordered = _applyOrder(data || [], effectiveOrder);
+        setMyLeagues(ordered);
         let id = leagueId;
-        if (!id || !(data || []).some(l => l.id === id)) {
-          id = data?.[0]?.id || null;
+        if (!id || !(ordered || []).some(l => l.id === id)) {
+          id = ordered?.[0]?.id || null;
           if (id) {
             try { localStorage.setItem(STORAGE_KEY, id); } catch (e) { /* noop */ }
             setLeagueId(id);
@@ -144,5 +186,44 @@ export function useActiveLeague() {
     meId,
   );
 
-  return { loading, myLeagues, myTeamsByLeague, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague, reloadMyLeagues };
+  // Iter 230al + 230am — Reorder leagues in-place. Persists the order
+  // to BOTH localStorage (instant cold-start replay) AND the server
+  // (`/notifications/preferences/league-order`) so the user's chosen
+  // order follows them across devices.
+  const reorderLeagues = (from, to) => {
+    setMyLeagues((prev) => {
+      if (from === to) return prev;
+      if (from < 0 || from >= prev.length) return prev;
+      if (to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(from, 1);
+      next.splice(to, 0, moved);
+      const orderedIds = next.map((l) => l.id);
+      try { localStorage.setItem(ORDER_KEY, JSON.stringify(orderedIds)); } catch (e) { /* noop */ }
+      api.put('/notifications/preferences/league-order', {
+        ordered_ids: orderedIds,
+      }).catch(() => { /* best-effort; localStorage still has it */ });
+      return next;
+    });
+  };
+
+  // Iter 230al — Hide a league from the user's day-to-day surfaces
+  // (switcher, Dashboard "My Leagues" list, Week-at-a-Glance). Hidden
+  // leagues are reversible from the Settings modal. We optimistically
+  // strip the league from `myLeagues` so the UI updates instantly.
+  const hideLeague = async (id) => {
+    setMyLeagues((prev) => prev.filter((l) => l.id !== id));
+    try {
+      await api.put('/notifications/preferences/league-hide', {
+        league_id: id,
+        hidden: true,
+      });
+    } catch (e) {
+      // On failure, reload to restore state.
+      reloadMyLeagues();
+      throw e;
+    }
+  };
+
+  return { loading, myLeagues, myTeamsByLeague, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague, reloadMyLeagues, reorderLeagues, hideLeague };
 }
