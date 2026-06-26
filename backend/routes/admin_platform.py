@@ -68,6 +68,22 @@ async def security_doc(request: Request):
         text = _SECURITY_DOC_PATH.read_text(encoding="utf-8")
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="SECURITY.md not found on disk")
+    db = _deps["db"]
+    # Iter 230p — Surface the most recent PDF export's SHA-256 so the
+    # Security tab can display "Last export · {hash} · {generated_at}"
+    # for chain-of-custody verification.
+    latest_export = await db.security_exports.find_one(
+        {}, sort=[("generated_at", -1)],
+    )
+    last_export_summary = None
+    if latest_export:
+        last_export_summary = {
+            "sha256": latest_export.get("sha256"),
+            "bytes": latest_export.get("bytes"),
+            "generated_at": latest_export.get("generated_at"),
+            "generated_by": latest_export.get("generated_by"),
+            "filename": latest_export.get("filename"),
+        }
     return {
         "path": str(_SECURITY_DOC_PATH),
         "bytes": len(text.encode("utf-8")),
@@ -78,6 +94,7 @@ async def security_doc(request: Request):
             if _SECURITY_DOC_PATH.exists() else None
         ),
         "content": text,
+        "last_export": last_export_summary,
     }
 
 
@@ -227,11 +244,39 @@ async def security_export_pdf(request: Request):
         md_text = "_(SECURITY.md not found on disk)_"
 
     pdf_bytes = _render_security_pdf(audits=audits, totals=totals, md_text=md_text)
+    # Iter 230p — Chain-of-custody: compute SHA-256, return as
+    # `X-PDF-SHA256` header AND log to `db.security_exports` so the
+    # Security tab can render "Last export · {hash} · {time}" on
+    # subsequent loads. Auditors paste this hash into `shasum -a 256`
+    # to prove the file they received wasn't altered post-export.
+    import hashlib as _hashlib
+    sha256 = _hashlib.sha256(pdf_bytes).hexdigest()
     filename = f"dynasty-dreams-security-{datetime.now(timezone.utc).strftime('%Y%m%d')}.pdf"
+    try:
+        admin = await _deps["get_current_user"](request)
+        await db.security_exports.insert_one({
+            "sha256": sha256,
+            "bytes": len(pdf_bytes),
+            "filename": filename,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_by": admin.get("email"),
+            "generated_by_id": str(admin.get("_id") or ""),
+        })
+    except Exception:
+        # Logging the export is best-effort — never fail the download
+        # because the audit-trail write hiccuped.
+        pass
     return FastAPIResponse(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-PDF-SHA256": sha256,
+            # Expose the custom header to JS code reading it via fetch
+            # (CORS preflight only needs this if cross-origin, but
+            # including it makes the contract explicit for proxies).
+            "Access-Control-Expose-Headers": "X-PDF-SHA256, Content-Disposition",
+        },
     )
 
 

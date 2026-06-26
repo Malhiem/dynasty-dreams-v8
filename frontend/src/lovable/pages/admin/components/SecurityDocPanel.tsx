@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { toast } from "sonner";
-import { ShieldCheck, FileText, ExternalLink, Loader2, Clock, Download } from "lucide-react";
+import { ShieldCheck, FileText, ExternalLink, Loader2, Clock, Download, Hash, Copy } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,13 @@ type DocResponse = {
   bytes: number;
   modified_at: string | null;
   content: string;
+  last_export?: {
+    sha256: string;
+    bytes: number;
+    generated_at: string;
+    generated_by?: string | null;
+    filename?: string | null;
+  } | null;
 };
 
 // Minimal markdown-to-React renderer — handles headings, paragraphs,
@@ -207,21 +214,52 @@ export default function SecurityDocPanel() {
       const res = await api.get("/admin/platform/security-export.pdf", {
         responseType: "blob",
       });
+      // Iter 230p — capture the chain-of-custody hash from the response
+      // header so we can display it immediately (no extra round-trip).
+      const sha256 = res.headers["x-pdf-sha256"] || res.headers["X-PDF-SHA256"];
       const blob = new Blob([res.data], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-      a.download = `dynasty-dreams-security-${stamp}.pdf`;
+      const fname = `dynasty-dreams-security-${stamp}.pdf`;
+      a.download = fname;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success("Security audit bundle downloaded");
+      // Optimistically update the panel's last_export so the user sees
+      // the new hash instantly without re-fetching the doc.
+      if (sha256) {
+        setDoc((cur) => cur && ({
+          ...cur,
+          last_export: {
+            sha256: String(sha256),
+            bytes: blob.size,
+            generated_at: new Date().toISOString(),
+            generated_by: null,
+            filename: fname,
+          },
+        }));
+      }
+      toast.success("Security audit bundle downloaded", {
+        description: sha256 ? `SHA-256: ${String(sha256).slice(0, 16)}…` : undefined,
+      });
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || "Failed to export PDF");
     } finally {
       setExporting(false);
+    }
+  };
+
+  const copyHash = async () => {
+    const h = doc?.last_export?.sha256;
+    if (!h) return;
+    try {
+      await navigator.clipboard.writeText(h);
+      toast.success("SHA-256 copied to clipboard");
+    } catch {
+      toast.error("Couldn't copy — your browser blocked clipboard access");
     }
   };
 
@@ -318,6 +356,44 @@ export default function SecurityDocPanel() {
                 OWASP Top 10 <ExternalLink className="h-3 w-3" />
               </a>
             </div>
+            {/* Iter 230p — Chain-of-custody hash row */}
+            {doc.last_export?.sha256 && (
+              <div
+                className="flex items-center gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2.5 py-1.5 mb-4 text-[11px]"
+                data-testid="security-doc-last-export"
+              >
+                <Hash className="h-3.5 w-3.5 text-emerald-300 shrink-0" />
+                <span className="text-muted-foreground shrink-0">Last export:</span>
+                <code
+                  className="font-mono text-emerald-200 truncate"
+                  title={doc.last_export.sha256}
+                  data-testid="security-doc-last-export-hash"
+                >
+                  {doc.last_export.sha256}
+                </code>
+                <button
+                  type="button"
+                  onClick={copyHash}
+                  data-testid="security-doc-copy-hash"
+                  aria-label="Copy SHA-256"
+                  title="Copy SHA-256 to clipboard"
+                  className="h-5 w-5 rounded text-muted-foreground hover:text-emerald-300 hover:bg-white/5 flex items-center justify-center shrink-0"
+                >
+                  <Copy className="h-3 w-3" />
+                </button>
+                <span className="text-muted-foreground/70 shrink-0 ml-1">
+                  · {new Date(doc.last_export.generated_at).toLocaleString()}
+                </span>
+                {doc.last_export.generated_by && (
+                  <span className="text-muted-foreground/70 shrink-0">
+                    · by <span className="text-foreground/80">{doc.last_export.generated_by}</span>
+                  </span>
+                )}
+                <span className="text-muted-foreground/70 shrink-0 ml-auto">
+                  Verify: <code className="font-mono text-foreground/80">shasum -a 256</code>
+                </span>
+              </div>
+            )}
             <div data-testid="security-doc-content">{renderMarkdown(doc.content)}</div>
             <div className="mt-6 flex justify-end">
               <Button
