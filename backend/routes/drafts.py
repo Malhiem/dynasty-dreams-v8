@@ -2332,6 +2332,7 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
             "early_start": early_start,
             "current_pick": 1,
             "started_at": datetime.now(timezone.utc).isoformat(),
+            "current_pick_started_at": datetime.now(timezone.utc).isoformat(),
             "team_abbrs": team_abbrs,
             "team_map": team_map,
         }
@@ -2540,7 +2541,13 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         {"_id": ObjectId(draft_id)},
         {
             "$push": {"picks": pick_doc},
-            "$set": {"current_pick": next_pick, "status": new_status},
+            "$set": {"current_pick": next_pick, "status": new_status,
+                     # Iter 230ar — Track the wall-clock moment the
+                     # next pick is now ON the clock so /state can
+                     # surface a server-authoritative remaining time
+                     # (frontend was resetting to the full duration
+                     # on every page mount).
+                     "current_pick_started_at": datetime.now(timezone.utc).isoformat()},
         },
     )
 
@@ -2732,7 +2739,12 @@ async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, reques
 
     await _db().drafts.update_one(
         {"_id": ObjectId(draft_id)},
-        {"$set": {"picks": kept, "current_pick": new_current, "status": new_status}},
+        {"$set": {"picks": kept, "current_pick": new_current, "status": new_status,
+                  # Iter 230ar — Reset the per-pick clock anchor on
+                  # undo so the timer restarts for the resurrected
+                  # pick rather than continuing from the old slot's
+                  # countdown.
+                  "current_pick_started_at": datetime.now(timezone.utc).isoformat()}},
     )
 
     # Chat + broadcast.

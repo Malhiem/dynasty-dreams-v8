@@ -77,6 +77,7 @@ async def _start_one(db, draft_doc) -> bool:
                 "early_start": False,
                 "current_pick": 1,
                 "started_at": datetime.now(timezone.utc).isoformat(),
+                "current_pick_started_at": datetime.now(timezone.utc).isoformat(),
                 "team_abbrs": team_abbrs,
                 "team_map": team_map,
             }}

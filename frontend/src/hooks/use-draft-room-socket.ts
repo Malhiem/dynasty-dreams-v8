@@ -99,6 +99,20 @@ export default function useDraftRoomSocket({
           });
         }
       },
+      // Iter 230ar — Refresh when the draft transitions from
+      // `scheduled` → `active` (whether via the commissioner button,
+      // the frontend countdown auto-boot, or the backend auto-start
+      // worker). Without this hook, a user who has the Draft Room
+      // open at the scheduled time would still see the pre-draft
+      // countdown until they manually refreshed.
+      draft_started: (p: any) => {
+        refreshDraftState();
+        toast.success("Draft started!", {
+          description: p?.auto_started
+            ? "Auto-started — clock is running."
+            : "The clock is now running.",
+        });
+      },
       // Iter 203 — when the draft completes, surface a celebratory
       // toast + auto-refresh so the UI flips to its completed state.
       draft_completed: () => {

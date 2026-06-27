@@ -404,6 +404,9 @@ export default function DraftRoom() {
   const shouldDefer = missedPickAction === "defer-to-user" && isMyPickActive;
 
   // Iter 204 — pick timer extracted to `usePickTimer` hook (-30 lines).
+  // Iter 230ar — Pass `currentPickStartedAt` from the draft doc so
+  // the timer computes remaining from the server timestamp (no more
+  // reset to full duration on page mount).
   const { pickTimeLeft, setPickTimeLeft, timerPaused, setTimerPaused } = usePickTimer({
     isClockActive,
     pickTimerSeconds: draftConfig.pickTimerSeconds,
@@ -411,6 +414,7 @@ export default function DraftRoom() {
     currentDraftId: currentDraft?._id,
     isDraftActive,
     refreshDraftState,
+    currentPickStartedAt: currentDraft?.current_pick_started_at,
     // Iter 228f — Only defer when the current pick is owned by the
     // local user AND the draft uses defer-to-user mode.
     deferOnExpiry: shouldDefer,

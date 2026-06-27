@@ -1,21 +1,30 @@
 // @ts-nocheck
 /**
  * Iter 204 — Pick timer hook (extracted from DraftRoom.tsx).
+ * Iter 230ar — Server-authoritative remaining-time computation.
  *
- * Encapsulates the on-the-clock countdown for the live Draft Room:
- *   • Resets `pickTimeLeft` to `pickTimerSeconds` whenever the active
- *     pick changes (or the clock becomes active).
- *   • Decrements `pickTimeLeft` every second when the clock is active
- *     and not paused.
- *   • On expiry, fires the backend `/drafts/{id}/auto-pick` endpoint
- *     for the on-clock team (once per pick, guarded by a ref) when a
- *     real draft is active.
+ * Previously this reset `pickTimeLeft = pickTimerSeconds` on every
+ * mount / pick advance, so navigating into the Draft Room restarted
+ * the per-pick countdown from the full duration. Now: when the caller
+ * provides `currentPickStartedAt` (an ISO timestamp written by the
+ * backend on draft start / each pick / undo), the remaining time is
+ * computed as `pickTimerSeconds - (now - currentPickStartedAt)` and
+ * stays consistent across page refreshes / reconnects.
  *
- * Returns the timer state slots + the pause/resume setter so the
- * Draft Room JSX can render the countdown chip and pause toggle.
+ * Falls back to the legacy "reset to full" behaviour when no server
+ * timestamp is available so an offline / pre-iter-230ar draft still
+ * works (just without persistence across reloads).
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import api from "@/lib/api";
+
+function _computeRemaining(pickTimerSeconds: number, startedAtIso?: string | null): number {
+  if (!startedAtIso) return pickTimerSeconds;
+  const startMs = new Date(startedAtIso).getTime();
+  if (Number.isNaN(startMs)) return pickTimerSeconds;
+  const elapsed = Math.floor((Date.now() - startMs) / 1000);
+  return Math.max(0, pickTimerSeconds - elapsed);
+}
 
 export default function usePickTimer({
   isClockActive,
@@ -24,6 +33,7 @@ export default function usePickTimer({
   currentDraftId,
   isDraftActive,
   refreshDraftState,
+  currentPickStartedAt = null,
   deferOnExpiry = false,
   onTimerExpired,
 }: {
@@ -33,18 +43,26 @@ export default function usePickTimer({
   currentDraftId?: string | null;
   isDraftActive: boolean;
   refreshDraftState: () => Promise<void> | void;
+  currentPickStartedAt?: string | null;
   deferOnExpiry?: boolean;
   onTimerExpired?: (pickNo: number) => void;
 }) {
-  const [pickTimeLeft, setPickTimeLeft] = useState<number>(pickTimerSeconds);
+  // Iter 230ar — Initialise from the server-authoritative remaining
+  // time so the very first render is correct (no flash of full
+  // duration).
+  const [pickTimeLeft, setPickTimeLeft] = useState<number>(
+    _computeRemaining(pickTimerSeconds, currentPickStartedAt),
+  );
   const [timerPaused, setTimerPaused] = useState(false);
 
-  // Reset on clock activation or pick advance.
+  // Iter 230ar — Re-sync from the server timestamp whenever it
+  // changes (draft starts, pick advances, undo, etc.). Keeps every
+  // open tab in lock-step.
   useEffect(() => {
     if (!isClockActive) return;
-    setPickTimeLeft(pickTimerSeconds);
+    setPickTimeLeft(_computeRemaining(pickTimerSeconds, currentPickStartedAt));
     setTimerPaused(false);
-  }, [isClockActive, currentPick, pickTimerSeconds]);
+  }, [isClockActive, currentPick, pickTimerSeconds, currentPickStartedAt]);
 
   // Countdown tick + backend auto-pick on expiry.
   const lastAutoFireRef = useRef<number | null>(null);
@@ -52,31 +70,35 @@ export default function usePickTimer({
     lastAutoFireRef.current = null;
   }, [currentPick]);
 
+  const fireAutoPick = useCallback(() => {
+    if (!currentDraftId || !isDraftActive) return;
+    if (lastAutoFireRef.current === currentPick) return;
+    lastAutoFireRef.current = currentPick;
+    if (deferOnExpiry) {
+      try { onTimerExpired?.(currentPick); } catch { /* noop */ }
+      return;
+    }
+    api.post(`/drafts/${currentDraftId}/auto-pick`).then(() => refreshDraftState()).catch(() => {
+      // ignore — next tick will retry
+    });
+  }, [currentDraftId, isDraftActive, currentPick, deferOnExpiry, onTimerExpired, refreshDraftState]);
+
   useEffect(() => {
     if (!isClockActive || timerPaused) return;
     const interval = setInterval(() => {
+      // Iter 230ar — When we have a server timestamp, recompute from
+      // it on each tick so drift between local Date.now() and the
+      // server is bounded. Otherwise fall back to the simple -1
+      // decrement.
       setPickTimeLeft((prev) => {
-        if (prev <= 1) {
-          if (currentDraftId && isDraftActive && lastAutoFireRef.current !== currentPick) {
-            lastAutoFireRef.current = currentPick;
-            // Iter 228f — When `deferOnExpiry` is set the caller wants
-            // to surface the DeferPickDialog instead of immediately
-            // auto-picking. Fire the callback and DO NOT hit the
-            // auto-pick endpoint.
-            if (deferOnExpiry) {
-              try { onTimerExpired?.(currentPick); } catch { /* noop */ }
-              return 0;
-            }
-            api
-              .post(`/drafts/${currentDraftId}/auto-pick`)
-              .then(() => refreshDraftState())
-              .catch(() => {
-                /* ignore — next tick will retry */
-              });
-          }
-          return pickTimerSeconds;
+        const next = currentPickStartedAt
+          ? _computeRemaining(pickTimerSeconds, currentPickStartedAt)
+          : prev - 1;
+        if (next <= 0) {
+          fireAutoPick();
+          return 0;
         }
-        return prev - 1;
+        return next;
       });
     }, 1000);
     return () => clearInterval(interval);
@@ -85,11 +107,8 @@ export default function usePickTimer({
     timerPaused,
     pickTimerSeconds,
     currentPick,
-    currentDraftId,
-    isDraftActive,
-    refreshDraftState,
-    deferOnExpiry,
-    onTimerExpired,
+    currentPickStartedAt,
+    fireAutoPick,
   ]);
 
   return { pickTimeLeft, setPickTimeLeft, timerPaused, setTimerPaused };
