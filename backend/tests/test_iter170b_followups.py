@@ -17,7 +17,10 @@ DRAFT_ROOM_PATH = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
 from tests._draftroom_sources import DraftRoomFamilyShim
 DRAFT_ROOM = DraftRoomFamilyShim()
 TRANSACTIONS = Path("/app/frontend/src/lovable/pages/Transactions.tsx")
-ROSTER_LIMITS_CARD = Path("/app/frontend/src/lovable/pages/commissioner/RosterLimitsCard.tsx")
+# Iter 231e — RosterLimitsCard.tsx + its LeagueSetupTab mount were deleted
+# (orphan since iter 228i moved roster-limits config to League Admin →
+# Rosters). The backend endpoints remain wired and used by the Roster
+# Monitor.
 LEAGUE_SETUP_TAB = Path("/app/frontend/src/lovable/pages/commissioner/tabs/LeagueSetupTab.tsx")
 LEAGUES_ROUTE = Path("/app/backend/routes/leagues.py")
 
@@ -86,38 +89,14 @@ def test_transactions_filters_applied_to_rows():
 
 
 # ────────────────────────── (c) Roster limits ─────────────────────────────
-
-
-def test_roster_limits_card_exists_and_uses_endpoint():
-    src = ROSTER_LIMITS_CARD.read_text()
-    assert 'data-testid="roster-limits-card"' in src
-    assert "/leagues/${leagueId}/roster-limits" in src
-    # All 5 fields rendered.
-    for key in ("starting_skaters", "starting_goalies", "bench", "ir", "minors"):
-        assert f"key: \"{key}\"" in src or f'"{key}"' in src
-        assert f'data-testid={{`roster-limit-input-${{f.key}}`}}' in src or f'roster-limit-input-{key}' in src
-    assert 'data-testid="roster-limits-save"' in src
-    assert 'data-testid="roster-limits-reset"' in src
-
-
-import pytest
-
-
-@pytest.mark.skip(
-    reason=(
-        "Iter 231 investigation: RosterLimitsCard.tsx still exists and the "
-        "/leagues/{id}/roster-limits backend endpoints are live, but the card "
-        "is no longer mounted in any commissioner tab. The UI was moved/dropped "
-        "during the iter 200+ Commissioner Settings refactor without removing "
-        "the orphaned component or this guard test. Re-mount the card (or "
-        "delete it intentionally) before un-skipping."
-    )
-)
-def test_league_setup_tab_mounts_roster_limits_card():
-    src = LEAGUE_SETUP_TAB.read_text()
-    assert "import RosterLimitsCard" in src
-    assert "<RosterLimitsCard" in src
-    assert "leagueId={p.activeLeague.id}" in src
+# Iter 231e — The standalone RosterLimitsCard frontend component was
+# DELETED. The functional UI for roster size + position breakdown lives
+# under League Administration → Rosters (iter 228i moved it there;
+# `commissioner/RosterLimitsCard.tsx` was orphan code with no mount).
+# The backend `/leagues/{id}/roster-limits` endpoints are still alive
+# (consumed by `routes/monitors.py`) — only the standalone card UI was
+# removed. The card-mount-in-LeagueSetupTab assertion has been deleted
+# along with the file.
 
 
 def test_backend_roster_limits_endpoints_defined():
