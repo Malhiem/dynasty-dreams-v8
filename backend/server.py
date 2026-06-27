@@ -1275,6 +1275,16 @@ async def startup():
     except Exception as e:
         logger.error(f"draft_autostart_worker failed to start: {e}")
 
+    # Iter 230ap — Trade-Block hygiene worker. Backfills missing names
+    # on legacy trade_block rows (seed data inserted before the proper
+    # /trade-block endpoint), prunes rows whose `player_id` no longer
+    # resolves. Runs once at startup + every 6 hours.
+    try:
+        from services.trade_block_cleanup_worker import trade_block_cleanup_loop
+        asyncio.create_task(trade_block_cleanup_loop(db))
+    except Exception as e:
+        logger.error(f"trade_block_cleanup_worker failed to start: {e}")
+
     # Iter 230e — NHL roster sync worker. Polls live NHL rosters every
     # 6h, routes diffs through the sync dispatcher so NHL ↔ AHL moves
     # auto-fire `player_sent_down` / `player_called_up` notifications
