@@ -9,7 +9,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { GripVertical, Loader2, Trophy, Users as UsersIcon, ArrowRight, MoreVertical, EyeOff } from 'lucide-react';
+import { GripVertical, Loader2, Trophy, Users as UsersIcon, ArrowRight, MoreVertical, EyeOff, Star } from 'lucide-react';
+// Iter 230av — Generic swipe-to-action primitive for the dashboard
+// list. Swipe RIGHT → set as default (pins to position 0 in the
+// saved order + activates immediately); swipe LEFT → hide.
+import SwipeableRow from '@/components/SwipeableRow';
+import { useActiveLeague } from '@/hooks/use-active-league';
 
 const ORDER_KEY = 'dd_league_order_v1';
 
@@ -38,6 +43,19 @@ export default function MyLeaguesOrderedList() {
   const [loading, setLoading] = useState(true);
   const [dragId, setDragId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
+  // Iter 230av — Pull the active league + switchLeague helper so a
+  // swipe-right can immediately make a league the default (active +
+  // pinned to position 0 in the saved order).
+  const { leagueId: activeLeagueId, switchLeague } = useActiveLeague();
+  // Iter 230av — Detect coarse-pointer (touch) devices so we can
+  // disable the conflicting HTML5 `draggable` reorder on mobile (the
+  // browser's drag start intercepts pointerdown before the
+  // SwipeableRow's gesture engine can lock in). Desktop / mouse users
+  // keep the drag-to-reorder affordance; mobile users get the swipe
+  // gestures + the ⋯ menu instead.
+  const isTouch = typeof window !== 'undefined'
+    && !!window.matchMedia
+    && window.matchMedia('(pointer: coarse)').matches;
 
   useEffect(() => {
     // Iter 230am — Fetch leagues + the server-side order preference
@@ -115,6 +133,29 @@ export default function MyLeaguesOrderedList() {
     }
   };
 
+  // Iter 230av — Set a league as the user's default. Pins it to
+  // position 0 in the saved order (so the switcher lands here on
+  // future loads), and immediately activates it for the current
+  // session via `switchLeague`.
+  const handleSetDefault = (leagueId, leagueName) => {
+    if (leagueId === activeLeagueId && leagues[0]?.id === leagueId) {
+      toast.info(`${leagueName || 'League'} is already your default`);
+      return;
+    }
+    setLeagues((prev) => {
+      const target = prev.find((l) => l.id === leagueId);
+      if (!target) return prev;
+      const rest = prev.filter((l) => l.id !== leagueId);
+      const next = [target, ...rest];
+      saveOrder(next.map((l) => l.id));
+      return next;
+    });
+    try { switchLeague?.(leagueId); } catch { /* noop */ }
+    toast.success(`${leagueName || 'League'} set as default`, {
+      description: 'Now the first league in your switcher.',
+    });
+  };
+
   if (loading) {
     return (
       <div className="surface p-6 mb-8 border border-white/5" data-testid="my-leagues-loading">
@@ -148,21 +189,46 @@ export default function MyLeaguesOrderedList() {
         {leagues.map((lg) => {
           const isDragging = dragId === lg.id;
           const isDragOver = dragOverId === lg.id;
+          // Iter 230av — Pre-compute swipe action flags. Right-swipe
+          // is a no-op when the league is already pinned + active
+          // (we still let the gesture commit so the user gets a
+          // "already default" toast for clarity).
+          const isDefault = (leagues[0]?.id === lg.id) && (lg.id === activeLeagueId);
           return (
+            <SwipeableRow
+              key={lg.id}
+              testId={`my-leagues-swipe-row-${lg.id}`}
+              rightAction={{
+                label: isDefault ? 'Already default' : 'Set as default',
+                icon: <Star className="h-4 w-4" />,
+                bg: 'bg-amber-500/25',
+                color: 'text-amber-200',
+                testId: `my-leagues-swipe-default-hint-${lg.id}`,
+              }}
+              leftAction={{
+                label: 'Hide',
+                icon: <EyeOff className="h-4 w-4" />,
+                bg: 'bg-rose-600/25',
+                color: 'text-rose-200',
+                testId: `my-leagues-swipe-hide-hint-${lg.id}`,
+              }}
+              onSwipeRight={() => handleSetDefault(lg.id, lg.name)}
+              onSwipeLeft={() => handleHideLeague(lg.id, lg.name)}
+            >
             <div
               key={lg.id}
-              draggable
-              onDragStart={(e) => onDragStart(e, lg.id)}
-              onDragOver={(e) => onDragOver(e, lg.id)}
-              onDragLeave={onDragLeave}
-              onDrop={(e) => onDrop(e, lg.id)}
-              onDragEnd={onDragEnd}
+              draggable={!isTouch}
+              onDragStart={isTouch ? undefined : (e) => onDragStart(e, lg.id)}
+              onDragOver={isTouch ? undefined : (e) => onDragOver(e, lg.id)}
+              onDragLeave={isTouch ? undefined : onDragLeave}
+              onDrop={isTouch ? undefined : (e) => onDrop(e, lg.id)}
+              onDragEnd={isTouch ? undefined : onDragEnd}
               data-testid={`my-leagues-row-${lg.id}`}
               className={`surface border border-white/5 p-3 flex items-center gap-3 transition-all select-none ${
                 isDragging ? 'opacity-50 border-[#00D2FF]/50' : ''
               } ${
                 isDragOver && !isDragging ? 'border-[#00D2FF] bg-[#00D2FF]/5' : ''
-              } hover:border-[#00D2FF]/40 cursor-grab active:cursor-grabbing`}
+              } hover:border-[#00D2FF]/40 ${isTouch ? '' : 'cursor-grab active:cursor-grabbing'}`}
             >
               <GripVertical size={16} className="text-[#52525B] shrink-0" />
               <div className="min-w-0 flex-1">
@@ -233,6 +299,14 @@ export default function MyLeaguesOrderedList() {
                   className="bg-[#141414] border border-white/10 text-white"
                 >
                   <DropdownMenuItem
+                    onSelect={() => handleSetDefault(lg.id, lg.name)}
+                    data-testid={`my-leagues-default-${lg.id}`}
+                    className="focus:bg-amber-500/10 focus:text-amber-200 cursor-pointer"
+                  >
+                    <Star size={14} className="mr-2" />
+                    Set as default
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
                     onSelect={() => handleHideLeague(lg.id, lg.name)}
                     data-testid={`my-leagues-hide-${lg.id}`}
                     className="text-rose-300 focus:bg-rose-500/10 focus:text-rose-200 cursor-pointer"
@@ -243,6 +317,7 @@ export default function MyLeaguesOrderedList() {
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+            </SwipeableRow>
           );
         })}
       </div>
