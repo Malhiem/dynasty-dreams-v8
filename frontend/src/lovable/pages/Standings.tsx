@@ -682,11 +682,21 @@ const StandingsPage = () => {
         divisions: data?.divisions || [],
         conferences: data?.conferences || [],
       });
-      // Auto-select division view when the league has divisions configured
-      // (user can still manually switch back to League via the Select)
+      // Auto-select division view when the league has REAL divisions
+      // configured AND at least half the teams are assigned to one of
+      // them. Otherwise leave the user on League view so they don't
+      // see a near-empty divisional bracket (iter 231o — TFHL had 1/24
+      // teams in a division which auto-switched to division view and
+      // hid the other 23 teams behind an unassigned filter).
       if (data?.has_divisions && !viewExplicitlyChanged.current) {
-        setView("division");
-        setDivisionFilter("all");
+        const assigned = (data.standings || []).filter(
+          (t: { division: string | null }) => !!t.division,
+        ).length;
+        const total = (data.standings || []).length || 1;
+        if (assigned / total >= 0.5) {
+          setView("division");
+          setDivisionFilter("all");
+        }
       }
     }).catch(() => {});
     return () => { cancelled = true; };
@@ -698,8 +708,13 @@ const StandingsPage = () => {
     const ranked = [...leagueTeams]
       .map(t => ({ ...t, _total: (t.points_for || 0) + (t.live_points || 0) }))
       .sort((a, b) => b._total - a._total);
-    const fallbackDivisions = ["Atlantic","Metropolitan","Central","Pacific"];
-    const fallbackConferences = ["Eastern","Western"];
+    // Iter 231o — Stop lying about team divisions/conferences. Previous
+    // builds used `fallbackDivisions[idx % 4]` which made teams that
+    // had NO real division silently get assigned to fake NHL-style
+    // buckets — so a 1-division league with 23 unassigned teams
+    // dropped 23 teams in division-view filtering. Now we surface
+    // "Unassigned" so the user can see (and act on) the gap.
+    const UNASSIGNED = "Unassigned";
     return ranked.map((t, idx) => {
       const gp = (t.wins || 0) + (t.losses || 0) + (t.ties || 0);
       const backend = backendStandings[t.id];
@@ -729,8 +744,8 @@ const StandingsPage = () => {
         pointsAgainst: Math.round(t.points_against || 0),
         streak: gp === 0 ? "—" : ((t.wins || 0) > (t.losses || 0) ? `W${Math.min(t.wins, 5)}` : `L${Math.min(t.losses, 5)}`),
         last5,
-        division: backend?.division || fallbackDivisions[idx % 4],
-        conference: backend?.conference || fallbackConferences[Math.floor(idx / 4) % 2],
+        division: backend?.division || UNASSIGNED,
+        conference: backend?.conference || UNASSIGNED,
         divWins: Math.floor((t.wins || 0) / 2),
         divLosses: Math.floor((t.losses || 0) / 2),
         confWins: Math.floor((t.wins || 0) * 0.7),
@@ -763,24 +778,40 @@ const StandingsPage = () => {
   // instead of being silently dropped by the old NHL-style hardcode. Falls
   // back to the union of divisions present on the actual team docs, then to
   // the NHL defaults, so legacy leagues without metadata still render.
+  //
+  // Iter 231o — Always append the "Unassigned" bucket when at least one
+  // team has no division/conference; otherwise those teams disappear from
+  // both the per-division view AND the league-wide "All Divisions" view.
+  const UNASSIGNED = "Unassigned";
+
   const divisionNames = useMemo<string[]>(() => {
     const fromMeta = standingsMeta.divisions || [];
-    if (fromMeta.length > 0) return fromMeta;
-    const fromTeams = Array.from(
-      new Set(liveTeams.map((t) => t.division).filter(Boolean)),
-    ) as string[];
-    if (fromTeams.length > 0) return fromTeams.sort();
-    return ["Atlantic", "Central", "Metropolitan", "Pacific"];
+    let base: string[];
+    if (fromMeta.length > 0) {
+      base = [...fromMeta];
+    } else {
+      const fromTeams = Array.from(
+        new Set(liveTeams.map((t) => t.division).filter((d) => d && d !== UNASSIGNED)),
+      ) as string[];
+      base = fromTeams.length > 0 ? fromTeams.sort() : ["Atlantic", "Central", "Metropolitan", "Pacific"];
+    }
+    const hasUnassigned = liveTeams.some((t) => t.division === UNASSIGNED);
+    return hasUnassigned ? [...base, UNASSIGNED] : base;
   }, [standingsMeta.divisions, liveTeams]);
 
   const conferenceNames = useMemo<string[]>(() => {
     const fromMeta = standingsMeta.conferences || [];
-    if (fromMeta.length > 0) return fromMeta;
-    const fromTeams = Array.from(
-      new Set(liveTeams.map((t) => t.conference).filter(Boolean)),
-    ) as string[];
-    if (fromTeams.length > 0) return fromTeams.sort();
-    return ["Eastern", "Western"];
+    let base: string[];
+    if (fromMeta.length > 0) {
+      base = [...fromMeta];
+    } else {
+      const fromTeams = Array.from(
+        new Set(liveTeams.map((t) => t.conference).filter((c) => c && c !== UNASSIGNED)),
+      ) as string[];
+      base = fromTeams.length > 0 ? fromTeams.sort() : ["Eastern", "Western"];
+    }
+    const hasUnassigned = liveTeams.some((t) => t.conference === UNASSIGNED);
+    return hasUnassigned ? [...base, UNASSIGNED] : base;
   }, [standingsMeta.conferences, liveTeams]);
 
   const getDivisionGroups = () =>

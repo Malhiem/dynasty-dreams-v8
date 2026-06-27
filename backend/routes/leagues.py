@@ -1173,13 +1173,21 @@ async def get_playoff_bracket(league_id: str):
     overall_leader = seeded_for_helper[0] if seeded_for_helper else None
 
     def _team_to_slot(t: dict, seed: int) -> dict:
+        # Iter 231o — Always return a non-null `team_name` so the
+        # frontend bracket consumers don't need to defend against
+        # `null.split()`/`null.slice()` crashes. Falls back to
+        # `Open Slot N` when a team doc somehow has no name (rare —
+        # happens for placeholder slots in not-yet-filled leagues).
+        raw_name = t.get("name")
+        seed_int = int(seed) if seed is not None else 99
+        safe_name = raw_name if (raw_name and str(raw_name).strip()) else f"Open Slot {seed_int}"
         return {
             "team_id": str(t["_id"]),
-            "team_name": t.get("name"),
-            "team_abbr": t.get("logo_abbr"),
+            "team_name": safe_name,
+            "team_abbr": t.get("logo_abbr") or (safe_name[:3].upper() if safe_name else "TBD"),
             "team_logo_url": t.get("logo_url"),
             "owner_name": t.get("owner_name"),
-            "seed": seed,
+            "seed": seed_int,
             "wins": t.get("wins", 0),
             "losses": t.get("losses", 0),
             "ties": t.get("ties", 0),
