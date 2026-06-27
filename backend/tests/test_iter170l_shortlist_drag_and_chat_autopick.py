@@ -11,28 +11,13 @@
 """
 from pathlib import Path
 
-# Iter 171 — DraftRoom.tsx parent was refactored. Draft Live tile + Draft Board
-# JSX now live in /draftroom/DraftLiveTile.tsx + DraftBoard.tsx. We treat
-# `DRAFT_ROOM.read_text()` as the concatenation of the parent and the
-# extracted subcomponents so existing grep-style assertions keep passing.
-def _read_draftroom_family() -> str:
-    from pathlib import Path as _P
-    paths = [
-        _P("/app/frontend/src/lovable/pages/DraftRoom.tsx"),
-        _P("/app/frontend/src/lovable/pages/draftroom/DraftLiveTile.tsx"),
-        _P("/app/frontend/src/lovable/pages/draftroom/DraftBoard.tsx"),
-        _P("/app/frontend/src/lovable/pages/draftroom/PlayerSearchPanel.tsx"),
-        _P("/app/frontend/src/lovable/pages/draftroom/draftConstants.ts"),
-    ]
-    return chr(10).join(p.read_text() for p in paths if p.exists())
+# Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* have been
+# decomposed across many iterations. The DraftRoomFamilyShim concatenates
+# every file that contributes to the runtime draft room behaviour so the
+# original grep-style assertions still resolve.
+from tests._draftroom_sources import DraftRoomFamilyShim
 
-
-class _DraftRoomShim:
-    def read_text(self) -> str:
-        return _read_draftroom_family()
-
-
-DRAFT_ROOM = _DraftRoomShim()
+DRAFT_ROOM = DraftRoomFamilyShim()
 CHAT_PANEL = Path("/app/frontend/src/lovable/pages/draftroom/DraftChatPanel.tsx")
 DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
 
@@ -77,7 +62,10 @@ def test_chat_panel_renders_auto_pick_badge():
 
 def test_backend_autopick_chat_carries_meta():
     src = DRAFTS_ROUTE.read_text()
-    block = src.split("async def auto_pick_for_on_clock_team")[1].split("# ─── Iter 170j — Draft Queue")[0]
+    # Iter 231 — split marker loosened + anchored on the
+    # `_perform_one_auto_pick` helper (which holds the chat meta in the
+    # decomposed router file).
+    block = src.split("async def _perform_one_auto_pick")[1].split("\n@router.")[0]
     # The system chat msg now carries `auto_picked: True` + the via
     # tag so the frontend doesn't need to sniff free text.
     assert '"auto_picked": True' in block

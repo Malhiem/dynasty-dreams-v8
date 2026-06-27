@@ -12,28 +12,13 @@ null. This iteration:
 """
 from pathlib import Path
 
-# Iter 171 — DraftRoom.tsx parent was refactored. Draft Live tile + Draft Board
-# JSX now live in /draftroom/DraftLiveTile.tsx + DraftBoard.tsx. We treat
-# `DRAFT_ROOM.read_text()` as the concatenation of the parent and the
-# extracted subcomponents so existing grep-style assertions keep passing.
-def _read_draftroom_family() -> str:
-    from pathlib import Path as _P
-    paths = [
-        _P("/app/frontend/src/lovable/pages/DraftRoom.tsx"),
-        _P("/app/frontend/src/lovable/pages/draftroom/DraftLiveTile.tsx"),
-        _P("/app/frontend/src/lovable/pages/draftroom/DraftBoard.tsx"),
-        _P("/app/frontend/src/lovable/pages/draftroom/PlayerSearchPanel.tsx"),
-        _P("/app/frontend/src/lovable/pages/draftroom/draftConstants.ts"),
-    ]
-    return chr(10).join(p.read_text() for p in paths if p.exists())
+# Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* have been
+# decomposed across many iterations. The DraftRoomFamilyShim concatenates
+# every file that contributes to the runtime draft room behaviour so the
+# original grep-style assertions still resolve.
+from tests._draftroom_sources import DraftRoomFamilyShim
 
-
-class _DraftRoomShim:
-    def read_text(self) -> str:
-        return _read_draftroom_family()
-
-
-DRAFT_ROOM = _DraftRoomShim()
+DRAFT_ROOM = DraftRoomFamilyShim()
 
 
 def _source() -> str:
@@ -52,18 +37,19 @@ def test_picks_until_my_turn_uses_total_rounds_not_rounds():
 def test_picks_until_my_turn_only_index_maps_when_lengths_match():
     """Iter 170b superseded: the heuristic length-match index mapping
     has been replaced with a direct `boardTeams.find(t => t.id === myTeam.id)`
-    lookup (live-league wiring). This test now locks the new approach."""
+    lookup (live-league wiring). Iter 231 — the lookup moved into the
+    use-draft-picks-until-my-turn hook so we check across the shim."""
     src = _source()
-    block = src.split("picksUntilMyTurn")[1].split("}, [")[0]
-    assert "boardTeams.find((t) => t.id && t.id === (myTeam as any).id)" in block
+    assert "boardTeams.find((t) => t.id && t.id === (myTeam as any).id)" in src
 
 
 def test_picks_until_my_turn_is_memoized():
     src = _source()
-    # The computation must be wrapped in useMemo so React only re-runs
-    # it when its inputs (myTeam / liveTeams / currentPick / etc.)
-    # actually change.
-    assert "const picksUntilMyTurn: number | null = useMemo" in src
+    # Iter 231 — the memoised computation was extracted into the
+    # `useDraftPicksUntilMyTurn` custom hook (which uses `useMemo`
+    # internally). Functional intent (memoisation) preserved.
+    assert "useDraftPicksUntilMyTurn(" in src
+    assert "return useMemo(" in src
 
 
 def test_simulate_pick_button_present_and_wired():

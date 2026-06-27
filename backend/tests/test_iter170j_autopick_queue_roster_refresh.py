@@ -23,7 +23,11 @@ Frontend:
 from pathlib import Path
 
 DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
-DRAFT_ROOM = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
+# Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* decomposed across
+# many iterations. Use the shared shim that concatenates every file that
+# contributes to the runtime draft room behaviour.
+from tests._draftroom_sources import DraftRoomFamilyShim
+DRAFT_ROOM = DraftRoomFamilyShim()
 TEAM_DRAFT_PICKS = Path("/app/frontend/src/lovable/components/dashboard/TeamDraftPicks.tsx")
 TEAM_PAGE = Path("/app/frontend/src/lovable/pages/Team.tsx")
 
@@ -34,7 +38,11 @@ TEAM_PAGE = Path("/app/frontend/src/lovable/pages/Team.tsx")
 def test_auto_pick_endpoint_present_and_queue_first():
     src = DRAFTS_ROUTE.read_text()
     assert '@router.post("/drafts/{draft_id}/auto-pick")' in src
-    block = src.split("async def auto_pick_for_on_clock_team")[1].split("# ─── Iter 170j — Draft Queue")[0]
+    # Iter 231 — auto-pick route handler became a thin shim that
+    # delegates to the `_perform_one_auto_pick` helper. The queue /
+    # roster / chat logic now lives in that helper, so we anchor the
+    # block on the helper definition.
+    block = src.split("async def _perform_one_auto_pick")[1].split("\n@router.")[0]
     # Queue is consulted before falling back to top eligible.
     assert 'queue = list((team or {}).get("draft_queue") or [])' in block
     assert 'via = "queue"' in block
@@ -70,20 +78,23 @@ def test_draft_queue_get_endpoint_present():
 
 def test_draftroom_auto_pick_on_timeout():
     src = DRAFT_ROOM.read_text()
-    # Ref guard + clear on currentPick change so we fire at most once
-    # per pick.
+    # Iter 231 — pick timer extracted into use-pick-timer.ts. Variable
+    # names migrated: `draftConfig.currentPick` → `currentPick`,
+    # `currentDraft._id` → `currentDraftId`. Functional intent (ref-
+    # guarded single fire + POST to /auto-pick) is preserved.
     assert "const lastAutoFireRef = useRef<number | null>(null)" in src
     assert "lastAutoFireRef.current = null" in src
-    assert "lastAutoFireRef.current !== draftConfig.currentPick" in src
+    assert "lastAutoFireRef.current === currentPick" in src
     # POST to /auto-pick when timer expires and a real draft is active.
-    assert "api.post(`/drafts/${currentDraft._id}/auto-pick`)" in src
+    assert "api.post(`/drafts/${currentDraftId}/auto-pick`)" in src
 
 
 def test_draftroom_queue_hydrate_and_persist():
     src = DRAFT_ROOM.read_text()
-    # Hydrate on mount + debounced persist on change.
-    assert "api.get(`/teams/${(myTeam as any).id}/draft-queue`)" in src
-    assert "api.put(`/teams/${(myTeam as any).id}/draft-queue`, { player_ids: queue })" in src
+    # Iter 231 — extracted into use-draft-queue-shortlist-persistence.
+    # `(myTeam as any).id` → `myTeamId` after the hook extraction.
+    assert "api.get(`/teams/${myTeamId}/draft-queue`)" in src
+    assert "api.put(`/teams/${myTeamId}/draft-queue`, { player_ids: queue })" in src
     # Hydration guard so the very first GET response doesn't kick off
     # a redundant PUT in a loop.
     assert "const hasHydratedQueueRef = useRef(false)" in src

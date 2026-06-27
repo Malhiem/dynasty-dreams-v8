@@ -14,7 +14,11 @@ Backend changes covered:
 from pathlib import Path
 
 DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
-DRAFT_ROOM = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
+# Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* decomposed across
+# many iterations. Use the shared shim that concatenates every file that
+# contributes to the runtime draft room behaviour.
+from tests._draftroom_sources import DraftRoomFamilyShim
+DRAFT_ROOM = DraftRoomFamilyShim()
 
 
 def _src() -> str:
@@ -79,12 +83,15 @@ def test_auto_init_endpoint_present_and_commissioner_only():
 
 def test_draftroom_auto_init_on_mount():
     src = DRAFT_ROOM.read_text()
-    # Calls /drafts/auto-init/{league_id} when league context is available.
-    assert "/drafts/auto-init/${activeLeagueCtx.id}" in src
+    # Iter 231 — auto-init moved into use-draft-auto-init hook; the
+    # league-id variable was renamed from `activeLeagueCtx.id` →
+    # `leagueId`. Functional intent (calls /drafts/auto-init/{league_id})
+    # is preserved.
+    assert "/drafts/auto-init/${leagueId}" in src
     # Saves the draft into currentDraft state.
     assert "const [currentDraft, setCurrentDraft] = useState<any>(null);" in src
-    # Hydrates picks + currentPick from the backend draft on mount.
-    assert "setPicks(d.picks.map((p: any) => ({" in src
+    # Hydrates picks from the backend draft via a dedicated helper.
+    assert "setPicks(_hydratePicks(d.picks))" in src
 
 
 def test_draftroom_posts_pick_to_backend_when_active():
@@ -98,10 +105,10 @@ def test_draftroom_posts_pick_to_backend_when_active():
 
 def test_draftroom_start_buttons_wire_to_backend():
     src = DRAFT_ROOM.read_text()
-    # Both Start (Early) and Start (With Timer) POST to /drafts/{id}/start
-    # when a backend draft exists.
-    assert "/drafts/${currentDraft._id}/start?early_start=true" in src
-    assert "/drafts/${currentDraft._id}/start?early_start=false" in src
+    # Iter 231 — start buttons collapsed into one parameterised POST in
+    # the use-draft-commissioner-actions hook. Functional intent (POST
+    # to /drafts/{id}/start with the early_start flag) is preserved.
+    assert "/drafts/${currentDraft._id}/start?early_start=${early ? \"true\" : \"false\"}" in src
 
 
 def test_draftroom_fetches_real_eligible_players():

@@ -31,6 +31,8 @@ _DR_FILES = [
     Path("/app/frontend/src/lovable/pages/draftroom/DraftChatPanel.tsx"),
     Path("/app/frontend/src/lovable/pages/draftroom/SelectedPlayerCard.tsx"),
     Path("/app/frontend/src/lovable/pages/draftroom/draftConstants.ts"),
+    # Iter 231 — `computeAbbrs` was extracted into the live-picks hook.
+    Path("/app/frontend/src/hooks/use-live-picks-by-orig-key.js"),
 ]
 
 DRAFT_ROOM = _DR_FILES[0]  # legacy alias
@@ -67,8 +69,9 @@ def test_compute_abbrs_includes_logo_abbr():
     # Backend `logo_abbr` (which honours overrides + hyphen-splits) is
     # the first abbr the matcher checks so chips line up with picks.
     assert "lt?.logo_abbr" in block
-    # Hyphen-aware initials fallback also present.
-    assert 'replace(/-/g, " ")' in block
+    # Iter 231 — hyphen-aware initials fallback is still present; quote
+    # style migrated from double to single during the hook extraction.
+    assert "replace(/-/g, ' ')" in block or 'replace(/-/g, " ")' in block
 
 
 def test_current_owner_abbrs_always_includes_column_abbr():

@@ -12,7 +12,11 @@
 """
 from pathlib import Path
 
-DRAFT_ROOM = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
+# Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* decomposed across
+# many iterations. Use the shared shim that concatenates every file that
+# contributes to the runtime draft room behaviour.
+from tests._draftroom_sources import DraftRoomFamilyShim
+DRAFT_ROOM = DraftRoomFamilyShim()
 SEED_SCRIPT = Path("/app/backend/scripts/iter170f_seed_pick_trade.py")
 
 
@@ -22,10 +26,10 @@ def _src() -> str:
 
 def test_unified_draft_handler_replaces_old_simulate():
     src = _src()
-    # Iter 170g — handler became async to await backend POST.
-    assert "const handleDraftPlayer = async (chosen?: DraftEligiblePlayer | null) => {" in src
+    # Iter 229h — handler was extracted into useDraftPickHandler (useCallback wrapper).
+    assert "const handleDraftPlayer = useCallback(async (chosen?: DraftEligiblePlayer | null) => {" in src
     # Old name kept as a thin alias so the Simulate Pick button binding stays.
-    assert "const handleSimulatePick = () => handleDraftPlayer();" in src
+    assert "const handleSimulatePick = useCallback(() => { handleDraftPlayer(); }" in src
 
 
 def test_on_draft_player_actually_picks():
@@ -54,9 +58,10 @@ def test_live_view_button_renders_and_reverts():
 
 def test_persistence_to_localstorage_keyed_by_league():
     src = _src()
-    # Storage key includes the active league id so different leagues
-    # don't trample each other.
-    assert "draftroom-state-v1:${activeLeagueCtx.id}" in src
+    # Iter 231 — storage key still namespaces by league id, but the
+    # variable name changed from `activeLeagueCtx.id` → `leagueId` when
+    # persistence moved into the use-draft-room-persistence hook.
+    assert "draftroom-state-v1:${leagueId}" in src
     # Hydration + persist effects both present.
     assert "localStorage.getItem(draftStorageKey)" in src
     assert "localStorage.setItem(" in src

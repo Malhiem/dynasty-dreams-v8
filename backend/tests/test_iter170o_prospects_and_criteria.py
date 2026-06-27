@@ -18,7 +18,11 @@ from pathlib import Path
 
 DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
 SEED_SCRIPT = Path("/app/backend/scripts/iter170o_seed_prospects.py")
-DRAFT_ROOM = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
+# Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* decomposed across
+# many iterations. Use the shared shim that concatenates every file that
+# contributes to the runtime draft room behaviour.
+from tests._draftroom_sources import DraftRoomFamilyShim
+DRAFT_ROOM = DraftRoomFamilyShim()
 # Iter 174 — header strip (subheader + criteria popover + toggles) was
 # extracted into DraftHeaderActions.tsx. Concatenate so existing
 # grep-style assertions keep working.
@@ -56,8 +60,13 @@ def test_seed_script_stamps_prospect_type_and_safe_nhl_id():
 
 def test_eligible_players_filters_by_criteria():
     src = DRAFTS_ROUTE.read_text()
-    block = src.split("async def get_draft_eligible_players")[1].split("# ─── Iter 170g — Auto-init")[0]
-    assert 'criteria = (draft.get("player_criteria") or "open").lower()' in block
+    # Iter 231 — split markers loosened: locate the eligible-players
+    # function body without depending on the trailing iter-170g comment.
+    block = src.split("async def get_draft_eligible_players")[1].split("\n@router.")[0]
+    # Iter 231 — `player_criteria` normalisation was hoisted to handle
+    # list payloads in addition to legacy strings.
+    assert 'draft.get("player_criteria")' in block
+    assert 'criteria = str(criteria).lower()' in block
     assert 'if criteria == "entry":' in block
     assert 'query["player_type"] = "prospect"' in block
     # Open drafts must EXCLUDE the prospect pool so NHL players surface
@@ -67,7 +76,9 @@ def test_eligible_players_filters_by_criteria():
 
 def test_auto_pick_respects_criteria_filter():
     src = DRAFTS_ROUTE.read_text()
-    block = src.split("async def auto_pick_for_on_clock_team")[1].split("# ─── Iter 170j — Draft Queue")[0]
+    # Iter 231 — split marker loosened + anchored on the
+    # `_perform_one_auto_pick` helper (the route became a thin shim).
+    block = src.split("async def _perform_one_auto_pick")[1].split("\n@router.")[0]
     # Same prospect / non-prospect branching when falling back to top
     # eligible.
     assert '"player_type": "prospect"' in block
