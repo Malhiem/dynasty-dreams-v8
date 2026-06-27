@@ -1581,7 +1581,23 @@ async def get_draft_eligible_players(
 # — re-running returns the existing draft. Commissioner-only.
 
 @router.post("/drafts/auto-init/{league_id}")
-async def auto_init_draft(league_id: str, request: Request):
+async def auto_init_draft(league_id: str, request: Request, commit: bool = False):
+    """Initialise (or fetch) the league's draft.
+
+    Iter 231 — `commit=False` (the default) returns a **preview** shape
+    WITHOUT persisting to the database. The preview carries the league's
+    current team_map + roster-cap-derived `total_rounds`, but `_id` is
+    `None` and the response is tagged `preview: True`. This lets the
+    Draft Room render correctly on first load WITHOUT creating an empty
+    stub draft every time a commissioner clicks into the page.
+
+    `commit=True` (the legacy behaviour) materialises the draft into
+    `db.drafts` and runs the pick-seed safety net. The frontend
+    triggers `commit=True` only when the user takes an explicit action
+    (clicking *Start Draft* or *Schedule Draft*). Existing drafts are
+    always returned as-is regardless of the flag — the heal-and-return
+    fast path is unchanged.
+    """
     user = await _get_user(request)
     league = await _db().leagues.find_one({"_id": ObjectId(league_id)})
     if not league:
@@ -1662,6 +1678,36 @@ async def auto_init_draft(league_id: str, request: Request):
     if not teams:
         raise HTTPException(status_code=400, detail="League has no teams")
     team_abbrs, team_map = _abbrs_with_dedup(teams)
+
+    # Iter 231 — Preview mode: return the would-be draft shape WITHOUT
+    # writing to the database. The Draft Room uses this to render a
+    # placeholder board so commissioners can see what their draft will
+    # look like before scheduling. No `_id` is issued — the frontend
+    # detects `preview: true` and disables pick / start actions until a
+    # commissioner materialises the draft (commit=true).
+    if not commit:
+        preview_doc = {
+            "_id": None,
+            "league_id": league_id,
+            "league_name": league.get("name"),
+            "draft_type": "snake",
+            "scheduled_time": None,
+            "total_rounds": default_rounds,
+            "time_per_pick": 120,
+            "snake_draft": True,
+            "player_criteria": "open",
+            "missed_pick_action": "skip",
+            "current_pick": 1,
+            "status": "preview",
+            "draft_started": False,
+            "early_start": False,
+            "timer_paused": False,
+            "team_abbrs": team_abbrs,
+            "picks": [],
+            "chat_messages": [],
+            "league_minors_enabled": bool(league.get("minors_enabled")),
+        }
+        return {"draft": preview_doc, "created": False, "preview": True}
 
     draft_doc = {
         "league_id": league_id,

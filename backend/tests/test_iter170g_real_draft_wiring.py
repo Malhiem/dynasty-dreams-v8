@@ -68,7 +68,9 @@ def test_eligible_players_returns_headshot_url():
 def test_auto_init_endpoint_present_and_commissioner_only():
     src = _src()
     assert '@router.post("/drafts/auto-init/{league_id}")' in src
-    block = src.split("async def auto_init_draft(league_id: str, request: Request):")[1].split("async def start_draft")[0]
+    # Iter 231 — signature gained a `commit: bool = False` query param so
+    # the default call no longer persists. Split anchor relaxed.
+    block = src.split("async def auto_init_draft(")[1].split("async def start_draft")[0]
     # Commissioner / co-commissioner check
     assert 'is_comm = league["commissioner_id"] == user["_id"]' in block
     assert 'co_commissioners' in block
@@ -105,10 +107,13 @@ def test_draftroom_posts_pick_to_backend_when_active():
 
 def test_draftroom_start_buttons_wire_to_backend():
     src = DRAFT_ROOM.read_text()
-    # Iter 231 — start buttons collapsed into one parameterised POST in
-    # the use-draft-commissioner-actions hook. Functional intent (POST
-    # to /drafts/{id}/start with the early_start flag) is preserved.
-    assert "/drafts/${currentDraft._id}/start?early_start=${early ? \"true\" : \"false\"}" in src
+    # Iter 231 — `_start` in use-draft-commissioner-actions now resolves
+    # the draft id via `materialiseDraft()` (auto-init?commit=true when
+    # the draft is still in preview mode) so the start POST targets the
+    # locally-bound `draftId` variable, not `currentDraft._id` directly.
+    assert "/drafts/${draftId}/start?early_start=${early ? \"true\" : \"false\"}" in src
+    # The materialisation step itself hits auto-init?commit=true.
+    assert "/drafts/auto-init/${leagueId}?commit=true" in src
 
 
 def test_draftroom_fetches_real_eligible_players():

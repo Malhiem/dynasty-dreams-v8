@@ -16,7 +16,10 @@ import { toast } from "sonner";
 import type { DraftConfig, DraftPick } from "@/lovable/pages/draftroom/types";
 
 interface CommissionerActionDeps {
-  currentDraft: { _id?: string; status?: string } | null;
+  currentDraft: { _id?: string | null; status?: string } | null;
+  // Iter 231 — leagueId enables materialising a preview draft on demand
+  // when the user clicks Start Draft Early / With Timer.
+  leagueId?: string | null;
   setCurrentDraft: (d: any) => void;
   refreshDraftState: () => Promise<void> | void;
   setPicks: (updater: (prev: DraftPick[]) => DraftPick[]) => void;
@@ -24,7 +27,26 @@ interface CommissionerActionDeps {
 }
 
 export function useDraftCommissionerActions(deps: CommissionerActionDeps) {
-  const { currentDraft, setCurrentDraft, refreshDraftState, setPicks, setDraftConfig } = deps;
+  const { currentDraft, leagueId, setCurrentDraft, refreshDraftState, setPicks, setDraftConfig } = deps;
+
+  // Iter 231 — Materialise a preview draft into a real DB row on first
+  // explicit commissioner action (Start / Schedule). Returns the
+  // committed draft id or null if materialisation failed.
+  const materialiseDraft = async (): Promise<string | null> => {
+    if (currentDraft?._id) return currentDraft._id; // already real
+    if (!leagueId) return null;
+    try {
+      const { data } = await api.post(`/drafts/auto-init/${leagueId}?commit=true`);
+      const real = data?.draft;
+      if (real?._id) {
+        setCurrentDraft(real);
+        return real._id;
+      }
+    } catch (e: any) {
+      toast.error("Couldn't create draft", { description: e?.response?.data?.detail || e?.message });
+    }
+    return null;
+  };
 
   const undoPicks = async (count: number = 1) => {
     if (!currentDraft?._id) {
@@ -57,10 +79,13 @@ export function useDraftCommissionerActions(deps: CommissionerActionDeps) {
   };
 
   const _start = async (early: boolean) => {
-    if (currentDraft?._id && currentDraft.status !== "active") {
+    // Iter 231 — When the draft is still in preview mode (no _id),
+    // materialise it first so /start has a real row to operate on.
+    const draftId = await materialiseDraft();
+    if (draftId && currentDraft?.status !== "active") {
       try {
-        await api.post(`/drafts/${currentDraft._id}/start?early_start=${early ? "true" : "false"}`);
-        const { data } = await api.get(`/drafts/${currentDraft._id}`);
+        await api.post(`/drafts/${draftId}/start?early_start=${early ? "true" : "false"}`);
+        const { data } = await api.get(`/drafts/${draftId}`);
         setCurrentDraft(data);
         setDraftConfig((prev) => ({
           ...prev,

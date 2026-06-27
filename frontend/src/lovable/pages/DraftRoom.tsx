@@ -341,6 +341,7 @@ export default function DraftRoom() {
     handleStartWithTimer,
   } = useDraftCommissionerActions({
     currentDraft,
+    leagueId: activeLeagueCtx?.id,
     setCurrentDraft,
     refreshDraftState,
     setPicks,
