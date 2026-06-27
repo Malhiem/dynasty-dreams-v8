@@ -1,0 +1,31 @@
+{
+  "summary": "Iter 231m draft_pick_actions.py extraction backend regression — ALL GREEN. 71/71 tests passed across 11 test files (7 guard suite + 41 prior-iter regression + 19 live end-to-end + 4 archived-draft guards). Live smoke against deployed backend confirms all 5 extracted endpoints (POST /pick, POST /undo, PATCH /picks/{overall}, POST /pause, POST /seed-picks) are wired and returning 401/422 (auth/validation), not 404/405 — proving routes load without ImportError/NameError. Late-binding pattern (`from routes import drafts as _drafts` inside `_early_start_clock_msg_fn` / `_seed_draft_picks_for_draft_fn`) successfully breaks the server→drafts→draft_pick_actions→drafts import cycle. drafts.py confirmed at 1952 lines (<2000 ceiling). Real production traffic in backend.out.log shows POST /api/drafts/{id}/pick returning 200 OK from active users — make-pick endpoint working end-to-end in live use.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tests/test_iter231l_snooze_and_draft_picks_extraction.py", "issue": "4 file-introspection tests marked @pytest.mark.asyncio but are sync — emits PytestWarning. Not a failure, harmless. Remove the asyncio marker on these 4 tests."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter231m_draft_pick_actions_extraction.py",
+    "/app/backend/tests/test_iter230ar_pick_started_at.py",
+    "/app/backend/tests/test_iter230an2_make_pick_notifications_no_crash.py",
+    "/app/test_reports/pytest/iter231m_regression.xml",
+    "/app/test_reports/pytest/iter231m_live.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Late-binding pattern in routes/draft_pick_actions.py (_early_start_clock_msg_fn, _seed_draft_picks_for_draft_fn) is the correct fix for the circular-import scenario, but it's a code smell that signals the underlying coupling between drafts.py helpers and the extracted modules is still tight. Future refactor: extract `_perform_one_auto_pick`, `_seed_draft_picks_for_draft`, `_early_start_clock_msg` into a `routes/draft_helpers.py` (or `services/draft_engine.py`) so both drafts.py and draft_pick_actions.py can import from it without late binding. This also removes the indirect dependency from routes/admin_user_actions.py back into drafts.py.",
+    "drafts.py at 1952 lines is now under the 2000-line ratchet but still large; the decomposition campaign should continue (next candidates: roster/lineup endpoints, draft setup/config endpoints, autodraft loop).",
+    "iter231l test file has 4 tests marked `@pytest.mark.asyncio` on sync functions — generates 4 warnings on every backend test run; trivial cleanup."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (71/71)", "frontend": "not tested (per request)"},
+  "test_credentials": "Used built-in test fixtures; live curl smoke used no credentials (auth-required endpoints returned 401/422 as expected).",
+  "seed_data_creation": "None — used existing fixtures + production data observed in backend.out.log.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 231m extraction is verified clean. drafts.py is 1952 lines. Next refactor targets per E1 will likely continue draft-flow decomposition. The late-binding pattern (`from routes import drafts as _drafts` inside helper fns) is the established escape-hatch for circular imports — look for it in any new extraction. Live backend traffic in /var/log/supervisor/backend.out.log is showing real users hitting POST /api/drafts/{id}/pick with 200 OK responses, so the extracted endpoint is being exercised in production.",
+  "rca of the issue": "N/A — no issues found."
+}
