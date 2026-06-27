@@ -61,3 +61,20 @@ async def mark_all_read(request: Request):
         {"$set": {"read": True}},
     )
     return {"message": f"Marked {result.modified_count} notifications as read"}
+
+
+@router.delete("/notifications/{notif_id}")
+async def delete_notification(notif_id: str, request: Request):
+    """Iter 230at — Delete a single notification. Used by the mobile
+    swipe-left-to-dismiss gesture in NotificationsPanel. Owner-scoped
+    so users can only delete their own."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    result = await db.notifications.delete_one(
+        {"_id": ObjectId(notif_id), "user_id": user["_id"]},
+    )
+    if result.deleted_count == 0:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"message": "Deleted"}

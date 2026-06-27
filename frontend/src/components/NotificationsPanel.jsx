@@ -11,6 +11,8 @@ import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSocket } from "@/hooks/use-socket";
 import NotificationSettings from "@/components/NotificationSettings";
+// Iter 230at — Swipe-to-dismiss row component for the mobile UX.
+import SwipeableNotificationRow from "@/components/SwipeableNotificationRow";
 
 // Iter 230 — Notification icon + color map.
 // Source of truth for event ids: /app/backend/routes/notification_events.py
@@ -191,6 +193,30 @@ export function NotificationsPanel() {
     } catch (e) { console.error(e); }
   };
 
+  // Iter 230at — Delete a single notification (swipe-left action).
+  // Optimistically removes the row + decrements the unread badge,
+  // then hits the backend; restores on failure.
+  const handleDelete = async (id) => {
+    const target = notifications.find((n) => n._id === id);
+    setNotifications((prev) => prev.filter((n) => n._id !== id));
+    if (target && !target.read) {
+      setUnreadCount((prev) => Math.max(0, prev - 1));
+    }
+    try {
+      await api.delete(`/notifications/${id}`);
+    } catch (e) {
+      console.error(e);
+      // Restore on failure
+      if (target) {
+        setNotifications((prev) => [target, ...prev]);
+        if (!target.read) setUnreadCount((c) => c + 1);
+      }
+      try {
+        toast.error("Couldn't delete notification");
+      } catch { /* sonner missing */ }
+    }
+  };
+
   return (
     <div className="relative" ref={panelRef}>
       <Button
@@ -255,9 +281,14 @@ export function NotificationsPanel() {
                   const color = colorMap[n.type] || "text-[#A1A1AA]";
                   const reason = n.reason || reasonMap[n.type] || "You're subscribed to this notification type. Update your preferences any time.";
                   return (
-                    <div
+                    <SwipeableNotificationRow
                       key={n._id}
-                      className={cn("p-3 hover:bg-white/5 cursor-pointer transition-colors flex gap-3", !n.read && "bg-[#00D2FF]/5")}
+                      notification={n}
+                      onMarkRead={handleMarkRead}
+                      onDelete={handleDelete}
+                    >
+                    <div
+                      className={cn("p-3 hover:bg-white/5 cursor-pointer transition-colors flex gap-3 bg-[#141414]", !n.read && "bg-[#00D2FF]/5")}
                       onClick={() => handleMarkRead(n._id)}
                       data-testid={`notification-item-${n._id}`}
                     >
@@ -313,6 +344,7 @@ export function NotificationsPanel() {
                         </PopoverContent>
                       </Popover>
                     </div>
+                    </SwipeableNotificationRow>
                   );
                 })}
               </div>
