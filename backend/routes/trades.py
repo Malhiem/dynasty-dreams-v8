@@ -68,6 +68,19 @@ async def _notify_league_event(
             _logger().debug(f"league fanout {event_type} → {uid} skipped: {e}")
 
 
+# Iter 231h — Read the canonical review-period hours from the new
+# `transactions_config.trades` envelope with a fallback to the legacy
+# top-level `league.trade_review_period_hours` for backward compat.
+def _resolve_review_period_hours(league: dict) -> int:
+    cfg = (league.get("transactions_config") or {}).get("trades") or {}
+    if cfg.get("review_period_hours") is not None:
+        try:
+            return int(cfg["review_period_hours"])
+        except Exception:
+            pass
+    return int(league.get("trade_review_period_hours") or 72)
+
+
 def _enforce_trade_deadline(league: dict) -> None:
     """Reject new trade proposals once the league's trade deadline has passed.
 
@@ -649,7 +662,7 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
                 detail["assists"] = player.get("assists", 0)
         requested_details.append(detail)
 
-    review_period_hours = int(league.get("trade_review_period_hours") or 72)
+    review_period_hours = _resolve_review_period_hours(league)
     has_conditions = bool(getattr(input, "conditions", None))
     pick_upgrades = [u.dict() if hasattr(u, "dict") else u for u in (getattr(input, "pick_upgrades", None) or [])]
     trade_doc = {
@@ -666,33 +679,255 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
         "conditional": has_conditions,
         "pick_upgrades": pick_upgrades,
         "message": input.message,
-        "status": "pending",
+        # Iter 231h — Initial state is `proposed` (awaiting recipient
+        # accept/reject). `processes_at` is left null at creation — it
+        # only gets stamped once the recipient accepts and the league
+        # review window starts. Legacy callers that grep for "pending"
+        # still see it under the same trades feed; the trade list endpoint
+        # treats both statuses as "open" for display purposes.
+        "status": "proposed",
         "votes": {"approve": 0, "veto": 0, "voters": []},
         "submitted_at": datetime.now(timezone.utc).isoformat(),
-        "processes_at": (datetime.now(timezone.utc) + timedelta(hours=review_period_hours)).isoformat(),
+        "processes_at": None,
         "responded_at": None,
         "processed_at": None,
+        # Stash review_period_hours so we can stamp processes_at without
+        # re-reading league config when the recipient accepts.
+        "_review_period_hours": review_period_hours,
     }
 
     result = await db.trades.insert_one(trade_doc)
     trade_doc["_id"] = str(result.inserted_id)
+    trade_id_str = str(result.inserted_id)
 
     await _broadcast(f"league_{input.league_id}", "trade_proposed", {
-        "trade_id": str(result.inserted_id),
+        "trade_id": trade_id_str,
         "proposer": proposer_team["name"],
         "target": target_team["name"],
     })
 
+    # Iter 231h — Deep-link the notification straight to the trade detail
+    # so clicking the notification opens the proposal (not just the
+    # generic Transactions feed). The frontend route at
+    # /transactions/trade/{id} renders the trade card with Accept/Reject
+    # buttons for the recipient.
+    trade_link = f"/transactions/trade/{trade_id_str}"
     await _create_notification(
         target_team["owner_id"],
         NT_TRADE_PROPOSED,
-        "New Trade Proposal",
-        f"{proposer_team['name']} wants to trade with you",
+        "New Trade Proposal — Pending Response",
+        f"{proposer_team['name']} wants to trade with you. Accept or reject to continue.",
         input.league_id,
-        "/transactions",
+        trade_link,
     )
 
     return trade_doc
+
+
+# ─── Iter 231h — Trade state machine ─────────────────────────────────
+#
+# The full proposal lifecycle is:
+#
+#   proposed                                    (recipient hasn't decided)
+#     ├── recipient accepts → pending           (in league review window)
+#     │     ├── review elapsed → executed       (auto-process)
+#     │     └── veto threshold hit → vetoed
+#     ├── recipient rejects → rejected
+#     └── proposer cancels  → cancelled
+#
+# `processes_at` is null while the trade is `proposed` and only stamped
+# at the moment the recipient accepts. This makes the auto-process
+# worker (`_process_pending_trades`) ignore proposals that no one has
+# accepted yet — fixing the user-reported issue that "trades go straight
+# into pending without a recipient accept/reject step".
+
+
+@router.post("/trades/{trade_id}/respond")
+async def respond_to_trade_proposal(trade_id: str, request: Request):
+    """Iter 231h — Recipient (target team owner / co-owner) accepts or
+    rejects a `proposed` trade.
+
+    Body: { "action": "accept" | "reject", "reason": Optional[str] }
+
+    On accept: status → "pending"; `processes_at` is stamped using the
+    league's configured review-period hours; banner notifications fire
+    to both teams ("Pending Review" for the proposer, the trade now sits
+    in the league review window).
+
+    On reject: status → "rejected"; rejection notification fires to the
+    proposer.
+    """
+    db = _db()
+    user = await _get_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    action = (body.get("action") or "").lower().strip()
+    if action not in {"accept", "reject"}:
+        raise HTTPException(status_code=400, detail="action must be 'accept' or 'reject'")
+
+    try:
+        trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    except Exception:
+        trade = None
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    if trade.get("status") != "proposed":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Trade is not in 'proposed' state (current: {trade.get('status')}); cannot respond.",
+        )
+
+    # Authorisation — only the target team's owner or a co-owner may respond.
+    target_team_id = trade.get("target_team_id")
+    target_team = None
+    try:
+        target_team = await db.teams.find_one({"_id": ObjectId(target_team_id)})
+    except Exception:
+        pass
+    if not target_team:
+        raise HTTPException(status_code=404, detail="Target team not found")
+    owner_ids = {target_team.get("owner_id")} | set(target_team.get("co_owner_ids") or [])
+    if user["_id"] not in owner_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the recipient team's owner or co-owners can respond to this trade.",
+        )
+
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    league_id = trade["league_id"]
+    trade_link = f"/transactions/trade/{trade_id}"
+
+    if action == "accept":
+        # Resolve review-period hours: prefer the value stamped at create
+        # time, fallback to current league config, then 72h default.
+        hours = trade.get("_review_period_hours")
+        if hours is None:
+            league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+            hours = _resolve_review_period_hours(league or {})
+        processes_at = (now + timedelta(hours=int(hours))).isoformat()
+
+        await db.trades.update_one(
+            {"_id": trade["_id"]},
+            {"$set": {
+                "status": "pending",
+                "responded_at": now_iso,
+                "responded_by": user["_id"],
+                "response_action": "accept",
+                "processes_at": processes_at,
+            }},
+        )
+
+        await _broadcast(f"league_{league_id}", "trade_accepted", {
+            "trade_id": trade_id,
+            "proposer": trade.get("proposer_team_name"),
+            "target": trade.get("target_team_name"),
+            "processes_at": processes_at,
+        })
+
+        # Notify proposer — the trade is now in the league review window.
+        await _create_notification(
+            trade.get("proposer_id"),
+            NT_TRADE_PROPOSED,
+            "Trade Accepted — Pending Review",
+            f"{trade.get('target_team_name')} accepted your trade. It's now in league review for {hours}h.",
+            league_id,
+            trade_link,
+        )
+
+        return {
+            "trade_id": trade_id,
+            "status": "pending",
+            "processes_at": processes_at,
+            "responded_at": now_iso,
+        }
+
+    # action == "reject"
+    reason = (body.get("reason") or "").strip()
+    await db.trades.update_one(
+        {"_id": trade["_id"]},
+        {"$set": {
+            "status": "rejected",
+            "responded_at": now_iso,
+            "responded_by": user["_id"],
+            "response_action": "reject",
+            "rejected_reason": reason or None,
+        }},
+    )
+
+    await _broadcast(f"league_{league_id}", "trade_rejected", {
+        "trade_id": trade_id,
+        "proposer": trade.get("proposer_team_name"),
+        "target": trade.get("target_team_name"),
+    })
+
+    await _create_notification(
+        trade.get("proposer_id"),
+        NT_TRADE_PROPOSED,
+        "Trade Rejected",
+        f"{trade.get('target_team_name')} rejected your trade proposal." + (f' Reason: "{reason}"' if reason else ""),
+        league_id,
+        trade_link,
+    )
+
+    return {
+        "trade_id": trade_id,
+        "status": "rejected",
+        "responded_at": now_iso,
+        "rejected_reason": reason or None,
+    }
+
+
+@router.post("/trades/{trade_id}/cancel")
+async def cancel_trade_proposal(trade_id: str, request: Request):
+    """Iter 231h — Proposer cancels their own `proposed` (or `pending`
+    if not yet executed) trade. Closes the loop without going through
+    the recipient.
+    """
+    db = _db()
+    user = await _get_user(request)
+    try:
+        trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    except Exception:
+        trade = None
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if trade.get("proposer_id") != user["_id"]:
+        raise HTTPException(status_code=403, detail="Only the proposer can cancel this trade.")
+    if trade.get("status") not in {"proposed", "pending"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot cancel trade in '{trade.get('status')}' state.",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.trades.update_one(
+        {"_id": trade["_id"]},
+        {"$set": {"status": "cancelled", "cancelled_at": now_iso}},
+    )
+
+    league_id = trade["league_id"]
+    trade_link = f"/transactions/trade/{trade_id}"
+    await _broadcast(f"league_{league_id}", "trade_cancelled", {
+        "trade_id": trade_id,
+        "proposer": trade.get("proposer_team_name"),
+        "target": trade.get("target_team_name"),
+    })
+    # Notify the recipient if the trade was already in their court.
+    if trade.get("target_owner_id"):
+        await _create_notification(
+            trade["target_owner_id"],
+            NT_TRADE_PROPOSED,
+            "Trade Cancelled",
+            f"{trade.get('proposer_team_name')} cancelled their trade proposal.",
+            league_id,
+            trade_link,
+        )
+
+    return {"trade_id": trade_id, "status": "cancelled", "cancelled_at": now_iso}
 
 
 @router.get("/trades/conditional")
@@ -968,12 +1203,16 @@ async def get_trade(trade_id: str):
 
 @router.get("/leagues/{league_id}/pending-trades")
 async def get_pending_trades(league_id: str):
-    """Trades currently in flight (status in pending/voting/conditional).
-    Powers the league homepage 'Pending Trades' panel."""
+    """Trades currently in flight (status in proposed/pending/voting/conditional).
+    Powers the league homepage 'Pending Trades' panel.
+
+    Iter 231h — `proposed` (waiting on recipient) is now surfaced
+    alongside `pending` (in league review window) so both proposer and
+    recipient see the trade in their inbox immediately."""
     db = _db()
     trades = await db.trades.find({
         "league_id": league_id,
-        "status": {"$in": ["pending", "voting", "conditional"]},
+        "status": {"$in": ["proposed", "pending", "voting", "conditional"]},
     }).sort("submitted_at", -1).to_list(100)
     for t in trades:
         t["_id"] = str(t["_id"])
@@ -1024,9 +1263,14 @@ async def accept_trade(trade_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Trade not found")
     if trade["target_owner_id"] != user["_id"]:
         raise HTTPException(status_code=403, detail="Only the target team can accept")
-    if trade["status"] != "pending":
-        raise HTTPException(status_code=400, detail="Trade is not pending")
+    if trade["status"] not in {"proposed", "pending"}:
+        raise HTTPException(status_code=400, detail=f"Trade is not pending (status={trade['status']})")
 
+    # Iter 231h — Legacy `/accept` endpoint also handles `proposed`
+    # trades for back-compat. The newer `/respond` endpoint splits
+    # acceptance (→ pending/review) from execution (after review
+    # elapses) — but `/accept` preserves the old "auto-execute on
+    # acceptance" semantics so existing callers don't break.
     await db.trades.update_one(
         {"_id": ObjectId(trade_id)},
         {"$set": {"status": "accepted", "responded_at": datetime.now(timezone.utc).isoformat()}},
@@ -1080,8 +1324,8 @@ async def reject_trade(trade_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Trade not found")
     if trade["target_owner_id"] != user["_id"]:
         raise HTTPException(status_code=403, detail="Only the target team can reject")
-    if trade["status"] != "pending":
-        raise HTTPException(status_code=400, detail="Trade is not pending")
+    if trade["status"] not in {"proposed", "pending"}:
+        raise HTTPException(status_code=400, detail=f"Trade is not pending (status={trade['status']})")
 
     await db.trades.update_one(
         {"_id": ObjectId(trade_id)},
@@ -1111,8 +1355,8 @@ async def withdraw_trade(trade_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Trade not found")
     if trade["proposer_id"] != user["_id"]:
         raise HTTPException(status_code=403, detail="Only the proposer can withdraw")
-    if trade["status"] != "pending":
-        raise HTTPException(status_code=400, detail="Trade is not pending")
+    if trade["status"] not in {"proposed", "pending"}:
+        raise HTTPException(status_code=400, detail=f"Trade is not pending (status={trade['status']})")
 
     await db.trades.update_one(
         {"_id": ObjectId(trade_id)},
@@ -1219,7 +1463,7 @@ async def create_multi_party_trade(input: MultiPartyTradeProposalCreate, request
     target_team = parties[legacy_target_idx]
 
     has_conditions = bool(input.conditions)
-    review_period_hours = int(league.get("trade_review_period_hours") or 72)
+    review_period_hours = _resolve_review_period_hours(league)
     trade_doc = {
         "league_id": input.league_id,
         "is_multi_party": len(parties) > 2,
@@ -1237,16 +1481,23 @@ async def create_multi_party_trade(input: MultiPartyTradeProposalCreate, request
         "conditional": has_conditions,
         "pick_upgrades": [u.dict() if hasattr(u, "dict") else u for u in (getattr(input, "pick_upgrades", None) or [])],
         "message": input.message,
-        "status": "pending",
+        # Iter 231h — Multi-party trades also start in `proposed`. The
+        # current implementation collapses N-party to the proposer + one
+        # canonical target for back-compat; respond endpoint advances to
+        # `pending` once that target accepts. Full N-party accept gating
+        # is a follow-up (each party needs to accept before review).
+        "status": "proposed",
         "votes": {"approve": 0, "veto": 0, "voters": []},
         "submitted_at": datetime.now(timezone.utc).isoformat(),
-        "processes_at": (datetime.now(timezone.utc) + timedelta(hours=review_period_hours)).isoformat(),
+        "processes_at": None,
         "responded_at": None,
         "processed_at": None,
+        "_review_period_hours": review_period_hours,
     }
 
     result = await db.trades.insert_one(trade_doc)
     trade_doc["_id"] = str(result.inserted_id)
+    multi_trade_link = f"/transactions/trade/{result.inserted_id}"
 
     for p in parties:
         if p["owner_id"] == user["_id"]:
@@ -1255,10 +1506,10 @@ async def create_multi_party_trade(input: MultiPartyTradeProposalCreate, request
             await _create_notification(
                 p["owner_id"],
                 NT_TRADE_PROPOSED,
-                "New Multi-Team Trade Proposal" if trade_doc["is_multi_party"] else "New Trade Proposal",
-                f"{proposer_team['team_name']} included you in a {len(parties)}-team trade",
+                "New Multi-Team Trade Proposal — Pending Response" if trade_doc["is_multi_party"] else "New Trade Proposal — Pending Response",
+                f"{proposer_team['team_name']} included you in a {len(parties)}-team trade. Accept or reject to continue.",
                 input.league_id,
-                "/transactions",
+                multi_trade_link,
             )
         except Exception:
             pass

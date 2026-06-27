@@ -118,7 +118,9 @@ class TestPendingTrades:
 
     def test_pending_trades_status_filter(self, admin_session, ice_kings_id):
         r = admin_session.get(f"{API}/leagues/{ice_kings_id}/pending-trades")
-        allowed = {"pending", "voting", "conditional"}
+        # Iter 231h — `proposed` (awaiting recipient response) was added
+        # alongside the existing pending/voting/conditional states.
+        allowed = {"proposed", "pending", "voting", "conditional"}
         for t in r.json()["pending_trades"]:
             assert t.get("status") in allowed, f"unexpected status {t.get('status')}"
 
