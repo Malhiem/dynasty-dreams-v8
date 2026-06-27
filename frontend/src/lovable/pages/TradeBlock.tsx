@@ -17,7 +17,7 @@ import TradeBlockCard from "@/lovable/pages/trade-block/TradeBlockCard";
 import TradeBlockListView from "@/lovable/pages/trade-block/TradeBlockListView";
 // Iter 230i — Types, mocks, MyPlayersTab, FiltersBar extracted.
 import type { TradeBlockItem } from "@/lovable/pages/trade-block/types";
-import { POSITIONS as positions, tradeBlockItemsMock as tradeBlockItems } from "@/lovable/pages/trade-block/mocks";
+import { POSITIONS as positions } from "@/lovable/pages/trade-block/mocks";
 import MyPlayersTab from "@/lovable/pages/trade-block/MyPlayersTab";
 import TradeBlockFiltersBar from "@/lovable/pages/trade-block/TradeBlockFiltersBar";
 // Iter 230j — Data layer + sort/filter pipeline extracted to hooks.
@@ -71,13 +71,11 @@ const TradeBlock = () => {
     });
 
   const handleProposeTrade = (owner: string, prefilledItem?: TradeBlockItem) => {
-    // Real trade items (preferred) take priority over the seeded mock. The
-    // pre-filled player from the per-card Trade button is force-included so
-    // even if the owner has nothing else listed, the proposal modal can
-    // still target that specific asset.
-    const liveItems = realTradeItems.filter((it) => it.owner === owner && it.type === "player");
-    const fallback = tradeBlockItems.filter((it) => it.owner === owner && it.type === "player");
-    const pool = liveItems.length > 0 ? liveItems : fallback;
+    // Iter 230ao — Use only LIVE trade-block items as the pool. Mock
+    // fallback was removed because it surfaced fake "Connor McDavid"
+    // listings in real leagues that didn't actually have anything on
+    // the block.
+    const pool = realTradeItems.filter((it) => it.owner === owner && it.type === "player");
     const merged = prefilledItem && !pool.some((p) => p.id === prefilledItem.id)
       ? [prefilledItem, ...pool]
       : pool;

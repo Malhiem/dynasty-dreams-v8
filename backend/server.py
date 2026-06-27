@@ -1264,6 +1264,17 @@ async def startup():
     except Exception as e:
         logger.error(f"notification_worker failed to start: {e}")
 
+    # Iter 230ao — Draft auto-start worker. Boots any draft whose
+    # `scheduled_time` has elapsed but is still in `status: "scheduled"`
+    # so the draft kicks off even when no manager has the room open.
+    # Polls every 60s (short enough to fire within a minute of the
+    # scheduled time, long enough not to thrash the DB).
+    try:
+        from services.draft_autostart_worker import draft_autostart_loop
+        asyncio.create_task(draft_autostart_loop(db))
+    except Exception as e:
+        logger.error(f"draft_autostart_worker failed to start: {e}")
+
     # Iter 230e — NHL roster sync worker. Polls live NHL rosters every
     # 6h, routes diffs through the sync dispatcher so NHL ↔ AHL moves
     # auto-fire `player_sent_down` / `player_called_up` notifications

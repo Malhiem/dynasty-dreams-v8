@@ -34,7 +34,12 @@ export function formatCountdown(ms: number) {
 }
 
 export function formatPickTimer(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${String(s).padStart(2, "0")}`;
+  // Iter 230ao — Always display HH:MM:SS so multi-hour per-pick clocks
+  // (TFHL uses 4h windows) read correctly. Short timers also benefit
+  // from the consistent zero-padded format (e.g. 00:01:30).
+  const safe = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(safe / 3600);
+  const m = Math.floor((safe % 3600) / 60);
+  const s = safe % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }

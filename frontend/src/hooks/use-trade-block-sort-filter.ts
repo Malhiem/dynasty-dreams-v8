@@ -3,9 +3,14 @@
 // honours the user's sortable column + direction; tile view always
 // orders highest-FP → prospect → pick (sortable columns make sense
 // only in table mode) and filters out user-hidden cards.
+//
+// Iter 230ao — Removed the `tradeBlockItemsMock` fallback. Showing
+// seeded mock data to real users in real leagues was confusing (TFHL
+// users were seeing fake "Connor McDavid → Lightning Wolves" listings
+// that didn't exist in the league). The trade block now renders the
+// authentic empty state when no league member has listed anything.
 import { useMemo } from "react";
 import type { TradeBlockItem } from "@/lovable/pages/trade-block/types";
-import { tradeBlockItemsMock } from "@/lovable/pages/trade-block/mocks";
 
 type Args = {
   realTradeItems: TradeBlockItem[];
@@ -25,9 +30,7 @@ export default function useTradeBlockSortFilter({
   isHidden,
 }: Args) {
   const sortedAndFilteredItems = useMemo(() => {
-    // Prefer live items; fall back to seeded mock when league has no entries.
-    let items: TradeBlockItem[] =
-      realTradeItems.length > 0 ? [...realTradeItems] : [...tradeBlockItemsMock];
+    let items: TradeBlockItem[] = [...realTradeItems];
 
     if (positionFilter !== "All") {
       if (positionFilter === "Prospect") {
