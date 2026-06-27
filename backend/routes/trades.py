@@ -11,6 +11,7 @@ from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from trade_waiver_engine import (
     TradeProposalCreate,
@@ -1934,6 +1935,7 @@ async def get_my_pending_trades(request: Request):
     db = _db()
     user = await _get_user(request)
     uid = user["_id"]
+    now_iso = datetime.now(timezone.utc).isoformat()
 
     # Pull every team the user owns or co-owns. Skip archived leagues so
     # the banner doesn't surface trades from leagues the user has hidden.
@@ -1945,12 +1947,28 @@ async def get_my_pending_trades(request: Request):
 
     team_ids = [str(t["_id"]) for t in teams]
 
-    # `awaiting_response` — recipient on a still-`proposed` trade.
+    # Iter 231l — Snoozed trades are stored in `trade.snoozed_until_by`
+    # as a `{user_id: iso_ts}` map. A trade is filtered out of the banner
+    # for this user when the current time is < that timestamp. Once the
+    # snooze expires it naturally re-appears.
+    snooze_filter = {
+        "$or": [
+            {f"snoozed_until_by.{uid}": {"$exists": False}},
+            {f"snoozed_until_by.{uid}": None},
+            {f"snoozed_until_by.{uid}": {"$lte": now_iso}},
+        ],
+    }
+
+    # `awaiting_response` — recipient on a still-`proposed` trade
+    # (and not snoozed by this user past `now`).
     awaiting_cursor = db.trades.find({
         "status": "proposed",
-        "$or": [
-            {"target_team_id": {"$in": team_ids}},
-            {"target_owner_id": uid},
+        "$and": [
+            {"$or": [
+                {"target_team_id": {"$in": team_ids}},
+                {"target_owner_id": uid},
+            ]},
+            snooze_filter,
         ],
     }).sort("submitted_at", -1).limit(20)
     awaiting = await awaiting_cursor.to_list(20)
@@ -1979,4 +1997,77 @@ async def get_my_pending_trades(request: Request):
     return {
         "awaiting_response": [_shape(t) for t in awaiting],
         "in_review": [_shape(t) for t in in_review],
+    }
+
+
+# Iter 231l — Snooze a pending-response trade for 24h.
+#
+# The recipient on a `proposed` trade can defer the decision without
+# rejecting it — the row drops off their dashboard banner for the
+# snooze window but stays visible in `/transactions` and the trade
+# detail page. Snooze is per-user (stored on `trade.snoozed_until_by`
+# keyed by user_id) so each recipient on a multi-party trade has an
+# independent quiet period. Re-calling snooze extends the window.
+class TradeSnoozeRequest(BaseModel):
+    hours: int = 24  # default 24h; cap at 7 days to prevent abuse
+
+
+@router.post("/trades/{trade_id}/snooze")
+async def snooze_trade(trade_id: str, body: TradeSnoozeRequest, request: Request):
+    db = _db()
+    user = await _get_user(request)
+    uid = user["_id"]
+
+    hours = max(1, min(int(body.hours or 24), 24 * 7))
+
+    try:
+        trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid trade_id")
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    # Only the recipient (target team owner / co-owner) on a still-
+    # `proposed` trade may snooze. Proposers can't snooze their own
+    # outgoing proposal (they already see it under "Pending Review"
+    # which has its own auto-process timer).
+    if trade.get("status") != "proposed":
+        raise HTTPException(
+            status_code=400,
+            detail="Only proposed trades can be snoozed (recipient action).",
+        )
+
+    target_team_id = trade.get("target_team_id")
+    is_recipient = False
+    if target_team_id:
+        try:
+            target_team = await db.teams.find_one({"_id": ObjectId(target_team_id)})
+            if target_team:
+                if target_team.get("owner_id") == uid:
+                    is_recipient = True
+                elif uid in (target_team.get("co_owner_ids") or []):
+                    is_recipient = True
+        except Exception:
+            pass
+    if not is_recipient and trade.get("target_owner_id") == uid:
+        is_recipient = True
+
+    if not is_recipient:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the trade's recipient can snooze it.",
+        )
+
+    snooze_until = datetime.now(timezone.utc) + timedelta(hours=hours)
+    snooze_iso = snooze_until.isoformat()
+
+    await db.trades.update_one(
+        {"_id": ObjectId(trade_id)},
+        {"$set": {f"snoozed_until_by.{uid}": snooze_iso}},
+    )
+
+    return {
+        "trade_id": trade_id,
+        "snoozed_until": snooze_iso,
+        "hours": hours,
     }
