@@ -405,30 +405,102 @@ async def post_message(channel_id: str, payload: dict, request: Request):
 @router.get("/chat/unread")
 async def total_unread(request: Request, league_id: Optional[str] = None):
     """Aggregate unread count across all of the user's visible channels —
-    powers the sidebar badge. Excludes channels the user has muted."""
+    powers the sidebar badge. Excludes channels the user has muted.
+
+    Iter 230aq — Previously this scanned every chat_channel in the DB
+    and only filtered DMs by `participants`. League-scoped channels
+    (kind == "channel") were counted regardless of league membership,
+    so a user who'd never joined "Ice Kings Head-to-Head" was still
+    seeing its 585-unread "trades" channel rolled into their badge.
+    Now: derive the set of leagues the user actually belongs to
+    (commissioner OR has a team OR is a co-owner), and only count
+    channels in those leagues. DMs continue to use the participants
+    check.
+    """
     db = _db()
     user = await _get_user(request)
+    uid = user["_id"]
+
+    # Iter 230aq — Resolve the user's league memberships once. Apply
+    # the same filters as the league switcher (archived OUT, name-
+    # based test artefacts OUT, per-user hidden OUT) so the badge
+    # reflects the leagues the user actually engages with — not
+    # 30+ leftover Iter###_* / TEST_* leagues from automated runs.
+    raw_member_team_league_ids: set = set()
+    async for t in db.teams.find(
+        {"$or": [{"owner_id": uid}, {"co_owner_ids": uid}]},
+        {"league_id": 1},
+    ):
+        if t.get("league_id"):
+            raw_member_team_league_ids.add(t["league_id"])
+    raw_commish_ids: set = set()
+    async for lg in db.leagues.find(
+        {"commissioner_id": uid},
+        {"_id": 1},
+    ):
+        raw_commish_ids.add(str(lg["_id"]))
+    raw_league_ids = raw_member_team_league_ids | raw_commish_ids
+
+    # Hydrate league docs so we can apply the same exclusion rules as
+    # `/leagues?my_leagues=true&exclude_archived=true&exclude_test=true`.
+    membership_league_ids: set = set()
+    if raw_league_ids:
+        from routes.leagues import _is_test_artifact_league
+        oids = []
+        for lid in raw_league_ids:
+            try:
+                oids.append(ObjectId(lid))
+            except Exception:
+                continue
+        async for lg in db.leagues.find({"_id": {"$in": oids}}):
+            if lg.get("archived") or (lg.get("status") or "").lower() == "archived":
+                continue
+            if _is_test_artifact_league(lg.get("name")):
+                continue
+            membership_league_ids.add(str(lg["_id"]))
+
+    # Iter 230aq — Also honour per-user hidden leagues so the badge
+    # never reports messages from a league the user has chosen to
+    # hide from their dashboard.
+    try:
+        from routes.notification_preferences import get_hidden_league_ids
+        hidden = set(await get_hidden_league_ids(uid))
+        membership_league_ids -= hidden
+    except Exception:
+        pass
 
     chan_q: dict = {}
     if league_id:
+        # Explicit league filter — but still enforce membership unless
+        # the caller is asking about a league they belong to.
+        if league_id not in membership_league_ids:
+            return {"unread": 0, "by_channel": {}}
         chan_q["league_id"] = league_id
 
     # Visible channels = open channels in user's leagues + DMs they're in
     cursor = db.chat_channels.find(chan_q)
     channel_ids: list[str] = []
     async for c in cursor:
-        if c["kind"] == "dm" and user["_id"] not in (c.get("participants") or []):
-            continue
+        if c["kind"] == "dm":
+            if uid not in (c.get("participants") or []):
+                continue
+        else:
+            # Iter 230aq — League-scoped channels must belong to a
+            # league the user is actually in. Channels with no
+            # league_id (rare; admin / system) are skipped.
+            lg_id = c.get("league_id")
+            if not lg_id or lg_id not in membership_league_ids:
+                continue
         channel_ids.append(str(c["_id"]))
     if not channel_ids:
         return {"unread": 0, "by_channel": {}}
 
     # Fetch read cursors and mute states in bulk
     reads = {}
-    async for r in db.chat_reads.find({"user_id": user["_id"], "channel_id": {"$in": channel_ids}}):
+    async for r in db.chat_reads.find({"user_id": uid, "channel_id": {"$in": channel_ids}}):
         reads[r["channel_id"]] = r.get("last_read_at")
     mutes = {}
-    async for m in db.chat_mutes.find({"user_id": user["_id"], "channel_id": {"$in": channel_ids}}):
+    async for m in db.chat_mutes.find({"user_id": uid, "channel_id": {"$in": channel_ids}}):
         mu = m.get("mute_until")
         if mu is None:
             mutes[m["channel_id"]] = True  # indefinite
@@ -444,7 +516,7 @@ async def total_unread(request: Request, league_id: Optional[str] = None):
         if mutes.get(cid):
             by_channel[cid] = 0
             continue
-        q = {"channel_id": cid, "user_id": {"$ne": user["_id"]}}
+        q = {"channel_id": cid, "user_id": {"$ne": uid}}
         if reads.get(cid):
             q["created_at"] = {"$gt": reads[cid]}
         n = await db.chat_messages.count_documents(q)
