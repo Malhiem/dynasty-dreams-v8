@@ -525,6 +525,27 @@ async def total_unread(request: Request, league_id: Optional[str] = None):
     return {"unread": total, "by_channel": by_channel}
 
 
+@router.post("/chat/channels/{channel_id}/mark-read")
+async def mark_channel_read(channel_id: str, request: Request):
+    """Iter 230au — Zero out the unread count on a single channel
+    without forcing the caller to fetch the message list. Used by the
+    mobile swipe-right-on-channel gesture in `ChannelList`."""
+    db = _db()
+    user = await _get_user(request)
+    chan = await db.chat_channels.find_one({"_id": ObjectId(channel_id)})
+    if not chan:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    if chan["kind"] == "dm" and user["_id"] not in (chan.get("participants") or []):
+        raise HTTPException(status_code=403, detail="Not a participant")
+    now = datetime.now(timezone.utc)
+    await db.chat_reads.update_one(
+        {"user_id": user["_id"], "channel_id": channel_id},
+        {"$set": {"user_id": user["_id"], "channel_id": channel_id, "last_read_at": now}},
+        upsert=True,
+    )
+    return {"channel_id": channel_id, "last_read_at": now.isoformat()}
+
+
 @router.post("/chat/channels/{channel_id}/mute")
 async def set_mute(channel_id: str, payload: dict, request: Request):
     """Mute or unmute. `payload.duration` ∈ {"30m","1h","4h","12h","24h",

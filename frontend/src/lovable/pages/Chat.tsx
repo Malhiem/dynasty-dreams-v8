@@ -12,7 +12,7 @@ import {
   DropdownMenuLabel, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import {
-  Send, Users, Hash, Plus, BellOff, Bell, Trash2, MoreHorizontal, Loader2,
+  Send, Users, Hash, Plus, BellOff, Bell, Trash2, MoreHorizontal, Loader2, Check,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
@@ -20,6 +20,8 @@ import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useAuth } from "@/contexts/AuthContext";
 import { useChatUnread } from "@/hooks/use-chat-unread";
+// Iter 230au — Generic swipe-to-action primitive for the channel list.
+import SwipeableRow from "@/components/SwipeableRow";
 import ReportUserButton from "@/components/ReportUserButton";
 
 const MUTE_OPTIONS = [
@@ -221,9 +223,38 @@ const Chat = () => {
     }
   };
 
+  // Iter 230au — Mark all messages in a channel as read without
+  // fetching the message list. Powers the swipe-right gesture in the
+  // channel sidebar and the row's "Mark as read" affordance.
+  const handleMarkChannelRead = async (chanId) => {
+    // Optimistic — zero out unread + last_read_at locally.
+    setChannels((prev) =>
+      prev.map((c) =>
+        c._id === chanId ? { ...c, unread: 0, last_read_at: new Date().toISOString() } : c,
+      ),
+    );
+    try {
+      await api.post(`/chat/channels/${chanId}/mark-read`);
+      refreshUnread();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not mark channel read");
+      loadChannels();
+    }
+  };
+
   const renderRow = (c) => {
     const isSelected = c._id === selectedId;
-    return (
+    // Iter 230au — Swipe RIGHT to mark all-read (disabled when
+    // already at 0 unread or muted, since there's nothing to clear).
+    // Swipe LEFT to toggle mute: when currently muted → unmute; when
+    // unmuted → mute for 24h (sensible default; long-press the row's
+    // ⋯ menu for finer durations).
+    const swipeRightDisabled = !(c.unread > 0) || c.muted;
+    const swipeLeftAction = c.muted
+      ? { label: "Unmute", icon: <Bell className="h-4 w-4" />, bg: "bg-sky-600/25", color: "text-sky-200", testId: `chat-swipe-unmute-hint-${c._id}` }
+      : { label: "Mute 24h", icon: <BellOff className="h-4 w-4" />, bg: "bg-amber-600/25", color: "text-amber-200", testId: `chat-swipe-mute-hint-${c._id}` };
+
+    const innerRow = (
       <div
         key={c._id}
         className={`group flex items-center justify-between gap-2 rounded-lg text-sm transition-colors ${
@@ -299,6 +330,25 @@ const Chat = () => {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+    );
+    return (
+      <SwipeableRow
+        key={c._id}
+        testId={`chat-swipe-row-${c._id}`}
+        rightAction={{
+          label: "Mark read",
+          icon: <Check className="h-4 w-4" />,
+          bg: "bg-emerald-600/25",
+          color: "text-emerald-200",
+          disabled: swipeRightDisabled,
+          testId: `chat-swipe-read-hint-${c._id}`,
+        }}
+        leftAction={swipeLeftAction}
+        onSwipeRight={() => handleMarkChannelRead(c._id)}
+        onSwipeLeft={() => handleMute(c._id, c.muted ? null : "24h")}
+      >
+        {innerRow}
+      </SwipeableRow>
     );
   };
 
