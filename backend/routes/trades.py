@@ -81,6 +81,86 @@ def _resolve_review_period_hours(league: dict) -> int:
     return int(league.get("trade_review_period_hours") or 72)
 
 
+# Iter 231j — Pull the trades-config sub-doc with safe defaults so the
+# trade engine can enforce config-driven constraints (max trades per team,
+# allow-before-draft, allow-during-draft, conditional-trades flag).
+def _trades_cfg(league: dict) -> dict:
+    return (league.get("transactions_config") or {}).get("trades") or {}
+
+
+async def _enforce_trade_config(
+    db,
+    league: dict,
+    *,
+    proposer_team_ids: list,
+    has_conditions: bool,
+) -> None:
+    """Iter 231j — Apply the Commissioner-configured trade rules.
+
+    Constraints enforced (each one short-circuits with HTTPException 400):
+      - max_trades_per_team: cap on in-flight (proposed + pending) trades per team
+      - allow_before_draft / allow_during_draft: gate by league.status
+      - conditional_trades_enabled: reject conditional proposals when disabled
+
+    `proposer_team_ids` is a list because multi-party trades have multiple
+    senders; the cap is checked PER team in the list.
+    """
+    cfg = _trades_cfg(league)
+    league_id = str(league["_id"])
+
+    # ── Conditional trades master toggle ─────────────────────────
+    if has_conditions and not cfg.get("conditional_trades_enabled", False):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Conditional trades are disabled in this league. "
+                "Ask your commissioner to enable them under "
+                "League Administration → Transactions → Trades."
+            ),
+        )
+
+    # ── Draft-window gating ──────────────────────────────────────
+    # league.status is one of {"setup", "draft_active", "active", "complete",
+    # "archived"} across the codebase. "setup" is pre-draft; "draft_active"
+    # is during the draft.
+    status = (league.get("status") or "").lower()
+    allow_before = cfg.get("allow_before_draft", True)
+    allow_during = cfg.get("allow_during_draft", False)
+    if status == "setup" and not allow_before:
+        raise HTTPException(
+            status_code=400,
+            detail="Trades are locked before the league's draft. Commissioner can change this in Transactions → Trades.",
+        )
+    if status == "draft_active" and not allow_during:
+        raise HTTPException(
+            status_code=400,
+            detail="Trades are locked during the live draft. Commissioner can change this in Transactions → Trades.",
+        )
+
+    # ── Max trades per team (proposed + pending count) ───────────
+    max_trades = cfg.get("max_trades_per_team")
+    if max_trades is not None and max_trades > 0 and proposer_team_ids:
+        for tid in proposer_team_ids:
+            count = await db.trades.count_documents({
+                "league_id": league_id,
+                "status": {"$in": ["proposed", "pending"]},
+                "$or": [
+                    {"proposer_team_id": tid},
+                    {"target_team_id": tid},
+                    {"parties.team_id": tid},
+                ],
+            })
+            if count >= int(max_trades):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Team has reached the league's cap of {max_trades} "
+                        f"in-flight trades. Resolve an existing proposal before "
+                        f"submitting a new one."
+                    ),
+                )
+
+
 def _enforce_trade_deadline(league: dict) -> None:
     """Reject new trade proposals once the league's trade deadline has passed.
 
@@ -617,6 +697,18 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
     target_team = await db.teams.find_one({"_id": ObjectId(input.target_team_id)})
     if not target_team:
         raise HTTPException(status_code=404, detail="Target team not found")
+
+    # Iter 231j — Enforce commissioner-configured trade rules
+    # (max trades, draft-window gating, conditional master toggle).
+    proposes_conditional = bool(getattr(input, "conditions", None)) or bool(
+        getattr(input, "pick_upgrades", None)
+    )
+    await _enforce_trade_config(
+        db,
+        league,
+        proposer_team_ids=[str(proposer_team["_id"]), str(target_team["_id"])],
+        has_conditions=proposes_conditional,
+    )
 
     # Iter 201e — platform-admin pair-lock gate. If the (proposer_id,
     # target_owner_id) pair has an active trade_lock (global or
@@ -1463,6 +1555,16 @@ async def create_multi_party_trade(input: MultiPartyTradeProposalCreate, request
     target_team = parties[legacy_target_idx]
 
     has_conditions = bool(input.conditions)
+
+    # Iter 231j — Enforce commissioner-configured trade rules across
+    # every participating team (max in-flight trades, draft-window
+    # gating, conditional master toggle).
+    await _enforce_trade_config(
+        db,
+        league,
+        proposer_team_ids=[p["team_id"] for p in parties],
+        has_conditions=has_conditions or bool(getattr(input, "pick_upgrades", None)),
+    )
     review_period_hours = _resolve_review_period_hours(league)
     trade_doc = {
         "league_id": input.league_id,
@@ -1810,4 +1912,71 @@ async def get_trade_votes(trade_id: str, request: Request):
         "veto_threshold": _veto_threshold(league),
         "your_vote": choices.get(str(user["_id"])),
         "status": trade["status"],
+    }
+
+
+
+# Iter 231j — Dashboard banner backing endpoint.
+#
+# Aggregates the calling user's open trades across EVERY league they
+# participate in (as owner or co-owner). Returns two buckets so the
+# dashboard banner can split them by call-to-action:
+#
+#   - awaiting_response: trades where the user is the recipient
+#     (target team owner / co-owner) and the trade is still `proposed`.
+#     Action: Accept or Reject.
+#
+#   - in_review: trades where the user is the proposer and the trade
+#     is `pending` (in the league review window).
+#     Action: Wait for review window to elapse / handle vetoes.
+@router.get("/users/me/pending-trades")
+async def get_my_pending_trades(request: Request):
+    db = _db()
+    user = await _get_user(request)
+    uid = user["_id"]
+
+    # Pull every team the user owns or co-owns. Skip archived leagues so
+    # the banner doesn't surface trades from leagues the user has hidden.
+    teams = await db.teams.find({
+        "$or": [{"owner_id": uid}, {"co_owner_ids": uid}],
+    }).to_list(500)
+    if not teams:
+        return {"awaiting_response": [], "in_review": []}
+
+    team_ids = [str(t["_id"]) for t in teams]
+
+    # `awaiting_response` — recipient on a still-`proposed` trade.
+    awaiting_cursor = db.trades.find({
+        "status": "proposed",
+        "$or": [
+            {"target_team_id": {"$in": team_ids}},
+            {"target_owner_id": uid},
+        ],
+    }).sort("submitted_at", -1).limit(20)
+    awaiting = await awaiting_cursor.to_list(20)
+
+    # `in_review` — proposer on a `pending` trade in the review window.
+    review_cursor = db.trades.find({
+        "status": "pending",
+        "proposer_id": uid,
+    }).sort("submitted_at", -1).limit(20)
+    in_review = await review_cursor.to_list(20)
+
+    def _shape(t: dict) -> dict:
+        return {
+            "trade_id": str(t.get("_id")),
+            "league_id": t.get("league_id"),
+            "proposer_team_name": t.get("proposer_team_name"),
+            "target_team_name": t.get("target_team_name"),
+            "status": t.get("status"),
+            "submitted_at": t.get("submitted_at"),
+            "processes_at": t.get("processes_at"),
+            "asset_count": (
+                len(t.get("assets_offered") or []) + len(t.get("assets_requested") or [])
+            ),
+        }
+
+    return {
+        "awaiting_response": [_shape(t) for t in awaiting],
+        "in_review": [_shape(t) for t in in_review],
     }

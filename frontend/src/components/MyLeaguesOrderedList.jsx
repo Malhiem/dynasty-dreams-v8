@@ -43,6 +43,10 @@ function fmtScoring(v) {
 export default function MyLeaguesOrderedList() {
   const [leagues, setLeagues] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Iter 231i — Surface a "Recently hidden" indicator so accidental
+  // swipe-to-hide actions remain obvious + recoverable from the
+  // Dashboard without users having to hunt through Settings.
+  const [hiddenCount, setHiddenCount] = useState(0);
   const [dragId, setDragId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
   // Iter 230av — Pull the active league + switchLeague helper so a
@@ -72,6 +76,14 @@ export default function MyLeaguesOrderedList() {
       .then(([leaguesRes, prefsRes]) => {
         const data = leaguesRes.data;
         const serverOrder = prefsRes.data?.league_order;
+        // Iter 231i — Track the count of currently-hidden leagues so
+        // the Dashboard can advertise their existence.
+        const hidden = Array.isArray(prefsRes.data?.hidden_league_ids)
+          ? prefsRes.data.hidden_league_ids
+          : Array.isArray(prefsRes.data?.hidden_leagues)
+            ? prefsRes.data.hidden_leagues
+            : [];
+        setHiddenCount(hidden.length);
         const savedOrder = Array.isArray(serverOrder) && serverOrder.length
           ? serverOrder
           : loadSavedOrder();
@@ -120,20 +132,41 @@ export default function MyLeaguesOrderedList() {
 
   // Iter 230h — Hide league from dashboard. Persists to the user's
   // notification_preferences.hidden_league_ids list and immediately
-  // removes the row locally so the surface decltters without a refetch.
+  // removes the row locally so the surface declutters without a refetch.
+  // Iter 231i — Sonner toast now offers a 5-second Undo action so an
+  // accidental swipe-to-hide is one click away from being reversed.
   const handleHideLeague = async (leagueId, leagueName) => {
     const prev = leagues;
     setLeagues((cur) => cur.filter((l) => l.id !== leagueId));
+    setHiddenCount((c) => c + 1);
     try {
       await api.put('/notifications/preferences/league-hide', {
         league_id: leagueId,
         hidden: true,
       });
       toast.success(`${leagueName || 'League'} hidden from dashboard`, {
-        description: 'Restore any time from Notification Settings.',
+        description: 'Click Undo to restore. Otherwise manage anytime from Settings.',
+        duration: 5000,
+        action: {
+          label: 'Undo',
+          onClick: async () => {
+            try {
+              await api.put('/notifications/preferences/league-hide', {
+                league_id: leagueId,
+                hidden: false,
+              });
+              setLeagues(prev);
+              setHiddenCount((c) => Math.max(0, c - 1));
+              toast.success(`${leagueName || 'League'} restored`);
+            } catch {
+              toast.error("Couldn't undo hide — open Settings to restore.");
+            }
+          },
+        },
       });
     } catch (e) {
       setLeagues(prev);
+      setHiddenCount((c) => Math.max(0, c - 1));
       toast.error("Couldn't hide that league");
     }
   };
@@ -184,6 +217,23 @@ export default function MyLeaguesOrderedList() {
           <Badge className="bg-white/5 border-white/10 text-[#A1A1AA] text-[10px]">
             {leagues.length} {leagues.length === 1 ? 'LEAGUE' : 'LEAGUES'}
           </Badge>
+          {/* Iter 231i — Recently hidden indicator. Clicking opens the
+              notification preferences modal where the user can unhide. */}
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  window.dispatchEvent(new CustomEvent('open-notification-settings'));
+                } catch { /* noop */ }
+              }}
+              className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md border border-amber-500/40 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 transition-colors"
+              data-testid="my-leagues-hidden-indicator"
+              title="You have hidden leagues — click to manage in Settings"
+            >
+              {hiddenCount} hidden — restore
+            </button>
+          )}
         </div>
         <span className="text-[11px] text-[#52525B] italic hidden sm:block">
           Drag to reorder • your preference is saved locally

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import RecommendedForYou from '@/components/RecommendedForYou';
 import MyLeaguesOrderedList from '@/components/MyLeaguesOrderedList';
 import LiveScoringWidget from '@/components/LiveScoringWidget';
+import PendingTradesBanner from '@/components/PendingTradesBanner';
 import { useActiveLeague } from '@/hooks/use-active-league';
 import MyWeekAtAGlance from '@/components/MyWeekAtAGlance';
 import YourActivityWidget from '@/components/YourActivityWidget';
@@ -90,6 +91,11 @@ export default function DashboardPage() {
             <FantasyLevelBadge />
           </div>
         </div>
+
+        {/* Iter 231j — Pending trades banner: surfaces "Pending Response"
+            (recipient) + "Pending Review" (proposer) trades across all
+            leagues so users see open trades immediately on load. */}
+        <PendingTradesBanner />
 
         {/* Stats Grid */}
         <div className="control-room-grid mb-8">

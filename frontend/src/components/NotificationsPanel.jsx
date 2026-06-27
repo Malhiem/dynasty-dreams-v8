@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import { Bell, Check, CheckCheck, ArrowRightLeft, Clock, Trophy, Users, Calendar, Settings, AlertTriangle, Megaphone, Info, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 // Iter 230as — Removed shadcn <ScrollArea> import; the panel now uses a
@@ -118,6 +119,7 @@ function timeAgo(dateStr) {
 
 export function NotificationsPanel() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -171,6 +173,16 @@ export function NotificationsPanel() {
     },
     user?.id,
   );
+
+  // Iter 231i — Cross-component handler to open the Notification
+  // Settings modal. The "Recently hidden" indicator on MyLeagues
+  // dispatches this event so the chip → modal flow doesn't require
+  // prop drilling through the AppLayout.
+  useEffect(() => {
+    const handler = () => setSettingsOpen(true);
+    window.addEventListener("open-notification-settings", handler);
+    return () => window.removeEventListener("open-notification-settings", handler);
+  }, []);
 
   // Close on outside click
   useEffect(() => {
@@ -297,7 +309,19 @@ export function NotificationsPanel() {
                     >
                     <div
                       className={cn("p-3 hover:bg-white/5 cursor-pointer transition-colors flex gap-3 bg-[#141414]", !n.read && "bg-[#00D2FF]/5")}
-                      onClick={() => handleMarkRead(n._id)}
+                      onClick={() => {
+                        // Iter 231i — Mark-as-read + deep-link navigation.
+                        // The backend stamps `link` (e.g. /transactions/trade/{id})
+                        // so clicking the notification opens the relevant
+                        // surface directly. Fallback: stay on current page
+                        // when there's no link (e.g. ambient announcements).
+                        handleMarkRead(n._id);
+                        const dest = n.link || n.action_url;
+                        if (dest && typeof dest === "string" && dest.startsWith("/")) {
+                          setOpen(false);
+                          navigate(dest);
+                        }
+                      }}
                       data-testid={`notification-item-${n._id}`}
                     >
                       <div className={cn("h-8 w-8 rounded-lg flex items-center justify-center shrink-0", `${color.replace("text-", "bg-")}/20`)}>

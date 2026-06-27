@@ -40,6 +40,7 @@ import LovableTeam from "@/lovable/pages/Team";
 import LovableMatchup from "@/lovable/pages/Matchup";
 import LovableStandings from "@/lovable/pages/Standings";
 import LovableTransactions from "@/lovable/pages/Transactions";
+import LovableTradeDetail from "@/lovable/pages/TradeDetail";
 import LovableWaivers from "@/lovable/pages/Waivers";
 import LovableTradeBlock from "@/lovable/pages/TradeBlock";
 import LovableDepthChart from "@/lovable/pages/DepthChart";
@@ -125,6 +126,8 @@ function App() {
           <Route path="/matchup" element={<ProtectedRoute><LovableMatchup /></ProtectedRoute>} />
           <Route path="/standings" element={<ProtectedRoute><LovableStandings /></ProtectedRoute>} />
           <Route path="/transactions" element={<ProtectedRoute><LovableTransactions /></ProtectedRoute>} />
+          {/* Iter 231i — Deep link from notifications. Renders a single trade with Accept/Reject/Cancel actions. */}
+          <Route path="/transactions/trade/:tradeId" element={<ProtectedRoute><LovableTradeDetail /></ProtectedRoute>} />
           <Route path="/waivers" element={<ProtectedRoute><LovableWaivers /></ProtectedRoute>} />
           <Route path="/trade-block" element={<ProtectedRoute><LovableTradeBlock /></ProtectedRoute>} />
           <Route path="/depth-chart" element={<ProtectedRoute><LovableDepthChart /></ProtectedRoute>} />

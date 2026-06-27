@@ -184,10 +184,33 @@ const Chat = () => {
   };
 
   // ── Mute / unmute ─────────────────────────────────────────
+  // Iter 231i — Mute toast now includes a 5-second Undo action so an
+  // accidental swipe-to-mute is one click away from being reversed.
   const handleMute = async (chanId, duration) => {
     try {
       await api.post(`/chat/channels/${chanId}/mute`, { duration });
-      toast.success(duration ? `Muted ${duration === "indefinite" ? "indefinitely" : `for ${duration}`}` : "Unmuted");
+      const isMuting = !!duration;
+      const label = isMuting
+        ? `Muted ${duration === "indefinite" ? "indefinitely" : `for ${duration}`}`
+        : "Unmuted";
+      toast.success(label, {
+        duration: 5000,
+        action: isMuting
+          ? {
+              label: "Undo",
+              onClick: async () => {
+                try {
+                  await api.post(`/chat/channels/${chanId}/mute`, { duration: null });
+                  toast.success("Unmuted");
+                  loadChannels();
+                  refreshUnread();
+                } catch (e) {
+                  toast.error(e?.response?.data?.detail || "Could not undo mute");
+                }
+              },
+            }
+          : undefined,
+      });
       loadChannels();
       refreshUnread();
     } catch (e) {
