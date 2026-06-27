@@ -20,7 +20,7 @@ const sizeClasses = {
 
 interface TeamLogoProps {
   logo?: string;
-  name: string;
+  name?: string | null;
   abbr?: string;
   size?: keyof typeof sizeClasses;
   className?: string;
@@ -28,13 +28,21 @@ interface TeamLogoProps {
 }
 
 const TeamLogo = ({ logo, name, abbr, size = "md", className, themeColor }: TeamLogoProps) => {
-  const initials = abbr || name.split(" ").map(w => w[0]).join("").slice(0, 3).toUpperCase();
+  // Iter 231n — Playoff brackets contain TBD slots where name is null;
+  // guard against null/undefined so the page renders a "TBD" placeholder
+  // instead of crashing on `name.split(...)`.
+  const safeName = (name && typeof name === "string" ? name : "").trim();
+  const initials =
+    abbr ||
+    (safeName
+      ? safeName.split(" ").map((w) => w[0]).filter(Boolean).join("").slice(0, 3).toUpperCase()
+      : "TBD");
 
   if (logo) {
     return (
       <img
         src={logo}
-        alt={`${name} logo`}
+        alt={`${safeName || "Team"} logo`}
         className={cn("rounded-lg object-cover flex-shrink-0", sizeClasses[size], className)}
       />
     );

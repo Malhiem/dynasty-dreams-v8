@@ -717,7 +717,8 @@ async def force_remove_from_draft(user_id: str, request: Request):
     # Drain on-clock picks: while the draft is active and the next on-clock
     # team belongs to the evicted user, execute auto-pick. Bounded by total
     # picks to be safe.
-    from routes.drafts import _perform_one_auto_pick  # local import to avoid cycle
+    # Iter 231n — Direct import (no more late-bound `from routes.drafts`).
+    from routes.draft_helpers import perform_one_auto_pick
     from draft_engine import get_team_for_pick
 
     drained: list = []
@@ -733,7 +734,7 @@ async def force_remove_from_draft(user_id: str, request: Request):
         on_clock_team = await _db().teams.find_one({"_id": ObjectId(on_clock_team_id)})
         if not on_clock_team or on_clock_team.get("owner_id") != user_id:
             break
-        pick = await _perform_one_auto_pick(draft_id, source="eviction")
+        pick = await perform_one_auto_pick(draft_id, source="eviction")
         drained.append(pick)
 
     aid = await _audit(

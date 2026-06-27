@@ -61,11 +61,11 @@ def test_chat_panel_renders_auto_pick_badge():
 
 
 def test_backend_autopick_chat_carries_meta():
-    src = DRAFTS_ROUTE.read_text()
-    # Iter 231 — split marker loosened + anchored on the
-    # `_perform_one_auto_pick` helper (which holds the chat meta in the
-    # decomposed router file).
-    block = src.split("async def _perform_one_auto_pick")[1].split("\n@router.")[0]
+    # Iter 231n — chat meta moved to `routes/draft_helpers.py` along
+    # with the rest of the auto-pick logic. Anchor on the new module.
+    from pathlib import Path
+    helpers_src = Path("/app/backend/routes/draft_helpers.py").read_text()
+    block = helpers_src.split("async def perform_one_auto_pick")[1]
     # The system chat msg now carries `auto_picked: True` + the via
     # tag so the frontend doesn't need to sniff free text.
     assert '"auto_picked": True' in block

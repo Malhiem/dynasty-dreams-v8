@@ -42,11 +42,12 @@ TEAM_PAGE = Path("/app/frontend/src/lovable/pages/Team.tsx")
 def test_auto_pick_endpoint_present_and_queue_first():
     src = DRAFTS_ROUTE.read_text()
     assert '@router.post("/drafts/{draft_id}/auto-pick")' in src
-    # Iter 231 — auto-pick route handler became a thin shim that
-    # delegates to the `_perform_one_auto_pick` helper. The queue /
-    # roster / chat logic now lives in that helper, so we anchor the
-    # block on the helper definition.
-    block = src.split("async def _perform_one_auto_pick")[1].split("\n@router.")[0]
+    # Iter 231n — auto-pick LOGIC moved out of drafts.py entirely. The
+    # endpoint handler still lives in drafts.py (it calls into the
+    # helper), but the queue / roster / chat logic now lives in
+    # `routes/draft_helpers.py`. Re-anchor the assertion there.
+    helpers_src = Path("/app/backend/routes/draft_helpers.py").read_text()
+    block = helpers_src.split("async def perform_one_auto_pick")[1]
     # Queue is consulted before falling back to top eligible.
     assert 'queue = list((team or {}).get("draft_queue") or [])' in block
     assert 'via = "queue"' in block

@@ -775,66 +775,15 @@ async def create_draft(input: CreateDraftRequest, request: Request):
 async def _seed_draft_picks_for_draft(
     draft_id: str, league_id: str, rounds: int, year: int,
 ) -> int:
-    """Iter 228h helper — materialises `rounds × team-count` draft_picks
-    rows for a freshly-created draft so they're immediately visible in
-    the trade center and draft board.
-
-    Teams are ordered alphabetically when the league hasn't saved a
-    pick order yet — deterministic and trivially overridable later.
-    Idempotent on (league_id, year, round, original_team_id).
+    """Iter 231n — Thin re-export shim. The real implementation moved
+    to `routes/draft_helpers.py` so both drafts.py and draft_pick_actions.py
+    can plain-import it without late-binding workarounds. Kept here as a
+    shim because internal call-sites at multiple lines in this file (and
+    third-party tests that grep for `async def _seed_draft_picks_for_draft`
+    in drafts.py source) rely on the name being defined here.
     """
-    from datetime import datetime as _dt, timezone as _tz
-
-    teams = await _db().teams.find({"league_id": league_id}).to_list(200)
-    if not teams:
-        return 0
-    # Honour saved pick order when present, else alphabetical
-    saved_order_doc = await _db().draft_order_config.find_one({"league_id": league_id})
-    saved_order = (saved_order_doc or {}).get("pick_order") or []
-    if saved_order:
-        order_index = {tid: idx for idx, tid in enumerate(saved_order)}
-        teams.sort(key=lambda t: order_index.get(str(t["_id"]), 9999))
-    else:
-        teams.sort(key=lambda t: (t.get("name") or "").lower())
-
-    inserted = 0
-    now = _dt.now(_tz.utc)
-    for r in range(1, rounds + 1):
-        for slot, team in enumerate(teams, start=1):
-            tid = str(team["_id"])
-            # Iter 228s — Include `draft_id` in the dedup key so the
-            # league can have multiple drafts in the SAME year (e.g.
-            # Inaugural in May + Summer Entry in July + Winter in
-            # December — all 2026) and each gets its OWN independent
-            # set of pick rows. Without this guard, the second and
-            # third drafts found existing rows from the first and
-            # skipped every insert.
-            existing = await _db().draft_picks.find_one({
-                "league_id": league_id,
-                "draft_id": draft_id,
-                "year": year,
-                "round": r,
-                "original_team_id": tid,
-            })
-            if existing:
-                continue
-            await _db().draft_picks.insert_one({
-                "league_id": league_id,
-                "draft_id": draft_id,
-                "year": year,
-                "round": r,
-                "slot": slot,
-                "overall": (r - 1) * len(teams) + slot,
-                "original_team_id": tid,
-                "original_team_name": team.get("name") or "Unknown",
-                "current_team_id": tid,
-                "current_team_name": team.get("name") or "Unknown",
-                "trade_history": [],
-                "tradeable": True,
-                "created_at": now,
-            })
-            inserted += 1
-    return inserted
+    from routes.draft_helpers import seed_draft_picks_for_draft as _impl
+    return await _impl(draft_id, league_id, rounds, year)
 
 @router.delete("/drafts/{draft_id}")
 async def delete_draft(draft_id: str, request: Request):
@@ -1609,31 +1558,9 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
 
 
 async def _early_start_clock_msg(draft: dict) -> str:
-    """Iter 230y — Render the per-notification clock-activation hint
-    used when the commissioner starts a draft with `early_start=True`.
-
-    Returns the empty string if the clock isn't going to auto-activate
-    (no `scheduled_time` set or it's already in the past). Otherwise
-    returns a short ` Clock activates HH:MM (your time) — pick now if
-    you want to, or wait for the clock.` suffix the caller appends to
-    the standard `You're on the clock!` body.
-    """
-    if not draft.get("early_start"):
-        return ""
-    sched = draft.get("scheduled_time")
-    if not sched:
-        return ""
-    try:
-        sched_dt = datetime.fromisoformat(str(sched).replace("Z", "+00:00"))
-    except Exception:
-        return ""
-    if sched_dt <= datetime.now(timezone.utc):
-        return ""
-    iso = sched_dt.isoformat().replace("+00:00", "Z")
-    return (
-        " The clock will start at " + iso +
-        " — pick now if you want to, or wait."
-    )
+    """Iter 231n — Thin re-export shim. Real impl in `routes/draft_helpers.py`."""
+    from routes.draft_helpers import early_start_clock_msg as _impl
+    return await _impl(draft)
 
 # ─── Iter 170g/170h — make-pick, undo-pick, swap-pick, pause endpoints
 #     extracted to routes/draft_pick_actions.py (iter 231m).
@@ -1643,122 +1570,16 @@ async def _early_start_clock_msg(draft: dict) -> str:
 
 
 async def _perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> dict:
-    """Iter 221 — Shared core for auto-picking the team currently on the clock.
-    Returns the recorded pick document. Raises HTTPException on bad state.
-    `source` is stamped into the pick doc / broadcast for audit (timeout,
-    eviction, commissioner_skip, etc.).
+    """Iter 231n — Thin re-export shim. Real impl in `routes/draft_helpers.py`.
+
+    Kept as a shim because (a) `auto_pick_for_on_clock_team` in this file
+    still calls `_perform_one_auto_pick`, (b) routes/admin_user_actions.py
+    used to import it from here (now switched to direct import), and (c)
+    several pytest files grep for `async def _perform_one_auto_pick` in
+    drafts.py source as a regression guard.
     """
-    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
-    if not draft:
-        raise HTTPException(status_code=404, detail="Draft not found")
-    if draft["status"] != "active":
-        raise HTTPException(status_code=400, detail="Draft is not active")
-
-    on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"])
-    on_clock_team_id = (draft.get("team_map") or {}).get(on_clock, {}).get("id")
-    if not on_clock_team_id:
-        raise HTTPException(status_code=500, detail="Could not resolve on-clock team")
-
-    drafted_ids = {p.get("player_id") for p in draft.get("picks", []) if p.get("player_id")}
-
-    chosen_player = None
-    via = "top_eligible"
-    team = await _db().teams.find_one({"_id": ObjectId(on_clock_team_id)})
-    queue = list((team or {}).get("draft_queue") or [])
-    for pid in queue:
-        if pid in drafted_ids:
-            continue
-        try:
-            cand = await _db().players.find_one({"_id": ObjectId(pid)})
-        except Exception:
-            continue
-        if cand:
-            chosen_player = cand
-            via = "queue"
-            break
-
-    if chosen_player is None:
-        criteria = (draft.get("player_criteria") or "open").lower()
-        q = {"player_type": "prospect"} if criteria == "entry" else {"player_type": {"$ne": "prospect"}}
-        async for p in _db().players.find(q).sort([("points", -1), ("name", 1)]):
-            if str(p["_id"]) in drafted_ids:
-                continue
-            chosen_player = p
-            break
-
-    if chosen_player is None:
-        raise HTTPException(status_code=400, detail="No eligible players left")
-
-    total_teams = len(draft["team_abbrs"])
-    current_pick = draft["current_pick"]
-    round_num = ((current_pick - 1) // total_teams) + 1
-    pick_in_round = ((current_pick - 1) % total_teams) + 1
-
-    pick_doc = {
-        "round": round_num,
-        "pick_in_round": pick_in_round,
-        "overall": current_pick,
-        "team": on_clock,
-        "team_id": on_clock_team_id,
-        "player_id": str(chosen_player["_id"]),
-        "player": {
-            "id": str(chosen_player["_id"]),
-            "name": chosen_player["name"],
-            "position": chosen_player["position"],
-            "nhlTeam": chosen_player.get("team", ""),
-            "team_name": chosen_player.get("team_name", ""),
-            "pts": chosen_player.get("points", 0),
-            "g": chosen_player.get("goals", 0),
-            "a": chosen_player.get("assists", 0),
-            "gp": chosen_player.get("games_played", 0),
-            "league": "NHL",
-            "headshot": (
-                f"https://assets.nhle.com/mugs/nhl/20252026/{chosen_player.get('team', 'NHL')}/{chosen_player.get('nhl_id', '')}.png"
-                if chosen_player.get("nhl_id") else None
-            ),
-        },
-        "auto_picked": True,
-        "auto_pick_via": via,
-        "auto_pick_source": source,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    next_pick = current_pick + 1
-    total_picks = draft["total_rounds"] * total_teams
-    new_status = "completed" if next_pick > total_picks else "active"
-    await _db().drafts.update_one(
-        {"_id": ObjectId(draft_id)},
-        {"$push": {"picks": pick_doc}, "$set": {"current_pick": next_pick, "status": new_status}},
-    )
-    await _db().teams.update_one(
-        {"_id": ObjectId(on_clock_team_id)},
-        {
-            "$addToSet": {"roster": str(chosen_player["_id"])},
-            "$pull": {"draft_queue": str(chosen_player["_id"])},
-        },
-    )
-    label = "Auto-pick" if source != "eviction" else "Eviction auto-pick"
-    msg = {
-        "id": f"autopick-{datetime.now(timezone.utc).timestamp()}",
-        "type": "pick",
-        "sender": "System",
-        "text": (
-            f"⏱ {label} — {on_clock} took {chosen_player['name']} ({chosen_player['position']}) "
-            f"at #{current_pick} (via {'queue' if via == 'queue' else 'top eligible'})"
-        ),
-        "auto_picked": True,
-        "auto_pick_via": via,
-        "auto_pick_source": source,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-    await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})
-    await _broadcast(f"draft_{draft_id}", "draft_chat", msg)
-    await _broadcast(f"draft_{draft_id}", "draft_pick", {
-        **pick_doc,
-        "next_pick": next_pick,
-        "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"]) if new_status == "active" else None,
-        "draft_complete": new_status == "completed",
-    })
-    return pick_doc
+    from routes.draft_helpers import perform_one_auto_pick as _impl
+    return await _impl(draft_id, source=source)
 
 
 @router.post("/drafts/{draft_id}/auto-pick")

@@ -8,16 +8,11 @@ Owns the per-pick mutation endpoints for live drafts:
   • POST  /api/drafts/{draft_id}/pause                  — commissioner pause
   • POST  /api/drafts/{draft_id}/seed-picks             — retroactive seeding
 
-The `_perform_one_auto_pick` helper + `auto_pick_for_on_clock_team`
-endpoint deliberately stay in drafts.py because the helper holds the
-queue / shortlist / chat-meta logic + is also called from
-`routes/admin_user_actions.py` via a local import.
-
-The two helpers we still need (`_early_start_clock_msg` and
-`_seed_draft_picks_for_draft`) are late-bound at call-time via
-`from routes import drafts` to avoid the import cycle that would
-otherwise prevent server.py from booting (server → drafts → this module
-→ drafts).
+The shared helpers `perform_one_auto_pick`, `seed_draft_picks_for_draft`,
+`early_start_clock_msg` live in `routes/draft_helpers.py` (extracted in
+iter 231n) and are imported plainly here. Iter 231m used a late-binding
+workaround because the helpers were still inside drafts.py; iter 231n
+removed that smell by moving them to a dedicated module.
 
 Wired via the `setup(deps)` injection pattern; see `server.py`.
 """
@@ -32,6 +27,11 @@ from pydantic import BaseModel, Field
 
 # Pure helpers / models that live elsewhere; safe to import at module load.
 from draft_engine import MakeDraftPickRequest, get_team_for_pick
+# Iter 231n — Direct (non-late-bound) imports of the cross-module helpers.
+from routes.draft_helpers import (
+    early_start_clock_msg,
+    seed_draft_picks_for_draft,
+)
 
 
 router = APIRouter()
@@ -65,22 +65,6 @@ async def _create_notification(*args, **kwargs):
     if fn is None:
         return None
     return await fn(*args, **kwargs)
-
-
-def _early_start_clock_msg_fn():
-    """Late-bound resolver for `routes.drafts._early_start_clock_msg`.
-
-    Imported inside the function (not at module load) to avoid the
-    server → drafts → draft_pick_actions → drafts import cycle.
-    """
-    from routes import drafts as _drafts  # noqa: WPS433
-    return _drafts._early_start_clock_msg
-
-
-def _seed_draft_picks_for_draft_fn():
-    """Same late-bound trick for the seed helper."""
-    from routes import drafts as _drafts  # noqa: WPS433
-    return _drafts._seed_draft_picks_for_draft
 
 
 # ─── Request models ───────────────────────────────────────────────
@@ -251,7 +235,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         if new_status == "active":
             # Iter 230y — Append clock-activation hint to "your turn"
             # body when running in early-start / no-clock mode.
-            early_clock_hint = await _early_start_clock_msg_fn()(draft)
+            early_clock_hint = await early_start_clock_msg(draft)
             for offset in range(0, 5):
                 future_pick = next_pick + offset
                 if future_pick > total_picks:
@@ -529,8 +513,7 @@ async def seed_draft_picks(draft_id: str, request: Request):
         raise HTTPException(status_code=403, detail="Commissioner or admin only")
 
     season = (league.get("season") or "2026").split("-")[0]
-    seed_fn = _seed_draft_picks_for_draft_fn()
-    inserted = await seed_fn(
+    inserted = await seed_draft_picks_for_draft(
         draft_id=draft_id,
         league_id=draft["league_id"],
         rounds=int(draft.get("total_rounds") or 1),

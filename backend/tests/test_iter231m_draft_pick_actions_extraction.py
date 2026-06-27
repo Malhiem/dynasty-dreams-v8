@@ -56,13 +56,17 @@ def test_perform_one_auto_pick_helper_stays_in_drafts():
     assert "async def _early_start_clock_msg" in src
 
 
-def test_draft_pick_actions_uses_late_bound_helpers():
-    """Late-binding (`from routes import drafts` inside a fn) prevents
-    the server → drafts → draft_pick_actions → drafts import cycle."""
+def test_draft_pick_actions_no_longer_late_binds():
+    """Iter 231n superseded this — the late-binding helpers were
+    removed once `draft_helpers.py` was extracted as a dedicated module.
+    Now we assert the OPPOSITE: that the late-binding workaround is
+    gone and the direct import is in place."""
     src = ACTIONS.read_text()
-    assert "def _early_start_clock_msg_fn" in src
-    assert "def _seed_draft_picks_for_draft_fn" in src
-    assert "from routes import drafts as _drafts" in src
+    assert "_early_start_clock_msg_fn" not in src
+    assert "_seed_draft_picks_for_draft_fn" not in src
+    assert "from routes import drafts as _drafts" not in src
+    # The direct import replaces it.
+    assert "from routes.draft_helpers import" in src
 
 
 def test_server_wires_draft_pick_actions_router():
