@@ -1273,7 +1273,20 @@ async def auto_init_draft(league_id: str, request: Request, commit: bool = False
     )
     default_rounds = roster_cap if roster_cap > 0 else 5
 
-    existing = await _db().drafts.find_one({"league_id": league_id}, sort=[("created_at", -1)])
+    # Iter 231f — Bug fix: previously this looked up "any" draft for the
+    # league, including ARCHIVED ones. That let the auto-init flow re-
+    # surface a deleted draft (the user "thought" they had cleaned up),
+    # and downstream start_draft happily flipped it back to `active`. We
+    # now strictly exclude archived rows so the existing-draft fast path
+    # only returns live drafts. The rogue resurrection bug is fully
+    # guarded by `test_iter231f_archived_draft_guards.py`.
+    existing = await _db().drafts.find_one(
+        {
+            "league_id": league_id,
+            "status": {"$ne": "archived"},
+        },
+        sort=[("created_at", -1)],
+    )
     if existing:
         existing_draft_id = str(existing["_id"])
         # Iter 228k — Heal legacy drafts that were auto-init'd with the
@@ -1433,6 +1446,20 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
 
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
     is_commissioner = league["commissioner_id"] == user["_id"]
+
+    # Iter 231f — Bug fix: previously start_draft happily activated
+    # archived drafts because there was no status guard. Combined with
+    # the auto_init_draft bug (which returned archived drafts as the
+    # "existing" draft), this caused chriszarek's deleted Ice Kings H2H
+    # E2E test draft to resurrect itself on 2026-06-26. We now reject
+    # archived drafts at the start endpoint as a defense-in-depth check
+    # — even if a caller somehow obtains the archived draft id, /start
+    # will refuse to activate it.
+    if draft.get("status") == "archived":
+        raise HTTPException(
+            status_code=400,
+            detail="This draft has been archived. Restore it first if you need to start it again.",
+        )
 
     # Iter 230an — Idempotency: if the draft is already active, return
     # success rather than 400. Multiple managers / browser tabs hitting
