@@ -349,10 +349,13 @@ export default function DraftRoom() {
 
   // ─── Countdown ──────────────────────────────────────────────────────────────
   // Iter 230v — Extracted to `useDraftCountdown` hook.
+  // Iter 230an — Pass `selectedDraftId` so the hook can boot the
+  // backend draft (POST /drafts/{id}/start) when scheduled time hits.
   const countdown = useDraftCountdown({
     scheduledTime: draftConfig.scheduledTime,
     draftStarted: draftConfig.draftStarted,
     setDraftConfig,
+    draftId: selectedDraftId,
   });
 
   // ─── Pick timer ─────────────────────────────────────────────────────────────

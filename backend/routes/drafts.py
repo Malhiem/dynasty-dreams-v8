@@ -70,7 +70,7 @@ def _send_email(to_email: str, subject: str, html_content: str) -> dict:
 # by appending a 2/3/… suffix so two teams that share initials (e.g.
 # "Crease Crashers" + "Checkmate Chiefs") get unique board columns.
 def _derive_team_abbr(team: dict) -> str:
-    name = team.get("name", "")
+    name = team.get("name") or ""
     override = (team.get("logo_abbr_override") or "").strip().upper()
     if override:
         return override[:4]
@@ -2284,11 +2284,46 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
         raise HTTPException(status_code=404, detail="Draft not found")
 
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can start draft")
+    is_commissioner = league["commissioner_id"] == user["_id"]
 
+    # Iter 230an — Idempotency: if the draft is already active, return
+    # success rather than 400. Multiple managers / browser tabs hitting
+    # the auto-start endpoint at the same moment is normal — the first
+    # one wins; the rest get a no-op response.
     if draft["status"] == "active":
-        raise HTTPException(status_code=400, detail="Draft already active")
+        return {"message": "Draft already active", "early_start": draft.get("early_start", False), "already_active": True}
+
+    # Iter 230an — Allow auto-start (non-commissioner trigger) ONLY when
+    # the scheduled time has elapsed. The frontend countdown hook calls
+    # this once the clock hits 0:00 so any team's manager (or
+    # commissioner, or a background worker) can boot the draft without
+    # the league owner needing to be online. Commissioners can always
+    # start at any time.
+    if not is_commissioner:
+        scheduled_at = draft.get("scheduled_time")
+        if not scheduled_at:
+            raise HTTPException(status_code=403, detail="Only commissioner can start draft")
+        try:
+            from datetime import datetime as _dt
+            sched_dt = _dt.fromisoformat(str(scheduled_at).replace("Z", "+00:00"))
+            if sched_dt.tzinfo is None:
+                sched_dt = sched_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            raise HTTPException(status_code=403, detail="Only commissioner can start draft")
+        if sched_dt > datetime.now(timezone.utc):
+            raise HTTPException(status_code=403, detail="Draft scheduled time has not yet arrived")
+
+    # Iter 230an — Refresh team_abbrs / team_map from the CURRENT set of
+    # league teams. Drafts created before all teams joined the league
+    # had stale abbr lists (e.g. TFHL's Inaugural Draft had only HC
+    # populated even after 24 teams joined). Re-derive on start so the
+    # draft proceeds with the right team set.
+    fresh_teams = await _db().teams.find({"league_id": draft["league_id"]}).to_list(200)
+    if fresh_teams and len(fresh_teams) > len(draft.get("team_abbrs") or []):
+        team_abbrs, team_map = _abbrs_with_dedup(fresh_teams)
+    else:
+        team_abbrs = draft.get("team_abbrs") or []
+        team_map = draft.get("team_map") or {}
 
     update = {
         "$set": {
@@ -2296,7 +2331,9 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
             "draft_started": True,
             "early_start": early_start,
             "current_pick": 1,
-            "started_at": datetime.now(timezone.utc).isoformat()
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "team_abbrs": team_abbrs,
+            "team_map": team_map,
         }
     }
     await _db().drafts.update_one({"_id": ObjectId(draft_id)}, update)
@@ -2305,8 +2342,8 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
     await _broadcast(f"draft_{draft_id}", "draft_started", {
         "draft_id": draft_id,
         "early_start": early_start,
-        "team_abbrs": draft["team_abbrs"],
-        "on_the_clock": draft["team_abbrs"][0] if draft["team_abbrs"] else None
+        "team_abbrs": team_abbrs,
+        "on_the_clock": team_abbrs[0] if team_abbrs else None
     })
 
     # Add system chat message
@@ -2320,76 +2357,77 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
     await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": system_msg}})
     await _broadcast(f"draft_{draft_id}", "draft_chat", system_msg)
 
-    # Iter 230y — When a commissioner starts a draft EARLY without a
-    # clock, notify the on-the-clock manager (pick #1's owner) so they
-    # know it's their turn AND that the clock will auto-activate at the
-    # originally-scheduled time. Without this hook, no notification
-    # fires until the first pick is made — which can leave the #1
-    # manager unaware they're up until someone in chat pings them.
-    if early_start:
-        try:
-            from routes.notification_events import EVT_DRAFT_YOUR_TURN, EVT_DRAFT_ON_DECK
-            updated_draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
-            clock_hint = await _early_start_clock_msg(updated_draft or draft)
-            team_abbrs = (updated_draft or draft).get("team_abbrs") or []
-            team_map = (updated_draft or draft).get("team_map") or {}
-            league_name = (updated_draft or draft).get("league_name") or ""
-            draft_name = (updated_draft or draft).get("name") or "your draft"
-            league_id_str = str(draft["league_id"])
+    # Iter 230y / 230an — Notify pick #1 (on the clock) and pick #2
+    # (on deck) the moment the draft starts. Previously this was gated
+    # behind `if early_start:` so a normal clock-started draft fired
+    # ZERO notifications until the first pick was made — leaving the
+    # first manager unaware they were up. Now ALWAYS notify the first
+    # two picks; the body adapts to early-start (clock-activation hint)
+    # vs. timer-started (standard "you're on the clock") via the
+    # `_early_start_clock_msg` helper which returns "" for non-early.
+    try:
+        from routes.notification_events import EVT_DRAFT_YOUR_TURN, EVT_DRAFT_ON_DECK
+        updated_draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+        clock_hint = await _early_start_clock_msg(updated_draft or draft)
+        team_abbrs = (updated_draft or draft).get("team_abbrs") or []
+        team_map = (updated_draft or draft).get("team_map") or {}
+        league_name = (updated_draft or draft).get("league_name") or ""
+        draft_name = (updated_draft or draft).get("name") or "your draft"
+        league_id_str = str(draft["league_id"])
 
-            # Iter 230aj — Notify BOTH pick #1 (your turn) AND pick #2
-            # (on deck) when the commissioner starts early without a
-            # clock. The on-deck manager needs the same heads-up so
-            # they can prep their pick before the clock activates.
-            # Each (event, pick_number, body_prefix) tuple drives a
-            # single notification + email pair.
-            picks_to_notify = [
-                (EVT_DRAFT_YOUR_TURN, 1, "You're on the clock!",   "Pick #1 — make your selection."),
-                (EVT_DRAFT_ON_DECK,   2, "On deck",                 "Pick #2 — you're up next."),
-            ]
-            for (event, pick_no, title, body_prefix) in picks_to_notify:
-                if pick_no > len(team_abbrs):
-                    continue  # tiny league — skip whichever notify is OOB.
-                abbr = team_abbrs[pick_no - 1]
-                team_id = (team_map.get(abbr) or {}).get("id")
-                if not team_id:
-                    continue
-                team_doc = await _db().teams.find_one(
-                    {"_id": ObjectId(team_id)},
-                    {"owner_id": 1, "co_owner_ids": 1, "name": 1},
+        # Iter 230aj — Notify BOTH pick #1 (your turn) AND pick #2 (on
+        # deck) the moment the draft boots up.
+        picks_to_notify = [
+            (EVT_DRAFT_YOUR_TURN, 1, "You're on the clock!",   "Pick #1 — make your selection."),
+            (EVT_DRAFT_ON_DECK,   2, "On deck",                 "Pick #2 — you're up next."),
+        ]
+        for (event, pick_no, title, body_prefix) in picks_to_notify:
+            if pick_no > len(team_abbrs):
+                continue  # tiny league — skip whichever notify is OOB.
+            abbr = team_abbrs[pick_no - 1]
+            team_id = (team_map.get(abbr) or {}).get("id")
+            if not team_id:
+                continue
+            team_doc = await _db().teams.find_one(
+                {"_id": ObjectId(team_id)},
+                {"owner_id": 1, "co_owner_ids": 1, "name": 1},
+            )
+            if not team_doc:
+                continue
+            owners = [team_doc.get("owner_id")] + list(team_doc.get("co_owner_ids") or [])
+            body_text = body_prefix + clock_hint
+            for uid in [u for u in owners if u]:
+                await create_notification(
+                    uid, event, title, body_text, league_id_str, "/draft-room",
                 )
-                if not team_doc:
+                # Iter 230ab — Email pipe (only for the "your turn"
+                # event — on-deck stays in-app to avoid email noise
+                # before the manager is actually on the clock).
+                if event != EVT_DRAFT_YOUR_TURN:
                     continue
-                owners = [team_doc.get("owner_id")] + list(team_doc.get("co_owner_ids") or [])
-                body_text = body_prefix + clock_hint
-                for uid in [u for u in owners if u]:
-                    await create_notification(
-                        uid, event, title, body_text, league_id_str, "/draft-room",
+                try:
+                    owner_doc = await _db().users.find_one(
+                        {"_id": ObjectId(uid)},
+                        {"email": 1, "name": 1},
                     )
-                    # Iter 230ab — Email pipe (only for the "your turn"
-                    # event — on-deck stays in-app to avoid email noise
-                    # before the manager is actually on the clock).
-                    if event != EVT_DRAFT_YOUR_TURN:
-                        continue
-                    try:
-                        owner_doc = await _db().users.find_one(
-                            {"_id": ObjectId(uid)},
-                            {"email": 1, "name": 1},
+                    if owner_doc and owner_doc.get("email"):
+                        subj = f"You're on the clock — {draft_name}"
+                        clock_note = (
+                            f" {clock_hint.strip()}" if (early_start and clock_hint)
+                            else " The clock is running — make your selection in the Draft Room."
                         )
-                        if owner_doc and owner_doc.get("email"):
-                            subj = f"You're on the clock — {draft_name}"
-                            html = (
-                                f"<p>Hi {owner_doc.get('name') or 'manager'},</p>"
-                                f"<p>The commissioner has started <b>{draft_name}</b>"
-                                f"{(' in ' + league_name) if league_name else ''} <b>without the clock</b>.</p>"
-                                f"<p>You're up for <b>Pick #{pick_no}</b>. {clock_hint.strip() or 'Make your selection.'}</p>"
-                                f"<p><a href=\"/draft-room\">Open the Draft Room →</a></p>"
-                            )
-                            _send_email(owner_doc["email"], subj, html)
-                    except Exception as e:
-                        logger.debug(f"start_draft early_start email skipped for {uid}: {e}")
-        except Exception as e:
-            logger.debug(f"start_draft early_start notification skipped: {e}")
+                        html = (
+                            f"<p>Hi {owner_doc.get('name') or 'manager'},</p>"
+                            f"<p><b>{draft_name}</b>"
+                            f"{(' in ' + league_name) if league_name else ''} has started.</p>"
+                            f"<p>You're up for <b>Pick #{pick_no}</b>.{clock_note}</p>"
+                            f"<p><a href=\"/draft-room\">Open the Draft Room →</a></p>"
+                        )
+                        _send_email(owner_doc["email"], subj, html)
+                except Exception as e:
+                    logger.debug(f"start_draft email skipped for {uid}: {e}")
+    except Exception as e:
+        logger.debug(f"start_draft notification skipped: {e}")
 
     return {"message": "Draft started", "early_start": early_start}
 
@@ -2524,6 +2562,21 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         "draft_complete": new_status == "completed",
     })
 
+    # Iter 230an — Build the system chat message BEFORE the notification
+    # fan-out so the EVT_DRAFT_PICK_MADE body can reference `pick_msg`
+    # without crashing the try/except (which would swallow the entire
+    # block — including the on-deck / coming-up notifications that
+    # depend on it).
+    pick_msg = {
+        "id": f"pick-{current_pick}",
+        "type": "pick",
+        "sender": "System",
+        "text": f"Pick #{current_pick} (Rd {round_num}, Pick {pick_in_round}): {on_clock} selects {player['name']} ({player['position']})",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
+    await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": pick_msg}})
+    await _broadcast(f"draft_{draft_id}", "draft_chat", pick_msg)
+
     # Iter 230 — In-app notifications for draft events. Fan out
     # "any pick made" league-wide (off-by-default), then the targeted
     # "your turn"/"on deck"/"coming up within 5" notifications for
@@ -2560,7 +2613,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
                     "Draft pick made",
                     pick_msg["text"],
                     league_id_str,
-                    f"/draft-room",
+                    "/draft-room",
                 )
 
         # 2. Look ahead — find the next 5 picks and notify their owners
@@ -2604,17 +2657,6 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
                     )
     except Exception as e:
         logger.debug(f"draft pick notifications skipped: {e}")
-
-    # System chat for the pick
-    pick_msg = {
-        "id": f"pick-{current_pick}",
-        "type": "pick",
-        "sender": "System",
-        "text": f"Pick #{current_pick} (Rd {round_num}, Pick {pick_in_round}): {on_clock} selects {player['name']} ({player['position']})",
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-    await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": pick_msg}})
-    await _broadcast(f"draft_{draft_id}", "draft_chat", pick_msg)
 
     if new_status == "completed":
         complete_msg = {
