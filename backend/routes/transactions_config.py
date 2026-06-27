@@ -165,6 +165,49 @@ class DraftClaimRules(BaseModel):
     allow_drops_during_draft: bool = False
 
 
+# Iter 231g — Trades configuration. Surfaces every knob the user
+# requested under League Administration → Transactions → Trades. Read
+# by `routes/trades.py` (state machine, voting, eligibility checks).
+# Legacy `league.trade_review_period_hours` / `trade_veto_threshold_pct`
+# top-level fields are kept for backward compat but the trade engine now
+# prefers `transactions_config.trades.*` when present.
+
+TradeVotingSystem = Literal["managers", "commissioners", "both"]
+
+
+class TradesConfig(BaseModel):
+    # Review window (proposer ↔ recipient ↔ league). Hours.
+    review_period_hours: int = Field(default=72, ge=0, le=336)  # 0–14 days
+    # NUMBER of teams that must vote No to veto (replaces the old % field).
+    # Multiple owners of the same team still count as one vote.
+    veto_threshold_teams: int = Field(default=4, ge=0, le=50)
+    # Cap on simultaneously pending + completed trades per team per season.
+    # `None` = unlimited.
+    max_trades_per_team: Optional[int] = Field(default=None, ge=1, le=50)
+    # Voting roster — who can cast vetoes.
+    voting_system: TradeVotingSystem = "managers"
+    # If true, vote counts (per side) are shown but individual ballots
+    # are not attributed publicly. Commissioners always see the roster.
+    anonymous_voting: bool = True
+    # Lock trades at the moment the first NHL game of the day starts
+    # (mirrors waiver lock behaviour).
+    lock_at_first_game: bool = False
+    # Draft-window allowances.
+    allow_before_draft: bool = True
+    allow_during_draft: bool = False
+    # If false, the trade engine rejects executions that would leave
+    # either roster in an illegal state (too few skaters, over cap, etc).
+    allow_illegal_rosters: bool = False
+    # If true, the comments thread on a pending trade is visible to every
+    # league manager (gossip mode). Otherwise only the two trading teams
+    # + commissioners see it.
+    comments_visible_to_all: bool = False
+    # Master toggle for conditional trades (player A if team X makes
+    # playoffs, etc.). Engine support shipped iter 211; this flag
+    # controls whether managers can author them.
+    conditional_trades_enabled: bool = False
+
+
 class TransactionsConfig(BaseModel):
     """Full envelope returned by GET / accepted by PUT."""
     claim_limits: ClaimLimits = Field(default_factory=ClaimLimits)
@@ -172,6 +215,8 @@ class TransactionsConfig(BaseModel):
     free_agency: FreeAgency = Field(default_factory=FreeAgency)
     waiver: WaiverConfig = Field(default_factory=WaiverConfig)
     draft_claims: DraftClaimRules = Field(default_factory=DraftClaimRules)
+    # Iter 231g
+    trades: TradesConfig = Field(default_factory=TradesConfig)
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────

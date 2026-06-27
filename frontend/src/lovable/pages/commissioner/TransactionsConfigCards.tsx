@@ -80,6 +80,20 @@ const DEFAULT_CFG = {
     allow_claims_before_draft: false,
     allow_drops_during_draft: false,
   },
+  // Iter 231g — Trades configuration
+  trades: {
+    review_period_hours: 72,
+    veto_threshold_teams: 4,
+    max_trades_per_team: null,
+    voting_system: "managers",
+    anonymous_voting: true,
+    lock_at_first_game: false,
+    allow_before_draft: true,
+    allow_during_draft: false,
+    allow_illegal_rosters: false,
+    comments_visible_to_all: false,
+    conditional_trades_enabled: false,
+  },
 };
 
 function deepMerge(base, override) {
@@ -1263,6 +1277,7 @@ export default function TransactionsConfigCards({ leagueId, leagueTeams }) {
       <ClaimRulesCard cfg={cfg} setCfg={setCfg} />
       <FreeAgencyCard cfg={cfg} setCfg={setCfg} leagueTeams={leagueTeams || []} />
       <WaiverWireCard cfg={cfg} setCfg={setCfg} leagueTeams={leagueTeams || []} />
+      <TradesConfigCard cfg={cfg} setCfg={setCfg} totalTeams={(leagueTeams || []).length} />
       <div className="flex justify-end">
         <Button onClick={() => save(cfg)} disabled={saving} className="gap-2" data-testid="transactions-bottom-save-btn">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -1270,5 +1285,266 @@ export default function TransactionsConfigCards({ leagueId, leagueTeams }) {
         </Button>
       </div>
     </div>
+  );
+}
+
+
+/* ───────────── Iter 231g — Trades configuration card ────────────────
+ *
+ * Single card grouping every trade-related knob the Commissioner needs.
+ * Mounted in the Transactions tab between Waiver Wire and the Save row.
+ * All controls bind into `cfg.trades.*` and persist via the shared
+ * useTransactionsConfig hook. The trade engine (routes/trades.py) reads
+ * from `transactions_config.trades.*` with fallback to the legacy
+ * top-level league fields for backward compat.
+ */
+export function TradesConfigCard({ cfg, setCfg, totalTeams }) {
+  const t = cfg.trades || DEFAULT_CFG.trades;
+  const set = (key) => (val) =>
+    setCfg((prev) => ({ ...prev, trades: { ...(prev.trades || DEFAULT_CFG.trades), [key]: val } }));
+
+  const maxTradesUnlimited = t.max_trades_per_team === null || t.max_trades_per_team === undefined;
+
+  return (
+    <Card className="bg-card border-border" data-testid="transactions-trades-card">
+      <CardHeader>
+        <CardTitle>
+          Trades
+          <InfoHint
+            testId="info-trades-card"
+            text="Controls how trades flow through the league — review window, voting, draft-window rules, and what happens to illegal rosters."
+          />
+        </CardTitle>
+        <CardDescription>
+          Configure the trade lifecycle: review period, veto voting, per-team caps, and pre/in-draft allowances.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* Review period + veto threshold */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="trade-review-hours" className="text-sm">
+              Review period (hours)
+              <InfoHint
+                testId="info-trade-review-hours"
+                text="How long a trade sits in Pending Review after both sides accept. League members can vote to veto during this window."
+              />
+            </Label>
+            <Input
+              id="trade-review-hours"
+              type="number"
+              min={0}
+              max={336}
+              value={t.review_period_hours}
+              onChange={(e) => set("review_period_hours")(Math.max(0, Math.min(336, Number(e.target.value) || 0)))}
+              data-testid="trade-review-hours-input"
+            />
+            <p className="text-xs text-muted-foreground">0 = process immediately. Up to 14 days (336h).</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="trade-veto-teams" className="text-sm">
+              Veto threshold (number of teams)
+              <InfoHint
+                testId="info-trade-veto-teams"
+                text="How many distinct teams must vote No to veto a trade. Multiple owners of the same team count as one vote."
+              />
+            </Label>
+            <Input
+              id="trade-veto-teams"
+              type="number"
+              min={0}
+              max={50}
+              value={t.veto_threshold_teams}
+              onChange={(e) => set("veto_threshold_teams")(Math.max(0, Math.min(50, Number(e.target.value) || 0)))}
+              data-testid="trade-veto-teams-input"
+            />
+            <p className="text-xs text-muted-foreground">
+              0 = no vetoes allowed. Currently {totalTeams || "—"} teams in this league.
+            </p>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Max trades per team */}
+        <div className="space-y-2">
+          <Label className="text-sm">
+            Maximum trades per team (season)
+            <InfoHint
+              testId="info-trade-max-per-team"
+              text="Cap the number of trades a team can execute in one season. Unlimited removes the cap entirely."
+            />
+          </Label>
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={maxTradesUnlimited}
+              onCheckedChange={(checked) => set("max_trades_per_team")(checked ? null : 10)}
+              id="trade-max-unlimited"
+              data-testid="trade-max-unlimited-switch"
+            />
+            <Label htmlFor="trade-max-unlimited" className="cursor-pointer text-sm">Unlimited</Label>
+            <Input
+              type="number"
+              min={1}
+              max={50}
+              value={maxTradesUnlimited ? "" : t.max_trades_per_team}
+              onChange={(e) => set("max_trades_per_team")(Math.max(1, Math.min(50, Number(e.target.value) || 1)))}
+              disabled={maxTradesUnlimited}
+              className="w-32"
+              placeholder="e.g. 10"
+              data-testid="trade-max-per-team-input"
+            />
+            <span className="text-xs text-muted-foreground">trades per team (1–50)</span>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Voting system + anonymous */}
+        <div className="space-y-2">
+          <Label className="text-sm">
+            Trade voting system
+            <InfoHint
+              testId="info-trade-voting-system"
+              text="Who is eligible to cast veto votes during the review window."
+            />
+          </Label>
+          <RadioGroup
+            value={t.voting_system}
+            onValueChange={set("voting_system")}
+            className="flex flex-wrap gap-4"
+            data-testid="trade-voting-system-group"
+          >
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <RadioGroupItem value="managers" data-testid="trade-voting-managers" /> Managers (team owners)
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <RadioGroupItem value="commissioners" data-testid="trade-voting-commissioners" /> Commissioners only
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <RadioGroupItem value="both" data-testid="trade-voting-both" /> Both (managers + commissioners)
+            </label>
+          </RadioGroup>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Switch
+            checked={t.anonymous_voting}
+            onCheckedChange={set("anonymous_voting")}
+            id="trade-anon-voting"
+            data-testid="trade-anonymous-voting-switch"
+          />
+          <Label htmlFor="trade-anon-voting" className="cursor-pointer text-sm">
+            Anonymous voting
+            <InfoHint
+              testId="info-trade-anonymous"
+              text="When on, individual ballots aren't publicly attributed — only the running vote count is shown. Commissioners always see who voted."
+            />
+          </Label>
+        </div>
+
+        <Separator />
+
+        {/* Lock & draft window rules */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-y-4 gap-x-6">
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={t.lock_at_first_game}
+              onCheckedChange={set("lock_at_first_game")}
+              id="trade-lock-first-game"
+              data-testid="trade-lock-first-game-switch"
+            />
+            <Label htmlFor="trade-lock-first-game" className="cursor-pointer text-sm">
+              Lock trades at first game of day
+              <InfoHint
+                testId="info-trade-lock-first-game"
+                text="Once the day's first NHL puck drops, no new trade proposals can be created until tomorrow."
+              />
+            </Label>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={t.allow_before_draft}
+              onCheckedChange={set("allow_before_draft")}
+              id="trade-allow-before-draft"
+              data-testid="trade-allow-before-draft-switch"
+            />
+            <Label htmlFor="trade-allow-before-draft" className="cursor-pointer text-sm">
+              Allow trades before the draft
+              <InfoHint
+                testId="info-trade-before-draft"
+                text="Permits pre-draft pick swaps. Off = trade window opens only after the draft completes."
+              />
+            </Label>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={t.allow_during_draft}
+              onCheckedChange={set("allow_during_draft")}
+              id="trade-allow-during-draft"
+              data-testid="trade-allow-during-draft-switch"
+            />
+            <Label htmlFor="trade-allow-during-draft" className="cursor-pointer text-sm">
+              Allow trades during the draft
+              <InfoHint
+                testId="info-trade-during-draft"
+                text="Permits live pick swaps mid-draft (advanced). Off = trade engine pauses while a draft is active."
+              />
+            </Label>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={t.allow_illegal_rosters}
+              onCheckedChange={set("allow_illegal_rosters")}
+              id="trade-allow-illegal"
+              data-testid="trade-allow-illegal-rosters-switch"
+            />
+            <Label htmlFor="trade-allow-illegal" className="cursor-pointer text-sm">
+              Allow execution with illegal rosters
+              <InfoHint
+                testId="info-trade-illegal-rosters"
+                text="When on, trades execute even if either team is left over the salary cap, short on skaters, or otherwise non-compliant. The roster monitor will flag the team for cleanup."
+              />
+            </Label>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={t.comments_visible_to_all}
+              onCheckedChange={set("comments_visible_to_all")}
+              id="trade-comments-public"
+              data-testid="trade-comments-public-switch"
+            />
+            <Label htmlFor="trade-comments-public" className="cursor-pointer text-sm">
+              Trade comments visible to all managers
+              <InfoHint
+                testId="info-trade-comments-public"
+                text="When on, every league manager can read the comment thread on pending trades. Off = only the two trading teams + commissioners see comments."
+              />
+            </Label>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Switch
+              checked={t.conditional_trades_enabled}
+              onCheckedChange={set("conditional_trades_enabled")}
+              id="trade-conditional"
+              data-testid="trade-conditional-switch"
+            />
+            <Label htmlFor="trade-conditional" className="cursor-pointer text-sm">
+              Enable conditional trades
+              <InfoHint
+                testId="info-trade-conditional"
+                text="Managers may attach conditions (e.g. pick upgrades if a team makes playoffs) when authoring a trade. The trade engine resolves conditions automatically at the trigger date."
+              />
+            </Label>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
