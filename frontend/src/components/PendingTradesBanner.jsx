@@ -90,9 +90,9 @@ function TradeRow({ trade, sideLabel, icon: Icon, snoozable, onSnooze }) {
           type="button"
           onClick={handleSnoozeClick}
           data-testid={`pending-trade-snooze-mobile-${trade.trade_id}`}
-          className="sm:hidden mt-1 ml-7 inline-flex items-center gap-1 text-xs text-[#A1A1AA] hover:text-amber-300 px-2 py-1 rounded border border-white/10 hover:border-amber-400/40 transition-colors"
+          className="sm:hidden mt-1 ml-7 inline-flex items-center gap-1.5 text-xs text-[#A1A1AA] hover:text-amber-300 px-3 py-2 rounded border border-white/10 hover:border-amber-400/40 transition-colors min-h-[44px]"
         >
-          <BellOff className="h-3 w-3" />
+          <BellOff className="h-3.5 w-3.5" />
           Snooze 24h
         </button>
       )}
