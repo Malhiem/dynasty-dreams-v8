@@ -23,6 +23,10 @@ Frontend:
 from pathlib import Path
 
 DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
+# Iter 231k — Draft Queue / Shortlist endpoints extracted to their own
+# module so we can keep ratcheting drafts.py down. Tests now read from
+# the new module.
+DRAFT_QUEUE_ROUTE = Path("/app/backend/routes/draft_queue.py")
 # Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* decomposed across
 # many iterations. Use the shared shim that concatenates every file that
 # contributes to the runtime draft room behaviour.
@@ -57,19 +61,18 @@ def test_auto_pick_endpoint_present_and_queue_first():
 
 
 def test_draft_queue_put_validates_owner_or_commissioner():
-    src = DRAFTS_ROUTE.read_text()
+    src = DRAFT_QUEUE_ROUTE.read_text()
     assert '@router.put("/teams/{team_id}/draft-queue")' in src
     block = src.split("async def update_team_draft_queue")[1].split("@router.get")[0]
     # Owner OR commissioner gate.
     assert 'is_owner = team.get("owner_id") == user["_id"]' in block
     assert 'is_comm = league and league.get("commissioner_id") == user["_id"]' in block
-    # Dedupe + cap.
-    assert "if pid not in seen:" in block
-    assert "len(cleaned) >= 100" in block
+    # Dedupe + cap (Iter 231k — extracted into _dedupe_capped helper).
+    assert '_dedupe_capped(payload.player_ids, cap=100)' in block
 
 
 def test_draft_queue_get_endpoint_present():
-    src = DRAFTS_ROUTE.read_text()
+    src = DRAFT_QUEUE_ROUTE.read_text()
     assert '@router.get("/teams/{team_id}/draft-queue")' in src
 
 

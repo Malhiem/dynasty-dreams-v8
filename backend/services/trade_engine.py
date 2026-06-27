@@ -801,6 +801,22 @@ async def _execute_multi_party_trade(trade: dict) -> dict:
     except Exception:
         pass
     await _post_trade_chat_messages(trade, moves)
+    # Iter 231k — Real-time multi-party toast.
+    sio = _deps.get("sio")
+    if sio is not None:
+        try:
+            names = " ↔ ".join(p["team_name"] for p in parties)
+            await sio.emit("trade_processed", {
+                "league_id": league_id,
+                "trade_id": str(trade.get("_id")),
+                "proposer_team_name": parties[0]["team_name"] if parties else None,
+                "target_team_name": parties[1]["team_name"] if len(parties) > 1 else None,
+                "is_multi_party": True,
+                "all_team_names": names,
+                "asset_count": sum(len(p.get("sends") or []) for p in parties),
+            })
+        except Exception as e:
+            _logger().debug(f"trade_processed multi-party sio.emit skipped: {e}")
     # Initial pick-upgrade eval. Mid-season / not-yet-finalized triggers stay
     # pending and re-evaluate on every award toggle + weekly simulation.
     refreshed = await _db().trades.find_one({"_id": trade["_id"]})
@@ -1042,6 +1058,27 @@ async def _execute_trade(trade: dict) -> dict:
                 )
             except Exception:
                 pass
+
+        # Iter 231k — Real-time toast: emit a global Socket.IO event so
+        # every league owner sees a live confirmation toast the moment
+        # a pending trade auto-processes. Mirrors the championship_crowned
+        # pattern (no room arg → broadcasts globally). Frontend filters
+        # by league_id in the dashboard banner reload.
+        sio = _deps.get("sio")
+        if sio is not None:
+            try:
+                await sio.emit("trade_processed", {
+                    "league_id": league_id,
+                    "trade_id": str(trade.get("_id")),
+                    "proposer_team_name": trade.get("proposer_team_name"),
+                    "target_team_name": trade.get("target_team_name"),
+                    "asset_count": (
+                        len(trade.get("assets_offered") or [])
+                        + len(trade.get("assets_requested") or [])
+                    ),
+                })
+            except Exception as e:
+                _logger().debug(f"trade_processed sio.emit skipped: {e}")
     except Exception as e:
         _logger().debug(f"trade_processed fanout skipped: {e}")
 

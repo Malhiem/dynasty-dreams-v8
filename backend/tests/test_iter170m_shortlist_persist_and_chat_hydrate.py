@@ -17,6 +17,8 @@ Frontend changes:
 from pathlib import Path
 
 DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
+# Iter 231k — Shortlist endpoints extracted to routes/draft_queue.py.
+DRAFT_QUEUE_ROUTE = Path("/app/backend/routes/draft_queue.py")
 # Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* decomposed across
 # many iterations. Use the shared shim that concatenates every file that
 # contributes to the runtime draft room behaviour.
@@ -25,16 +27,15 @@ DRAFT_ROOM = DraftRoomFamilyShim()
 
 
 def test_shortlist_endpoints_present_and_validated():
-    src = DRAFTS_ROUTE.read_text()
+    src = DRAFT_QUEUE_ROUTE.read_text()
     assert '@router.put("/teams/{team_id}/shortlist")' in src
     assert '@router.get("/teams/{team_id}/shortlist")' in src
     block = src.split("async def update_team_shortlist")[1].split("@router.get")[0]
     # Same owner-or-commissioner gate as draft-queue.
     assert 'is_owner = team.get("owner_id") == user["_id"]' in block
     assert 'is_comm = league and league.get("commissioner_id") == user["_id"]' in block
-    # Dedupe + 200-entry cap.
-    assert "if pid not in seen:" in block
-    assert "len(cleaned) >= 200" in block
+    # Dedupe + 200-entry cap (Iter 231k — extracted into _dedupe_capped helper).
+    assert '_dedupe_capped(payload.player_ids, cap=200)' in block
     # Persists onto team.shortlist.
     assert '"$set": {"shortlist": cleaned}' in block
 

@@ -80,12 +80,14 @@ export default function DashboardPage() {
     <div data-testid="dashboard-page">
       <div className="max-w-7xl mx-auto">
         {/* Welcome Section */}
-        <div className="mb-8 flex items-start justify-between gap-4 flex-wrap">
+        <div className="mb-6 sm:mb-8 flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="font-heading text-4xl sm:text-5xl font-bold tracking-tight text-white mb-2">
+            {/* Iter 231k — Mobile-friendly heading: text-3xl on small screens
+                so "WELCOME BACK, <USERNAME>" fits on 1-2 lines instead of 3+. */}
+            <h1 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white mb-2">
               WELCOME BACK, {user?.name?.toUpperCase()}
             </h1>
-            <p className="text-[#A1A1AA]">Here's your dynasty at a glance</p>
+            <p className="text-sm sm:text-base text-[#A1A1AA]">Here&apos;s your dynasty at a glance</p>
           </div>
           <div className="w-full sm:w-80">
             <FantasyLevelBadge />

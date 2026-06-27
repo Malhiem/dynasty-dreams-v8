@@ -283,27 +283,32 @@ export default function TradeDetail() {
           </CardContent>
         </Card>
 
-        {/* Action row */}
+        {/* Action row — Iter 231k: mobile-friendly. On small screens the
+            buttons stack full-width with a comfortable 44px+ touch target
+            and the Accept button is sticky-bottom-stacked so it's always
+            within thumb reach. */}
         {(canRespond || canCancel) && (
-          <div className="flex flex-wrap gap-2 justify-end" data-testid="trade-detail-actions">
+          <div
+            className="flex flex-col-reverse sm:flex-row gap-2 sm:justify-end sticky bottom-0 sm:static bg-[#0A0A0A]/95 sm:bg-transparent backdrop-blur-sm sm:backdrop-blur-none -mx-4 sm:mx-0 px-4 sm:px-0 py-3 sm:py-0 border-t border-white/10 sm:border-0"
+            data-testid="trade-detail-actions"
+          >
             {canRespond && (
               <>
                 <Button
                   variant="destructive"
-                  size="sm"
                   onClick={handleReject}
                   disabled={acting !== ""}
                   data-testid="trade-detail-reject-btn"
+                  className="w-full sm:w-auto min-h-[44px]"
                 >
                   {acting === "reject" ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <X className="h-4 w-4 mr-1.5" />}
                   {showRejectInput ? "Confirm Reject" : "Reject"}
                 </Button>
                 <Button
-                  size="sm"
                   onClick={handleAccept}
                   disabled={acting !== ""}
                   data-testid="trade-detail-accept-btn"
-                  className="bg-green-500/20 hover:bg-green-500/30 text-green-300"
+                  className="bg-green-500/20 hover:bg-green-500/30 text-green-300 w-full sm:w-auto min-h-[44px]"
                 >
                   {acting === "accept" ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Check className="h-4 w-4 mr-1.5" />}
                   Accept
@@ -313,10 +318,10 @@ export default function TradeDetail() {
             {canCancel && (
               <Button
                 variant="outline"
-                size="sm"
                 onClick={handleCancel}
                 disabled={acting !== ""}
                 data-testid="trade-detail-cancel-btn"
+                className="w-full sm:w-auto min-h-[44px]"
               >
                 {acting === "cancel" ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <X className="h-4 w-4 mr-1.5" />}
                 Cancel Proposal

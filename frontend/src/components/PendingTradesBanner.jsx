@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '@/lib/api';
-import { ArrowRightLeft, Clock, AlertCircle } from 'lucide-react';
+import { ArrowRightLeft, Clock, AlertCircle, ChevronRight } from 'lucide-react';
 
 function relativeTime(iso) {
   if (!iso) return '';
@@ -39,7 +39,7 @@ function TradeRow({ trade, sideLabel, icon: Icon }) {
     <Link
       to={`/transactions/trade/${trade.trade_id}`}
       data-testid={`pending-trade-row-${trade.trade_id}`}
-      className="flex items-center gap-3 rounded-md bg-white/5 hover:bg-white/10 transition-colors px-3 py-2 group"
+      className="flex items-center gap-3 rounded-md bg-white/5 hover:bg-white/10 active:bg-white/15 transition-colors px-3 py-2.5 sm:py-2 group min-h-[48px]"
     >
       <Icon className="h-4 w-4 text-[#00D2FF] shrink-0" />
       <div className="min-w-0 flex-1">
@@ -55,9 +55,9 @@ function TradeRow({ trade, sideLabel, icon: Icon }) {
           {!trade.processes_at && trade.submitted_at ? ` · proposed ${relativeTime(trade.submitted_at)}` : ''}
         </p>
       </div>
-      <span className="text-xs text-[#00D2FF] opacity-0 group-hover:opacity-100 transition-opacity">
-        Open →
-      </span>
+      {/* Iter 231k — Always-visible chevron affords tappability on touch devices
+          (the desktop "Open →" hover hint was invisible to mobile users). */}
+      <ChevronRight className="h-4 w-4 text-[#52525B] group-hover:text-[#00D2FF] transition-colors shrink-0" />
     </Link>
   );
 }

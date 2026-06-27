@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { NotificationsPanel } from "@/components/NotificationsPanel";
 import { useGlobalSocketEvent } from "@/hooks/use-global-socket";
 import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
 import GlobalTradeBuilder from "@/lovable/components/trade/GlobalTradeBuilder";
 import AppPreferencesMenu from "./AppPreferencesMenu";
 import TradeDeadlineRibbon from "@/lovable/components/TradeDeadlineRibbon";
@@ -15,6 +16,7 @@ import BannedUserBanner from "@/components/BannedUserBanner";
 
 export function AppLayout({ children, onSettingsClick }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   // Real-time championship / consolation toasts (app-wide)
   useGlobalSocketEvent("championship_crowned", (payload) => {
@@ -29,6 +31,25 @@ export function AppLayout({ children, onSettingsClick }) {
     toast(`🎖 ${payload?.team_name || "A team"} won the consolation bracket`, {
       description: payload?.applied_steps?.[0] || "Prize recorded",
       duration: 7000,
+    });
+  });
+
+  // Iter 231k — Real-time toast when a pending trade auto-processes.
+  // Surfaces league-wide for every connected manager so users watching
+  // the review window see the resolution the moment it lands.
+  useGlobalSocketEvent("trade_processed", (payload) => {
+    const desc = payload?.is_multi_party
+      ? payload?.all_team_names || "Multi-team trade"
+      : `${payload?.proposer_team_name || "Team A"} ↔ ${payload?.target_team_name || "Team B"}`;
+    toast.success("Trade just executed", {
+      description: desc,
+      duration: 7000,
+      action: payload?.trade_id
+        ? {
+            label: "View",
+            onClick: () => navigate(`/transactions/trade/${payload.trade_id}`),
+          }
+        : undefined,
     });
   });
 
