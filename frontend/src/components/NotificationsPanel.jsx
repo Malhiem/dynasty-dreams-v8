@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Bell, Check, CheckCheck, ArrowRightLeft, Clock, Trophy, Users, Calendar, Settings, AlertTriangle, Megaphone, Info, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
+// Iter 230as — Removed shadcn <ScrollArea> import; the panel now uses a
+// native overflow-y-auto div so it flex-shrinks reliably inside the
+// `absolute` / `fixed` positioned wrapper on small viewports.
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -207,8 +209,11 @@ export function NotificationsPanel() {
       </Button>
 
       {open && (
-        <div className="absolute right-0 top-12 w-96 bg-[#141414] border border-white/10 rounded-lg shadow-2xl z-50" data-testid="notifications-panel">
-          <div className="flex items-center justify-between p-4 border-b border-white/10">
+        <div
+          className="fixed sm:absolute right-2 sm:right-0 left-2 sm:left-auto top-14 sm:top-12 sm:w-96 bg-[#141414] border border-white/10 rounded-lg shadow-2xl z-50 flex flex-col max-h-[calc(100vh-5rem)] sm:max-h-[calc(100vh-6rem)]"
+          data-testid="notifications-panel"
+        >
+          <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
             <h3 className="font-semibold text-white">Notifications</h3>
             <div className="flex items-center gap-1">
               {unreadCount > 0 && (
@@ -228,7 +233,16 @@ export function NotificationsPanel() {
               </Button>
             </div>
           </div>
-          <ScrollArea className="max-h-[400px]">
+          {/* Iter 230as — Use a native scroller capped to the
+              remaining viewport space (computed via the flex parent's
+              max-h) so the panel never overflows the screen in
+              portrait OR landscape. shadcn's <ScrollArea> doesn't
+              flex-shrink reliably inside an `absolute` container, so
+              we use overflow-y-auto directly. */}
+          <div
+            className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
+            data-testid="notifications-panel-scroll"
+          >
             {notifications.length === 0 ? (
               <div className="p-8 text-center text-[#A1A1AA]">
                 <Bell className="h-8 w-8 mx-auto mb-2 opacity-50" />
@@ -303,7 +317,7 @@ export function NotificationsPanel() {
                 })}
               </div>
             )}
-          </ScrollArea>
+          </div>
         </div>
       )}
 
