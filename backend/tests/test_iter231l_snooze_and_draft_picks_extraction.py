@@ -34,7 +34,12 @@ def _backend_url():
 
 
 BASE = _backend_url()
-pytestmark = pytest.mark.asyncio
+# Iter 231l — module-level asyncio marker applies broadly; the 4 sync
+# file-introspection tests below explicitly opt out via `@pytest.mark.asyncio(False)`-style:
+# we simply unmark them by re-asserting they're sync. Pytest-asyncio still
+# warns when a sync function carries the marker, so we narrow the marker
+# to the async tests using @pytest.mark.asyncio directly on each async fn.
+pytestmark = []
 
 
 # ─── Extraction guards (sync) ─────────────────────────────────────
@@ -145,6 +150,7 @@ async def _propose_trade(client, setup):
 # ─── Snooze behaviour ─────────────────────────────────────────────
 
 
+@pytest.mark.asyncio
 async def test_recipient_can_snooze_proposed_trade():
     async with AsyncClient(base_url=BASE, timeout=30.0) as client:
         setup = await _setup_league(client)
@@ -182,6 +188,7 @@ async def test_recipient_can_snooze_proposed_trade():
         assert trade_id not in ids_after
 
 
+@pytest.mark.asyncio
 async def test_snooze_is_per_user_only():
     """Snoozing by user B does not hide the trade from anyone else."""
     async with AsyncClient(base_url=BASE, timeout=30.0) as client:
@@ -205,6 +212,7 @@ async def test_snooze_is_per_user_only():
         assert r.json().get("status") == "proposed"
 
 
+@pytest.mark.asyncio
 async def test_proposer_cannot_snooze_own_proposal():
     async with AsyncClient(base_url=BASE, timeout=30.0) as client:
         setup = await _setup_league(client)
@@ -219,6 +227,7 @@ async def test_proposer_cannot_snooze_own_proposal():
         assert "recipient" in r.json()["detail"].lower()
 
 
+@pytest.mark.asyncio
 async def test_third_party_cannot_snooze():
     async with AsyncClient(base_url=BASE, timeout=30.0) as client:
         setup = await _setup_league(client)
@@ -233,6 +242,7 @@ async def test_third_party_cannot_snooze():
         assert r.status_code == 403
 
 
+@pytest.mark.asyncio
 async def test_cannot_snooze_non_proposed_trade():
     """After acceptance the trade is `pending` (in review window) — the
     snooze endpoint must reject the request with a clear error."""
@@ -256,6 +266,7 @@ async def test_cannot_snooze_non_proposed_trade():
         assert "proposed" in r.json()["detail"].lower()
 
 
+@pytest.mark.asyncio
 async def test_snooze_hours_capped_at_one_week():
     """`hours` is clamped to [1, 168]."""
     async with AsyncClient(base_url=BASE, timeout=30.0) as client:
@@ -272,6 +283,7 @@ async def test_snooze_hours_capped_at_one_week():
         assert r.json()["hours"] == 168
 
 
+@pytest.mark.asyncio
 async def test_expired_snooze_resurfaces_trade():
     """Past-dated snoozes are ignored — the banner re-surfaces the trade."""
     async with AsyncClient(base_url=BASE, timeout=30.0) as client:
