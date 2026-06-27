@@ -15,6 +15,8 @@ export default function SwipeableNotificationRow({
   notification,
   onMarkRead,
   onDelete,
+  showOnboardingHint = false,
+  onHintShown,
   children,
 }) {
   const isRead = !!notification.read;
@@ -22,6 +24,8 @@ export default function SwipeableNotificationRow({
     <SwipeableRow
       testId={`notif-swipe-row-${notification._id}`}
       keepOnRight
+      showOnboardingHint={showOnboardingHint}
+      onHintShown={onHintShown}
       rightAction={{
         label: "Mark read",
         icon: <Check className="h-4 w-4" />,

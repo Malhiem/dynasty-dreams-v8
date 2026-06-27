@@ -29,10 +29,14 @@
  *   - keepOnLeft:    same flag for the left side.
  *   - testId:        forwarded to the outer wrapper
  */
-import { useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 const COMMIT_THRESHOLD_PX = 80;
 const TAP_TOLERANCE_PX = 8;
+// Iter 230aw — How far the row drifts in each direction during the
+// onboarding hint pulse. Just enough to reveal the backdrop colour +
+// label, never enough to trip the commit threshold.
+const HINT_PEEK_PX = 56;
 
 export default function SwipeableRow({
   rightAction = null,
@@ -42,6 +46,15 @@ export default function SwipeableRow({
   keepOnRight = true,
   keepOnLeft = false,
   testId,
+  // Iter 230aw — When true (and the row is enabled for at least one
+  // direction), the row animates a quick right-peek → centre →
+  // left-peek → centre pulse on mount so first-time mobile users see
+  // both action backdrops and learn the gesture exists. Set by the
+  // parent only for the FIRST row in a list, and only when the user
+  // hasn't dismissed the hint for that surface yet (see
+  // `useOnboardingHint` helper).
+  showOnboardingHint = false,
+  onHintShown,
   children,
 }) {
   const wrapperRef = useRef(null);
@@ -84,6 +97,44 @@ export default function SwipeableRow({
 
   const rightDisabled = !rightAction || rightAction.disabled;
   const leftDisabled = !leftAction || leftAction.disabled;
+
+  // Iter 230aw — Onboarding hint pulse. Runs ONCE per mount when
+  // `showOnboardingHint` is true and at least one direction is
+  // enabled. The animation chain (right peek → centre → left peek →
+  // centre) takes ~1500ms total and is gated behind a guard so
+  // remounts inside the same tab don't repeat. The parent's
+  // `useOnboardingHint` helper handles cross-tab + cross-session
+  // dedupe via localStorage.
+  const hintFiredRef = useRef(false);
+  useEffect(() => {
+    if (!showOnboardingHint) return;
+    if (hintFiredRef.current) return;
+    if (rightDisabled && leftDisabled) return;
+    hintFiredRef.current = true;
+    // Defer slightly so the first paint (with row at translateX:0) is
+    // visible before we start sliding — keeps the hint readable.
+    const t0 = setTimeout(() => {
+      setAnimating(true);
+      setTranslateX(rightDisabled ? -HINT_PEEK_PX : HINT_PEEK_PX);
+    }, 350);
+    const t1 = setTimeout(() => setTranslateX(0), 850);
+    const t2 = setTimeout(
+      () => setTranslateX(leftDisabled ? HINT_PEEK_PX : -HINT_PEEK_PX),
+      1100,
+    );
+    const t3 = setTimeout(() => {
+      setTranslateX(0);
+      setTimeout(() => setAnimating(false), 220);
+      onHintShown?.();
+    }, 1600);
+    return () => {
+      clearTimeout(t0);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+    // Run once on mount; subsequent flag changes shouldn't re-pulse.
+  }, []);
 
   const onPointerDown = (e) => {
     if (pointerIdRef.current !== null) return;

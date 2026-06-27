@@ -13,6 +13,9 @@ import { useSocket } from "@/hooks/use-socket";
 import NotificationSettings from "@/components/NotificationSettings";
 // Iter 230at — Swipe-to-dismiss row component for the mobile UX.
 import SwipeableNotificationRow from "@/components/SwipeableNotificationRow";
+// Iter 230aw — One-time onboarding pulse on the first row so touch
+// users discover the swipe gestures.
+import useOnboardingHint from "@/hooks/use-onboarding-hint";
 
 // Iter 230 — Notification icon + color map.
 // Source of truth for event ids: /app/backend/routes/notification_events.py
@@ -120,6 +123,9 @@ export function NotificationsPanel() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const panelRef = useRef(null);
+  // Iter 230aw — One-time onboarding hint pulse on the first row when
+  // the user opens the panel on a touch device for the first time.
+  const [hintActive, markHintShown] = useOnboardingHint("notifications");
 
   const fetchNotifications = useCallback(async () => {
     if (!user) return;
@@ -276,7 +282,7 @@ export function NotificationsPanel() {
               </div>
             ) : (
               <div className="divide-y divide-white/5">
-                {notifications.map(n => {
+                {notifications.map((n, idx) => {
                   const Icon = iconMap[n.type] || Bell;
                   const color = colorMap[n.type] || "text-[#A1A1AA]";
                   const reason = n.reason || reasonMap[n.type] || "You're subscribed to this notification type. Update your preferences any time.";
@@ -284,8 +290,10 @@ export function NotificationsPanel() {
                     <SwipeableNotificationRow
                       key={n._id}
                       notification={n}
-                      onMarkRead={handleMarkRead}
-                      onDelete={handleDelete}
+                      onMarkRead={(id) => { markHintShown(); return handleMarkRead(id); }}
+                      onDelete={(id) => { markHintShown(); return handleDelete(id); }}
+                      showOnboardingHint={hintActive && idx === 0}
+                      onHintShown={markHintShown}
                     >
                     <div
                       className={cn("p-3 hover:bg-white/5 cursor-pointer transition-colors flex gap-3 bg-[#141414]", !n.read && "bg-[#00D2FF]/5")}

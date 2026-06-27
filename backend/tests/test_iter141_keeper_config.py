@@ -28,7 +28,7 @@ OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
 REPO = Path(__file__).resolve().parents[2]
 KEEPER_CARD = REPO / "frontend/src/lovable/pages/commissioner/KeeperSettingsCard.tsx"
 ADMIN = REPO / "frontend/src/lovable/pages/CommissionerSettings.tsx"
-DRAFTS_ROUTE = REPO / "backend/routes/drafts.py"
+DRAFTS_ROUTE = REPO / "backend/routes/draft_config.py"
 
 
 def _login(email, password):

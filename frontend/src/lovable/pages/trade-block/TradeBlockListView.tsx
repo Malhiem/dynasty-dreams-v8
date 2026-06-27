@@ -82,7 +82,7 @@ const TradeBlockListView = ({
               <TableRow key={item.id} data-testid={`trade-block-row-${item.id}`}>
                 <TableCell className="font-medium">{item.name}</TableCell>
                 <TableCell>{item.position}</TableCell>
-                <TableCell>{item.team}</TableCell>
+                <TableCell>{item.team || "—"}</TableCell>
                 <TableCell className="text-right">{item.age ?? "—"}</TableCell>
                 <TableCell className="text-right text-primary">
                   {item.weeklyPoints && item.weeklyPoints > 0 ? item.weeklyPoints.toFixed(1) : "—"}

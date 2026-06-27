@@ -31,7 +31,7 @@ OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
 REPO = Path(__file__).resolve().parents[2]
 ROSTER = REPO / "frontend/src/lovable/components/dashboard/PlayerRoster.tsx"
 TEAM = REPO / "frontend/src/lovable/pages/Team.tsx"
-DRAFTS = REPO / "backend/routes/drafts.py"
+DRAFTS = REPO / "backend/routes/draft_config.py"
 
 
 def _login(email, password):

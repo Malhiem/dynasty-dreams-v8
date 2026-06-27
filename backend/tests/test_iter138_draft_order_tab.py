@@ -33,6 +33,7 @@ OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
 REPO = Path(__file__).resolve().parents[2]
 DRAFT = REPO / "frontend/src/lovable/pages/DraftBoard.tsx"
 DRAFTS_ROUTE = REPO / "backend/routes/drafts.py"
+DRAFT_CONFIG_ROUTE = REPO / "backend/routes/draft_config.py"
 
 
 def _login(email, password):
@@ -153,7 +154,7 @@ def test_invalid_method_rejected(owner_token, owner_league):
 
 # ── Backend file-content sanity ────────────────────────────────
 def test_backend_has_new_routes():
-    src = DRAFTS_ROUTE.read_text()
+    src = DRAFTS_ROUTE.read_text() + DRAFT_CONFIG_ROUTE.read_text()
     assert '"/leagues/{league_id}/draft-order/config"' in src
     assert '"/admin/draft-lottery-date"' in src
     assert "DRAFT_ORDER_METHODS" in src

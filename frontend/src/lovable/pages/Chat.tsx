@@ -22,6 +22,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useChatUnread } from "@/hooks/use-chat-unread";
 // Iter 230au — Generic swipe-to-action primitive for the channel list.
 import SwipeableRow from "@/components/SwipeableRow";
+// Iter 230aw — First-time onboarding pulse for the swipe gestures.
+import useOnboardingHint from "@/hooks/use-onboarding-hint";
 import ReportUserButton from "@/components/ReportUserButton";
 
 const MUTE_OPTIONS = [
@@ -67,6 +69,8 @@ const Chat = () => {
   const [creating, setCreating] = useState(false);
   const [newChanName, setNewChanName] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  // Iter 230aw — One-time onboarding pulse for the channel swipes.
+  const [hintActive, markHintShown] = useOnboardingHint("chat-channels");
 
   const isCommish = useMemo(() => {
     if (!league || !user) return false;
@@ -242,6 +246,9 @@ const Chat = () => {
     }
   };
 
+  // Iter 230aw — `hintRowId` is computed below from `channelList[0]`
+  // / `dmList[0]` so only ONE row across both maps gets the pulse.
+
   const renderRow = (c) => {
     const isSelected = c._id === selectedId;
     // Iter 230au — Swipe RIGHT to mark all-read (disabled when
@@ -335,6 +342,8 @@ const Chat = () => {
       <SwipeableRow
         key={c._id}
         testId={`chat-swipe-row-${c._id}`}
+        showOnboardingHint={hintActive && c._id === hintRowId}
+        onHintShown={markHintShown}
         rightAction={{
           label: "Mark read",
           icon: <Check className="h-4 w-4" />,
@@ -344,8 +353,8 @@ const Chat = () => {
           testId: `chat-swipe-read-hint-${c._id}`,
         }}
         leftAction={swipeLeftAction}
-        onSwipeRight={() => handleMarkChannelRead(c._id)}
-        onSwipeLeft={() => handleMute(c._id, c.muted ? null : "24h")}
+        onSwipeRight={() => { markHintShown(); handleMarkChannelRead(c._id); }}
+        onSwipeLeft={() => { markHintShown(); handleMute(c._id, c.muted ? null : "24h"); }}
       >
         {innerRow}
       </SwipeableRow>
@@ -354,6 +363,10 @@ const Chat = () => {
 
   const channelList = channels.filter((c) => c.kind === "channel");
   const dmList = channels.filter((c) => c.kind === "dm");
+  // Iter 230aw — Single row across BOTH lists that gets the
+  // onboarding pulse (prefer the first regular channel, fall back to
+  // the first DM if the league has none).
+  const hintRowId = channelList[0]?._id || dmList[0]?._id || null;
   const channelCap = `${channelList.length}/${maxChannels}`;
 
   if (!leagueId) {

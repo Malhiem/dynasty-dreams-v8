@@ -32,6 +32,23 @@ const TradeBlockCard = ({ item, onProposeTrade, onHide, streakChipData }) => {
     return null;
   };
 
+  // Iter 231 — Player thumbnail fallback. Previously the 12x12 box just
+  // rendered `item.team` (NHL team abbr), which left an empty square
+  // when a roster's `nhl_team` was unset. Now we derive initials from
+  // the player name if no team abbr is available so the tile always
+  // has a legible glyph.
+  const playerInitials = (item.name || "?")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  const thumbContent =
+    item.type === "pick"
+      ? "📋"
+      : (item.team && item.team !== "Own" ? item.team : playerInitials || "—");
+
   return (
     <Card className="bg-card border-border hover:border-primary/30 transition-colors relative overflow-hidden">
       {onHide && (
@@ -49,8 +66,12 @@ const TradeBlockCard = ({ item, onProposeTrade, onHide, streakChipData }) => {
       <CardContent className="p-5 space-y-4">
         {/* Player header */}
         <div className="flex items-start gap-3 min-w-0 pr-7">
-          <div className="h-12 w-12 shrink-0 rounded-lg bg-gradient-to-br from-secondary to-muted flex items-center justify-center text-xs font-bold">
-            {item.type === "pick" ? "📋" : item.team}
+          <div
+            className="h-12 w-12 shrink-0 rounded-lg bg-gradient-to-br from-secondary to-muted flex items-center justify-center text-xs font-bold"
+            data-testid={`trade-block-thumb-${item.id}`}
+            title={item.name}
+          >
+            {thumbContent}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 mb-1 min-w-0">

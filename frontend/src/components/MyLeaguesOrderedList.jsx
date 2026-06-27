@@ -15,6 +15,8 @@ import { GripVertical, Loader2, Trophy, Users as UsersIcon, ArrowRight, MoreVert
 // saved order + activates immediately); swipe LEFT → hide.
 import SwipeableRow from '@/components/SwipeableRow';
 import { useActiveLeague } from '@/hooks/use-active-league';
+// Iter 230aw — One-time onboarding pulse for the swipe gestures.
+import useOnboardingHint from '@/hooks/use-onboarding-hint';
 
 const ORDER_KEY = 'dd_league_order_v1';
 
@@ -56,6 +58,9 @@ export default function MyLeaguesOrderedList() {
   const isTouch = typeof window !== 'undefined'
     && !!window.matchMedia
     && window.matchMedia('(pointer: coarse)').matches;
+  // Iter 230aw — One-time pulse on the first row so touch users
+  // discover the swipe gestures.
+  const [hintActive, markHintShown] = useOnboardingHint('my-leagues');
 
   useEffect(() => {
     // Iter 230am — Fetch leagues + the server-side order preference
@@ -186,7 +191,7 @@ export default function MyLeaguesOrderedList() {
       </div>
 
       <div className="space-y-2">
-        {leagues.map((lg) => {
+        {leagues.map((lg, idx) => {
           const isDragging = dragId === lg.id;
           const isDragOver = dragOverId === lg.id;
           // Iter 230av — Pre-compute swipe action flags. Right-swipe
@@ -198,6 +203,8 @@ export default function MyLeaguesOrderedList() {
             <SwipeableRow
               key={lg.id}
               testId={`my-leagues-swipe-row-${lg.id}`}
+              showOnboardingHint={hintActive && idx === 0}
+              onHintShown={markHintShown}
               rightAction={{
                 label: isDefault ? 'Already default' : 'Set as default',
                 icon: <Star className="h-4 w-4" />,
@@ -212,8 +219,8 @@ export default function MyLeaguesOrderedList() {
                 color: 'text-rose-200',
                 testId: `my-leagues-swipe-hide-hint-${lg.id}`,
               }}
-              onSwipeRight={() => handleSetDefault(lg.id, lg.name)}
-              onSwipeLeft={() => handleHideLeague(lg.id, lg.name)}
+              onSwipeRight={() => { markHintShown(); handleSetDefault(lg.id, lg.name); }}
+              onSwipeLeft={() => { markHintShown(); handleHideLeague(lg.id, lg.name); }}
             >
             <div
               key={lg.id}
