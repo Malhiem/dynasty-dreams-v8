@@ -14,7 +14,10 @@ import { toast } from "sonner";
 
 interface BracketTeam {
   team_id: string;
-  team_name: string;
+  // Iter 231n — team_name can come back null from the backend when the
+  // playoff slot is unfilled (TBD bracket); callers must defend against
+  // null before calling string methods like .slice() / .toUpperCase().
+  team_name: string | null;
   team_abbr?: string | null;
   team_logo_url?: string | null;
   owner_name?: string;
@@ -184,7 +187,7 @@ const MatchupCard = ({ mu, status, canMark, onMarkWinner }: {
       )}
       {!hasScore && status === "projected" && hs && ls && (
         <div className="text-[10px] text-center text-muted-foreground pt-0.5 italic">
-          Projected: {hs.team_abbr || hs.team_name.slice(0, 3).toUpperCase()} advances
+          Projected: {hs.team_abbr || (hs.team_name || "TBD").slice(0, 3).toUpperCase()} advances
         </div>
       )}
       {showMarkAction && (
@@ -198,7 +201,7 @@ const MatchupCard = ({ mu, status, canMark, onMarkWinner }: {
             className="flex-1 text-[10px] font-semibold uppercase tracking-wider py-1 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
             data-testid={`mark-winner-high-${mu.matchup_id}`}
           >
-            ✓ {hs!.team_abbr || hs!.team_name.slice(0, 6)}
+            ✓ {hs!.team_abbr || (hs!.team_name || "TBD").slice(0, 6)}
           </button>
           <button
             type="button"
@@ -206,7 +209,7 @@ const MatchupCard = ({ mu, status, canMark, onMarkWinner }: {
             className="flex-1 text-[10px] font-semibold uppercase tracking-wider py-1 rounded-md bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/25 transition-colors"
             data-testid={`mark-winner-low-${mu.matchup_id}`}
           >
-            ✓ {ls!.team_abbr || ls!.team_name.slice(0, 6)}
+            ✓ {ls!.team_abbr || (ls!.team_name || "TBD").slice(0, 6)}
           </button>
         </div>
       )}
