@@ -197,7 +197,13 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> di
             break
 
     if chosen_player is None:
-        criteria = (draft.get("player_criteria") or "open").lower()
+        # Iter 231r — Defensive: some legacy drafts have `player_criteria`
+        # stored as a list instead of a string. Coerce to str so `.lower()`
+        # never crashes the worker.
+        raw_criteria = (draft.get("player_criteria") or "open")
+        if isinstance(raw_criteria, list):
+            raw_criteria = raw_criteria[0] if raw_criteria else "open"
+        criteria = str(raw_criteria).lower()
         q = {"player_type": "prospect"} if criteria == "entry" else {"player_type": {"$ne": "prospect"}}
         async for p in _db().players.find(q).sort([("points", -1), ("name", 1)]):
             if str(p["_id"]) in drafted_ids:

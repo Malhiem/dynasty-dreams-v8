@@ -13,7 +13,9 @@ Backend changes covered:
 """
 from pathlib import Path
 
-DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
+# Iter 231 — drafts.py decomposed across many modules. Use shared shim.
+from tests._drafts_route_sources import DraftsRouteFamilyShim
+DRAFTS_ROUTE = DraftsRouteFamilyShim()
 # Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* decomposed across
 # many iterations. Use the shared shim that concatenates every file that
 # contributes to the runtime draft room behaviour.

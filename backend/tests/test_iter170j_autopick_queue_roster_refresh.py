@@ -22,11 +22,12 @@ Frontend:
 """
 from pathlib import Path
 
-DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
+from tests._drafts_route_sources import DraftsRouteFamilyShim
+DRAFTS_ROUTE = DraftsRouteFamilyShim()
+DRAFT_QUEUE_ROUTE = Path("/app/backend/routes/draft_queue.py")
 # Iter 231k — Draft Queue / Shortlist endpoints extracted to their own
 # module so we can keep ratcheting drafts.py down. Tests now read from
 # the new module.
-DRAFT_QUEUE_ROUTE = Path("/app/backend/routes/draft_queue.py")
 # Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* decomposed across
 # many iterations. Use the shared shim that concatenates every file that
 # contributes to the runtime draft room behaviour.

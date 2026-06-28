@@ -200,7 +200,7 @@ async def get_payment_status(session_id: str, request: Request):
         )
 
         if status.payment_status == "paid" and transaction["payment_status"] != "paid":
-            ptype = transaction["package_type"]
+            ptype = transaction.get("package_type")  # may be None for league_team_fee
             if ptype in ("premium_monthly", "premium_yearly"):
                 await db.users.update_one(
                     {"_id": ObjectId(transaction["user_id"])},
@@ -224,6 +224,26 @@ async def get_payment_status(session_id: str, request: Request):
                     "Premium features unlocked for this league",
                     transaction["user_id"],
                 )
+
+        # Iter 231s — League team-fee grant. Stamps every team in the
+        # transaction's `team_ids` as paid in one update_many. Idempotent
+        # via the surrounding `payment_status != "paid"` guard.
+        if (
+            status.payment_status == "paid"
+            and transaction["payment_status"] != "paid"
+            and transaction.get("kind") == "league_team_fee"
+            and transaction.get("team_ids")
+            and transaction.get("league_id")
+        ):
+            now_iso = datetime.now(timezone.utc).isoformat()
+            await db.teams.update_many(
+                {"_id": {"$in": [ObjectId(tid) for tid in transaction["team_ids"]]}},
+                {"$set": {
+                    "payment_status": "paid",
+                    "payment_paid_at": now_iso,
+                    "payment_paid_by": transaction["user_id"],
+                }},
+            )
 
     return {
         "status": status.status,
@@ -300,11 +320,35 @@ async def stripe_webhook(request: Request):
     try:
         event = await stripe_checkout.handle_webhook(body, signature)
         if event.payment_status == "paid":
+            # Look up transaction first so we can also grant team-fee
+            # access (idempotent via the `payment_status != "paid"`
+            # guard before the side-effects fire).
+            transaction = await db.payment_transactions.find_one(
+                {"session_id": event.session_id}
+            )
             await db.payment_transactions.update_one(
                 {"session_id": event.session_id},
                 {"$set": {"payment_status": "paid",
                           "updated_at": datetime.now(timezone.utc)}},
             )
+            # Iter 231s — League team-fee grant from the webhook path so
+            # teams are flipped to paid even when the user closes the
+            # browser before the status-poll lands.
+            if (
+                transaction
+                and transaction.get("payment_status") != "paid"
+                and transaction.get("kind") == "league_team_fee"
+                and transaction.get("team_ids")
+            ):
+                now_iso = datetime.now(timezone.utc).isoformat()
+                await db.teams.update_many(
+                    {"_id": {"$in": [ObjectId(tid) for tid in transaction["team_ids"]]}},
+                    {"$set": {
+                        "payment_status": "paid",
+                        "payment_paid_at": now_iso,
+                        "payment_paid_by": transaction.get("user_id"),
+                    }},
+                )
         return {"status": "ok"}
     except Exception as e:
         _logger().error(f"Webhook error: {e}")
@@ -320,9 +364,13 @@ class TeamFeeIntent(BaseModel):
     Either `full=True` to cover every unpaid team in the league, or
     pass an explicit `team_ids` list to cover only those. Amount is
     computed server-side as `entry_fee_per_team × len(covered_teams)`.
+    `origin_url` is the frontend's `window.location.origin` so the
+    success / cancel URLs work in preview AND production without
+    env-specific config.
     """
     full: bool = False
     team_ids: list[str] = []
+    origin_url: Optional[str] = None
 
 
 @router.get("/payments/league/{league_id}/status")
@@ -367,9 +415,19 @@ async def get_league_payment_status(league_id: str, request: Request):
 
 @router.post("/payments/league/{league_id}/intent")
 async def create_league_payment_intent(league_id: str, body: TeamFeeIntent, request: Request):
-    """MOCKED Stripe intent — flips team `payment_status` to "paid" for
-    the selected teams. Replace the body with a real Stripe Payment Intent
-    once SetupIntents are wired (see Iter 220 backlog).
+    """Iter 231s — Real Stripe Checkout for league team fees.
+
+    Creates a Stripe Checkout Session for `entry_fee × N` covering the
+    selected (or all unpaid) teams. Returns `{checkout_url, session_id}`.
+    The frontend redirects to `checkout_url`; on payment success the
+    /payments/status/{session_id} poll (or the webhook) flips every
+    listed team's `payment_status` to "paid".
+
+    For backward-compat with the iter 226 mocked frontend, if the
+    request omits `origin_url` we fall back to the legacy mocked
+    behaviour — stamp teams as paid synchronously and return
+    `{mocked: true}`. New frontends always send `origin_url` to get
+    the real Stripe flow.
     """
     user = await _get_user(request)
     db = _db()
@@ -399,11 +457,57 @@ async def create_league_payment_intent(league_id: str, body: TeamFeeIntent, requ
             raise HTTPException(status_code=400, detail="None of the supplied team_ids exist in this league")
 
     if not target_team_ids:
-        return {"ok": True, "mocked": True, "covered_count": 0,
+        return {"ok": True, "mocked": False, "covered_count": 0,
                 "amount_cents": 0, "message": "Nothing to pay — all teams already paid."}
 
     amount_total = entry_fee * len(target_team_ids)
     now = datetime.now(timezone.utc).isoformat()
+
+    # Real Stripe path — frontend supplied `origin_url`.
+    if body.origin_url:
+        stripe_checkout = _stripe_client(request)
+        success_url = f"{body.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}"
+        cancel_url = f"{body.origin_url}/payment/cancel"
+        # Stripe `metadata` is `Dict[str, str]` only — store team_ids
+        # joined by comma. The full list is also persisted in the
+        # `payment_transactions` row below so the grant logic doesn't
+        # depend on metadata round-tripping.
+        checkout_request = CheckoutSessionRequest(
+            amount=amount_total, currency="usd",
+            success_url=success_url, cancel_url=cancel_url,
+            metadata={
+                "user_id": user["_id"],
+                "package_type": "league_team_fee",
+                "league_id": league_id,
+                "team_count": str(len(target_team_ids)),
+            },
+        )
+        session = await stripe_checkout.create_checkout_session(checkout_request)
+        await db.payment_transactions.insert_one({
+            "session_id": session.session_id,
+            "user_id": user["_id"],
+            "email": user.get("email"),
+            "league_id": league_id,
+            "team_ids": target_team_ids,
+            "amount": amount_total,
+            "currency": "usd",
+            "payment_status": "pending",
+            "kind": "league_team_fee",
+            "created_at": datetime.now(timezone.utc),
+        })
+        return {
+            "ok": True,
+            "mocked": False,
+            "checkout_url": session.url,
+            "session_id": session.session_id,
+            "covered_count": len(target_team_ids),
+            "team_ids": target_team_ids,
+            "amount_cents": int(round(amount_total * 100)),
+            "amount_total": amount_total,
+            "entry_fee_per_team": entry_fee,
+        }
+
+    # Legacy mocked path — kept for backward compat with older frontends.
     await db.teams.update_many(
         {"_id": {"$in": [ObjectId(tid) for tid in target_team_ids]}},
         {"$set": {
@@ -412,7 +516,6 @@ async def create_league_payment_intent(league_id: str, body: TeamFeeIntent, requ
             "payment_paid_by": user["_id"],
         }},
     )
-    # Audit row in `payment_transactions` so the admin Finance tab sees it.
     await db.payment_transactions.insert_one({
         "league_id": league_id,
         "payer_id": user["_id"],

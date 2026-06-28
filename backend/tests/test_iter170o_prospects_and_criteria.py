@@ -16,7 +16,11 @@ page subheader.
 """
 from pathlib import Path
 
-DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
+# Iter 231 — drafts.py decomposed; use family shim so grep assertions
+# still resolve against the relocated `_perform_one_auto_pick` helper
+# (now in `routes/draft_helpers.py`).
+from tests._drafts_route_sources import DraftsRouteFamilyShim
+DRAFTS_ROUTE = DraftsRouteFamilyShim()
 SEED_SCRIPT = Path("/app/backend/scripts/iter170o_seed_prospects.py")
 # Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* decomposed across
 # many iterations. Use the shared shim that concatenates every file that
@@ -76,9 +80,11 @@ def test_eligible_players_filters_by_criteria():
 
 def test_auto_pick_respects_criteria_filter():
     src = DRAFTS_ROUTE.read_text()
-    # Iter 231 — split marker loosened + anchored on the
-    # `_perform_one_auto_pick` helper (the route became a thin shim).
-    block = src.split("async def _perform_one_auto_pick")[1].split("\n@router.")[0]
+    # Iter 231n — `_perform_one_auto_pick` was extracted from drafts.py
+    # into `routes/draft_helpers.py` and renamed to `perform_one_auto_pick`
+    # (sans underscore). The shim concatenates both files so we anchor on
+    # the real impl signature.
+    block = src.split("async def perform_one_auto_pick")[1].split("\nasync def ")[0]
     # Same prospect / non-prospect branching when falling back to top
     # eligible.
     assert '"player_type": "prospect"' in block

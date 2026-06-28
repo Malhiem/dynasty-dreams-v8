@@ -69,7 +69,7 @@ def test_auto_init_derives_total_rounds_from_roster_cap_and_seeds():
     league = _create_league(tok, roster_spots=18, bench_spots=8, minors_spots=4, max_teams=4)
     H = {"Authorization": f"Bearer {tok}"}
 
-    r = requests.post(f"{API_URL}/api/drafts/auto-init/{league['id']}", headers=H)
+    r = requests.post(f"{API_URL}/api/drafts/auto-init/{league['id']}?commit=true", headers=H)
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["created"] is True

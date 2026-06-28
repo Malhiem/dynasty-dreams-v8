@@ -23,7 +23,9 @@ Frontend changes:
 """
 from pathlib import Path
 
-DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
+# Iter 231 — drafts.py decomposed; use the family shim.
+from tests._drafts_route_sources import DraftsRouteFamilyShim
+DRAFTS_ROUTE = DraftsRouteFamilyShim()
 # Iter 231 — DraftRoom.tsx + draftroom/* + hooks/use-draft-* have been
 # decomposed across many iterations. The DraftRoomFamilyShim concatenates
 # every file that contributes to the runtime draft room behaviour so the

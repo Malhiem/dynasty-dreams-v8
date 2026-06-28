@@ -310,10 +310,21 @@ function LeagueTeamFeesPanel({ leagueId }) {
     }
     setPaying(true);
     try {
-      const body = mode === "full"
+      const base = mode === "full"
         ? { full: true }
         : { team_ids: Array.from(selected) };
+      // Iter 231s — Pass `origin_url` so the backend creates a real
+      // Stripe Checkout Session instead of the legacy mocked flow.
+      const body = { ...base, origin_url: window.location.origin };
       const { data } = await api.post(`/payments/league/${leagueId}/intent`, body);
+      if (data.checkout_url) {
+        // Real Stripe path — redirect to Checkout. The
+        // `/payment/success` page polls /payments/status which
+        // grants the teams as paid on the way back.
+        window.location.href = data.checkout_url;
+        return;
+      }
+      // Legacy mocked path (older backend deployments).
       const dollars = (data.amount_cents / 100).toFixed(2);
       toast.success(`Paid $${dollars} for ${data.covered_count} team${data.covered_count === 1 ? "" : "s"}${data.mocked ? " (MOCKED)" : ""}`);
       await load();
