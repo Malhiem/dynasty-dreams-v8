@@ -170,60 +170,9 @@ async def _perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> d
 # Iter 170j Draft Queue + Iter 170m Shortlist endpoints extracted to
 # `routes/draft_queue.py` (iter 231k).
 
-@router.post("/drafts/{draft_id}/chat")
-async def send_draft_chat(draft_id: str, input: DraftChatRequest, request: Request):
-    user = await _get_user(request)
+# ─── Iter 231w — send_draft_chat, get_draft_chat, update_draft_config
+#     extracted to routes/draft_chat_config.py.
 
-    team = await _db().teams.find_one({"league_id": (await _db().drafts.find_one({"_id": ObjectId(draft_id)}))["league_id"], "owner_id": user["_id"]})
-    sender = team["name"] if team else user["name"]
-
-    msg = {
-        "id": f"chat-{datetime.now(timezone.utc).timestamp()}",
-        "type": "chat",
-        "sender": sender,
-        "text": input.text,
-        "timestamp": datetime.now(timezone.utc).isoformat()
-    }
-
-    await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$push": {"chat_messages": msg}})
-    await _broadcast(f"draft_{draft_id}", "draft_chat", msg)
-    return msg
-
-@router.get("/drafts/{draft_id}/chat")
-async def get_draft_chat(draft_id: str):
-    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)}, {"chat_messages": 1})
-    if not draft:
-        raise HTTPException(status_code=404, detail="Draft not found")
-    return draft.get("chat_messages", [])
-
-@router.put("/drafts/{draft_id}/config")
-async def update_draft_config(draft_id: str, input: UpdateDraftConfigRequest, request: Request):
-    user = await _get_user(request)
-    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
-    if not draft:
-        raise HTTPException(status_code=404, detail="Draft not found")
-
-    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can update draft config")
-
-    updates = {}
-    if input.time_per_pick is not None:
-        updates["time_per_pick"] = input.time_per_pick
-    if input.total_rounds is not None:
-        updates["total_rounds"] = input.total_rounds
-    if input.snake_draft is not None:
-        updates["snake_draft"] = input.snake_draft
-    if input.player_criteria is not None:
-        updates["player_criteria"] = input.player_criteria
-    if input.missed_pick_action is not None:
-        updates["missed_pick_action"] = input.missed_pick_action
-
-    if updates:
-        await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$set": updates})
-        await _broadcast(f"draft_{draft_id}", "draft_config_updated", updates)
-
-    return {"updated": list(updates.keys())}
 
 # ═══════════════════════════════════════════════════════════════
 # Notifications Engine
