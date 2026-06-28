@@ -34,6 +34,8 @@ _DRAFTS_FAMILY_FILES = [
     "draft_inspection.py",
     "draft_config.py",
     "draft_lifecycle.py",
+    "draft_admin.py",
+    "draft_order.py",
 ]
 
 

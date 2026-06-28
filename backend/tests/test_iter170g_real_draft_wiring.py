@@ -41,7 +41,10 @@ def test_team_abbr_helpers_present():
 def test_create_draft_uses_new_helpers():
     src = _src()
     # create_draft body uses _abbrs_with_dedup, no longer name[:4].upper().
-    block = src.split("async def create_draft(input: CreateDraftRequest, request: Request):")[1].split("async def get_drafts")[0]
+    # Iter 231t — create_draft moved to draft_admin.py; the family shim
+    # concatenates all draft modules so the function body is still here.
+    # Use a robust end-marker (any subsequent `@router.` decorator).
+    block = src.split("async def create_draft(input: CreateDraftRequest, request: Request):")[1].split("\n@router.")[0]
     assert "_abbrs_with_dedup(teams)" in block
     assert "t[\"name\"][:4].upper()" not in block
 
