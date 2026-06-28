@@ -258,9 +258,21 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> di
     # duplicate picks. Conditioning the update on `current_pick == N`
     # AND `status == "active"` makes the second writer's match_count=0
     # and we abort cleanly instead of polluting the picks array.
+    # Iter 231ab — Reset `current_pick_started_at` so the worker doesn't
+    # immediately re-fire on the next tick (was stuck on the original
+    # `started` value and treated every following pick as "already
+    # expired", producing the rapid-fire auto-pick incident the user
+    # reported on 2026-02 — even after the clock-window guard landed).
     result = await _db().drafts.update_one(
         {"_id": ObjectId(draft_id), "current_pick": current_pick, "status": "active"},
-        {"$push": {"picks": pick_doc}, "$set": {"current_pick": next_pick, "status": new_status}},
+        {
+            "$push": {"picks": pick_doc},
+            "$set": {
+                "current_pick": next_pick,
+                "status": new_status,
+                "current_pick_started_at": datetime.now(timezone.utc).isoformat(),
+            },
+        },
     )
     if result.matched_count == 0:
         # Another writer beat us — refuse silently so the caller can

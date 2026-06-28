@@ -97,11 +97,20 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
     on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"])
     on_clock_team_id = (draft.get("team_map") or {}).get(on_clock, {}).get("id")
 
-    # Commissioner can pick for any team, otherwise it must be the user's turn.
+    # Commissioner / co-commissioner / platform admin can pick for any team,
+    # otherwise it must be the user's turn.
+    # Iter 231ab — Expanded from a strict `commissioner_id` check to honour
+    # `co_commissioners` and platform admins so league admins can rescue
+    # stalled drafts (e.g. when an owner is unreachable and the
+    # missed_pick_action is "defer-to-user").
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    is_commissioner = league["commissioner_id"] == user["_id"]
+    is_admin = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
 
-    if not is_commissioner:
+    if not is_admin:
         if not team:
             raise HTTPException(status_code=403, detail="You don't have a team in this league")
         if str(team["_id"]) != on_clock_team_id:
@@ -314,8 +323,14 @@ async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, reques
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can undo picks")
+    # Iter 231ab — Co-commissioners + platform admins allowed (was commish-only).
+    is_admin = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Only commissioner / co-commissioner / admin can undo picks")
 
     picks = list(draft.get("picks", []))
     if not picks:
@@ -387,8 +402,14 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can swap pick players")
+    # Iter 231ab — Co-commissioners + platform admins allowed.
+    is_admin = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Only commissioner / co-commissioner / admin can swap pick players")
 
     picks = list(draft.get("picks", []))
     target_idx = next((i for i, p in enumerate(picks) if p.get("overall") == overall), -1)
@@ -470,8 +491,14 @@ async def pause_draft(draft_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Draft not found")
 
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    if league["commissioner_id"] != user["_id"]:
-        raise HTTPException(status_code=403, detail="Only commissioner can pause draft")
+    # Iter 231ab — Co-commissioners + platform admins allowed.
+    is_admin = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Only commissioner / co-commissioner / admin can pause draft")
 
     paused = not draft.get("timer_paused", False)
     await _db().drafts.update_one({"_id": ObjectId(draft_id)}, {"$set": {"timer_paused": paused}})

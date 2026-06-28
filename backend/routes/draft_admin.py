@@ -495,3 +495,123 @@ async def patch_draft(draft_id: str, body: dict, request: Request):
         pass
 
     return {"draft": fresh, "updated_fields": list(update.keys())}
+
+
+# ─── POST /drafts/{draft_id}/restart ───────────────────────────────────
+
+
+@router.post("/drafts/{draft_id}/restart")
+async def restart_draft(draft_id: str, request: Request):
+    """Iter 231ab — Hard reset an active or completed draft.
+
+    Wipes all picks, removes the drafted players from every team's
+    roster, resets `current_pick` to 1, and flips status back to
+    `scheduled`. Commissioner / co-commissioner / platform-admin only.
+
+    Use case: the league wants to redo the draft (e.g. mid-night
+    auto-pick storm, owner disputes, test data cleanup). Trade-history
+    on per-pick rows is preserved — those rows continue to exist in
+    `draft_picks` so trade audit stays intact.
+    """
+    user = await _get_user(request)
+    try:
+        draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft_id")
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_admin = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+        or user.get("role") == "admin"
+    )
+    if not is_admin:
+        raise HTTPException(status_code=403, detail="Commissioner / co-commissioner / admin only")
+
+    if draft.get("status") == "archived":
+        raise HTTPException(
+            status_code=400,
+            detail="Restore the draft first before restarting it.",
+        )
+
+    # Wipe every drafted player off each team's roster.
+    picks = list(draft.get("picks") or [])
+    for p in picks:
+        tid = p.get("team_id") or (draft.get("team_map") or {}).get(p.get("team", ""), {}).get("id")
+        pid = p.get("player_id")
+        if tid and pid:
+            try:
+                await _db().teams.update_one(
+                    {"_id": ObjectId(tid)},
+                    {"$pull": {"roster": pid}},
+                )
+            except Exception:
+                pass  # roster cleanup is best-effort
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {
+            "$set": {
+                "status": "scheduled",
+                "draft_started": False,
+                "early_start": False,
+                "timer_paused": False,
+                "current_pick": 1,
+                "picks": [],
+                "chat_messages": [],
+                "restarted_at": now_iso,
+                "restarted_by": user["_id"],
+            },
+            "$unset": {"current_pick_started_at": "", "started_at": ""},
+        },
+    )
+
+    # Audit trail row.
+    await _db().admin_user_actions.insert_one({
+        "admin_id": str(user["_id"]),
+        "admin_email": user.get("email"),
+        "admin_tier": user.get("permission_tier") or user.get("role") or "commissioner",
+        "target_user_id": league.get("commissioner_id"),
+        "action": "draft_restart",
+        "reason": "Commissioner hard-reset the draft (wiped picks + rosters).",
+        "metadata": {
+            "draft_id": draft_id,
+            "draft_name": draft.get("name"),
+            "league_id": draft.get("league_id"),
+            "league_name": draft.get("league_name"),
+            "picks_wiped": len(picks),
+        },
+        "prior_state": {
+            "status": draft.get("status"),
+            "current_pick": draft.get("current_pick"),
+        },
+        "mocked": False,
+        "ts": now_iso,
+    })
+
+    # Broadcast so all connected Draft Room clients refresh and the UI
+    # flips back to its pre-draft countdown state.
+    try:
+        await _broadcast(
+            f"draft_{draft_id}",
+            "draft_restarted",
+            {
+                "draft_id": draft_id,
+                "picks_wiped": len(picks),
+                "restarted_at": now_iso,
+            },
+        )
+    except Exception:
+        pass
+
+    return {
+        "draft_id": draft_id,
+        "status": "scheduled",
+        "picks_wiped": len(picks),
+        "restarted_at": now_iso,
+    }

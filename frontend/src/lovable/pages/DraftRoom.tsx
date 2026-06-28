@@ -337,6 +337,7 @@ export default function DraftRoom() {
   const {
     handleUndoPicks,
     handleSwapPickPlayer,
+    handleRestartDraft,
     handleEarlyStart,
     handleStartWithTimer,
   } = useDraftCommissionerActions({
@@ -679,6 +680,7 @@ export default function DraftRoom() {
               undoCount={undoCount}
               setUndoCount={setUndoCount}
               handleUndoPicks={handleUndoPicks}
+              handleRestartDraft={handleRestartDraft}
               soundsEnabled={draftSounds.enabled}
               onToggleSounds={() => {
                 const next = !draftSounds.enabled;

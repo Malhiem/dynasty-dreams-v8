@@ -1,0 +1,36 @@
+{
+  "summary": "Iter 231ab — Three Draft-Room production fixes + new restart endpoint. All 78 tests pass across 11 iter231 regression files including the new test_iter231ab suite. Verified: (1) perform_one_auto_pick resets current_pick_started_at on each auto-pick — fixes 1am rapid-fire incident. (2) draft_pick_timer_worker.run_once() detects ownerless teams (owner_id=None AND co_owner_ids empty) and fires auto-pick IMMEDIATELY, bypassing defer-to-user / clock window / time_per_pick deadline. counts['ownerless_picks'] increments correctly. (3) Owned teams under defer-to-user are still skipped (regression guard passes). (4) make_pick / undo_pick / swap_pick_player / pause now accept commissioner OR co_commissioners OR role=='admin' (5 occurrences in draft_pick_actions.py — covers all 5 endpoints). (5) POST /api/drafts/{draft_id}/restart endpoint exists in routes/draft_admin.py, wipes picks + rosters, resets current_pick=1 + status='scheduled', writes admin_user_actions audit row, broadcasts 'draft_restarted'. Live smoke confirms endpoint returns 401 (auth required, not 404) — properly wired. Verified pre-existing 5 failures in test_drafts_router.py + 2 errors in test_draft_engine.py setup are NOT caused by this work (reproduce identically on HEAD~1).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "tests/test_drafts_router.py", "issue": "Pre-existing 5 failures (KeyError 'picks'/'year') — isolated_router_app fixture appears not to mount the /api/drafts/{league_id}/picks endpoint in test mode. Verified to also fail on HEAD~1; UNRELATED to iter231ab work."},
+      {"endpoint": "tests/test_draft_engine.py", "issue": "Pre-existing HTTP-mode test setup errors: 'You already have a team in this league' on TestDraftCreation.test_create_draft_success + TestDraftListing.test_get_drafts_by_league — stale test data on shared preview backend, not a regression."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter231ab_draft_restart_ownerless_admin.py",
+    "/app/backend/tests/test_iter231q_draft_pick_timer_worker.py",
+    "/app/backend/tests/test_iter231y_clock_window_and_time_per_pick.py",
+    "/app/backend/tests/test_iter231m_draft_pick_actions_extraction.py",
+    "/app/backend/tests/test_iter231t_draft_admin_extraction.py",
+    "/app/backend/tests/test_iter231x_production_safety_fixes.py",
+    "/app/test_reports/pytest/iter231ab.xml",
+    "/app/test_reports/pytest/iter231ab_final.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Worker.run_once() now treats ownerless teams as IMMEDIATELY auto-pickable — this is correct for stuck Open Slot drafts, but consider adding a per-draft kill-switch or rate-limit (e.g., at most 1 ownerless auto-pick per worker tick PER DRAFT) so a degenerate state of 8 consecutive Open Slot teams can't burn through 8 rounds in one second and surprise commissioners. Currently the loop will iterate and pick for each ownerless team during a single run_once call.",
+    "draft_pick_actions.py now has the same `commissioner OR co_commissioners OR role==admin` check duplicated in 5 endpoint handlers (lines 103-110, 329-330, 408-409, 497-498, 536-537). Extract into a single helper `_is_league_admin(user, league)` — reduces drift risk if a 6th endpoint is added later.",
+    "POST /drafts/{draft_id}/restart wipes teams.roster of drafted players in-place; consider archiving the old picks array into `drafts_history` or `draft_restart_log` before deletion so a commissioner can self-serve recovery if a restart was an accident. Current audit row in `admin_user_actions` records the action but not the lost picks payload.",
+    "Test file uses `os.environ['MONGO_URL']` directly without `dotenv.load_dotenv()` — relies on caller exporting env vars. Other tests in this suite use the same pattern, so consistent, but a tests/conftest.py that auto-loads /app/backend/.env would eliminate the 'KeyError: MONGO_URL' footgun for future devs."
+  ],
+  "updated_files": ["/app/memory/test_credentials.md"],
+  "success_rate": {"backend": "100% (78/78 on iter231ab + 10 related iter231 files)", "frontend": "not tested (per request)"},
+  "test_credentials": "/app/memory/test_credentials.md updated with all 3 credentials from review request (admin / commissioner / secondary user).",
+  "seed_data_creation": "test_iter231ab creates/cleans up its own ephemeral leagues + teams + players + drafts via uuid suffixes; full teardown in finally blocks. No leaked test data.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 231ab implementation is VERIFIED. Restart endpoint live at POST /api/drafts/{draft_id}/restart returns 401 for unauth, route is mounted. Worker correctly auto-picks for ownerless teams. To run the iter231ab test in isolation: `cd /app/backend && export $(grep -E '^(MONGO_URL|DB_NAME)=' .env | xargs) && export REACT_APP_BACKEND_URL=https://dynasty-preview.preview.emergentagent.com && pytest tests/test_iter231ab_draft_restart_ownerless_admin.py -v`. The 5 failures in test_drafts_router.py are pre-existing (confirmed on HEAD~1) and relate to the isolated_router_app fixture not exposing the /api/drafts/{league_id}/picks GET endpoint — independent refactor candidate, do not block iter231ab on it.",
+  "rca of the issue": "N/A — no new issues. Iter 231ab three fixes + 1 new endpoint all working as designed; verified via source guards + functional MongoDB-backed run_once() invocations + live HTTP smoke."
+}

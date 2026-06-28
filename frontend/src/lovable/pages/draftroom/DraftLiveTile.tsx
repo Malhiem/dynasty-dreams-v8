@@ -22,7 +22,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Clock, Play, Pause, Timer, AlertCircle, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { Clock, Play, Pause, Timer, AlertCircle, RotateCcw, Volume2, VolumeX, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCountdown, formatPickTimer } from "@/lovable/pages/draftroom/draftConstants";
 import DraftStatsStrip from "@/lovable/pages/draftroom/DraftStatsStrip";
@@ -51,6 +51,9 @@ export default function DraftLiveTile({
   undoCount,
   setUndoCount,
   handleUndoPicks,
+  // Iter 231ab — Hard-restart the draft (wipes picks + rosters). Confirm via
+  // window.confirm so a slip-of-the-mouse can't nuke the draft.
+  handleRestartDraft,
   // Iter 172 — audio alerts (opt-in toggle + preview)
   soundsEnabled,
   onToggleSounds,
@@ -283,6 +286,24 @@ export default function DraftLiveTile({
                       {undoCount === 1 ? "Undo Last Pick" : `Undo ${undoCount} Picks`}
                     </Button>
                   </div>
+                )}
+                {isLeagueManager && picks.length > 0 && handleRestartDraft && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="w-full mt-1 gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/10"
+                    onClick={() => {
+                      if (window.confirm(
+                        `Hard-restart this draft? This wipes ALL ${picks.length} picks + roster entries and resets to scheduled. This cannot be undone.`
+                      )) {
+                        handleRestartDraft();
+                      }
+                    }}
+                    data-testid="draft-room-restart-draft"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Restart Draft (Wipe All Picks)
+                  </Button>
                 )}
               </div>
             )}
