@@ -155,6 +155,11 @@ export default function OwnerInvites() {
   };
 
   const revokeInvite = async (inv) => {
+    // Iter 231p — Guard against malformed invite docs (silent-fail path).
+    if (!inv?.id) {
+      toast.error("Cannot revoke — invite id missing. Reload the page and try again.");
+      return;
+    }
     if (!window.confirm("Revoke this invite link? Anyone who already has it won't be able to claim the team.")) return;
     setBusy(inv.team_id, true);
     try {

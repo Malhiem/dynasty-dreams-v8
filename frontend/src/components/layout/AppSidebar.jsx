@@ -1,7 +1,9 @@
+import { useEffect, useMemo, useState } from "react";
 import {
   Home, Users, MessageSquare, Newspaper, ArrowRightLeft, Trophy, DollarSign,
   Star, Clock, Settings, BarChart3, CreditCard, History, Medal, UserSearch,
-  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText, UserCircle, Flag, Search, Network, Scale
+  Layers, LayoutGrid, ClipboardList, Dices, LogOut, Shield, Radio, ScrollText,
+  UserCircle, Flag, Search, Network, Scale, ChevronDown, ChevronRight, GripVertical,
 } from "lucide-react";
 import { NavLink } from "@/components/NavLink";
 import { useLocation, Link } from "react-router-dom";
@@ -22,8 +24,6 @@ const userItems = [
 
 const adminItem = { title: "Admin Dashboard", url: "/admin", icon: Shield };
 
-// Static items that don't depend on the active league live in this list.
-// Dynamic items (League Home, League Administration) are inserted below.
 const leagueHubStatic = [
   { title: "Live Scoring", url: "/matchup", icon: Radio },
   { title: "Standings", url: "/standings", icon: Trophy },
@@ -51,9 +51,46 @@ const managementItems = [
 const draftItems = [
   { title: "Draft Board", url: "/draft-board", icon: ClipboardList },
   { title: "Draft Room", url: "/draft-room", icon: LayoutGrid },
-  // Iter 203 — Past drafts (auto-archived when status flips to `completed`).
   { title: "Draft History", url: "/draft-history", icon: History },
 ];
+
+// Iter 231p — Sidebar group registry. Each group has a stable `key`
+// (used for localStorage persistence of order + collapsed state) plus
+// its display label and items. The User group is intentionally NOT in
+// this list — it stays pinned to the top (and includes the league
+// switcher) so users can always return to the dashboard / change
+// leagues regardless of how they've reordered everything else.
+const SIDEBAR_GROUPS_LS_ORDER = "dd_sidebar_group_order_v1";
+const SIDEBAR_GROUPS_LS_COLLAPSED = "dd_sidebar_group_collapsed_v1";
+const DEFAULT_GROUP_ORDER = ["league_hub", "social", "team_mgmt", "draft"];
+
+function loadOrder() {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_GROUPS_LS_ORDER);
+    if (!raw) return DEFAULT_GROUP_ORDER;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DEFAULT_GROUP_ORDER;
+    // Drop unknown keys + append any missing defaults so newly-added
+    // groups still appear after a future release.
+    const known = new Set(DEFAULT_GROUP_ORDER);
+    const cleaned = parsed.filter((k) => known.has(k));
+    for (const k of DEFAULT_GROUP_ORDER) if (!cleaned.includes(k)) cleaned.push(k);
+    return cleaned;
+  } catch {
+    return DEFAULT_GROUP_ORDER;
+  }
+}
+
+function loadCollapsed() {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_GROUPS_LS_COLLAPSED);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 export function AppSidebar() {
   const { state } = useSidebar();
@@ -65,8 +102,18 @@ export function AppSidebar() {
   const isActive = (path) => location.pathname === path;
   const { count: chatUnread } = useChatUnread();
 
-  // Determine if the current user is the commissioner OR a co-commissioner
-  // for the active league. Used to gate the "League Administration" link.
+  // Iter 231p — Persisted per-user customisation (order + collapse).
+  const [groupOrder, setGroupOrder] = useState(loadOrder);
+  const [collapsedMap, setCollapsedMap] = useState(loadCollapsed);
+  const [dragKey, setDragKey] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_GROUPS_LS_ORDER, JSON.stringify(groupOrder));
+  }, [groupOrder]);
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_GROUPS_LS_COLLAPSED, JSON.stringify(collapsedMap));
+  }, [collapsedMap]);
+
   const isLeagueAdmin = !!(
     league && user && (
       league.commissioner_id === user.id ||
@@ -74,8 +121,6 @@ export function AppSidebar() {
     )
   );
 
-  // Dynamic League Hub: prepend "League Home" and append "League
-  // Administration" only when the user is allowed to administer the league.
   const dynamicLeagueHub = [
     {
       title: "League Home",
@@ -88,44 +133,126 @@ export function AppSidebar() {
       : []),
   ];
 
-  const renderGroup = (label, items) => (
+  const socialItemsWithBadge = socialItems.map((it) =>
+    it.title === "Chat" ? { ...it, badge: chatUnread } : it,
+  );
+
+  // Iter 231p — Resolved group registry keyed by stable `key`. Order
+  // applied below via `groupOrder`.
+  const groupRegistry = useMemo(() => ({
+    league_hub: { key: "league_hub", label: "League Hub", items: dynamicLeagueHub },
+    social: { key: "social", label: "Social", items: socialItemsWithBadge },
+    team_mgmt: { key: "team_mgmt", label: "Team Management", items: managementItems },
+    draft: { key: "draft", label: "Draft", items: draftItems },
+  }), [dynamicLeagueHub, socialItemsWithBadge]);
+
+  const toggleCollapsed = (key) => {
+    setCollapsedMap((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // ── Drag-and-drop reorder (HTML5; same pattern as MyLeagues) ─────
+  const onDragStart = (key) => (e) => {
+    setDragKey(key);
+    e.dataTransfer.effectAllowed = "move";
+    try { e.dataTransfer.setData("text/plain", key); } catch { /* noop */ }
+  };
+  const onDragOver = (key) => (e) => {
+    e.preventDefault();
+    if (!dragKey || dragKey === key) return;
+    setGroupOrder((prev) => {
+      const next = [...prev];
+      const from = next.indexOf(dragKey);
+      const to = next.indexOf(key);
+      if (from < 0 || to < 0) return prev;
+      next.splice(to, 0, next.splice(from, 1)[0]);
+      return next;
+    });
+  };
+  const onDragEnd = () => setDragKey(null);
+
+  const renderItem = (item) => (
+    <SidebarMenuItem key={item.title}>
+      <SidebarMenuButton asChild isActive={isActive(item.url)} tooltip={item.title}>
+        <NavLink
+          to={item.url}
+          className="flex items-center gap-3 px-3 py-2 rounded-lg transition-colors hover:bg-secondary"
+          activeClassName="bg-[#00D2FF]/10 text-[#00D2FF] border-l-2 border-[#00D2FF]"
+        >
+          <item.icon className="h-4 w-4 shrink-0" />
+          {!collapsed && <span className="flex-1">{item.title}</span>}
+          {item.badge > 0 && (
+            <span
+              data-testid={`sidebar-badge-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+              className={`ml-auto h-5 ${collapsed ? "absolute right-1 top-1 min-w-[18px]" : "min-w-[20px]"} px-1.5 rounded-full bg-[#FF3B5C] text-white text-[10px] font-bold flex items-center justify-center shadow`}
+            >
+              {item.badge > 99 ? "99+" : item.badge}
+            </span>
+          )}
+        </NavLink>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+
+  const renderStaticGroup = (label, items) => (
     <SidebarGroup>
       <SidebarGroupLabel className="text-muted-foreground text-xs uppercase tracking-wider">
         {!collapsed && label}
       </SidebarGroupLabel>
       <SidebarGroupContent>
-        <SidebarMenu>
-          {items.map((item) => (
-            <SidebarMenuItem key={item.title}>
-              <SidebarMenuButton asChild isActive={isActive(item.url)} tooltip={item.title}>
-                <NavLink
-                  to={item.url}
-                  className="flex items-center gap-3 px-3 py-2 rounded-lg transition-colors hover:bg-secondary"
-                  activeClassName="bg-[#00D2FF]/10 text-[#00D2FF] border-l-2 border-[#00D2FF]"
-                >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  {!collapsed && <span className="flex-1">{item.title}</span>}
-                  {item.badge > 0 && (
-                    <span
-                      data-testid={`sidebar-badge-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
-                      className={`ml-auto h-5 ${collapsed ? "absolute right-1 top-1 min-w-[18px]" : "min-w-[20px]"} px-1.5 rounded-full bg-[#FF3B5C] text-white text-[10px] font-bold flex items-center justify-center shadow`}
-                    >
-                      {item.badge > 99 ? "99+" : item.badge}
-                    </span>
-                  )}
-                </NavLink>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))}
-        </SidebarMenu>
+        <SidebarMenu>{items.map(renderItem)}</SidebarMenu>
       </SidebarGroupContent>
     </SidebarGroup>
   );
 
-  // Inject the live unread count onto the Chat menu item.
-  const socialItemsWithBadge = socialItems.map((it) =>
-    it.title === "Chat" ? { ...it, badge: chatUnread } : it,
-  );
+  // Iter 231p — Reorderable + collapsible group renderer. Header click
+  // toggles items; the grip handle (visible on hover) starts a drag to
+  // reorder. In collapsed-sidebar mode we suppress the drag affordance
+  // entirely (no room to render it).
+  const renderReorderableGroup = (group) => {
+    const isCollapsed = !!collapsedMap[group.key];
+    const isDragging = dragKey === group.key;
+    return (
+      <SidebarGroup
+        key={group.key}
+        draggable={!collapsed}
+        onDragStart={onDragStart(group.key)}
+        onDragOver={onDragOver(group.key)}
+        onDragEnd={onDragEnd}
+        className={isDragging ? "opacity-50" : ""}
+        data-testid={`sidebar-group-${group.key}`}
+      >
+        <SidebarGroupLabel asChild>
+          <button
+            type="button"
+            onClick={() => toggleCollapsed(group.key)}
+            className="group flex w-full items-center gap-1.5 text-muted-foreground text-xs uppercase tracking-wider hover:text-white transition-colors"
+            data-testid={`sidebar-group-toggle-${group.key}`}
+            aria-expanded={!isCollapsed}
+          >
+            {!collapsed && (
+              <>
+                {isCollapsed ? (
+                  <ChevronRight className="h-3 w-3 shrink-0" />
+                ) : (
+                  <ChevronDown className="h-3 w-3 shrink-0" />
+                )}
+                <span className="flex-1 text-left">{group.label}</span>
+                <GripVertical
+                  className="h-3 w-3 opacity-0 group-hover:opacity-60 cursor-grab active:cursor-grabbing"
+                  aria-hidden
+                />
+              </>
+            )}
+          </button>
+        </SidebarGroupLabel>
+        {!isCollapsed && (
+          <SidebarGroupContent>
+            <SidebarMenu>{group.items.map(renderItem)}</SidebarMenu>
+          </SidebarGroupContent>
+        )}
+      </SidebarGroup>
+    );
+  };
 
   return (
     <Sidebar collapsible="icon" className="border-r border-white/10">
@@ -143,16 +270,11 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent className="px-2">
-        {renderGroup("User", user?.role === "admin" ? [...userItems, adminItem] : userItems)}
-        {/* "Current League" switcher — repurposed from the old static
-            "Active league" badge that used to live here. Clicking opens
-            the league-switch menu; this is the only way to jump between
-            leagues besides the User Dashboard link above. */}
+        {/* User group + league switcher are pinned (not reorderable). */}
+        {renderStaticGroup("User", user?.role === "admin" ? [...userItems, adminItem] : userItems)}
         <CurrentLeagueDropdown collapsed={collapsed} />
-        {renderGroup("League Hub", dynamicLeagueHub)}
-        {renderGroup("Social", socialItemsWithBadge)}
-        {renderGroup("Team Management", managementItems)}
-        {renderGroup("Draft", draftItems)}
+        {/* Iter 231p — Reorderable + collapsible groups. */}
+        {groupOrder.map((key) => groupRegistry[key]).filter(Boolean).map(renderReorderableGroup)}
       </SidebarContent>
 
       <SidebarFooter className="p-4 border-t border-white/10">

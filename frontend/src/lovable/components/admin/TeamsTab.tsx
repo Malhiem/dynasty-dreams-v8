@@ -27,6 +27,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Plus, X, Pencil, Check, Mail, Users, Link2, Copy } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -44,6 +54,12 @@ const TeamsTab = () => {
   const [addingOwnerFor, setAddingOwnerFor] = useState(null);
   const [newOwnerEmail, setNewOwnerEmail] = useState("");
   const [busy, setBusy] = useState({});
+  // Iter 231p — Track which invite is pending revocation so the
+  // AlertDialog can render its content + run the actual delete on
+  // confirm. Replaces the unreliable native `window.confirm` (which
+  // some embedded browsers / popup blockers swallow → "Yes click does
+  // nothing").
+  const [revokeTarget, setRevokeTarget] = useState(null);
 
   const setBusyFor = (teamId, val) =>
     setBusy((prev) => ({ ...prev, [teamId]: val }));
@@ -149,7 +165,14 @@ const TeamsTab = () => {
   };
 
   const revokeInvite = async (inv) => {
-    if (!window.confirm("Revoke this invite link?")) return;
+    // Iter 231p — Guard against malformed invite docs (missing id is the
+    // most-likely silent-fail path). Without this guard, axios issues a
+    // DELETE to `/team-invites/undefined` which hits a 404 + a vague
+    // "Couldn't revoke invite" toast that the user often misses.
+    if (!inv?.id) {
+      toast.error("Cannot revoke — invite id missing. Reload the page and try again.");
+      return;
+    }
     setBusyFor(inv.team_id, true);
     try {
       await api.delete(`/team-invites/${inv.id}`);
@@ -159,6 +182,7 @@ const TeamsTab = () => {
       toast.error(e?.response?.data?.detail || "Couldn't revoke invite");
     } finally {
       setBusyFor(inv.team_id, false);
+      setRevokeTarget(null);
     }
   };
 
@@ -275,7 +299,7 @@ const TeamsTab = () => {
                         <button
                           type="button"
                           className="inline-flex items-center text-muted-foreground hover:text-destructive"
-                          onClick={() => revokeInvite(inv)}
+                          onClick={() => setRevokeTarget(inv)}
                           disabled={isBusy}
                           aria-label="Revoke invite"
                           data-testid={`teams-tab-invite-revoke-${inv.id}`}
@@ -385,6 +409,32 @@ const TeamsTab = () => {
         </Table>
         )}
       </CardContent>
+      {/* Iter 231p — Revoke-invite confirmation. Replaces window.confirm so
+          the modal works reliably across browsers/embedded WebViews. */}
+      <AlertDialog
+        open={!!revokeTarget}
+        onOpenChange={(open) => !open && setRevokeTarget(null)}
+      >
+        <AlertDialogContent data-testid="teams-tab-revoke-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke this invite link?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Anyone who already has this link won&apos;t be able to claim the team.
+              {revokeTarget?.email ? ` Invite was for ${revokeTarget.email}.` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="teams-tab-revoke-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => revokeTarget && revokeInvite(revokeTarget)}
+              data-testid="teams-tab-revoke-confirm"
+            >
+              Yes, revoke
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 };
