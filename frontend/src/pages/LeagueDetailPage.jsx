@@ -311,9 +311,15 @@ export default function LeagueDetailPage() {
         <div className="flex flex-col">
 
         {/* Matchups + Standings (side-by-side on desktop) */}
+        {/* Iter 231q — `minmax(0, 1fr)` forces the matchups column to
+            expand to fill available horizontal space. CSS Grid's bare
+            `1fr` collapses to content-min when the second track has a
+            fixed size and the parent container is wider than expected,
+            leaving the left column narrow + a huge dead band on the
+            page. */}
         {widgetVis.matchups && isH2H ? (
           <SortableSection id="matchups" className="mb-8" style={{order: widgetOrder.indexOf("matchups")}}>
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr,360px] gap-6" data-testid="league-matchups-section">
+          <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-6" data-testid="league-matchups-section">
             {/* Matchups column */}
             <div>
               <div className="flex items-baseline justify-between mb-4">

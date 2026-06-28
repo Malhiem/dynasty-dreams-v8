@@ -1289,6 +1289,11 @@ async def startup():
     try:
         from services.draft_autostart_worker import draft_autostart_loop
         asyncio.create_task(draft_autostart_loop(db))
+        # Iter 231q — Pick timer rollover. Auto-picks stalled drafts where
+        # the per-pick clock has elapsed and no one is on the page to
+        # trigger it from the frontend.
+        from services.draft_pick_timer_worker import draft_pick_timer_loop
+        asyncio.create_task(draft_pick_timer_loop(db))
     except Exception as e:
         logger.error(f"draft_autostart_worker failed to start: {e}")
 
