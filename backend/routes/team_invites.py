@@ -399,11 +399,20 @@ async def list_league_team_invites(
     request: Request,
     team_id: Optional[str] = None,
     include_used: bool = False,
+    include_revoked: bool = False,
 ):
     """Commissioner-only roll-up of all slot invites in the league.
 
     Useful for the Commissioner → Owner Invites page so each team row can
     show its outstanding tokens with revoke / copy-link controls.
+
+    Iter 231aa — Revoked invites are excluded by default. The previous
+    behaviour returned them and the frontend rendered them as if they
+    were still pending — clicking revoke on an already-revoked invite
+    silently re-revoked it (the backend is idempotent), the toast said
+    "Invite revoked", but the row never disappeared because the next
+    list() call returned the same revoked invite right back. Setting
+    `include_revoked=true` opts back in for audit views.
     """
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
@@ -434,6 +443,9 @@ async def list_league_team_invites(
     for inv in invites:
         status = _invite_status(inv)
         if not include_used and status == "accepted":
+            continue
+        # Iter 231aa — Hide revoked invites from the default list view.
+        if not include_revoked and status == "revoked":
             continue
         t = teams_by_id.get(inv["team_id"]) or {}
         out.append(_to_response(

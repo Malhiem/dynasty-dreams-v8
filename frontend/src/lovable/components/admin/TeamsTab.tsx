@@ -75,6 +75,12 @@ const TeamsTab = () => {
       setData(r.data || { teams: [] });
       const byTeam = {};
       (sr.data?.invites || []).forEach((inv) => {
+        // Iter 231aa — Defense in depth: also drop revoked/accepted invites
+        // client-side. The backend now filters them by default, but if any
+        // legacy server returns them, never render an already-revoked invite
+        // as if it were pending — that's what made the user click "revoke"
+        // on a no-op row and complain the button didn't work.
+        if (inv?.status === "revoked" || inv?.status === "accepted" || inv?.status === "expired") return;
         if (!byTeam[inv.team_id]) byTeam[inv.team_id] = [];
         byTeam[inv.team_id].push(inv);
       });
