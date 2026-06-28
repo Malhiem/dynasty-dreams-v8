@@ -250,10 +250,27 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> di
     next_pick = current_pick + 1
     total_picks = draft["total_rounds"] * total_teams
     new_status = "completed" if next_pick > total_picks else "active"
-    await _db().drafts.update_one(
-        {"_id": ObjectId(draft_id)},
+    # Iter 231x — Optimistic concurrency control. Without this guard
+    # two concurrent invocations (the timer worker + a manual UI
+    # auto-pick, or two timer ticks racing each other on a single
+    # expired clock) both read `current_pick=N`, both compute the same
+    # on-clock team, and both `$push` a pick with `overall=N` — yielding
+    # duplicate picks. Conditioning the update on `current_pick == N`
+    # AND `status == "active"` makes the second writer's match_count=0
+    # and we abort cleanly instead of polluting the picks array.
+    result = await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id), "current_pick": current_pick, "status": "active"},
         {"$push": {"picks": pick_doc}, "$set": {"current_pick": next_pick, "status": new_status}},
     )
+    if result.matched_count == 0:
+        # Another writer beat us — refuse silently so the caller can
+        # observe via an HTTP 409. The timer worker catches this and
+        # increments its `errors` counter; the manual /auto-pick
+        # endpoint surfaces the 409 to the client.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pick #{current_pick} was already made by another process (concurrent update)",
+        )
     await _db().teams.update_one(
         {"_id": ObjectId(on_clock_team_id)},
         {

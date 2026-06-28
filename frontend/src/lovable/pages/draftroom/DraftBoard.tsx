@@ -296,9 +296,22 @@ export default function DraftBoard({
                     {round}
                   </div>
                   {boardTeamAbbrs.map((teamAbbr) => {
-                    const pick = roundPicks.find((p) => p.team === teamAbbr);
-                    const isCurrentPick = pick?.overall === draftConfig.currentPick && draftConfig.draftStarted;
                     const boardEntry = boardTeams.find((t) => t.abbr === teamAbbr);
+                    // Iter 231x — Pick lookup matches by EITHER team_id
+                    // (canonical) OR the legacy `team` abbr. Drafts created
+                    // before iter229b backfilled "Open Slot N" team names
+                    // stored their picks with `team: "TBD"`, `"TBD2"` etc.
+                    // The current frontend derives column abbrs as "OS5",
+                    // "OS9", "OS1", "OS12" (from `Open Slot N` initials) so
+                    // a pure-abbr match leaves the cell blank. Resolving by
+                    // `pick.team_id === boardEntry.id` (which the auto-pick
+                    // worker stamps onto every pick) makes the rendering
+                    // resilient to abbr drift.
+                    const pick = roundPicks.find((p) => {
+                      if (boardEntry?.id && p.team_id && String(p.team_id) === String(boardEntry.id)) return true;
+                      return p.team === teamAbbr;
+                    });
+                    const isCurrentPick = pick?.overall === draftConfig.currentPick && draftConfig.draftStarted;
                     const ownerTeam = (liveTeams || []).find((t) => {
                       if (boardEntry?.id && (t.id || t._id) === boardEntry.id) return true;
                       const nameAbbr = (t.name || "").replace(/\s/g, "").slice(0, 3).toUpperCase();

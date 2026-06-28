@@ -150,7 +150,9 @@ async def test_expired_clock_triggers_auto_pick():
     draft_id = await _seed_draft(db, league_id, team_ids, abbrs, started_at=past)
 
     try:
-        counts = await run_once(db)
+        # Iter 231x — scope the worker to ONLY our seeded draft so we
+        # never auto-pick into production drafts that happen to be active.
+        counts = await run_once(db, draft_ids_filter=[draft_id])
         assert counts["expired"] >= 1
         assert counts["picked"] >= 1
 
@@ -178,7 +180,7 @@ async def test_defer_to_user_drafts_are_skipped():
     )
 
     try:
-        counts = await run_once(db)
+        counts = await run_once(db, draft_ids_filter=[draft_id])
         assert counts["skipped"] >= 1
         refreshed = await db.drafts.find_one({"_id": ObjectId(draft_id)})
         assert refreshed["picks"] == []
@@ -201,7 +203,7 @@ async def test_paused_drafts_are_skipped():
     )
 
     try:
-        counts = await run_once(db)
+        counts = await run_once(db, draft_ids_filter=[draft_id])
         assert counts["skipped"] >= 1
         refreshed = await db.drafts.find_one({"_id": ObjectId(draft_id)})
         assert refreshed["picks"] == []
@@ -221,7 +223,7 @@ async def test_drafts_within_grace_window_are_not_picked():
     draft_id = await _seed_draft(db, league_id, team_ids, abbrs, started_at=just_now)
 
     try:
-        counts = await run_once(db)
+        counts = await run_once(db, draft_ids_filter=[draft_id])
         # Other drafts in the DB may be expired — we only care that OURS is not.
         refreshed = await db.drafts.find_one({"_id": ObjectId(draft_id)})
         assert refreshed["picks"] == []
@@ -240,7 +242,7 @@ async def test_drafts_with_no_started_anchor_are_skipped():
     draft_id = await _seed_draft(db, league_id, team_ids, abbrs, started_at=None)
 
     try:
-        counts = await run_once(db)
+        counts = await run_once(db, draft_ids_filter=[draft_id])
         assert counts["skipped"] >= 1
         refreshed = await db.drafts.find_one({"_id": ObjectId(draft_id)})
         assert refreshed["picks"] == []
@@ -269,7 +271,7 @@ async def test_queue_player_picked_before_best_eligible():
     draft_id = await _seed_draft(db, league_id, team_ids, abbrs, started_at=past)
 
     try:
-        await run_once(db)
+        await run_once(db, draft_ids_filter=[draft_id])
         refreshed = await db.drafts.find_one({"_id": ObjectId(draft_id)})
         assert len(refreshed["picks"]) == 1
         assert refreshed["picks"][0]["player_id"] == queued_pid
@@ -293,7 +295,7 @@ async def test_inactive_drafts_are_ignored():
     )
 
     try:
-        counts = await run_once(db)
+        counts = await run_once(db, draft_ids_filter=[draft_id])
         # `checked` excludes non-active drafts (worker query filters them out).
         refreshed = await db.drafts.find_one({"_id": ObjectId(draft_id)})
         assert refreshed["picks"] == []
@@ -305,13 +307,19 @@ async def test_inactive_drafts_are_ignored():
 @pytest.mark.asyncio
 async def test_run_once_returns_count_shape():
     """Smoke: run_once returns the expected counters dict shape even when
-    there's nothing to do (empty drafts collection scan)."""
+    there's nothing to do (empty drafts collection scan).
+
+    Iter 231x — pass an empty filter list so the worker scans nothing
+    (we just want to verify the return shape). This is the test that
+    formerly scanned production drafts and caused iter231q pollution."""
     db = _db()
     _wire_deps(db)
-    counts = await run_once(db)
+    counts = await run_once(db, draft_ids_filter=[])
     for k in ("checked", "expired", "picked", "skipped", "errors"):
         assert k in counts
         assert isinstance(counts[k], int)
+    # With an empty filter, nothing should be scanned.
+    assert counts["checked"] == 0
 
 
 @pytest.mark.asyncio

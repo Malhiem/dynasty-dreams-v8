@@ -46,15 +46,26 @@ def _parse_iso(value):
         return None
 
 
-async def run_once(db) -> dict:
+async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
     """Single pass: find active drafts whose current pick clock has
-    elapsed, and trigger an auto-pick. Returns counts for observability."""
+    elapsed, and trigger an auto-pick. Returns counts for observability.
+
+    `draft_ids_filter` — Iter 231x test-isolation hook. When provided,
+    only scans the listed draft ids instead of every active draft in
+    the DB. Production callers (the long-running loop) always pass
+    None so behaviour is unchanged. Tests pass their own seeded
+    draft_id(s) so a unit test can never touch a production draft.
+    """
     from routes.draft_helpers import perform_one_auto_pick
 
     now = datetime.now(timezone.utc)
     counts = {"checked": 0, "expired": 0, "picked": 0, "skipped": 0, "errors": 0}
 
-    async for draft in db.drafts.find({"status": "active"}):
+    query: dict = {"status": "active"}
+    if draft_ids_filter is not None:
+        query["_id"] = {"$in": [ObjectId(d) for d in draft_ids_filter]}
+
+    async for draft in db.drafts.find(query):
         counts["checked"] += 1
         if draft.get("timer_paused"):
             counts["skipped"] += 1
