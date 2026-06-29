@@ -52,6 +52,14 @@ async def isolated_router_app(router_module, *, user: dict | None = None):
 
     The test database is dropped on exit so each test starts pristine — this
     is the property the iter-85 test-pollution incident specifically lacked.
+
+    Iter 231al — `router_module` accepts either a single module **or** an
+    iterable of modules. When iterable, every module's `setup(deps)` is
+    invoked with the same shared deps dict and every router is mounted on
+    the same app + `/api` prefix. This lets a single test exercise an
+    endpoint family that has been decomposed across multiple files (e.g.
+    `drafts.py` after iter 231 → drafts/draft_admin/draft_lifecycle/
+    draft_pick_actions/draft_inspection/draft_chat_config/draft_auction).
     """
     # Per-test mongo client. We tried sharing one client across tests but
     # motor's connection pool occasionally hands out a stale socket under
@@ -110,7 +118,7 @@ async def isolated_router_app(router_module, *, user: dict | None = None):
     def _stub_calculate_fantasy_points(player, config=None):
         return float(player.get("points") or player.get("fantasy_points") or 0.0)
 
-    router_module.setup({
+    deps = {
         "db": db,
         "get_current_user": _stub_get_current_user,
         "_safe_object_id": _safe_object_id,
@@ -118,11 +126,24 @@ async def isolated_router_app(router_module, *, user: dict | None = None):
         "log_activity": _stub_log_activity,
         "_recompute_team_salary_used": _stub_recompute,
         "calculate_fantasy_points": _stub_calculate_fantasy_points,
-    })
+        # Iter 231al — `drafts.py` notification helpers expect a `sio` ref
+        # (None means "skip socket emit"). draft_lifecycle delegates to a
+        # shared `notify_*` helper that reads this; default to None so the
+        # auto-pick + start flows don't blow up trying to broadcast.
+        "sio": None,
+    }
+
+    modules = router_module if isinstance(router_module, (list, tuple)) else [router_module]
 
     app = FastAPI()
     sub = APIRouter()
-    sub.include_router(router_module.router)
+    for mod in modules:
+        mod.setup(deps)
+        # Iter 231al — Some draft-family modules host shared helpers only
+        # (no `@router.*` endpoints) but still need `setup(deps)` so their
+        # `_db()` resolver works. Skip the include_router for those.
+        if hasattr(mod, "router"):
+            sub.include_router(mod.router)
     app.include_router(sub, prefix="/api")
 
     try:

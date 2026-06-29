@@ -204,6 +204,13 @@ export default function DraftRoom() {
   const [swapSearch, setSwapSearch] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState("");
   const [positionFilter, setPositionFilter] = useState("all");
+  // Iter 231al — Player-type segment for the Eligible tab. "all" shows
+  // every undrafted row, "nhl" hides prospects, "prospects" isolates the
+  // 1,339 backfilled prospect tier so users running an entry draft can
+  // browse rookies without scrolling past Connor McDavid + Nikita
+  // Kucherov. Defaults to "all" so the existing UX is unchanged for
+  // managers who never touch the chip.
+  const [typeFilter, setTypeFilter] = useState<"all" | "nhl" | "prospects">("all");
   // Iter 230v — Countdown ticker extracted into `useDraftCountdown`.
   // Iter 204 — `pickTimeLeft`/`timerPaused` moved into `usePickTimer`
   // hook (declared further down after currentDraft is available).
@@ -437,6 +444,7 @@ export default function DraftRoom() {
     players,
     searchQuery,
     positionFilter,
+    typeFilter,
     shortlist,
     setShortlist,
     queue,
@@ -737,6 +745,8 @@ export default function DraftRoom() {
             setSearchQuery={setSearchQuery}
             positionFilter={positionFilter}
             setPositionFilter={setPositionFilter}
+            typeFilter={typeFilter}
+            setTypeFilter={setTypeFilter}
             positions={positions}
             positionColors={positionColors}
             selectedPlayerId={selectedPlayerId}

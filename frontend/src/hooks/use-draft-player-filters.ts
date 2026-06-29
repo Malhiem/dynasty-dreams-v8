@@ -19,6 +19,7 @@ export default function useDraftPlayerFilters({
   players,
   searchQuery,
   positionFilter,
+  typeFilter = "all",
   shortlist,
   setShortlist,
   queue,
@@ -27,6 +28,13 @@ export default function useDraftPlayerFilters({
   players: DraftEligiblePlayer[];
   searchQuery: string;
   positionFilter: string;
+  /**
+   * Iter 231al — Player-type segment ("all" | "nhl" | "prospects").
+   * Powered by the new tri-segment chip in PlayerSearchPanel so users
+   * can isolate the 1,339 prospect tier without scrolling past the
+   * NHL stars that dominate the points-sorted list.
+   */
+  typeFilter?: "all" | "nhl" | "prospects";
   shortlist: string[];
   setShortlist: (updater: (prev: string[]) => string[]) => void;
   queue: string[];
@@ -38,10 +46,15 @@ export default function useDraftPlayerFilters({
       .filter((p) => {
         const matchesSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
         const matchesPos = positionFilter === "all" || p.position === positionFilter;
-        return matchesSearch && matchesPos;
+        const isProspect = p.player_type === "prospect" || !!p.minor_eligible;
+        const matchesType =
+          typeFilter === "all" ||
+          (typeFilter === "prospects" && isProspect) ||
+          (typeFilter === "nhl" && !isProspect);
+        return matchesSearch && matchesPos && matchesType;
       })
       .sort((a, b) => a.ranking - b.ranking);
-  }, [players, searchQuery, positionFilter]);
+  }, [players, searchQuery, positionFilter, typeFilter]);
 
   // Iter 170l — preserve the manager's drag-ordered shortlist (was
   // sorted by global ranking before, which made drag-to-reorder

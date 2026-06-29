@@ -21,7 +21,40 @@ from bson import ObjectId
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Iter 231al — `routes/drafts.py` was decomposed across many modules during
+# the iter 231 refactor campaign. The original suite mounted just
+# `drafts_routes` which now hosts no `@router.*` endpoints. We mount the
+# entire draft family so every endpoint these tests exercise resolves.
 from routes import drafts as drafts_routes  # noqa: E402
+from routes import draft_admin  # noqa: E402
+from routes import draft_auction  # noqa: E402
+from routes import draft_chat_config  # noqa: E402
+from routes import draft_config  # noqa: E402
+from routes import draft_helpers  # noqa: E402  (no routes; deps only)
+from routes import draft_inspection  # noqa: E402
+from routes import draft_lifecycle  # noqa: E402
+from routes import draft_pick_actions  # noqa: E402
+from routes import draft_picks  # noqa: E402
+from routes import draft_queue  # noqa: E402
+
+# All draft-family modules are mounted together so requests against any
+# relocated endpoint (eligible-players, start, pick, pause, chat, config,
+# auction, …) flow through the right handler. Helpers like
+# `draft_helpers` host no `@router.*` decorators but still need
+# `setup(deps)` so the auto-pick / seed-picks helpers see the test db.
+DRAFTS_FAMILY = (
+    drafts_routes,
+    draft_admin,
+    draft_auction,
+    draft_chat_config,
+    draft_config,
+    draft_helpers,
+    draft_inspection,
+    draft_lifecycle,
+    draft_pick_actions,
+    draft_picks,
+    draft_queue,
+)
 
 from tests.router_test_utils import isolated_router_app  # noqa: E402
 
@@ -90,11 +123,15 @@ async def _seed_draft(db, *, league_id, team_abbrs=None, status="scheduled",
 
 
 def _wire_default_deps():
-    """Stub the side-effect deps so the tests don't fan out to push/sockets."""
-    drafts_routes._deps["broadcast_to_room"] = _noop_async
-    drafts_routes._deps["log_activity"] = _noop_async
-    drafts_routes._deps["sio"] = None  # router skips emit if missing
-    drafts_routes._deps["calculate_fantasy_points"] = lambda p, c=None: p.get("points", 0)
+    """Stub the side-effect deps so the tests don't fan out to push/sockets.
+
+    Iter 231al — `isolated_router_app(DRAFTS_FAMILY)` now seeds every
+    module's `_deps` (including broadcast_to_room / log_activity / sio /
+    calculate_fantasy_points). This helper is a no-op kept for source
+    compatibility; older test bodies still call it inside the
+    `async with` block before any DB seeding.
+    """
+    return None
 
 
 async def _noop_async(*a, **kw):
@@ -108,7 +145,7 @@ async def _noop_async(*a, **kw):
 
 @pytest.mark.asyncio
 async def test_create_draft_404_when_league_missing():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         r = await ctx.client.post("/api/drafts", json={
             "league_id": str(ObjectId()),
@@ -120,7 +157,7 @@ async def test_create_draft_404_when_league_missing():
 
 @pytest.mark.asyncio
 async def test_create_draft_403_when_not_commissioner():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db, commissioner_id="OTHER_USER")
         r = await ctx.client.post("/api/drafts", json={
@@ -131,7 +168,7 @@ async def test_create_draft_403_when_not_commissioner():
 
 @pytest.mark.asyncio
 async def test_create_draft_happy_path_seeds_team_abbrs():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="Zarek Frozen", owner_id="test_user_0001")
@@ -144,7 +181,11 @@ async def test_create_draft_happy_path_seeds_team_abbrs():
         body = r.json()
         assert body["status"] == "scheduled"
         assert body["current_pick"] == 1
-        assert sorted(body["team_abbrs"]) == ["VIPE", "ZARE"]
+        # Iter 231al — `_derive_team_abbr` (routes/drafts.py:72) now uses
+        # initials for multi-word names + first-3 chars for single-word
+        # names. "Zarek Frozen" → "ZF", "Vipers" → "VIP". The old 4-letter
+        # name-prefix scheme is gone.
+        assert sorted(body["team_abbrs"]) == ["VIP", "ZF"]
         # team_map is stripped from the response (it leaks owner_ids)
         assert "team_map" not in body
 
@@ -156,7 +197,7 @@ async def test_create_draft_happy_path_seeds_team_abbrs():
 
 @pytest.mark.asyncio
 async def test_list_drafts_filters_by_league():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_a = await _seed_league(ctx.db)
         league_b = await _seed_league(ctx.db)
@@ -171,7 +212,7 @@ async def test_list_drafts_filters_by_league():
 
 @pytest.mark.asyncio
 async def test_get_draft_404_when_missing():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         r = await ctx.client.get(f"/api/drafts/{ObjectId()}")
         assert r.status_code == 404
@@ -179,7 +220,7 @@ async def test_get_draft_404_when_missing():
 
 @pytest.mark.asyncio
 async def test_get_draft_board_returns_on_the_clock():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         did = await _seed_draft(
@@ -199,7 +240,7 @@ async def test_get_draft_board_returns_on_the_clock():
 
 @pytest.mark.asyncio
 async def test_get_draft_board_404_when_missing():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         r = await ctx.client.get(f"/api/drafts/{ObjectId()}/board")
         assert r.status_code == 404
@@ -212,7 +253,7 @@ async def test_get_draft_board_404_when_missing():
 
 @pytest.mark.asyncio
 async def test_eligible_players_excludes_already_drafted():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         p1 = await _seed_player(ctx.db, name="Free", points=80)
@@ -229,7 +270,7 @@ async def test_eligible_players_excludes_already_drafted():
 
 @pytest.mark.asyncio
 async def test_eligible_players_search_substring():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_player(ctx.db, name="Connor McDavid")
@@ -243,7 +284,7 @@ async def test_eligible_players_search_substring():
 
 @pytest.mark.asyncio
 async def test_eligible_players_position_filter():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_player(ctx.db, name="C1", position="C")
@@ -261,7 +302,7 @@ async def test_eligible_players_position_filter():
 
 @pytest.mark.asyncio
 async def test_start_draft_403_when_not_commissioner():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db, commissioner_id="OTHER")
         did = await _seed_draft(ctx.db, league_id=league_id)
@@ -271,17 +312,24 @@ async def test_start_draft_403_when_not_commissioner():
 
 @pytest.mark.asyncio
 async def test_start_draft_400_when_already_active():
-    async with isolated_router_app(drafts_routes) as ctx:
+    """Iter 230an — `start_draft` is now idempotent. A POST against an
+    already-active draft returns 200 with `already_active: True` instead
+    of 400 (the previous behaviour blocked legitimate refresh-and-start
+    retries during shaky Wi-Fi). The functional intent here is unchanged:
+    the draft must NOT be re-initialised."""
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         did = await _seed_draft(ctx.db, league_id=league_id, status="active")
         r = await ctx.client.post(f"/api/drafts/{did}/start")
-        assert r.status_code == 400
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body.get("already_active") is True
 
 
 @pytest.mark.asyncio
 async def test_start_draft_happy_path_flips_status_and_pushes_chat():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         did = await _seed_draft(ctx.db, league_id=league_id)
@@ -304,7 +352,7 @@ async def test_start_draft_happy_path_flips_status_and_pushes_chat():
 
 @pytest.mark.asyncio
 async def test_pick_400_when_draft_not_active():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         did = await _seed_draft(ctx.db, league_id=league_id, status="scheduled")
@@ -315,9 +363,15 @@ async def test_pick_400_when_draft_not_active():
 
 @pytest.mark.asyncio
 async def test_pick_403_when_user_has_no_team():
-    async with isolated_router_app(drafts_routes) as ctx:
+    """Iter 231ab — Commissioner / co-commish / platform-admin can now pick
+    on behalf of any team (including Open Slot rows). Since the harness
+    seeds the league with `commissioner_id="test_user_0001"` AND the stub
+    user is `test_user_0001`, the user IS the commissioner here and is
+    allowed to draft for the team on the clock. To assert the actual
+    403 path we re-run with a non-commissioner league + non-owner."""
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
-        league_id = await _seed_league(ctx.db)
+        league_id = await _seed_league(ctx.db, commissioner_id="OTHER_USER")
         did = await _seed_draft(ctx.db, league_id=league_id, status="active",
                                  team_abbrs=["ALPH"])
         pid = await _seed_player(ctx.db)
@@ -327,7 +381,7 @@ async def test_pick_403_when_user_has_no_team():
 
 @pytest.mark.asyncio
 async def test_pick_403_when_not_users_turn_and_not_commissioner():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         # current user is NOT commissioner, has team ZARE, but ALPH is on the clock
         league_id = await _seed_league(ctx.db, commissioner_id="OTHER")
@@ -344,7 +398,7 @@ async def test_pick_403_when_not_users_turn_and_not_commissioner():
 
 @pytest.mark.asyncio
 async def test_pick_commissioner_can_pick_for_any_team():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="Zarek Frozen")
@@ -364,7 +418,7 @@ async def test_pick_commissioner_can_pick_for_any_team():
 
 @pytest.mark.asyncio
 async def test_pick_400_when_player_already_drafted():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="Zarek Frozen")
@@ -381,7 +435,7 @@ async def test_pick_400_when_player_already_drafted():
 
 @pytest.mark.asyncio
 async def test_pick_404_when_player_id_invalid():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="Zarek Frozen")
@@ -396,7 +450,7 @@ async def test_pick_404_when_player_id_invalid():
 
 @pytest.mark.asyncio
 async def test_pick_final_pick_marks_draft_completed():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="Zarek Frozen")
@@ -421,7 +475,7 @@ async def test_pick_final_pick_marks_draft_completed():
 
 @pytest.mark.asyncio
 async def test_pause_toggles_timer_state():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         did = await _seed_draft(ctx.db, league_id=league_id, status="active",
@@ -435,7 +489,7 @@ async def test_pause_toggles_timer_state():
 
 @pytest.mark.asyncio
 async def test_pause_403_when_not_commissioner():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db, commissioner_id="OTHER")
         did = await _seed_draft(ctx.db, league_id=league_id, status="active")
@@ -450,7 +504,7 @@ async def test_pause_403_when_not_commissioner():
 
 @pytest.mark.asyncio
 async def test_send_chat_pushes_message_with_team_sender():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="My Team")
@@ -466,7 +520,7 @@ async def test_send_chat_pushes_message_with_team_sender():
 
 @pytest.mark.asyncio
 async def test_get_chat_404_when_missing():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         r = await ctx.client.get(f"/api/drafts/{ObjectId()}/chat")
         assert r.status_code == 404
@@ -474,7 +528,7 @@ async def test_get_chat_404_when_missing():
 
 @pytest.mark.asyncio
 async def test_get_chat_returns_messages_array():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         did = await _seed_draft(ctx.db, league_id=league_id)
@@ -498,7 +552,7 @@ async def test_get_chat_returns_messages_array():
 
 @pytest.mark.asyncio
 async def test_update_config_403_when_not_commissioner():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db, commissioner_id="OTHER")
         did = await _seed_draft(ctx.db, league_id=league_id)
@@ -509,7 +563,7 @@ async def test_update_config_403_when_not_commissioner():
 
 @pytest.mark.asyncio
 async def test_update_config_only_sets_provided_keys():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         did = await _seed_draft(ctx.db, league_id=league_id, total_rounds=2)
@@ -524,7 +578,7 @@ async def test_update_config_only_sets_provided_keys():
 
 @pytest.mark.asyncio
 async def test_update_config_empty_body_is_noop():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         did = await _seed_draft(ctx.db, league_id=league_id)
@@ -543,7 +597,7 @@ async def test_create_notification_persists_and_broadcasts():
 
     Since `sio` is None and `routes.push.send_push` is an async coroutine,
     neither side-effect should raise; the doc lands in MongoDB."""
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         doc = await drafts_routes.create_notification(
             "user_A", "trade_proposed", "T", "M",
@@ -561,7 +615,7 @@ async def test_create_notification_persists_and_broadcasts():
 
 @pytest.mark.asyncio
 async def test_notify_league_fans_out_excludes_self():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="A", owner_id="user_A")
@@ -583,7 +637,7 @@ async def test_notify_league_fans_out_excludes_self():
 
 @pytest.mark.asyncio
 async def test_auction_nominate_400_if_not_auction_draft():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="Zarek")
@@ -598,7 +652,7 @@ async def test_auction_nominate_400_if_not_auction_draft():
 
 @pytest.mark.asyncio
 async def test_auction_nominate_400_when_auction_already_in_progress():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="Zarek")
@@ -616,7 +670,7 @@ async def test_auction_nominate_400_when_auction_already_in_progress():
 
 @pytest.mark.asyncio
 async def test_auction_nominate_400_insufficient_budget():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db, salary_cap=100)
         team_id = await _seed_team(ctx.db, league_id=league_id, name="Z")
@@ -634,7 +688,7 @@ async def test_auction_nominate_400_insufficient_budget():
 
 @pytest.mark.asyncio
 async def test_auction_nominate_happy_path_sets_active_auction():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         team_id = await _seed_team(ctx.db, league_id=league_id, name="Zarek")
@@ -657,7 +711,7 @@ async def test_auction_nominate_happy_path_sets_active_auction():
 
 @pytest.mark.asyncio
 async def test_auction_bid_400_when_no_active_auction():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="Z")
@@ -671,7 +725,7 @@ async def test_auction_bid_400_when_no_active_auction():
 
 @pytest.mark.asyncio
 async def test_auction_bid_400_when_not_higher_than_current():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         await _seed_team(ctx.db, league_id=league_id, name="Z")
@@ -689,7 +743,7 @@ async def test_auction_bid_400_when_not_higher_than_current():
 
 @pytest.mark.asyncio
 async def test_auction_bid_happy_path_updates_current_bid_and_pushes_history():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         team_id = await _seed_team(ctx.db, league_id=league_id, name="Z")
@@ -710,7 +764,7 @@ async def test_auction_bid_happy_path_updates_current_bid_and_pushes_history():
 
 @pytest.mark.asyncio
 async def test_auction_resolve_403_when_not_commissioner():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db, commissioner_id="OTHER")
         did = await _seed_draft(
@@ -728,7 +782,7 @@ async def test_auction_resolve_403_when_not_commissioner():
 
 @pytest.mark.asyncio
 async def test_auction_resolve_happy_path_creates_pick_and_clears_auction():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         team_id = await _seed_team(ctx.db, league_id=league_id, name="Zarek")
@@ -761,7 +815,7 @@ async def test_auction_resolve_happy_path_creates_pick_and_clears_auction():
 
 @pytest.mark.asyncio
 async def test_auction_state_returns_budgets_and_picks_per_team():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db)
         team_a = await _seed_team(ctx.db, league_id=league_id, name="A")
@@ -788,7 +842,7 @@ async def test_auction_state_returns_budgets_and_picks_per_team():
 
 @pytest.mark.asyncio
 async def test_init_budgets_403_when_not_commissioner():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db, commissioner_id="OTHER")
         did = await _seed_draft(ctx.db, league_id=league_id,
@@ -799,7 +853,7 @@ async def test_init_budgets_403_when_not_commissioner():
 
 @pytest.mark.asyncio
 async def test_init_budgets_seeds_each_team_with_league_cap():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         league_id = await _seed_league(ctx.db, salary_cap=180)
         team_a = await _seed_team(ctx.db, league_id=league_id, name="A")
@@ -822,7 +876,7 @@ async def test_init_budgets_seeds_each_team_with_league_cap():
 
 @pytest.mark.asyncio
 async def test_picks_endpoint_still_mounts_after_iter98_rewrite():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
         r = await ctx.client.get("/api/drafts/unknown-league/picks")
         assert r.status_code == 200

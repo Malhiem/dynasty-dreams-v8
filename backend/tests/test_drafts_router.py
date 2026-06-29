@@ -7,14 +7,21 @@ from bson import ObjectId
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Iter 231al — `get_draft_picks` moved to `routes/draft_inspection.py`
+# during the iter 231 router decomposition. Mount the inspection module
+# alongside drafts so the legacy `/api/drafts/{league_id}/picks` route
+# still resolves.
 from routes import drafts as drafts_routes  # noqa: E402
+from routes import draft_inspection  # noqa: E402
+
+DRAFTS_FAMILY = (drafts_routes, draft_inspection)
 
 from tests.router_test_utils import isolated_router_app  # noqa: E402
 
 
 @pytest.mark.asyncio
 async def test_picks_returns_empty_when_no_picks():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         r = await ctx.client.get("/api/drafts/no-such-league/picks")
         assert r.status_code == 200
         body = r.json()
@@ -23,7 +30,7 @@ async def test_picks_returns_empty_when_no_picks():
 
 @pytest.mark.asyncio
 async def test_picks_sorted_by_year_then_round():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         league_id = "L1"
         await ctx.db.draft_picks.insert_many([
             {"league_id": league_id, "year": 2026, "round": 2, "pick_number": 14, "current_team_id": "T1"},
@@ -38,7 +45,7 @@ async def test_picks_sorted_by_year_then_round():
 
 @pytest.mark.asyncio
 async def test_picks_year_filter():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         await ctx.db.draft_picks.insert_many([
             {"league_id": "L1", "year": 2025, "round": 1, "pick_number": 1, "current_team_id": "T1"},
             {"league_id": "L1", "year": 2026, "round": 1, "pick_number": 1, "current_team_id": "T1"},
@@ -52,7 +59,7 @@ async def test_picks_year_filter():
 
 @pytest.mark.asyncio
 async def test_picks_attach_pending_protections_from_executed_trades():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         league_id = "L1"
         pick_res = await ctx.db.draft_picks.insert_one({
             "league_id": league_id, "year": 2026, "round": 1, "pick_number": 4,
@@ -90,7 +97,7 @@ async def test_picks_attach_pending_protections_from_executed_trades():
 
 @pytest.mark.asyncio
 async def test_picks_no_protections_when_trade_not_executed():
-    async with isolated_router_app(drafts_routes) as ctx:
+    async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         pick_res = await ctx.db.draft_picks.insert_one({
             "league_id": "L1", "year": 2026, "round": 1, "pick_number": 1,
             "current_team_id": "T1",

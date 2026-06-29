@@ -25,6 +25,7 @@ type MobileTab = "players" | "roster" | "chat";
 export default function DraftRoomBottomGrid({
   // Player Search panel
   filteredPlayers, searchQuery, setSearchQuery, positionFilter, setPositionFilter,
+  typeFilter, setTypeFilter,
   positions, positionColors, selectedPlayerId, setSelectedPlayerId,
   tradeBlockPlayerIds, minorsEnabled,
   queue, shortlist, queuedPlayers, shortlistedPlayers,
@@ -46,6 +47,8 @@ export default function DraftRoomBottomGrid({
       setSearchQuery={setSearchQuery}
       positionFilter={positionFilter}
       setPositionFilter={setPositionFilter}
+      typeFilter={typeFilter}
+      setTypeFilter={setTypeFilter}
       positions={positions}
       positionColors={positionColors}
       selectedPlayerId={selectedPlayerId}
