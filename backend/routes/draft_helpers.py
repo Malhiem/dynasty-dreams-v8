@@ -204,7 +204,15 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> di
         if isinstance(raw_criteria, list):
             raw_criteria = raw_criteria[0] if raw_criteria else "open"
         criteria = str(raw_criteria).lower()
-        q = {"player_type": "prospect"} if criteria == "entry" else {"player_type": {"$ne": "prospect"}}
+        # Iter 231aj — Same 3-way criteria mapping as
+        # `get_draft_eligible_players`: entry/prospects → prospects
+        # only; all → no filter; else → non-prospects only.
+        if criteria in ("entry", "prospects"):
+            q = {"player_type": "prospect"}
+        elif criteria == "all":
+            q = {}
+        else:
+            q = {"player_type": {"$ne": "prospect"}}
         async for p in _db().players.find(q).sort([("points", -1), ("name", 1)]):
             if str(p["_id"]) in drafted_ids:
                 continue

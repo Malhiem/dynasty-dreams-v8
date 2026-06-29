@@ -443,18 +443,24 @@ async def get_draft_eligible_players(
     if draft.get("minors_eligibility_required"):
         query["minor_eligible"] = True
 
-    # Iter 170o — Criteria-aware filter. "entry" → prospect pool only;
-    # "open" / anything else → all NHL skaters/goalies (no prospects).
-    # `player_criteria` can be either a legacy string OR a list (modern
-    # multi-select); normalise to a single canonical lowercase string.
+    # Iter 170o / 231aj — Criteria-aware filter. Normalises the
+    # draft-config string to one of: `entry` / `prospects` (synonyms,
+    # both filter to player_type=prospect), `all` (include BOTH NHL
+    # and prospects — no player_type filter), or `open` / anything
+    # else (only non-prospects). The frontend uses `prospects` and
+    # `all`; legacy drafts may still use `entry` / `open`.
     raw_crit = draft.get("player_criteria")
     if isinstance(raw_crit, list):
         criteria = (raw_crit[0] if raw_crit else "open")
     else:
         criteria = raw_crit or "open"
     criteria = str(criteria).lower()
-    if criteria == "entry":
+    if criteria in ("entry", "prospects"):
         query["player_type"] = "prospect"
+    elif criteria == "all":
+        # No player_type filter — include both NHL skaters/goalies
+        # AND prospects in the eligibility list.
+        pass
     else:
         query["player_type"] = {"$ne": "prospect"}
 

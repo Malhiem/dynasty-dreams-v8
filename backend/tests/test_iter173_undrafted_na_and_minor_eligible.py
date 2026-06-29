@@ -13,6 +13,12 @@ User asks:
 """
 from pathlib import Path
 
+# Iter 231 — drafts.py was decomposed; use the family shim so grep
+# assertions still resolve against the relocated eligible-players
+# endpoint (now in `routes/draft_inspection.py`) and the auto-init
+# flag stamp (now in `routes/draft_lifecycle.py`).
+from tests._drafts_route_sources import DraftsRouteFamilyShim
+
 FRONTEND = Path("/app/frontend/src")
 PLAYERS_PAGE = FRONTEND / "pages" / "PlayersPage.jsx"
 PLAYER_POOL = FRONTEND / "lovable" / "pages" / "PlayerPool.tsx"
@@ -20,7 +26,9 @@ PLAYER_CARD = FRONTEND / "lovable" / "components" / "dashboard" / "PlayerCardMod
 PLAYER_SEARCH = FRONTEND / "lovable" / "pages" / "draftroom" / "PlayerSearchPanel.tsx"
 SELECTED_CARD = FRONTEND / "lovable" / "pages" / "draftroom" / "SelectedPlayerCard.tsx"
 DRAFT_ROOM = FRONTEND / "lovable" / "pages" / "DraftRoom.tsx"
-DRAFTS_ROUTE = Path("/app/backend/routes/drafts.py")
+# Iter 231ak — eligible-players hook was extracted from DraftRoom.tsx.
+ELIGIBLE_HOOK = FRONTEND / "hooks" / "use-draft-eligible-players.ts"
+DRAFTS_ROUTE = DraftsRouteFamilyShim()
 
 
 def test_players_page_owned_cell_renders_na_for_undrafted():
@@ -71,12 +79,16 @@ def test_selected_player_card_renders_minor_eligible_badge():
 
 
 def test_draft_room_wires_minors_enabled_into_subcomponents():
-    src = DRAFT_ROOM.read_text()
+    src = DRAFT_ROOM.read_text() + "\n" + ELIGIBLE_HOOK.read_text()
     # The hook surface — currentDraft.league_minors_enabled — is forwarded
     # to both presentational children so the badge renders consistently.
     assert "league_minors_enabled" in src
     assert "minorsEnabled={!!(currentDraft as any)?.league_minors_enabled}" in src
-    # Eligible-players mapper passes through player_type + minor_eligible.
+    # Iter 231ak — Eligible-players mapper was relocated to the
+    # `use-draft-eligible-players` hook and now spreads `player_type`
+    # conditionally to skip noisy keys on rows that lack it. The
+    # `minor_eligible` boolean is always emitted so the sprout badge
+    # gating stays deterministic.
     assert "player_type: p.player_type" in src
     assert "minor_eligible: !!p.minor_eligible" in src
 

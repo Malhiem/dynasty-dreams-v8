@@ -123,6 +123,11 @@ def test_draftroom_start_buttons_wire_to_backend():
 
 def test_draftroom_fetches_real_eligible_players():
     src = DRAFT_ROOM.read_text()
-    assert "/drafts/${currentDraft._id}/eligible-players?limit=100" in src
+    # Iter 231ak — the hook now paginates the eligible-players endpoint
+    # (PAGE_SIZE=200) so the full pool surfaces in the Eligible tab.
+    # Previously the hook only fetched the first 100 rows, which made
+    # the 1,368 backfilled prospects appear as ~17 visible rows because
+    # NHL skaters dominated the head of the points-sorted list.
+    assert "/drafts/${currentDraft!._id}/eligible-players?limit=${PAGE_SIZE}&page=${page}" in src
     # Maps headshot → headshot_url for the SelectedPlayerCard.
     assert "headshot_url: p.headshot" in src

@@ -77,6 +77,12 @@ def _normalize_pick(pick: Dict[str, Any], year: int) -> Dict[str, Any]:
         "team": amateur_club,            # amateur team for UI display.
         "team_name": team_name,
         "amateur_league": amateur_league,
+        # Iter 231aj — All draft-class prospects are by definition
+        # minor-eligible (they were drafted out of junior/college/
+        # European leagues). Without this flag, drafts that toggle
+        # `minors_eligibility_required` on (e.g. TFHL Summer Entry
+        # Draft) filter the entire prospect pool down to zero.
+        "minor_eligible": True,
         "season": f"{year - 1}-{year}",  # eg. "2024-2025" for 2025 draft.
         "draft_year": year,
         "draft_round": int(pick.get("round") or 0),

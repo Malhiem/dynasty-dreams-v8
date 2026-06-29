@@ -71,7 +71,9 @@ def test_eligible_players_filters_by_criteria():
     # list payloads in addition to legacy strings.
     assert 'draft.get("player_criteria")' in block
     assert 'criteria = str(criteria).lower()' in block
-    assert 'if criteria == "entry":' in block
+    # Iter 231aj — entry / prospects are synonyms; `all` includes both
+    # NHL and prospects (no player_type filter).
+    assert 'if criteria in ("entry", "prospects"):' in block
     assert 'query["player_type"] = "prospect"' in block
     # Open drafts must EXCLUDE the prospect pool so NHL players surface
     # without being polluted by prospect rows.
