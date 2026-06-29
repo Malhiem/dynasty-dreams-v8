@@ -41,14 +41,14 @@ interface ScoringTabProps {
 function CategoryRow({ cat, prefix, enabled, points, accentClass, onToggle, onChangePoints }: any) {
   return (
     <div
-      className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+      className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 p-3 rounded-lg border transition-colors ${
         enabled ? accentClass : "bg-secondary/30 border-border"
       }`}
       data-testid={`scoring-row-${cat.id}`}
     >
-      <div className="flex items-center gap-3 flex-1">
-        <Checkbox id={`${prefix}${cat.id}`} checked={enabled} onCheckedChange={onToggle} />
-        <div className="flex-1">
+      <div className="flex items-start sm:items-center gap-3 flex-1 min-w-0">
+        <Checkbox id={`${prefix}${cat.id}`} checked={enabled} onCheckedChange={onToggle} className="mt-0.5 sm:mt-0 shrink-0" />
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <label htmlFor={`${prefix}${cat.id}`} className="font-medium cursor-pointer">
               {cat.name}
@@ -58,14 +58,18 @@ function CategoryRow({ cat, prefix, enabled, points, accentClass, onToggle, onCh
           <p className="text-xs text-muted-foreground">{cat.description}</p>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      {/* Iter 231ao — Points input drops below the name/description on
+          mobile so it never gets clipped off-screen by the parent card's
+          overflow. On `sm+` we keep the original right-aligned layout. */}
+      <div className="flex items-center justify-end gap-2 pl-9 sm:pl-0 shrink-0">
         <Label className="text-xs text-muted-foreground">Points:</Label>
         <Input
           type="number"
           step="0.1"
+          inputMode="decimal"
           value={points ?? 0}
           onChange={(e) => onChangePoints(parseFloat(e.target.value) || 0)}
-          className="w-20 h-8 bg-secondary border-border text-center"
+          className="w-20 h-9 bg-secondary border-border text-center"
           disabled={!enabled}
           data-testid={`scoring-points-${cat.id}`}
         />

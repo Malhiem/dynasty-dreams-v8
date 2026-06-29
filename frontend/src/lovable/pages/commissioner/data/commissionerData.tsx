@@ -330,8 +330,8 @@ export const TankMonitorTable = ({ leagueId }: { leagueId?: string }) => {
       </div>
       )}
 
-      <ScrollArea className="w-full">
-        <Table>
+      <ScrollArea className="w-full" data-testid="roster-monitor-scroll-area">
+        <Table className="min-w-[900px]">
           <TableHeader>
             <TableRow className="border-border">
               <TableHead className="text-muted-foreground">Team</TableHead>
@@ -722,8 +722,8 @@ export const RosterMonitorTable = ({ onAuditLog, leagueId }: { onAuditLog?: (ent
         <span className="flex items-center gap-1.5">✅ Compliant</span>
       </div>
 
-      <ScrollArea className="w-full">
-        <Table>
+      <ScrollArea className="w-full" data-testid="tank-monitor-scroll-area">
+        <Table className="min-w-[700px]">
           <TableHeader>
             <TableRow className="border-border">
               <TableHead className="text-muted-foreground">Team</TableHead>

@@ -237,7 +237,14 @@ const TeamsTab = () => {
           <p className="text-sm text-muted-foreground italic">This league has no teams yet. Run the Setup Wizard to seed slots.</p>
         )}
         {!loading && rows.length > 0 && (
-        <Table data-testid="teams-tab-table">
+        /* Iter 231ao — Wrap the 5-column teams table in an
+           overflow-x-auto scroller with a min-width so mobile admins
+           can swipe horizontally to reach the Manager Email + Joined
+           + Actions columns. Without this the table was clipped at
+           the right edge of the screen, hiding the re-invite / remove
+           actions from anyone on a phone. */
+        <div className="-mx-2 sm:mx-0 overflow-x-auto" data-testid="teams-tab-scroller">
+        <Table data-testid="teams-tab-table" className="min-w-[760px]">
           <TableHeader>
             <TableRow className="border-border">
               <TableHead className="text-muted-foreground w-[200px]">Team Name</TableHead>
@@ -485,6 +492,7 @@ const TeamsTab = () => {
             })}
           </TableBody>
         </Table>
+        </div>
         )}
       </CardContent>
       {/* Iter 231p — Revoke-invite confirmation. Replaces window.confirm so
