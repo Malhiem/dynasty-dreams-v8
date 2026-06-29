@@ -60,7 +60,17 @@ export function AppLayout({ children, onSettingsClick }) {
         <div className="flex-1 flex flex-col min-w-0">
           <header className="h-14 border-b border-white/10 flex items-center justify-between px-4 bg-[#141414]/80 backdrop-blur-sm sticky top-0 z-10">
             <div className="flex items-center gap-4">
-              <SidebarTrigger className="text-[#A1A1AA] hover:text-white" data-testid="sidebar-trigger" />
+              {/* Iter 231am — Sidebar trigger upsized on mobile (40×40
+                  tap target with cyan tint + visible 1px border) so
+                  users can find the menu affordance on a touch device
+                  without hunting. Desktop keeps the compact 28×28
+                  ghost button to stay out of the way of header
+                  search + breadcrumbs. */}
+              <SidebarTrigger
+                className="h-10 w-10 md:h-7 md:w-7 border border-white/15 md:border-transparent bg-[#00D2FF]/10 md:bg-transparent text-[#00D2FF] md:text-[#A1A1AA] hover:text-white hover:bg-[#00D2FF]/20 md:hover:bg-transparent [&_svg]:size-5 md:[&_svg]:size-4"
+                data-testid="sidebar-trigger"
+                aria-label="Toggle navigation menu"
+              />
               <div className="relative hidden md:block">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#A1A1AA]" />
                 <Input

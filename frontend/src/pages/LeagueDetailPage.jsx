@@ -884,28 +884,12 @@ export default function LeagueDetailPage() {
         </SortableSection>
         )}
 
-        {/* Quick Actions */}
-        {widgetVis.quick_actions && hasTeam && (
-          <SortableSection id="quick_actions" className="mb-8" style={{order: widgetOrder.indexOf("quick_actions")}}>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Link to={`/leagues/${id}/roster`} className="surface p-6 hover:border-[#00D2FF]/50 transition-colors">
-              <Users size={32} className="text-[#00D2FF] mb-3" />
-              <h3 className="text-white font-semibold">My Roster</h3>
-              <p className="text-[#A1A1AA] text-sm">Manage your team</p>
-            </Link>
-            <Link to={`/leagues/${id}/draft`} className="surface p-6 hover:border-[#00D2FF]/50 transition-colors">
-              <Calendar size={32} className="text-[#00D2FF] mb-3" />
-              <h3 className="text-white font-semibold">Draft Room</h3>
-              <p className="text-[#A1A1AA] text-sm">View draft board</p>
-            </Link>
-            <Link to={`/leagues/${id}/trades`} className="surface p-6 hover:border-[#00D2FF]/50 transition-colors">
-              <Trophy size={32} className="text-[#00D2FF] mb-3" />
-              <h3 className="text-white font-semibold">Trade Center</h3>
-              <p className="text-[#A1A1AA] text-sm">Propose and review trades</p>
-            </Link>
-          </div>
-          </SortableSection>
-        )}
+        {/* Iter 231am — Quick Actions removed. The three cards
+            (My Roster / Draft Room / Trade Center) pointed at the
+            legacy `/leagues/:id/{roster|draft|trades}` routes which
+            404 in the current router. Same destinations are already
+            reachable via the persistent sidebar, so we drop the
+            duplicate entrypoints rather than re-wire them. */}
         </div>
         </SortableSections>
       </div>
