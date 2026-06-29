@@ -17,6 +17,15 @@
  * a 30-day cool-down so we don't nag users who've already declined.
  * The banner never appears on desktop (≥768px) — desktop install is
  * handled by the browser's native omnibox affordance.
+ *
+ * Iter 231ap — Hardened against the "Script error." overlay reported by
+ * the first user who tapped Install. Every storage / matchMedia /
+ * prompt call is wrapped in try/catch so a Safari Private-mode
+ * SecurityError or a stale BeforeInstallPromptEvent never escapes to
+ * the global `window.onerror` handler (which surfaces as the dreaded
+ * cross-origin "Script error." with no stack trace). The install
+ * button is also disabled while pending to defeat the double-tap race
+ * that throws `InvalidStateError` from `prompt()`.
  */
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -30,25 +39,63 @@ type BIPEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
 
-function isIos() {
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+// ── Defensive helpers ───────────────────────────────────────────────────
+// Every browser-surface call below is wrapped because mobile Safari in
+// Private mode + WebViews + cross-origin iframes will throw on the
+// "obvious" APIs (localStorage, matchMedia, navigator). The component
+// must never throw from those — it would take down the whole app.
+
+function safeMatchMedia(query: string): boolean {
+  try {
+    return !!(typeof window !== "undefined" && window.matchMedia?.(query).matches);
+  } catch {
+    return false;
+  }
 }
 
-function isStandalone() {
-  // `display-mode: standalone` is what the manifest asks for.
-  // Safari additionally exposes `navigator.standalone`.
-  return (
-    window.matchMedia?.("(display-mode: standalone)").matches ||
-    (window.navigator as any).standalone === true
-  );
+function safeLocalStorageGet(key: string): string | null {
+  try {
+    return typeof window !== "undefined" ? window.localStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
 }
 
-function isMobileViewport() {
-  return window.matchMedia?.("(max-width: 767px)").matches;
+function safeLocalStorageSet(key: string, value: string): void {
+  try {
+    if (typeof window !== "undefined") window.localStorage.setItem(key, value);
+  } catch {
+    /* ignore — quota exceeded, Safari Private, sandboxed iframe */
+  }
 }
 
-function wasRecentlyDismissed() {
-  const raw = localStorage.getItem(DISMISS_KEY);
+function isIos(): boolean {
+  try {
+    return (
+      typeof navigator !== "undefined" &&
+      /iPad|iPhone|iPod/.test(navigator.userAgent) &&
+      !(window as any).MSStream
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isStandalone(): boolean {
+  if (safeMatchMedia("(display-mode: standalone)")) return true;
+  try {
+    return (window.navigator as any).standalone === true;
+  } catch {
+    return false;
+  }
+}
+
+function isMobileViewport(): boolean {
+  return safeMatchMedia("(max-width: 767px)");
+}
+
+function wasRecentlyDismissed(): boolean {
+  const raw = safeLocalStorageGet(DISMISS_KEY);
   if (!raw) return false;
   const ts = Number(raw);
   if (!Number.isFinite(ts)) return false;
@@ -58,50 +105,83 @@ function wasRecentlyDismissed() {
 export default function PWAInstallBanner() {
   const [promptEvent, setPromptEvent] = useState<BIPEvent | null>(null);
   const [visible, setVisible] = useState(false);
+  const [installing, setInstalling] = useState(false);
   // "android" = native prompt available; "ios" = manual hint.
   const [mode, setMode] = useState<"android" | "ios">("android");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (isStandalone() || wasRecentlyDismissed() || !isMobileViewport()) return;
-
-    const onBIP = (e: Event) => {
-      e.preventDefault();
-      setPromptEvent(e as BIPEvent);
-      setMode("android");
-      setVisible(true);
-    };
-    window.addEventListener("beforeinstallprompt", onBIP);
-
-    // iOS fallback — no event, so check the UA once on mount.
-    if (isIos() && !isStandalone()) {
-      setMode("ios");
-      setVisible(true);
+    try {
+      if (isStandalone() || wasRecentlyDismissed() || !isMobileViewport()) return;
+    } catch {
+      return;
     }
 
-    return () => window.removeEventListener("beforeinstallprompt", onBIP);
+    const onBIP = (e: Event) => {
+      try {
+        e.preventDefault();
+        setPromptEvent(e as BIPEvent);
+        setMode("android");
+        setVisible(true);
+      } catch {
+        /* ignore */
+      }
+    };
+    try {
+      window.addEventListener("beforeinstallprompt", onBIP);
+    } catch {
+      /* ignore — addEventListener should never throw, but defensive */
+    }
+
+    // iOS fallback — no event, so check the UA once on mount.
+    try {
+      if (isIos() && !isStandalone()) {
+        setMode("ios");
+        setVisible(true);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    return () => {
+      try {
+        window.removeEventListener("beforeinstallprompt", onBIP);
+      } catch {
+        /* ignore */
+      }
+    };
   }, []);
 
   if (!visible) return null;
 
   const dismiss = () => {
-    localStorage.setItem(DISMISS_KEY, String(Date.now()));
+    safeLocalStorageSet(DISMISS_KEY, String(Date.now()));
     setVisible(false);
   };
 
   const install = async () => {
-    if (!promptEvent) return;
+    // Defeat double-tap race: prompt() throws InvalidStateError on the
+    // second call. Disabling the button while we await `userChoice`
+    // is the deterministic guard.
+    if (!promptEvent || installing) return;
+    setInstalling(true);
     try {
       await promptEvent.prompt();
       const result = await promptEvent.userChoice;
-      // Whichever way the user answers, hide the banner — `accepted`
-      // removes the need; `dismissed` deserves the cool-down too.
       if (result.outcome === "dismissed") {
-        localStorage.setItem(DISMISS_KEY, String(Date.now()));
+        safeLocalStorageSet(DISMISS_KEY, String(Date.now()));
       }
+    } catch {
+      // Swallow — every failure path here is recoverable: the user
+      // can re-open the banner via the next page load (Chrome
+      // re-fires `beforeinstallprompt` ~24h later) and we don't want
+      // the dev overlay's cross-origin "Script error." surfacing for
+      // what is effectively a no-op for the user.
+      safeLocalStorageSet(DISMISS_KEY, String(Date.now()));
     } finally {
       setPromptEvent(null);
       setVisible(false);
+      setInstalling(false);
     }
   };
 
@@ -144,10 +224,12 @@ export default function PWAInstallBanner() {
       {mode === "android" && (
         <Button
           onClick={install}
-          className="mt-3 w-full bg-[#00D2FF] hover:bg-[#00D2FF]/90 text-[#0B0B0F] font-semibold"
+          disabled={installing}
+          className="mt-3 w-full bg-[#00D2FF] hover:bg-[#00D2FF]/90 text-[#0B0B0F] font-semibold disabled:opacity-60"
           data-testid="pwa-install-banner-install"
         >
-          <Download className="h-4 w-4 mr-2" /> Install app
+          <Download className="h-4 w-4 mr-2" />
+          {installing ? "Opening…" : "Install app"}
         </Button>
       )}
     </div>
