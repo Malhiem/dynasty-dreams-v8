@@ -493,10 +493,29 @@ async def get_pending_team_invites(league_id: str, request: Request):
             status = inv.get("status") or "sent"
         elif invite_email:
             status = "pending"
+        # Iter 231ar — Derive the abbreviation from `logo_abbr_override`
+        # first (commissioner override), then auto-compute from the team
+        # name (initials for multi-word names, first-3 chars otherwise).
+        # The legacy `abbreviation` field is preserved as a final
+        # fallback. This is the single line that made every TFHL team
+        # render `—` in the League Admin → Team and Owner List table,
+        # because storage migrated to `logo_abbr_override` long ago.
+        name = t.get("name") or ""
+        override = (t.get("logo_abbr_override") or "").strip().upper()
+        if override:
+            derived_abbr = override[:4]
+        elif name:
+            words = [w for w in name.replace("-", " ").split() if w and w[0].isalnum()]
+            if len(words) >= 2:
+                derived_abbr = (words[0][0] + words[1][0] + (words[2][0] if len(words) > 2 else "")).upper()[:4]
+            else:
+                derived_abbr = name[:3].upper()
+        else:
+            derived_abbr = None
         out.append({
             "team_id": str(t["_id"]),
             "team_name": t.get("name"),
-            "abbreviation": t.get("abbreviation"),
+            "abbreviation": derived_abbr or t.get("abbreviation"),
             "draft_position": t.get("draft_position"),
             "is_pending": bool(t.get("is_pending")),
             "owner_id": t.get("owner_id"),

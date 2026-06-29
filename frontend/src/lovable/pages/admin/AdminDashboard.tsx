@@ -66,6 +66,7 @@ import SecurityDocPanel from "./components/SecurityDocPanel";
 import SecurityAuditHistory from "./components/SecurityAuditHistory";
 // Iter 231ag — Database hygiene one-click pollution sweep.
 import DbHygienePanel from "./components/DbHygienePanel";
+import RecentCrashesPanel from "./components/RecentCrashesPanel";
 export { ModNotesPanel } from "./components/ModNotesPanel";
 import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_shared";
 
@@ -185,6 +186,7 @@ export default function AdminDashboard() {
             <SidebarTab value="archived-drafts" icon={Archive} label="Archived Drafts" testid="admin-tab-archived-drafts" />
             <SidebarTab value="players" icon={Users} label="Player Verify" testid="admin-tab-player-verify" />
             <SidebarTab value="db-hygiene" icon={ShieldCheck} label="DB Hygiene" testid="admin-tab-db-hygiene" />
+            <SidebarTab value="crashes" icon={AlertTriangle} label="Recent Crashes" testid="admin-tab-crashes" />
           </TabsList>
 
           {/* Right content pane */}
@@ -323,6 +325,11 @@ export default function AdminDashboard() {
           {/* ─── Iter 231ag — DB Hygiene one-click pollution sweep ─── */}
           <TabsContent value="db-hygiene" className="space-y-3 mt-0">
             <DbHygienePanel />
+          </TabsContent>
+
+          {/* ─── Iter 231ar — Recent Crashes triage ─── */}
+          <TabsContent value="crashes" className="space-y-3 mt-0">
+            <RecentCrashesPanel />
           </TabsContent>
           </div>
         </Tabs>

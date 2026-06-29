@@ -22,9 +22,12 @@ export default function LeagueAdminTab({ adminSubTab, setAdminSubTab, isH2H }: L
   return (
     <Tabs value={adminSubTab} onValueChange={setAdminSubTab} data-testid="commissioner-league-admin-tab">
       <TabsList className="bg-secondary border border-border">
-        <TabsTrigger value="teams" className="data-[state=active]:bg-primary/20">
+        <TabsTrigger value="teams" className="data-[state=active]:bg-primary/20" data-testid="admin-sub-tab-team-owner-list">
           <Users className="h-4 w-4 mr-2" />
-          Teams
+          {/* Iter 231ar — Renamed from "Teams" so the label matches
+              what the tab actually shows: the team + owner + email
+              roster (vs. SchedulesTab / SeasonAwardsTab siblings). */}
+          Team and Owner List
         </TabsTrigger>
         <TabsTrigger value="schedules" className="data-[state=active]:bg-primary/20">
           <Calendar className="h-4 w-4 mr-2" />

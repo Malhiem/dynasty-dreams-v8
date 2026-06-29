@@ -595,6 +595,59 @@ async def preview_schedule(input: PreviewScheduleRequest):
     }
 
 
+# ── Iter 231ar — Open-slot resolution at read time ─────────────────
+# When schedules are generated before all teams are claimed, matchups
+# reference synthetic `home_team_id="open_slot_<draft_position>"`.
+# Once an owner adopts the seat, the matchup row is still pointing at
+# the placeholder — that's what made TFHL's League Home show "Open
+# Slot 3 vs Open Slot 22" even though every seat had been adopted.
+# This helper rewrites those references using each team's
+# `draft_position` so the response always reflects the current roster.
+
+async def _resolve_open_slots(db, league_id: str, matchups: list) -> list:
+    """Overlay `home_team_id` / `away_team_id` (+ name) for rows that
+    reference `open_slot_<N>` placeholders when a real team has since
+    been seeded at that draft_position. Returns a new list — mutation
+    of the source docs is fine since they're already pulled out of
+    Mongo, but we never `update` the stored doc here; let the caller
+    decide if it wants to persist (see the iter 231ar backfill script
+    + the optional `persist` flag on `simulate_week`)."""
+    has_open = any(
+        (m.get("home_team_id") or "").startswith("open_slot_")
+        or (m.get("away_team_id") or "").startswith("open_slot_")
+        for m in matchups
+    )
+    if not has_open:
+        return matchups
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(200)
+    by_pos: dict = {}
+    for t in teams:
+        pos = t.get("draft_position")
+        if pos is not None:
+            by_pos[int(pos)] = t
+
+    def _resolve_one(tid: str):
+        if not isinstance(tid, str) or not tid.startswith("open_slot_"):
+            return None, None
+        try:
+            pos = int(tid.split("_")[-1])
+        except Exception:
+            return None, None
+        t = by_pos.get(pos)
+        if not t or not t.get("name"):
+            return None, None
+        return str(t["_id"]), t.get("name")
+
+    for m in matchups:
+        for side in ("home", "away"):
+            new_id, new_name = _resolve_one(m.get(f"{side}_team_id"))
+            if new_id:
+                m[f"{side}_team_id"] = new_id
+                m[f"{side}_team_name"] = new_name
+    return matchups
+
+
 @router.get("/matchups/{league_id}")
 async def get_matchups(league_id: str, week: Optional[int] = None):
     db = _deps["db"]
@@ -604,6 +657,7 @@ async def get_matchups(league_id: str, week: Optional[int] = None):
     matchups = await db.matchups.find(query).sort("week", 1).to_list(1000)
     for m in matchups:
         m["_id"] = str(m["_id"])
+    matchups = await _resolve_open_slots(db, league_id, matchups)
     return matchups
 
 
@@ -619,6 +673,7 @@ async def get_current_week(league_id: str):
     matchups = await db.matchups.find({"league_id": league_id, "week": current}).to_list(100)
     for m in matchups:
         m["_id"] = str(m["_id"])
+    matchups = await _resolve_open_slots(db, league_id, matchups)
     return {"week": current, "matchups": matchups}
 
 
@@ -628,6 +683,7 @@ async def get_week_results(league_id: str, week: int):
     matchups = await db.matchups.find({"league_id": league_id, "week": week}).to_list(100)
     for m in matchups:
         m["_id"] = str(m["_id"])
+    matchups = await _resolve_open_slots(db, league_id, matchups)
     return matchups
 
 
