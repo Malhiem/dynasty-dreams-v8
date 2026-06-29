@@ -77,10 +77,12 @@ def test_worker_rate_limit_and_admin_managed():
 
 
 def test_admin_managed_endpoint_exists():
-    src = Path("/app/backend/routes/team_invites.py").read_text()
-    assert "/admin-managed" in src
-    assert "AdminManagedToggleRequest" in src
-    assert "team_admin_managed_toggle" in src  # audit row action label.
+    """Iter 231ad → 231ah: endpoint was relocated to `teams_admin.py`
+    in iter231ah. Verify it lives there now (not in team_invites)."""
+    new_src = Path("/app/backend/routes/teams_admin.py").read_text()
+    assert "/admin-managed" in new_src
+    assert "AdminManagedToggleRequest" in new_src
+    assert "team_admin_managed_toggle" in new_src  # audit row action label.
 
 
 def test_pending_invites_count_exposed():

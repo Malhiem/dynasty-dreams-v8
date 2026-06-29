@@ -42,6 +42,16 @@ NEW test files should tag every seeded doc with `_test_seed: True`
 so this sweep finds it automatically. Pattern:
 
     db.players.insert_one({**player_doc, "_test_seed": True})
+
+Iter 231ah update — Legacy test files that pre-date the `_test_seed`
+convention are now AUTO-TAGGED via a `pytest_collection_modifyitems`
+hook that monkey-patches both PyMongo's sync `Collection.insert_one
+/.insert_many` AND Motor's async `AsyncIOMotorCollection.insert_one
+/.insert_many` for the 9 polluted collections (players, leagues,
+users, teams, drafts, waiver_claims, waiver_budgets, team_invites,
+league_invites). The patch only activates DURING pytest — production
+code is untouched. New test files DON'T need to set `_test_seed`
+manually; the patch handles it.
 """
 from __future__ import annotations
 
@@ -86,7 +96,12 @@ _TEST_USER_EMAIL_PATTERN = re.compile(r"@example\.com$", re.IGNORECASE)
 
 
 def pytest_configure(config):
-    """Bootstrap env vars so tests don't KeyError on common settings."""
+    """Bootstrap env vars so tests don't KeyError on common settings.
+
+    Iter 231ah — Also installs auto-tagging insert monkey-patches so
+    legacy test files that don't manually add `_test_seed: True` still
+    get cleaned up. See `_install_auto_seed_tagger` below.
+    """
     env_path = Path("/app/backend/.env")
     if env_path.exists():
         for line in env_path.read_text().splitlines():
@@ -107,6 +122,89 @@ def pytest_configure(config):
         "REACT_APP_BACKEND_URL",
         "https://dynasty-preview.preview.emergentagent.com",
     )
+    # Iter 231ah — Install auto-tagger monkey-patches AFTER env bootstrap
+    # but BEFORE any test imports motor/pymongo. Idempotent — running
+    # twice on the same interpreter is a no-op.
+    _install_auto_seed_tagger()
+
+
+# ─── Iter 231ah — Auto-tag inserts during test runs ─────────────────
+# Legacy test files that pre-date the `_test_seed` convention don't
+# need to be migrated one-by-one. Instead, while pytest is running we
+# transparently wrap `Collection.insert_one` / `insert_many` for the
+# 9 polluted collections so every test-driven insert lands with
+# `_test_seed: True` already set.
+#
+# Production code is unaffected — these patches only apply to the
+# pytest Python process. App services run in supervisor's own
+# interpreter and never load this conftest.
+
+_AUTO_SEED_COLLECTIONS = {
+    "players", "leagues", "users", "teams", "drafts",
+    "waiver_claims", "waiver_budgets", "team_invites", "league_invites",
+}
+_AUTO_SEED_INSTALLED = False
+
+
+def _tag_doc(doc):
+    """Insert `_test_seed: True` if it's a dict and doesn't already
+    have a value for the key."""
+    if isinstance(doc, dict) and "_test_seed" not in doc:
+        doc["_test_seed"] = True
+    return doc
+
+
+def _tag_docs(docs):
+    if isinstance(docs, list):
+        return [_tag_doc(d) for d in docs]
+    return docs
+
+
+def _install_auto_seed_tagger() -> None:
+    global _AUTO_SEED_INSTALLED
+    if _AUTO_SEED_INSTALLED:
+        return
+    # ── PyMongo (sync) ───────────────────────────────────────────────
+    try:
+        from pymongo.collection import Collection
+        _orig_sync_insert_one = Collection.insert_one
+        _orig_sync_insert_many = Collection.insert_many
+
+        def _wrapped_sync_insert_one(self, document, *args, **kwargs):
+            if self.name in _AUTO_SEED_COLLECTIONS:
+                _tag_doc(document)
+            return _orig_sync_insert_one(self, document, *args, **kwargs)
+
+        def _wrapped_sync_insert_many(self, documents, *args, **kwargs):
+            if self.name in _AUTO_SEED_COLLECTIONS:
+                _tag_docs(documents)
+            return _orig_sync_insert_many(self, documents, *args, **kwargs)
+
+        Collection.insert_one = _wrapped_sync_insert_one
+        Collection.insert_many = _wrapped_sync_insert_many
+    except Exception as e:  # pragma: no cover
+        print(f"[conftest] pymongo auto-tag install failed: {e}")
+    # ── Motor (async) ────────────────────────────────────────────────
+    try:
+        from motor.motor_asyncio import AsyncIOMotorCollection
+        _orig_async_insert_one = AsyncIOMotorCollection.insert_one
+        _orig_async_insert_many = AsyncIOMotorCollection.insert_many
+
+        async def _wrapped_async_insert_one(self, document, *args, **kwargs):
+            if self.name in _AUTO_SEED_COLLECTIONS:
+                _tag_doc(document)
+            return await _orig_async_insert_one(self, document, *args, **kwargs)
+
+        async def _wrapped_async_insert_many(self, documents, *args, **kwargs):
+            if self.name in _AUTO_SEED_COLLECTIONS:
+                _tag_docs(documents)
+            return await _orig_async_insert_many(self, documents, *args, **kwargs)
+
+        AsyncIOMotorCollection.insert_one = _wrapped_async_insert_one
+        AsyncIOMotorCollection.insert_many = _wrapped_async_insert_many
+    except Exception as e:  # pragma: no cover
+        print(f"[conftest] motor auto-tag install failed: {e}")
+    _AUTO_SEED_INSTALLED = True
 
 
 def _sweep_polluted_artefacts() -> None:

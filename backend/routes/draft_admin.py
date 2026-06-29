@@ -544,12 +544,17 @@ async def restart_draft(draft_id: str, request: Request):
     # mistake. Audit row in `admin_user_actions` records the action
     # itself; `draft_restart_log` records the full picks array.
     if picks:
+        # Iter 231ah — Store both ISO string (for human-readable audit
+        # display) and Date (for the 90-day TTL index). Mongo's TTL
+        # monitor requires an actual BSON Date, not a string.
+        now_dt = datetime.now(timezone.utc)
         await _db().draft_restart_log.insert_one({
             "draft_id": draft_id,
             "league_id": draft.get("league_id"),
             "league_name": draft.get("league_name"),
             "draft_name": draft.get("name"),
             "restarted_at": now_iso,
+            "restarted_at_ts": now_dt,  # BSON Date for TTL.
             "restarted_by": str(user["_id"]),
             "restarted_by_email": user.get("email"),
             "prior_status": draft.get("status"),
