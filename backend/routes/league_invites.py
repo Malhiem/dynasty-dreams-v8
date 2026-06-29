@@ -460,6 +460,28 @@ async def get_pending_team_invites(league_id: str, request: Request):
         if em:
             invites_by_email[em] = inv
 
+    # Iter 231ae — Also pull all PENDING slot-locked team_invites so we
+    # can attach a per-team `pending_invite_count` tally chip to the
+    # row. Excludes accepted / revoked / expired tokens.
+    pending_team_invites = await db.team_invites.find({
+        "league_id": league_id,
+        "revoked_at": None,
+        "used_at": None,
+    }).to_list(500)
+    now_ts = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    pending_count_by_team: dict = {}
+    for inv in pending_team_invites:
+        exp = inv.get("expires_at")
+        # Skip expired tokens (treat naive datetimes as UTC).
+        if exp:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=__import__("datetime").timezone.utc)
+            if exp < now_ts:
+                continue
+        tid = inv.get("team_id")
+        if tid:
+            pending_count_by_team[tid] = pending_count_by_team.get(tid, 0) + 1
+
     out = []
     for t in teams:
         invite_email = (t.get("invite_email") or "").lower() or None
@@ -482,6 +504,9 @@ async def get_pending_team_invites(league_id: str, request: Request):
             "invite_email": invite_email,
             "status": status,
             "sent_at": inv.get("sent_at") if inv else None,
+            # Iter 231ae — extra fields for the Teams & Owners UI.
+            "pending_invite_count": pending_count_by_team.get(str(t["_id"]), 0),
+            "admin_managed": bool(t.get("admin_managed", False)),
         })
     return {
         "league_id": league_id,

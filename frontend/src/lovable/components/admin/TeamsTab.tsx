@@ -37,7 +37,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Plus, X, Pencil, Check, Mail, Users, Link2, Copy } from "lucide-react";
+import { Plus, X, Pencil, Check, Mail, Users, Link2, Copy, ShieldCheck } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
@@ -192,6 +193,31 @@ const TeamsTab = () => {
     }
   };
 
+  // Iter 231ae — Toggle whether a league admin manually manages this team.
+  // Used for owner-removal continuity scenarios. When enabled, the Draft
+  // Room timer worker stops auto-picking BPA for this team (admin will
+  // pick manually) and the row badges as "Admin-managed" so other owners
+  // know who's running it.
+  const toggleAdminManaged = async (row, enabled) => {
+    setBusyFor(row.team_id, true);
+    try {
+      await api.post(
+        `/leagues/${leagueId}/teams/${row.team_id}/admin-managed`,
+        { enabled },
+      );
+      toast.success(
+        enabled
+          ? "Admin-managed enabled — you'll run this team."
+          : "Admin-managed disabled.",
+      );
+      await load();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Couldn't update admin management");
+    } finally {
+      setBusyFor(row.team_id, false);
+    }
+  };
+
   return (
     <Card className="bg-card border-border" data-testid="teams-tab-root">
       <CardHeader>
@@ -243,7 +269,7 @@ const TeamsTab = () => {
                       data-testid={`teams-tab-name-input-${row.team_id}`}
                     />
                   ) : (
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span
                         className={`font-medium ${row.isOpenSlot ? "text-muted-foreground italic" : ""}`}
                         data-testid={`teams-tab-name-${row.team_id}`}
@@ -253,6 +279,31 @@ const TeamsTab = () => {
                       {row.isOpenSlot && (
                         <Badge variant="outline" className="border-amber-500/40 text-amber-300 bg-amber-500/10 text-[9px]">
                           Open
+                        </Badge>
+                      )}
+                      {/* Iter 231ae — Pending invites tally chip so the
+                          commissioner can spot outstanding tokens at a
+                          glance without expanding the row. */}
+                      {row.pending_invite_count > 0 && (
+                        <Badge
+                          variant="outline"
+                          className="border-sky-500/40 text-sky-300 bg-sky-500/10 text-[9px]"
+                          data-testid={`teams-tab-pending-chip-${row.team_id}`}
+                        >
+                          {row.pending_invite_count} pending
+                        </Badge>
+                      )}
+                      {/* Iter 231ae — Admin-managed badge. Different from
+                          "Open" because an owner-removed team will be
+                          ownerless + admin-managed (e.g. continuity flow). */}
+                      {row.admin_managed && (
+                        <Badge
+                          variant="outline"
+                          className="border-violet-500/40 text-violet-300 bg-violet-500/10 text-[9px] gap-1"
+                          data-testid={`teams-tab-admin-managed-badge-${row.team_id}`}
+                        >
+                          <ShieldCheck className="h-2.5 w-2.5" />
+                          Admin-managed
                         </Badge>
                       )}
                     </div>
@@ -316,6 +367,27 @@ const TeamsTab = () => {
                     ))}
                     {!row.owner_id && teamInvites.length === 0 && (
                       <span className="text-xs text-muted-foreground italic">No owners assigned</span>
+                    )}
+                    {/* Iter 231ae — Per-row admin-managed checkbox.
+                        Visible whenever the team has no primary owner so
+                        the commissioner can run the team during the
+                        owner-removal continuity window. Hidden when the
+                        team has a real owner (admin-management is a
+                        no-owner thing — primary owner picks instead). */}
+                    {row.isOpenSlot && (
+                      <label
+                        className="mt-1 flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none w-fit"
+                        data-testid={`teams-tab-admin-managed-row-${row.team_id}`}
+                      >
+                        <Checkbox
+                          checked={!!row.admin_managed}
+                          disabled={isBusy}
+                          onCheckedChange={(checked) => toggleAdminManaged(row, checked === true)}
+                          className="h-3.5 w-3.5"
+                          data-testid={`teams-tab-admin-managed-toggle-${row.team_id}`}
+                        />
+                        <span>League admin runs this team</span>
+                      </label>
                     )}
                     {addingOwnerFor === row.team_id ? (
                       <div className="flex items-center gap-1 mt-1">

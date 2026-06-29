@@ -141,9 +141,23 @@ async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
         )
 
         if is_ownerless:
-            # Fire immediately; bypass defer-to-user + clock window +
-            # deadline checks. No grace period — the team has no owner
-            # who could possibly act.
+            # Iter 231ab — Fire immediately; bypass defer-to-user + clock
+            # window + deadline checks. No grace period — the team has
+            # no owner who could possibly act.
+            # Iter 231ad — Rate-limit: at most 1 ownerless auto-pick per
+            # draft per tick. With ~6 worker ticks per minute (10s
+            # cadence), an 8-team Open-Slot block now takes ~80 seconds
+            # to fully resolve instead of being decided in <1ms — gives
+            # commissioners time to react ("oh no, undo!") + matches the
+            # cadence of real-owner picks so chat / roster updates don't
+            # firehose.
+            # Iter 231ae — Also honour `admin_managed=True`: when the
+            # commissioner has explicitly opted the team into manual
+            # admin management (for owner-removal continuity), DO NOT
+            # auto-pick. The admin will pick manually via the UI.
+            if on_clock_team.get("admin_managed"):
+                counts["skipped"] += 1
+                continue
             counts["expired"] += 1
             try:
                 await perform_one_auto_pick(str(draft["_id"]), source="ownerless")

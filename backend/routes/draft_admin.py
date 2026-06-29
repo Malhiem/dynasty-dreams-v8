@@ -34,6 +34,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 from draft_engine import CreateDraftRequest
 from routes.draft_helpers import seed_draft_picks_for_draft
+from routes._authz import is_league_admin  # Iter 231ad — shared role check.
 
 
 router = APIRouter()
@@ -524,12 +525,8 @@ async def restart_draft(draft_id: str, request: Request):
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
-    is_admin = (
-        league.get("commissioner_id") == user["_id"]
-        or user["_id"] in (league.get("co_commissioners") or [])
-        or user.get("role") == "admin"
-    )
-    if not is_admin:
+    # Iter 231ad — Shared helper (was 4 inline lines).
+    if not is_league_admin(user, league):
         raise HTTPException(status_code=403, detail="Commissioner / co-commissioner / admin only")
 
     if draft.get("status") == "archived":
@@ -540,6 +537,28 @@ async def restart_draft(draft_id: str, request: Request):
 
     # Wipe every drafted player off each team's roster.
     picks = list(draft.get("picks") or [])
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Iter 231ad — Archive the picks payload before deletion so the
+    # commissioner can self-serve a recovery if the restart was a
+    # mistake. Audit row in `admin_user_actions` records the action
+    # itself; `draft_restart_log` records the full picks array.
+    if picks:
+        await _db().draft_restart_log.insert_one({
+            "draft_id": draft_id,
+            "league_id": draft.get("league_id"),
+            "league_name": draft.get("league_name"),
+            "draft_name": draft.get("name"),
+            "restarted_at": now_iso,
+            "restarted_by": str(user["_id"]),
+            "restarted_by_email": user.get("email"),
+            "prior_status": draft.get("status"),
+            "prior_current_pick": draft.get("current_pick"),
+            "picks_wiped": len(picks),
+            "picks": picks,  # full payload for self-serve recovery
+            "chat_messages": list(draft.get("chat_messages") or []),
+        })
+
     for p in picks:
         tid = p.get("team_id") or (draft.get("team_map") or {}).get(p.get("team", ""), {}).get("id")
         pid = p.get("player_id")
@@ -552,7 +571,6 @@ async def restart_draft(draft_id: str, request: Request):
             except Exception:
                 pass  # roster cleanup is best-effort
 
-    now_iso = datetime.now(timezone.utc).isoformat()
     await _db().drafts.update_one(
         {"_id": ObjectId(draft_id)},
         {
@@ -565,7 +583,7 @@ async def restart_draft(draft_id: str, request: Request):
                 "picks": [],
                 "chat_messages": [],
                 "restarted_at": now_iso,
-                "restarted_by": user["_id"],
+                "restarted_by": str(user["_id"]),
             },
             "$unset": {"current_pick_started_at": "", "started_at": ""},
         },

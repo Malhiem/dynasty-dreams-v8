@@ -74,13 +74,20 @@ def test_worker_handles_ownerless_teams_separately():
 
 
 def test_make_pick_allows_co_commissioners():
+    """Iter 231ab → 231ad: the role check originally lived inline in
+    draft_pick_actions.py (5 copies of the same 4 lines). Iter 231ad
+    extracted it to `routes._authz.is_league_admin` — so now we
+    assert the file IMPORTS the helper instead of greping for raw
+    `co_commissioners` clauses."""
     from pathlib import Path
     src = Path("/app/backend/routes/draft_pick_actions.py").read_text()
-    # `co_commissioners` membership must short-circuit the "not your
-    # turn" guard alongside the primary commissioner check.
-    assert "co_commissioners" in src
-    # Same expanded check should cover undo + swap + pause.
-    assert src.count("co_commissioners") >= 4
+    assert "from routes._authz import is_league_admin" in src
+    # All 5 handlers (pick / undo / swap / pause / seed-picks) must
+    # call the helper. Count must be >= 5.
+    assert src.count("is_league_admin(user, league)") >= 5
+    # And the underlying helper must check co_commissioners.
+    helper_src = Path("/app/backend/routes/_authz.py").read_text()
+    assert "co_commissioners" in helper_src
 
 
 def test_restart_endpoint_exists():

@@ -32,6 +32,10 @@ from routes.draft_helpers import (
     early_start_clock_msg,
     seed_draft_picks_for_draft,
 )
+# Iter 231ad — Shared `is_league_admin` helper (commish OR co-commish OR
+# platform admin). Replaces 5 inline copies of the same check that
+# previously lived in this file.
+from routes._authz import is_league_admin
 
 
 router = APIRouter()
@@ -99,16 +103,9 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
 
     # Commissioner / co-commissioner / platform admin can pick for any team,
     # otherwise it must be the user's turn.
-    # Iter 231ab — Expanded from a strict `commissioner_id` check to honour
-    # `co_commissioners` and platform admins so league admins can rescue
-    # stalled drafts (e.g. when an owner is unreachable and the
-    # missed_pick_action is "defer-to-user").
+    # Iter 231ad — Pulled the role check into `routes._authz.is_league_admin`.
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    is_admin = (
-        league.get("commissioner_id") == user["_id"]
-        or user["_id"] in (league.get("co_commissioners") or [])
-        or user.get("role") == "admin"
-    )
+    is_admin = is_league_admin(user, league)
 
     if not is_admin:
         if not team:
@@ -323,13 +320,8 @@ async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, reques
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    # Iter 231ab — Co-commissioners + platform admins allowed (was commish-only).
-    is_admin = (
-        league.get("commissioner_id") == user["_id"]
-        or user["_id"] in (league.get("co_commissioners") or [])
-        or user.get("role") == "admin"
-    )
-    if not is_admin:
+    # Iter 231ad — Shared helper.
+    if not is_league_admin(user, league):
         raise HTTPException(status_code=403, detail="Only commissioner / co-commissioner / admin can undo picks")
 
     picks = list(draft.get("picks", []))
@@ -402,13 +394,8 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    # Iter 231ab — Co-commissioners + platform admins allowed.
-    is_admin = (
-        league.get("commissioner_id") == user["_id"]
-        or user["_id"] in (league.get("co_commissioners") or [])
-        or user.get("role") == "admin"
-    )
-    if not is_admin:
+    # Iter 231ad — Shared helper.
+    if not is_league_admin(user, league):
         raise HTTPException(status_code=403, detail="Only commissioner / co-commissioner / admin can swap pick players")
 
     picks = list(draft.get("picks", []))
@@ -491,13 +478,8 @@ async def pause_draft(draft_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Draft not found")
 
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
-    # Iter 231ab — Co-commissioners + platform admins allowed.
-    is_admin = (
-        league.get("commissioner_id") == user["_id"]
-        or user["_id"] in (league.get("co_commissioners") or [])
-        or user.get("role") == "admin"
-    )
-    if not is_admin:
+    # Iter 231ad — Shared helper.
+    if not is_league_admin(user, league):
         raise HTTPException(status_code=403, detail="Only commissioner / co-commissioner / admin can pause draft")
 
     paused = not draft.get("timer_paused", False)
@@ -531,12 +513,8 @@ async def seed_draft_picks(draft_id: str, request: Request):
     league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
-    is_commish = (
-        league.get("commissioner_id") == user["_id"]
-        or user["_id"] in (league.get("co_commissioners") or [])
-        or user.get("role") == "admin"
-    )
-    if not is_commish:
+    # Iter 231ad — Shared helper.
+    if not is_league_admin(user, league):
         raise HTTPException(status_code=403, detail="Commissioner or admin only")
 
     season = (league.get("season") or "2026").split("-")[0]
