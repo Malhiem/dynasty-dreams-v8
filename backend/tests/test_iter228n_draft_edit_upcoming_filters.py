@@ -33,6 +33,10 @@ def _register(prefix="i228n"):
 def _create_league(tok):
     H = {"Authorization": f"Bearer {tok}"}
     r = requests.post(f"{API_URL}/api/leagues", headers=H, json={
+        # Iter 231af — Use `_test_seed=True` tag via a recognisable prefix
+        # so the global conftest auto-sweep finds + deletes the league.
+        # `i228n-` is matched by the conftest's `^(iter|i)\s*22\d[a-z]{0,3}[-_ ]`
+        # regex (extended in iter231af to cover `i22X-` patterns).
         "name": f"i228n-{uuid.uuid4().hex[:6]}", "format": "dynasty",
         "scoring_format": "head_to_head", "max_teams": 4,
         "draft_type": "snake", "roster_spots": 19,
@@ -188,11 +192,14 @@ def test_eligible_players_honours_minors_eligibility_required_flag():
         "name": f"Minor Eligible Forward {sid}", "position": "C",
         "team": "TST", "points": 10, "player_type": "skater",
         "minor_eligible": True, "nhl_id": f"min_{sid}",
+        # Iter 231af — Auto-sweep tag (see /app/backend/tests/conftest.py).
+        "_test_seed": True,
     })
     db.players.insert_one({
         "name": f"NHL Veteran Forward {sid}", "position": "C",
         "team": "TST", "points": 10, "player_type": "skater",
         "minor_eligible": False, "nhl_id": f"vet_{sid}",
+        "_test_seed": True,
     })
 
     H = {"Authorization": f"Bearer {tok}"}
@@ -227,6 +234,7 @@ def test_eligible_players_excludes_previously_drafted_when_flag_on():
         "name": f"Repeat Pick {sid}", "position": "C",
         "team": "TST", "points": 99, "player_type": "skater",
         "nhl_id": f"rp_{sid}",
+        "_test_seed": True,  # Iter 231af — Auto-sweep tag.
     }).inserted_id
 
     # First draft: complete + record the player in picks

@@ -55,15 +55,34 @@ import pytest
 # Player names — legacy unmarked-seed patterns we MUST sweep until every
 # old test file is migrated to tag `_test_seed: True`.
 _PLAYER_NAME_PATTERN = re.compile(
-    r"^(ForceP|FutureP|WaiverTarget|Iter\s*23[01][a-z]{0,3}\s*Player|i\s*23[01][a-z]{0,3}\s*Player|TestPlayer)",
+    r"^("
+    r"ForceP|FutureP|WaiverTarget|RollbackP|"
+    # Generic `<Word>P-<hex>` test-player pattern (iter228 style).
+    r"[A-Z][a-zA-Z]+P-[a-f0-9]{4,}|"
+    r"Iter\s*23\d[a-z]{0,3}\s*Player|"
+    r"i\s*23\d[a-z]{0,3}\s*Player|"
+    r"i\s*22\d[a-z]{0,3}\s*Player|"
+    r"NHL Veteran Forward|Minor Eligible Forward|Repeat Pick|"
+    r"TestPlayer|Waiver Player"
+    r")",
     re.IGNORECASE,
 )
-# League names — ephemeral test leagues. `iter228-`, `iter231-`, etc.,
-# plus the `i231ab League ...` pattern used by iter231ab tests.
+# League names — ephemeral test leagues. Broadened in iter231af to catch
+# `i228n-` (was only catching `i23X-` prefixes pre-231af). Pattern now:
+# `iter` or `i` + 3-digit year-marker + 0-3 letter suffix + separator.
 _LEAGUE_NAME_PATTERN = re.compile(
-    r"^(iter|i)\s*23[01][a-z]{0,3}[-_ ]",
+    # Three flavors of ephemeral test leagues:
+    #   1. `iter228-` / `i228n-` / `i231ab-` — HTTP test files.
+    #   2. `TEST_*`             — Playwright / E2E suite leagues.
+    r"^(iter|i)\s*\d{3}[a-z]{0,3}[-_ ]|^TEST_",
     re.IGNORECASE,
 )
+# Iter 231af — `@example.com` is RFC-reserved for documentation and is
+# the canonical test-user email domain across this codebase. Real
+# users register with gmail / outlook / live / dynastydreams etc., so
+# any `@example.com` row is by-definition test pollution. Much safer
+# + simpler than maintaining a prefix allow-list (which can drift).
+_TEST_USER_EMAIL_PATTERN = re.compile(r"@example\.com$", re.IGNORECASE)
 
 
 def pytest_configure(config):
@@ -139,6 +158,39 @@ def _sweep_polluted_artefacts() -> None:
             db.team_invites.delete_many({"league_id": {"$in": lids}})
             db.league_invites.delete_many({"league_id": {"$in": lids}})
             db.leagues.delete_many({"_id": {"$in": [lg["_id"] for lg in polluted_leagues]}})
+
+        # ── 3. Test user accounts + their owned leagues ───────────
+        # Iter 231af — Scrub `@example.com` users (RFC-reserved test
+        # domain) AND cascade-delete every league they own. Without
+        # the cascade, HTTP-mode tests that register fresh users then
+        # POST `/api/leagues` would leak thousands of orphan leagues
+        # owned by deleted users (seen in iter231af repair: 2,677
+        # orphan leagues / 4,974 teams / 1,400 drafts).
+        test_users = list(db.users.find(
+            {"$or": [
+                {"_test_seed": True},
+                {"email": {"$regex": _TEST_USER_EMAIL_PATTERN}},
+            ]},
+            {"_id": 1},
+        ))
+        if test_users:
+            uids = [str(u["_id"]) for u in test_users]
+            # Find every league owned by a test user.
+            owned_leagues = list(db.leagues.find(
+                {"commissioner_id": {"$in": uids}}, {"_id": 1},
+            ))
+            owned_lids = [str(lg["_id"]) for lg in owned_leagues]
+            if owned_lids:
+                db.teams.delete_many({"league_id": {"$in": owned_lids}})
+                db.drafts.delete_many({"league_id": {"$in": owned_lids}})
+                db.waiver_claims.delete_many({"league_id": {"$in": owned_lids}})
+                db.waiver_budgets.delete_many({"league_id": {"$in": owned_lids}})
+                db.team_invites.delete_many({"league_id": {"$in": owned_lids}})
+                db.league_invites.delete_many({"league_id": {"$in": owned_lids}})
+                db.leagues.delete_many({"_id": {"$in": [lg["_id"] for lg in owned_leagues]}})
+            # Teams the test user owned directly (not via league cascade).
+            db.teams.delete_many({"owner_id": {"$in": uids}})
+            db.users.delete_many({"_id": {"$in": [u["_id"] for u in test_users]}})
     except Exception as e:
         # Never block the test run on a sweep failure.
         print(f"[conftest] global pollution sweep skipped: {e}")
