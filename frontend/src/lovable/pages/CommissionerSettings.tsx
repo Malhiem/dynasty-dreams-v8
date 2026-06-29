@@ -3,6 +3,13 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Settings, Users, Trophy, Shield, Target, LayoutGrid, AlertTriangle, ClipboardCheck, ScrollText, UserCog, Sliders, DollarSign } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
@@ -39,7 +46,31 @@ import {
 } from "@/lovable/pages/commissioner/data/commissionerData";
 
 
+// Iter 231an — Single source of truth for the Commissioner Settings
+// tab strip. Used by both the desktop `TabsList` and the mobile
+// `<Select>` dropdown so labels + icons + ordering stay in sync.
+const COMMISSIONER_TABS = [
+  { value: "league-setup", label: "League Setup", icon: Trophy },
+  { value: "player-pool", label: "Player Pool", icon: Users },
+  { value: "rosters", label: "Rosters", icon: Shield },
+  { value: "divisions", label: "League Structure", icon: Trophy },
+  { value: "rules-schedule", label: "Transactions", icon: Sliders },
+  { value: "salary-cap-contracts", label: "Salary Cap & Contracts", icon: DollarSign },
+  { value: "scoring", label: "Scoring", icon: Target },
+  { value: "draft", label: "Draft", icon: LayoutGrid },
+  { value: "tanking", label: "Tank Monitor", icon: AlertTriangle },
+  { value: "roster-monitor", label: "Roster Monitor", icon: ClipboardCheck },
+  { value: "admin", label: "League Administration", icon: UserCog },
+  { value: "audit-log", label: "Audit Log", icon: ScrollText },
+] as const;
+
+
 const CommissionerSettings = () => {
+
+  // Iter 231an — Controlled active tab so the mobile <Select> dropdown
+  // can mirror clicks on the desktop tab strip (and vice-versa) and
+  // `onJumpToTab` callbacks can navigate without a DOM-click hack.
+  const [activeTab, setActiveTab] = useState<string>("league-setup");
 
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
   const [scoringFormat, setScoringFormat] = useState("h2h-points");
@@ -487,14 +518,53 @@ const CommissionerSettings = () => {
         <LeagueHealthCard
           leagueId={activeLeague?.id}
           onJumpToTab={(tab) => {
+            // Iter 231an — Controlled tab state, so the cleanest jump
+            // is to set the state directly. We keep the DOM-click
+            // fallback for any old callers that arrive without a
+            // useState handle.
+            if (typeof tab === "string") setActiveTab(tab);
             const trigger = document.querySelector(`[data-state] [value="${tab}"], [role="tab"][value="${tab}"]`);
             if (trigger instanceof HTMLElement) trigger.click();
           }}
           onReopenWizard={reopenWizard}
         />
 
-        <Tabs defaultValue="league-setup" className="space-y-6">
-          <TabsList className="bg-secondary border border-border">
+        {/* Iter 231an — Controlled tabs so the new mobile Select can
+            drive the same active tab as the desktop TabsList. Without
+            controlled state the Select would be a parallel UI that
+            never reflects clicks on the (hidden) desktop tabs. */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          {/* Mobile-only tab selector. Below md the 13-item tab strip
+              required heavy horizontal scrolling; a native-feeling
+              dropdown gives one-tap access to every section. */}
+          <div className="md:hidden">
+            <Select value={activeTab} onValueChange={setActiveTab}>
+              <SelectTrigger
+                className="w-full bg-secondary border border-border h-11"
+                data-testid="commissioner-settings-mobile-tab-select"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {COMMISSIONER_TABS.map(({ value, icon: Icon, label }) => (
+                  <SelectItem
+                    key={value}
+                    value={value}
+                    data-testid={`commissioner-settings-mobile-tab-${value}`}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Icon className="h-4 w-4" />
+                      {label}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Desktop tab strip — hidden on mobile to reclaim the
+              horizontal real-estate for the Select above. */}
+          <TabsList className="hidden md:flex flex-wrap h-auto bg-secondary border border-border">
             <TabsTrigger value="league-setup" className="data-[state=active]:bg-primary/20">
               <Trophy className="h-4 w-4 mr-2" />
               League Setup

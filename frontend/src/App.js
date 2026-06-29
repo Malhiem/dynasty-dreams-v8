@@ -3,6 +3,7 @@ import "@/index.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
+import PWAInstallBanner from "@/components/PWAInstallBanner";
 import { usePageviewTracker } from "@/hooks/use-pageview-tracker";
 import { TradeBuilderProvider } from "@/lovable/state/TradeBuilderContext";
 import ProtectedRoute from "@/components/layout/ProtectedRoute";
@@ -85,6 +86,7 @@ function App() {
       <Toaster position="top-right" richColors closeButton />
       <BrowserRouter>
         <ImpersonationBanner />
+        <PWAInstallBanner />
         <PageviewTrackerMount />
         <TradeBuilderProvider>
         <Routes>
