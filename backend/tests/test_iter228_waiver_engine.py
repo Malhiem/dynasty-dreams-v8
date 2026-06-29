@@ -129,8 +129,73 @@ def _seed_player(db, name="Waiver Player"):
         "points": 25,
         "games_played": 50,
         "player_type": "skater",
+        # Iter 231ac — Tag every test-seeded player so the autouse
+        # cleanup fixture (and any future repair script) can find and
+        # delete them. Without this, repeated runs against the shared
+        # preview DB leak ForceP/FutureP/WaiverTarget rows into the
+        # global player pool — which surface in the live waiver wire,
+        # player search, and free-agent screens for real users (see
+        # iter231ac repair: 65 polluting players, 89 polluted rosters).
+        "iter228_test_seed": True,
     }).inserted_id
     return str(pid)
+
+
+# Iter 231ac — Module-scoped autouse cleanup. Each test that seeds a
+# player via `_seed_player` AND/OR creates an `iter228-*` league via
+# `_create_league` MUST be torn down so we don't leak rows into the
+# shared preview database.
+@__import__("pytest").fixture(autouse=True)
+def _cleanup_iter228_pollution():
+    """Sweep iter228 test artefacts before AND after each test.
+
+    Before: belt-and-suspenders for runs that previously aborted
+    mid-test (e.g. KeyboardInterrupt) and left rows behind.
+    After: the canonical cleanup path.
+    """
+    def _sweep():
+        try:
+            db = _db()
+            # 1. Find all test-seeded players (tagged + legacy prefix-named).
+            import re as _re
+            _pattern = _re.compile(r"^(ForceP|FutureP|WaiverTarget)", _re.IGNORECASE)
+            test_players = list(db.players.find(
+                {"$or": [
+                    {"iter228_test_seed": True},
+                    {"name": {"$regex": _pattern}},
+                ]},
+                {"_id": 1},
+            ))
+            pids = [str(p["_id"]) for p in test_players]
+            if pids:
+                from bson import ObjectId as _OID
+                db.teams.update_many(
+                    {"roster": {"$in": pids}},
+                    {"$pull": {"roster": {"$in": pids}}},
+                )
+                db.waiver_claims.delete_many({"player_id": {"$in": pids}})
+                db.players.delete_many({"_id": {"$in": [_OID(p) for p in pids]}})
+            # 2. Drop iter228-* leagues + their teams + drafts.
+            iter_leagues = list(db.leagues.find(
+                {"name": {"$regex": "^iter228-"}}, {"_id": 1},
+            ))
+            iter_ids = [str(l["_id"]) for l in iter_leagues]
+            if iter_ids:
+                from bson import ObjectId as _OID2
+                db.teams.delete_many({"league_id": {"$in": iter_ids}})
+                db.drafts.delete_many({"league_id": {"$in": iter_ids}})
+                db.waiver_claims.delete_many({"league_id": {"$in": iter_ids}})
+                db.waiver_budgets.delete_many({"league_id": {"$in": iter_ids}})
+                db.leagues.delete_many({"_id": {"$in": [_OID2(i) for i in iter_ids]}})
+        except Exception as _e:
+            # Best-effort cleanup; never block the test run on a sweep
+            # failure (the next test's setup-sweep will catch it).
+            print(f"[iter228 cleanup] sweep skipped: {_e}")
+
+    _sweep()
+    yield
+    _sweep()
+
 
 
 # ── Tests ────────────────────────────────────────────────────
