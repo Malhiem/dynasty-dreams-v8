@@ -114,6 +114,21 @@ async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
             counts["skipped"] += 1
             continue
 
+        # Iter 231ad — Guard against zombie drafts with empty `team_abbrs`.
+        # `get_team_for_pick` does `pick % len(team_abbrs)` which raises
+        # ZeroDivisionError on empty arrays. Found 18 such drafts in the
+        # preview DB throwing 'integer division or modulo by zero' every
+        # 10s in the worker log. These are unusable drafts (no teams to
+        # pick for) — skip them entirely and bump the error counter so
+        # we can surface a fix-it-now alert.
+        if not (draft.get("team_abbrs") or []):
+            counts["skipped"] += 1
+            counts["errors"] += 1
+            logger.warning(
+                f"draft_pick_timer_worker: draft {draft['_id']} has empty team_abbrs — skipping (zombie draft)."
+            )
+            continue
+
         # Iter 231ab — Resolve the team currently on the clock so we can
         # detect ownerless (Open Slot) teams. Open Slot teams have no
         # human to pick for them, so the worker auto-picks IMMEDIATELY
