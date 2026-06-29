@@ -64,6 +64,8 @@ import PlayerVerifyPanel from "./components/PlayerVerifyPanel";
 import SecurityDocPanel from "./components/SecurityDocPanel";
 // Iter 230n — Security audit history widget (compliance cadence view).
 import SecurityAuditHistory from "./components/SecurityAuditHistory";
+// Iter 231ag — Database hygiene one-click pollution sweep.
+import DbHygienePanel from "./components/DbHygienePanel";
 export { ModNotesPanel } from "./components/ModNotesPanel";
 import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_shared";
 
@@ -182,6 +184,7 @@ export default function AdminDashboard() {
             <SidebarTab value="ux-analytics" icon={Activity} label="UX Analytics" testid="admin-tab-ux-analytics" />
             <SidebarTab value="archived-drafts" icon={Archive} label="Archived Drafts" testid="admin-tab-archived-drafts" />
             <SidebarTab value="players" icon={Users} label="Player Verify" testid="admin-tab-player-verify" />
+            <SidebarTab value="db-hygiene" icon={ShieldCheck} label="DB Hygiene" testid="admin-tab-db-hygiene" />
           </TabsList>
 
           {/* Right content pane */}
@@ -315,6 +318,11 @@ export default function AdminDashboard() {
           {/* ─── Iter 228e — Player Verification ─── */}
           <TabsContent value="players" className="space-y-3 mt-0">
             <PlayerVerifyPanel />
+          </TabsContent>
+
+          {/* ─── Iter 231ag — DB Hygiene one-click pollution sweep ─── */}
+          <TabsContent value="db-hygiene" className="space-y-3 mt-0">
+            <DbHygienePanel />
           </TabsContent>
           </div>
         </Tabs>
