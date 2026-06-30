@@ -15,8 +15,9 @@
  *
  * Visibility:
  *   • Hidden on `md+` (desktop keeps the persistent left sidebar).
- *   • Hidden on `/login` / `/signup` (no auth context).
- *   • Hidden when no active league is selected (presence has no room).
+ *   • Hidden on `/login` / `/signup` / `/forgot-password` (no auth context).
+ *   • When no active league is selected the presence bubble simply
+ *     stays at 0 (the bar itself still renders so nav remains usable).
  *
  * Safe-area padding inset honours the iOS home-indicator (the PWA
  * runs in `standalone` mode — see iter 231as).
