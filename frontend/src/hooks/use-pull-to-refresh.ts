@@ -81,6 +81,12 @@ export function usePullToRefresh({
     // with touchpads that synthesize touch events.
     if (!("ontouchstart" in window)) return;
 
+    // Tracks the mount lifetime of this effect so the
+    // post-`minSpinnerMs` setState in onEnd doesn't warn when the
+    // user navigates away mid-refresh (unmounts the component while
+    // the timeout is still pending).
+    let isMounted = true;
+
     const onStart = (e: TouchEvent) => {
       // Only arm when the document is genuinely at top. Reading
       // `scrollY` rather than `documentElement.scrollTop` covers
@@ -145,6 +151,7 @@ export function usePullToRefresh({
           if (elapsed < minSpinnerMs) {
             await new Promise((r) => setTimeout(r, minSpinnerMs - elapsed));
           }
+          if (!isMounted) return;
           distanceRef.current = 0;
           setState({ distance: 0, refreshing: false, engaged: false });
         }
@@ -164,6 +171,7 @@ export function usePullToRefresh({
     document.addEventListener("touchcancel", onEnd, { passive: true });
 
     return () => {
+      isMounted = false;
       document.removeEventListener("touchstart", onStart);
       document.removeEventListener("touchmove", onMove as EventListener);
       document.removeEventListener("touchend", onEnd);
