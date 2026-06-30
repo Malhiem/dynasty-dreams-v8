@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import api from '@/lib/api';
@@ -14,6 +14,8 @@ import { useActiveLeague } from '@/hooks/use-active-league';
 import MyWeekAtAGlance from '@/components/MyWeekAtAGlance';
 import YourActivityWidget from '@/components/YourActivityWidget';
 import FantasyLevelBadge from '@/components/FantasyLevelBadge';
+import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
+import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
 import { Trophy, Users, Calendar, Rocket, Plus, ArrowRight } from '@phosphor-icons/react';
 
 export default function DashboardPage() {
@@ -22,34 +24,48 @@ export default function DashboardPage() {
   const [stats, setStats] = useState({ leagues: 0, teams: 0, upcoming: 0 });
   const [leagues, setLeagues] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Iter 231at — Bump a reload tick to force every dependent widget
+  // (LiveScoringWidget, MyWeekAtAGlance, etc.) to re-fetch. Cheaper
+  // than threading a refresh handle into each child.
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const fetchData = useCallback(async () => {
+    try {
+      // Iter 230g — `/teams?owner_id=me` returns the user's actual teams
+      // (including co-owned, excluding archived/test leagues), so the
+      // "Total Teams" stat reflects the dashboard's Week at a Glance
+      // exactly. Falls back to summing league.current_teams ONLY if
+      // the dedicated endpoint isn't available.
+      const [leaguesRes, wagRes] = await Promise.all([
+        api.get('/leagues?my_leagues=true'),
+        api.get('/users/me/week-at-a-glance').catch(() => ({ data: { summaries: [] } })),
+      ]);
+      setLeagues(leaguesRes.data);
+      const myTeamsCount = (wagRes.data?.summaries || []).length;
+      setStats({
+        leagues: leaguesRes.data.length,
+        teams: myTeamsCount,
+        upcoming: leaguesRes.data.filter(l => l.status === 'setup').length
+      });
+    } catch (err) {
+      console.error('Failed to fetch dashboard data', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        // Iter 230g — `/teams?owner_id=me` returns the user's actual teams
-        // (including co-owned, excluding archived/test leagues), so the
-        // "Total Teams" stat reflects the dashboard's Week at a Glance
-        // exactly. Falls back to summing league.current_teams ONLY if
-        // the dedicated endpoint isn't available.
-        const [leaguesRes, wagRes] = await Promise.all([
-          api.get('/leagues?my_leagues=true'),
-          api.get('/users/me/week-at-a-glance').catch(() => ({ data: { summaries: [] } })),
-        ]);
-        setLeagues(leaguesRes.data);
-        const myTeamsCount = (wagRes.data?.summaries || []).length;
-        setStats({
-          leagues: leaguesRes.data.length,
-          teams: myTeamsCount,
-          upcoming: leaguesRes.data.filter(l => l.status === 'setup').length
-        });
-      } catch (err) {
-        console.error('Failed to fetch dashboard data', err);
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchData();
-  }, []);
+  }, [fetchData]);
+
+  // Iter 231at — Pull-to-refresh wiring. The hook is a no-op on
+  // non-touch devices, so desktop users keep their existing flow.
+  const ptr = usePullToRefresh({
+    onRefresh: async () => {
+      await fetchData();
+      setReloadTick((t) => t + 1);
+    },
+  });
 
   const leagueColumns = [
     {
@@ -77,7 +93,8 @@ export default function DashboardPage() {
 
   return (
     <AppLayout>
-    <div data-testid="dashboard-page">
+    <PullToRefreshIndicator distance={ptr.distance} refreshing={ptr.refreshing} engaged={ptr.engaged} />
+    <div data-testid="dashboard-page" key={reloadTick}>
       <div className="max-w-7xl mx-auto">
         {/* Welcome Section */}
         <div className="mb-6 sm:mb-8 flex items-start justify-between gap-4 flex-wrap">

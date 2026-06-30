@@ -12,6 +12,8 @@ import { useLeagueHomeConfig } from '@/hooks/use-league-home-config';
 import LeagueHomeSettingsModal from '@/components/LeagueHomeSettingsModal';
 import MatchupStarButton from '@/components/MatchupStarButton';
 import { SortableSections, SortableSection } from '@/components/SortableSections';
+import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
+import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
 
 export default function LeagueDetailPage() {
   const { id } = useParams();
@@ -45,6 +47,13 @@ export default function LeagueDetailPage() {
   const [blockTotal, setBlockTotal] = useState(0);
   const [txnSinceKey, setTxnSinceKey] = useState("latest20");
   const [txnTeamId, setTxnTeamId] = useState("");
+  // Iter 231at — Bumped on pull-to-refresh; threaded into every
+  // data-fetching effect's dep array so the page re-loads in place
+  // without a hard navigation.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const ptr = usePullToRefresh({
+    onRefresh: async () => setRefreshTick((t) => t + 1),
+  });
 
   useEffect(() => {
     const fetchData = async () => {
@@ -64,7 +73,7 @@ export default function LeagueDetailPage() {
       }
     };
     fetchData();
-  }, [id]);
+  }, [id, refreshTick]);
 
   useEffect(() => {
     if (!isH2H || !id) return;
@@ -79,7 +88,7 @@ export default function LeagueDetailPage() {
       .catch(() => {})
       .finally(() => { if (!cancelled) setMatchupsLoading(false); });
     return () => { cancelled = true; };
-  }, [id, isH2H]);
+  }, [id, isH2H, refreshTick]);
 
   // ── Iter 133 — fetch starred + auto-watch state to sort matchups ──
   const [matchupStars, setMatchupStars] = useState({ starredIds: new Set(), autoWatch: {} });
@@ -234,6 +243,7 @@ export default function LeagueDetailPage() {
 
   return (
     <AppLayout onSettingsClick={() => setSettingsOpen(true)}>
+    <PullToRefreshIndicator distance={ptr.distance} refreshing={ptr.refreshing} engaged={ptr.engaged} />
     <div data-testid="league-detail-page">
       <div className="max-w-7xl mx-auto">
         <button
