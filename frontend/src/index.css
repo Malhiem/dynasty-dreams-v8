@@ -160,6 +160,30 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
+  /* Iter 231as — Respect the iOS notch + Android cutout when launched
+     in PWA standalone mode (manifest `display: standalone` +
+     `viewport-fit=cover`). Without these insets the WELCOME header
+     drew under the status bar and hid the user's clock / battery /
+     signal. `env(safe-area-inset-*)` resolves to 0 in regular
+     browser tabs, so non-PWA users see no visual change. */
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  /* Match the safe-area edges to the app surface so the iOS status
+     bar tray blends into the dark background — looks intentional
+     instead of a black bar pasted on top. */
+  background-color: hsl(var(--background));
+}
+@supports (padding: env(safe-area-inset-top)) {
+  /* Keep `100vh` measurement honest under standalone mode: the
+     browser still reports 100vh = full window, so we subtract the
+     safe-area insets so `min-h-screen` matchups don't push under
+     the status bar. */
+  html, body {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
 }
 
 h1, h2, h3, h4, h5, h6 {

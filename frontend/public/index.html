@@ -18,7 +18,14 @@
         <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <!-- Iter 231as — `default` (was `black-translucent`) so iOS
+             reserves space for the status bar instead of drawing app
+             content underneath it. The translucent variant hid the
+             user's clock + battery behind our WELCOME header in
+             standalone mode. `default` pairs with the
+             `safe-area-inset-top` body padding in App.css for an
+             edge-to-edge feel that still respects the system chrome. -->
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="DynastyDreams" />
         <meta name="application-name" content="DynastyDreams" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
