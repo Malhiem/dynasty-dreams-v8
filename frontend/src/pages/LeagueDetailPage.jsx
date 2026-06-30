@@ -50,9 +50,39 @@ export default function LeagueDetailPage() {
   // Iter 231at — Bumped on pull-to-refresh; threaded into every
   // data-fetching effect's dep array so the page re-loads in place
   // without a hard navigation.
+  // Iter 232a — `onRefresh` now actually awaits the refreshed data
+  // (previously it resolved immediately after bumping refreshTick,
+  // so the spinner snapped back before any network round-trip).
+  // Forces the service-worker's stale-while-revalidate cache to be
+  // bypassed via `?nocache=1` so the user sees fresh standings +
+  // matchups, not yesterday's snapshot.
   const [refreshTick, setRefreshTick] = useState(0);
   const ptr = usePullToRefresh({
-    onRefresh: async () => setRefreshTick((t) => t + 1),
+    onRefresh: async () => {
+      setRefreshTick((t) => t + 1);
+      const tasks = [
+        api.get(`/leagues/${id}/standings?nocache=1`)
+          .then(({ data }) => setStandings(Array.isArray(data) ? data : (data?.standings || [])))
+          .catch(() => undefined),
+        api.get(`/leagues/${id}`)
+          .then(({ data }) => setLeague(data))
+          .catch(() => undefined),
+        api.get(`/teams?league_id=${id}`)
+          .then(({ data }) => setTeams(data))
+          .catch(() => undefined),
+      ];
+      if (isH2H) {
+        tasks.push(
+          api.get(`/matchups/${id}/current-week?nocache=1`)
+            .then(({ data }) => {
+              setCurrentWeek(data?.week || null);
+              setWeekMatchups(data?.matchups || []);
+            })
+            .catch(() => undefined),
+        );
+      }
+      await Promise.all(tasks);
+    },
   });
 
   useEffect(() => {

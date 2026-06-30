@@ -669,18 +669,15 @@ const StandingsPage = () => {
   // sequence from completed matchups + live cap_remaining for each team.
   const [backendStandings, setBackendStandings] = useState<Record<string, any>>({});
   const [standingsMeta, setStandingsMeta] = useState<{ has_divisions: boolean; has_conferences: boolean; divisions: string[]; conferences: string[]; }>({ has_divisions: false, has_conferences: false, divisions: [], conferences: [] });
-  // Iter 231au — Pull-to-refresh tick. Bumped on finger-drag; threaded
-  // into the standings fetch dep array so the table re-pulls fresh
-  // W/L/T + cap_remaining values.
-  const [refreshTick, setRefreshTick] = useState(0);
-  const ptr = usePullToRefresh({
-    onRefresh: async () => setRefreshTick((t) => t + 1),
-  });
-  useEffect(() => {
+  // Iter 231au — Pull-to-refresh: refactored in iter 232a so the gesture
+  // (a) awaits the actual /standings network fetch, and (b) bypasses the
+  // service-worker's stale-while-revalidate cache via `?nocache=1`. The
+  // hook now keeps the spinner visible until `onRefresh` resolves.
+  const fetchStandings = useCallback(async (force = false): Promise<void> => {
     if (!leagueId) return;
-    let cancelled = false;
-    api.get(`/leagues/${leagueId}/standings`).then(({ data }) => {
-      if (cancelled) return;
+    try {
+      const path = `/leagues/${leagueId}/standings${force ? "?nocache=1" : ""}`;
+      const { data } = await api.get(path);
       const rows = Array.isArray(data) ? data : (data?.standings || []);
       const map: Record<string, any> = {};
       rows.forEach((row: any) => { map[row.team_id] = row; });
@@ -707,9 +704,21 @@ const StandingsPage = () => {
           setDivisionFilter("all");
         }
       }
-    }).catch(() => {});
+    } catch {
+      /* swallow — UI keeps last-known-good standings on transient failure */
+    }
+  }, [leagueId]);
+  const ptr = usePullToRefresh({
+    onRefresh: async () => { await fetchStandings(true); },
+  });
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (cancelled) return;
+      await fetchStandings(false);
+    })();
     return () => { cancelled = true; };
-  }, [leagueId, refreshTick]);
+  }, [fetchStandings]);
 
   // Build real-data teams list shaped like the Lovable mock so the UI below works as-is.
   const liveTeams: StandingsTeam[] = useMemo(() => {

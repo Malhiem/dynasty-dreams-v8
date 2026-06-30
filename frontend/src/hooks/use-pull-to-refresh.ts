@@ -15,6 +15,18 @@
  * Mouse / desktop users see no behavior change — desktop has its own
  * refresh idioms (Ctrl-R, the omnibox reload button) and we don't
  * want random page-top mouse-drags to fire a network call.
+ *
+ * Iter 232a — fixed two correctness bugs that made the gesture feel
+ * "the icon appears but nothing seems to refresh":
+ *   1. The previous implementation kept `state.distance` in the
+ *      effect's dep array so listeners re-bound on every pixel. That
+ *      created a race where `touchend` could fire on a listener whose
+ *      closure still held `distance: 0` (the previous render) and
+ *      silently abort the refresh. Replaced with a `distanceRef` that
+ *      `onEnd` reads synchronously.
+ *   2. The minimum visible-refresh window is now enforced (default
+ *      450ms) so a fast cached response can't snap the spinner away
+ *      before the user perceives it.
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -27,6 +39,8 @@ interface Options {
   maxStretch?: number;
   /** Disable entirely (e.g. when a modal is open). */
   enabled?: boolean;
+  /** Minimum visible spinner duration in ms (perception floor). */
+  minSpinnerMs?: number;
 }
 
 interface State {
@@ -43,10 +57,22 @@ export function usePullToRefresh({
   threshold = 70,
   maxStretch = 110,
   enabled = true,
+  minSpinnerMs = 450,
 }: Options): State {
   const [state, setState] = useState<State>({ distance: 0, refreshing: false, engaged: false });
   const startY = useRef<number | null>(null);
   const armed = useRef(false);
+  // Mirror of `state.distance` updated synchronously in onMove so the
+  // touchend handler reads the *real* current drag — `state.distance`
+  // through the closure can lag behind by one React commit.
+  const distanceRef = useRef(0);
+  // Stable handle to the caller's onRefresh so the effect doesn't
+  // re-bind listeners every render (every parent re-render passes a
+  // new arrow function).
+  const onRefreshRef = useRef(onRefresh);
+  useEffect(() => {
+    onRefreshRef.current = onRefresh;
+  }, [onRefresh]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -68,6 +94,7 @@ export function usePullToRefresh({
       if (!t) return;
       startY.current = t.clientY;
       armed.current = true;
+      distanceRef.current = 0;
     };
 
     const onMove = (e: TouchEvent) => {
@@ -77,12 +104,16 @@ export function usePullToRefresh({
       const delta = t.clientY - startY.current;
       if (delta <= 0) {
         // User scrolled back up — release the indicator.
-        setState((s) => (s.distance ? { ...s, distance: 0, engaged: false } : s));
+        if (distanceRef.current !== 0) {
+          distanceRef.current = 0;
+          setState((s) => (s.distance ? { ...s, distance: 0, engaged: false } : s));
+        }
         return;
       }
       // Tween past threshold so the user feels resistance.
       const eased = delta < threshold ? delta : threshold + (delta - threshold) * 0.4;
       const clamped = Math.min(maxStretch, eased);
+      distanceRef.current = clamped;
       // Prevent the browser's own pull-to-refresh (Android Chrome)
       // from stealing the gesture once we're actively dragging.
       if (e.cancelable && delta > 4) {
@@ -93,22 +124,33 @@ export function usePullToRefresh({
 
     const onEnd = async () => {
       if (!armed.current) return;
-      const dist = state.distance;
+      // Read the live distance from the ref — closure may be stale.
+      const dist = distanceRef.current;
       armed.current = false;
       startY.current = null;
       if (dist >= threshold) {
         // Snap the indicator to the threshold position while we run
         // the refresh — looks intentional vs. springing back early.
+        distanceRef.current = threshold;
         setState({ distance: threshold, refreshing: true, engaged: true });
+        const startedAt = Date.now();
         try {
-          await onRefresh();
+          await onRefreshRef.current();
         } catch {
           /* swallow — caller should toast on their own */
         } finally {
+          // Enforce a minimum spinner window so a fast cached refetch
+          // can't dismiss the indicator before the user sees it.
+          const elapsed = Date.now() - startedAt;
+          if (elapsed < minSpinnerMs) {
+            await new Promise((r) => setTimeout(r, minSpinnerMs - elapsed));
+          }
+          distanceRef.current = 0;
           setState({ distance: 0, refreshing: false, engaged: false });
         }
       } else {
         // Below threshold — spring back without firing.
+        distanceRef.current = 0;
         setState({ distance: 0, refreshing: false, engaged: false });
       }
     };
@@ -123,11 +165,14 @@ export function usePullToRefresh({
 
     return () => {
       document.removeEventListener("touchstart", onStart);
-      document.removeEventListener("touchmove", onMove as any);
+      document.removeEventListener("touchmove", onMove as EventListener);
       document.removeEventListener("touchend", onEnd);
       document.removeEventListener("touchcancel", onEnd);
     };
-  }, [enabled, onRefresh, threshold, maxStretch, state.distance]);
+    // Stable deps — listeners only rebind when caller toggles
+    // enabled/threshold/maxStretch/minSpinnerMs. `onRefresh` is
+    // proxied through `onRefreshRef`.
+  }, [enabled, threshold, maxStretch, minSpinnerMs]);
 
   return state;
 }

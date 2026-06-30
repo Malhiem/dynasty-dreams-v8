@@ -63,11 +63,40 @@ def test_hook_runs_refresh_and_resets_state():
     # On release past threshold: snap to threshold position, await
     # the user's `onRefresh`, then clear state.
     assert "if (dist >= threshold)" in src
-    assert "await onRefresh()" in src
+    # Iter 232a — the caller's `onRefresh` is invoked through a ref so
+    # stale closures from re-rendering parents don't run an outdated
+    # version (e.g., before `leagueId` resolved).
+    assert "await onRefreshRef.current()" in src
     # Always clears even on error so a flaky network doesn't lock
     # the indicator open.
     assert "} finally {" in src
     assert "{ distance: 0, refreshing: false, engaged: false }" in src
+
+
+def test_hook_uses_distance_ref_to_avoid_stale_closure():
+    """Iter 232a — the touchend handler must read the *live* drag
+    distance from a ref, not the React-state closure. Reading
+    `state.distance` through the effect's closure could lag the most
+    recent touchmove by one commit, which caused the gesture to fail
+    silently ("icon appears but nothing refreshes")."""
+    src = HOOK.read_text()
+    assert "const distanceRef = useRef(0);" in src
+    # onEnd reads from the ref, not state.
+    assert "const dist = distanceRef.current;" in src
+    # And the effect no longer keeps `state.distance` in its dep
+    # array — otherwise listeners rebind on every pixel of drag.
+    assert "[enabled, threshold, maxStretch, minSpinnerMs]" in src
+
+
+def test_hook_enforces_minimum_spinner_window():
+    """Iter 232a — a SW-cached endpoint can resolve in <50ms, which
+    snaps the spinner away before the user perceives it. Enforce a
+    perception floor so the gesture always *feels* like it did
+    something."""
+    src = HOOK.read_text()
+    assert "minSpinnerMs" in src
+    assert "Date.now() - startedAt" in src
+    assert "setTimeout(r, minSpinnerMs - elapsed)" in src
 
 
 def test_indicator_respects_safe_area_inset_top():
@@ -89,10 +118,13 @@ def test_dashboard_wires_pull_to_refresh():
     assert "import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';" in src
     assert "import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';" in src
     # `fetchData` extracted to useCallback so PTR can re-trigger it.
-    assert "const fetchData = useCallback(async () =>" in src
-    # PTR onRefresh re-runs fetchData AND bumps the reloadTick that
-    # remounts data-dependent widgets via the page-level `key`.
-    assert "await fetchData();" in src
+    assert "const fetchData = useCallback(async (force = false) =>" in src
+    # Iter 232a — pull-to-refresh path forces the SW to bypass its
+    # stale-while-revalidate cache for the week-at-a-glance call.
+    assert "/users/me/week-at-a-glance?nocache=1" in src
+    # PTR onRefresh re-runs fetchData(force=true) AND bumps the reloadTick
+    # that remounts data-dependent widgets via the page-level `key`.
+    assert "await fetchData(true);" in src
     assert "setReloadTick((t) => t + 1);" in src
     # Indicator rendered above the page content with engaged/distance
     # forwarded.
@@ -108,5 +140,11 @@ def test_league_detail_wires_pull_to_refresh():
     assert "const [refreshTick, setRefreshTick] = useState(0);" in src
     assert "}, [id, refreshTick]);" in src
     assert "}, [id, isH2H, refreshTick]);" in src
+    # Iter 232a — PTR awaits explicit refreshed network calls that
+    # bypass the SW cache, so the spinner reflects real round-trip
+    # time and the displayed data is genuinely fresh.
+    assert "/leagues/${id}/standings?nocache=1" in src
+    assert "/matchups/${id}/current-week?nocache=1" in src
+    assert "await Promise.all(tasks)" in src
     # Indicator mounted above the page.
     assert "<PullToRefreshIndicator distance={ptr.distance} refreshing={ptr.refreshing} engaged={ptr.engaged} />" in src

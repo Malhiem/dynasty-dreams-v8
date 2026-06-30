@@ -29,16 +29,23 @@ export default function DashboardPage() {
   // than threading a refresh handle into each child.
   const [reloadTick, setReloadTick] = useState(0);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (force = false) => {
     try {
       // Iter 230g — `/teams?owner_id=me` returns the user's actual teams
       // (including co-owned, excluding archived/test leagues), so the
       // "Total Teams" stat reflects the dashboard's Week at a Glance
       // exactly. Falls back to summing league.current_teams ONLY if
       // the dedicated endpoint isn't available.
+      // Iter 232a — `force=true` (pull-to-refresh path) appends
+      // `?nocache=1` to the service-worker-cached week-at-a-glance
+      // request so the user actually sees fresh data, not the
+      // stale-while-revalidate copy.
+      const wagPath = force
+        ? '/users/me/week-at-a-glance?nocache=1'
+        : '/users/me/week-at-a-glance';
       const [leaguesRes, wagRes] = await Promise.all([
         api.get('/leagues?my_leagues=true'),
-        api.get('/users/me/week-at-a-glance').catch(() => ({ data: { summaries: [] } })),
+        api.get(wagPath).catch(() => ({ data: { summaries: [] } })),
       ]);
       setLeagues(leaguesRes.data);
       const myTeamsCount = (wagRes.data?.summaries || []).length;
@@ -62,7 +69,7 @@ export default function DashboardPage() {
   // non-touch devices, so desktop users keep their existing flow.
   const ptr = usePullToRefresh({
     onRefresh: async () => {
-      await fetchData();
+      await fetchData(true);
       setReloadTick((t) => t + 1);
     },
   });

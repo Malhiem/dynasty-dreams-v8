@@ -85,9 +85,44 @@ const Matchup = () => {
   // Iter 231au — Pull-to-refresh tick. Threaded into every fetch
   // effect's dep array so a finger-drag forces the matchup grid +
   // live-scoring rails to re-pull from the network.
+  // Iter 232a — `onRefresh` now actually awaits the underlying fetches
+  // and forces the service worker (stale-while-revalidate) to bypass
+  // its cache via `?nocache=1`. Previously it returned a resolved
+  // promise immediately, so the spinner snapped back before the
+  // network round-trip and the user couldn't tell anything happened.
   const [refreshTick, setRefreshTick] = useState(0);
   const ptr = usePullToRefresh({
-    onRefresh: async () => setRefreshTick((t) => t + 1),
+    onRefresh: async () => {
+      const tasks: Promise<unknown>[] = [];
+      if (league?.id) {
+        tasks.push(
+          api
+            .get(`/matchups/${league.id}/current-week?nocache=1`)
+            .then(({ data }) => setMatchup(data))
+            .catch(() => undefined),
+        );
+      }
+      if (focusedMyTeam?.id) {
+        tasks.push(
+          api
+            .get(`/live-scoring/team/${focusedMyTeam.id}`)
+            .then(({ data }) => setMyLive(data))
+            .catch(() => undefined),
+        );
+      }
+      if (opponentTeam?.id) {
+        tasks.push(
+          api
+            .get(`/live-scoring/team/${opponentTeam.id}`)
+            .then(({ data }) => setOppLive(data))
+            .catch(() => undefined),
+        );
+      }
+      // Also bump refreshTick so any other effects (rating badges,
+      // side-rail) that key off it re-run alongside the explicit fetch.
+      setRefreshTick((t) => t + 1);
+      await Promise.all(tasks);
+    },
   });
 
   // ── Inter-matchup viewer ───────────────────────────────────────
