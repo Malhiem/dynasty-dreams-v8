@@ -16,6 +16,8 @@ import YourActivityWidget from '@/components/YourActivityWidget';
 import FantasyLevelBadge from '@/components/FantasyLevelBadge';
 import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
 import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
+// Iter 232b — "Last updated · 14s ago" freshness pill.
+import LastUpdatedBadge from '@/components/LastUpdatedBadge';
 import { Trophy, Users, Calendar, Rocket, Plus, ArrowRight } from '@phosphor-icons/react';
 
 export default function DashboardPage() {
@@ -28,6 +30,8 @@ export default function DashboardPage() {
   // (LiveScoringWidget, MyWeekAtAGlance, etc.) to re-fetch. Cheaper
   // than threading a refresh handle into each child.
   const [reloadTick, setReloadTick] = useState(0);
+  // Iter 232b — Freshness timestamp for the LastUpdatedBadge.
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
 
   const fetchData = useCallback(async (force = false) => {
     try {
@@ -54,6 +58,7 @@ export default function DashboardPage() {
         teams: myTeamsCount,
         upcoming: leaguesRes.data.filter(l => l.status === 'setup').length
       });
+      setLastUpdatedAt(Date.now());
     } catch (err) {
       console.error('Failed to fetch dashboard data', err);
     } finally {
@@ -111,7 +116,12 @@ export default function DashboardPage() {
             <h1 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white mb-2">
               WELCOME BACK, {user?.name?.toUpperCase()}
             </h1>
-            <p className="text-sm sm:text-base text-[#A1A1AA]">Here&apos;s your dynasty at a glance</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm sm:text-base text-[#A1A1AA]">Here&apos;s your dynasty at a glance</p>
+              {/* Iter 232b — Last-updated pill (flashes green after a
+                  successful pull-to-refresh). */}
+              <LastUpdatedBadge timestamp={lastUpdatedAt} testIdSuffix="dashboard" />
+            </div>
           </div>
           <div className="w-full sm:w-80">
             <FantasyLevelBadge />

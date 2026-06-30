@@ -25,6 +25,9 @@ import SwipeableRow from "@/components/SwipeableRow";
 // Iter 230aw — First-time onboarding pulse for the swipe gestures.
 import useOnboardingHint from "@/hooks/use-onboarding-hint";
 import ReportUserButton from "@/components/ReportUserButton";
+// Iter 232b — Live presence on the League Chat header + per-member dots.
+import { useLeagueSocket } from "@/hooks/use-socket";
+import { OnlinePresenceBadge, OnlineDot } from "@/components/OnlinePresenceBadge";
 
 const MUTE_OPTIONS = [
   { value: "30m", label: "30 minutes" },
@@ -57,6 +60,14 @@ const Chat = () => {
   const { user } = useAuth();
   const { leagueId, league, myLeagues } = useActiveLeague();
   const { refresh: refreshUnread } = useChatUnread();
+
+  // Iter 232b — Subscribe to the league socket room so the header
+  // can show how many league members are currently online. The same
+  // `onlineUserIds` set is threaded down into the members list so
+  // each row gets a live green/grey presence dot. No new backend
+  // work — `presence_state` / `user_joined` / `user_left` already
+  // emit on every connect/join/leave (see backend/server.py).
+  const { onlineUserIds } = useLeagueSocket(leagueId, { userId: user?.id });
 
   const [channels, setChannels] = useState([]);
   const [maxChannels, setMaxChannels] = useState(12);
@@ -412,6 +423,17 @@ const Chat = () => {
               <Users className="h-4 w-4 text-primary" />
               <span className="truncate">{league?.name || "League Chat"}</span>
             </h2>
+            {/* Iter 232b — Live presence pill below the league name.
+                Shows how many league members are currently connected
+                to the league socket room. Updates in real time as
+                managers open/close the page. */}
+            <div className="mt-2" data-testid="chat-presence-bar">
+              <OnlinePresenceBadge
+                onlineUserIds={onlineUserIds}
+                label="online"
+                testIdSuffix="league-chat"
+              />
+            </div>
           </div>
 
           <ScrollArea className="flex-1 p-3">
@@ -536,6 +558,16 @@ const Chat = () => {
                           <span className="font-semibold text-sm" data-testid={`chat-msg-sender-${msg._id}`}>
                             {msg.sender_name}
                           </span>
+                          {/* Iter 232b — Live online dot next to the
+                              author. Reflects current socket-room
+                              presence, not any historical "active"
+                              state. */}
+                          {msg.user_id && (
+                            <OnlineDot
+                              online={onlineUserIds?.has(String(msg.user_id))}
+                              testId={`chat-msg-presence-${msg._id}`}
+                            />
+                          )}
                           <span className="text-[11px] text-muted-foreground">{fmtTime(msg.created_at)}</span>
                           {/* Iter 206 — Report this user (hidden for self) */}
                           {msg.user_id && msg.user_id !== user?.id && (

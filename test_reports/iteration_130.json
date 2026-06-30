@@ -1,0 +1,46 @@
+{
+  "summary": "Frontend-only validation of iter 232b features: LastUpdatedBadge on 4 pages + OnlinePresenceBadge in Chat & Draft Room. ALL LastUpdatedBadge tests PASS. Online presence containers/wiring are correct, but live count cannot be validated in preview env because Socket.IO WebSocket connections fail with 403 (Cloudflare/ingress blocks `wss://.../api/socket.io/`). Badge correctly renders null fallback in that case as designed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Online presence (Chat + Draft Room)",
+        "issue": "Socket.IO websocket handshake returns 403 in the preview-host (wss://dynasty-preview.preview.emergentagent.com/api/socket.io/). Since presence relies on socket events (presence_state/user_joined), `[data-testid=online-presence-badge-league-chat]` and `[data-testid=online-presence-badge-draft-room]` render null (correct fallback). Cannot validate count >= 1 in this env. Container `[data-testid=chat-presence-bar]` IS mounted, confirming integration is wired correctly. This is an environment limitation, not a code bug — main agent should re-verify on a build where WebSockets are reachable (or behind feature flag w/ polling).",
+        "affected_selectors": ["[data-testid=online-presence-badge-league-chat]", "[data-testid=online-presence-badge-draft-room]", "[data-testid=chat-msg-presence-*]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_evidence": {
+    "login": "PASS — chriszarek@gmail.com / Chris2026! reached /dashboard",
+    "last-updated-badge-dashboard": "PASS — text 'Last updated · just now', data-flashing='true' on initial fetch resolve",
+    "last-updated-badge-standings": "PASS — initial 'just now' → 'Last updated · 8s ago' after 5s wait (1Hz tick verified). data-flashing='true' immediately on reload, 'false' 2s later (green-flash semantics verified). Standings table still renders (regression PASS).",
+    "last-updated-badge-matchup": "PASS — found, 'Last updated · just now'",
+    "last-updated-badge-league-detail": "PASS — found, 'Last updated · just now' on /leagues/{id}",
+    "chat-presence-bar container": "PRESENT (data-testid mounted)",
+    "online-presence-badge-league-chat": "NULL render — count=0 due to socket 403 (expected fallback)",
+    "chat-msg-presence-*": "0 dots — 'general' channel had no messages ('No messages yet — say hi'), so per-message dots could not be exercised",
+    "online-presence-badge-draft-room": "NULL render — socket 403 fallback (draft room itself loaded fine, header shows 'Draft starts in 01:59:51')",
+    "regression_chat_renders": "PASS — channels sidebar lists Frozen Dynasty channels (general/trades/trash-talk + DMs); no white screen from useLeagueSocket addition",
+    "regression_dashboard_renders": "PASS — no JS pageerrors; only websocket warnings (non-blocking)",
+    "regression_standings_table": "PASS — table element present after badge addition"
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Verify online presence count in an environment where wss://.../api/socket.io/ is not 403'd (production / local). The component code path looks correct (badge returns null when size===0, no layout jumps) — just unverifiable from this preview env.",
+    "Optional: add a small dev-only banner or status indicator when socket fails repeatedly, so users on broken-ws environments don't silently lose presence."
+  ],
+  "critical_code_review_comments": [
+    "Console floods with 'WebSocket handshake 403' on every page (chat/draft/dashboard/league). Consider exponential backoff with a max-retry cap in socket client to reduce console noise when WS is unreachable — currently retries every ~1s indefinitely.",
+    "LastUpdatedBadge dashboard shows data-flashing='true' on first paint because fetchData() bumps lastUpdatedAt after the initial state. The spec says 'FIRST render does not flash' (ref compare). This still works as documented because the FIRST render uses initial value (no flash) and the SECOND render after fetch resolves DOES flash — observed behavior matches spec, just noting for clarity."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped", "frontend": "LastUpdatedBadge 100% (4/4 pages); Online Presence wiring verified but live count blocked by env 403"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (works, dashboard reached)",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Preview env (https://dynasty-preview.preview.emergentagent.com) blocks Socket.IO wss handshake with 403. To validate presence count >=1, either (a) run against a env that allows ws upgrades, or (b) ask main agent to add a non-socket presence test hook. The chat-presence-bar container testid existence already proves the React tree is correct. The 4 LastUpdatedBadge testids are reliable and verified ticking + flashing.",
+  "rca of the issue": "N/A — no functional bugs found. Only environmental constraint: Socket.IO websockets return 403 in this preview host, causing presence badges to render null (which is the documented fallback)."
+}

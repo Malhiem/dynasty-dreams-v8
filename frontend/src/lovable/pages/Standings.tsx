@@ -16,6 +16,9 @@ import { Settings, ChevronUp, ChevronDown, Minus, Crown } from "lucide-react";
 import TeamLogo from "@/lovable/components/TeamLogo";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import PullToRefreshIndicator from "@/components/PullToRefreshIndicator";
+// Iter 232b — Live "Last updated · 14s ago" pill that flashes green
+// after a successful pull-to-refresh.
+import LastUpdatedBadge from "@/components/LastUpdatedBadge";
 // Iter 207 — Report this team's owner
 import ReportUserButton from "@/components/ReportUserButton";
 import { PlayoffBracketView } from "@/lovable/pages/PlayoffBracket";
@@ -673,6 +676,10 @@ const StandingsPage = () => {
   // (a) awaits the actual /standings network fetch, and (b) bypasses the
   // service-worker's stale-while-revalidate cache via `?nocache=1`. The
   // hook now keeps the spinner visible until `onRefresh` resolves.
+  // Iter 232b — Track `lastUpdatedAt` so the page can render a
+  // "Last updated · 14s ago" badge next to the title that flashes
+  // green after a successful refresh.
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const fetchStandings = useCallback(async (force = false): Promise<void> => {
     if (!leagueId) return;
     try {
@@ -688,6 +695,8 @@ const StandingsPage = () => {
         divisions: data?.divisions || [],
         conferences: data?.conferences || [],
       });
+      // Stamp the freshness timestamp — drives the LastUpdatedBadge.
+      setLastUpdatedAt(Date.now());
       // Auto-select division view when the league has REAL divisions
       // configured AND at least half the teams are assigned to one of
       // them. Otherwise leave the user on League view so they don't
@@ -853,7 +862,12 @@ const StandingsPage = () => {
       <div className="container py-8">
         <div className="mb-6 flex items-start justify-between flex-wrap gap-4">
           <div>
-            <h1 className="text-3xl font-bold mb-1">{league?.name || 'Standings'}</h1>
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <h1 className="text-3xl font-bold">{league?.name || 'Standings'}</h1>
+              {/* Iter 232b — Live "last updated" pill; flashes green
+                  after a successful pull-to-refresh. */}
+              <LastUpdatedBadge timestamp={lastUpdatedAt} testIdSuffix="standings" />
+            </div>
             <p className="text-muted-foreground">
               {league ? `${league.format?.replace('_',' ').toUpperCase()} · ${league.current_teams}/${league.max_teams} teams · Live standings` : 'Full league standings, divisions, and playoff picture.'}
             </p>

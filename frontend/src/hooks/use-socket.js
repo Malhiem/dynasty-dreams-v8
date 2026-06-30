@@ -166,9 +166,18 @@ export function useDraftSocket(draftId, callbacks = {}) {
 
 /**
  * Hook for league-level WebSocket events.
+ *
+ * Iter 232b — also tracks live presence (which user_ids are currently
+ * connected to this league's socket room). Surfaces `onlineUserIds`
+ * so the League Chat (and any future league-scoped surface) can show
+ * a "who's online" indicator. Powered by the server's existing
+ * `presence_state` / `user_joined` / `user_left` events emitted on
+ * every connect/join/leave to the room.
  */
 export function useLeagueSocket(leagueId, callbacks = {}) {
-  return useSocket(
+  const [onlineUserIds, setOnlineUserIds] = useState(new Set());
+
+  const socketState = useSocket(
     leagueId ? `league_${leagueId}` : null,
     {
       trade_proposed: callbacks.onTradeProposed,
@@ -176,7 +185,40 @@ export function useLeagueSocket(leagueId, callbacks = {}) {
       trade_vetoed: callbacks.onTradeVetoed,
       waivers_processed: callbacks.onWaiversProcessed,
       week_simulated: callbacks.onWeekSimulated,
+      // Iter 232b — presence
+      presence_state: (data) => {
+        if (!data) return;
+        setOnlineUserIds(new Set((data.user_ids || []).map(String)));
+      },
+      user_joined: (data) => {
+        if (data?.user_id) {
+          setOnlineUserIds((prev) => {
+            const next = new Set(prev);
+            next.add(String(data.user_id));
+            return next;
+          });
+        }
+        callbacks.onUserJoined?.(data);
+      },
+      user_left: (data) => {
+        if (data?.user_id) {
+          setOnlineUserIds((prev) => {
+            const next = new Set(prev);
+            next.delete(String(data.user_id));
+            return next;
+          });
+        }
+        callbacks.onUserLeft?.(data);
+      },
     },
     callbacks.userId
   );
+
+  // Reset presence on league change / unmount so users don't carry
+  // "online" markers between leagues.
+  useEffect(() => {
+    if (!leagueId) setOnlineUserIds(new Set());
+  }, [leagueId]);
+
+  return { ...socketState, onlineUserIds };
 }

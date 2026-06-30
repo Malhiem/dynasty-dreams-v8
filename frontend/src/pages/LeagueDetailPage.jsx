@@ -14,6 +14,8 @@ import MatchupStarButton from '@/components/MatchupStarButton';
 import { SortableSections, SortableSection } from '@/components/SortableSections';
 import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
 import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
+// Iter 232b — Freshness pill rendered next to the league name.
+import LastUpdatedBadge from '@/components/LastUpdatedBadge';
 
 export default function LeagueDetailPage() {
   const { id } = useParams();
@@ -57,6 +59,10 @@ export default function LeagueDetailPage() {
   // bypassed via `?nocache=1` so the user sees fresh standings +
   // matchups, not yesterday's snapshot.
   const [refreshTick, setRefreshTick] = useState(0);
+  // Iter 232b — Freshness timestamp; bumped after every successful
+  // fetch so the LastUpdatedBadge can show "Last updated · 14s ago"
+  // and pulse green when PTR completes.
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const ptr = usePullToRefresh({
     onRefresh: async () => {
       setRefreshTick((t) => t + 1);
@@ -82,6 +88,7 @@ export default function LeagueDetailPage() {
         );
       }
       await Promise.all(tasks);
+      setLastUpdatedAt(Date.now());
     },
   });
 
@@ -96,6 +103,7 @@ export default function LeagueDetailPage() {
         setLeague(leagueRes.data);
         setTeams(teamsRes.data);
         setStandings(Array.isArray(standingsRes.data) ? standingsRes.data : (standingsRes.data?.standings || []));
+        setLastUpdatedAt(Date.now());
       } catch (err) {
         console.error('Failed to fetch league', err);
       } finally {
@@ -301,6 +309,9 @@ export default function LeagueDetailPage() {
                   <span className={`badge ${league.status === 'active' ? 'badge-success' : 'badge-warning'}`}>
                     {league.status}
                   </span>
+                  {/* Iter 232b — Freshness pill (flashes green after
+                      a successful pull-to-refresh). */}
+                  <LastUpdatedBadge timestamp={lastUpdatedAt} testIdSuffix="league-detail" />
                 </div>
               </div>
             </div>

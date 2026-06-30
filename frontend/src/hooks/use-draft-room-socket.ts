@@ -16,7 +16,7 @@
  *                         current user's own pending pick, so we don't
  *                         double-toast it.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useSocket } from "@/hooks/use-socket";
 import { toast } from "sonner";
 
@@ -38,6 +38,19 @@ export default function useDraftRoomSocket({
   // Iter 194c — latest `draft_chat` payload forwarded to the
   // PickTradeReviewPill so it can react to pick_trade_* kinds.
   const [lastChatEvent, setLastChatEvent] = useState<any>(null);
+  // Iter 232b — Live presence (user_ids currently in the draft room).
+  // Powered by the existing socket-side `presence_state` /
+  // `user_joined` / `user_left` events that the server already emits
+  // on every connect/join/leave. We surface this so the DraftRoom UI
+  // can mark online managers in the participants list + draft board.
+  const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
+
+  // Reset the presence set when the room id changes (e.g. switching
+  // leagues / drafts) so we don't carry stale "online" markers from
+  // the previous room.
+  useEffect(() => {
+    setOnlineUserIds(new Set());
+  }, [roomId]);
 
   useSocket(
     roomId,
@@ -122,9 +135,33 @@ export default function useDraftRoomSocket({
           duration: 8000,
         });
       },
+      // Iter 232b — Live presence wiring (same payload shape the
+      // server emits for the legacy DraftRoomPage). `presence_state`
+      // is the room snapshot sent when the client first joins;
+      // `user_joined` / `user_left` are deltas.
+      presence_state: (data: any) => {
+        if (!data) return;
+        setOnlineUserIds(new Set((data.user_ids || []).map(String)));
+      },
+      user_joined: (data: any) => {
+        if (!data?.user_id) return;
+        setOnlineUserIds((prev) => {
+          const next = new Set(prev);
+          next.add(String(data.user_id));
+          return next;
+        });
+      },
+      user_left: (data: any) => {
+        if (!data?.user_id) return;
+        setOnlineUserIds((prev) => {
+          const next = new Set(prev);
+          next.delete(String(data.user_id));
+          return next;
+        });
+      },
     },
     userId,
   );
 
-  return { lastChatEvent, setLastChatEvent };
+  return { lastChatEvent, setLastChatEvent, onlineUserIds };
 }

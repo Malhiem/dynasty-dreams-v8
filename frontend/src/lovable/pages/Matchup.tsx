@@ -16,6 +16,8 @@ import TeamLink from "@/lovable/components/TeamLink";
 import { useNavigate } from "react-router-dom";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import PullToRefreshIndicator from "@/components/PullToRefreshIndicator";
+// Iter 232b — Last-updated freshness pill.
+import LastUpdatedBadge from "@/components/LastUpdatedBadge";
 
 interface MatchupPlayer {
   id: number | string;
@@ -91,6 +93,9 @@ const Matchup = () => {
   // promise immediately, so the spinner snapped back before the
   // network round-trip and the user couldn't tell anything happened.
   const [refreshTick, setRefreshTick] = useState(0);
+  // Iter 232b — Freshness timestamp. Bumped whenever any of the
+  // matchup-grid / live-scoring fetches successfully resolves.
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
   const ptr = usePullToRefresh({
     onRefresh: async () => {
       const tasks: Promise<unknown>[] = [];
@@ -122,6 +127,7 @@ const Matchup = () => {
       // side-rail) that key off it re-run alongside the explicit fetch.
       setRefreshTick((t) => t + 1);
       await Promise.all(tasks);
+      setLastUpdatedAt(Date.now());
     },
   });
 
@@ -134,7 +140,11 @@ const Matchup = () => {
   useEffect(() => {
     if (!league?.id) return;
     let cancelled = false;
-    api.get(`/matchups/${league.id}/current-week`).then(({data}) => !cancelled && setMatchup(data)).catch(() => {});
+    api.get(`/matchups/${league.id}/current-week`).then(({data}) => {
+      if (cancelled) return;
+      setMatchup(data);
+      setLastUpdatedAt(Date.now());
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [league, refreshTick]);
 
@@ -240,7 +250,7 @@ const Matchup = () => {
       <PullToRefreshIndicator distance={ptr.distance} refreshing={ptr.refreshing} engaged={ptr.engaged} />
       <div className="container py-8">
         {/* Top-level page tab nav: Matchup vs Live Scoring */}
-        <div className="mb-4 flex items-center gap-2" data-testid="matchup-page-tabs">
+        <div className="mb-4 flex items-center gap-2 flex-wrap" data-testid="matchup-page-tabs">
           <Button
             size="sm"
             variant="default"
@@ -257,6 +267,8 @@ const Matchup = () => {
           >
             Live Scoring (League + NHL)
           </Button>
+          {/* Iter 232b — Freshness pill. Pulses green on PTR refresh. */}
+          <LastUpdatedBadge timestamp={lastUpdatedAt} testIdSuffix="matchup" />
         </div>
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1 space-y-6 min-w-0">

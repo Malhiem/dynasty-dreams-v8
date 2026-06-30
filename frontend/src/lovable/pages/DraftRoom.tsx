@@ -8,6 +8,8 @@ import usePickTimer from "@/hooks/use-pick-timer";
 // Iter 205 — localStorage persistence + chat composer extracted.
 import useDraftRoomPersistence from "@/hooks/use-draft-room-persistence";
 import useDraftChat from "@/hooks/use-draft-chat";
+// Iter 232b — Online presence pill rendered next to the Draft Room title.
+import { OnlinePresenceBadge } from "@/components/OnlinePresenceBadge";
 // Iter 228f — Defer-to-User missed-pick dialog
 import DeferPickDialog from "@/lovable/components/DeferPickDialog";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -326,7 +328,7 @@ export default function DraftRoom() {
   // Iter 203 — moved into `useDraftRoomSocket` hook (-45 lines).
   const lastSelfPickRef = useRef<string | null>(null);
   const draftRoomId = currentDraft?._id ? `draft_${currentDraft._id}` : null;
-  const { lastChatEvent, setLastChatEvent } = useDraftRoomSocket({
+  const { lastChatEvent, setLastChatEvent, onlineUserIds } = useDraftRoomSocket({
     roomId: draftRoomId,
     userId,
     refreshDraftState,
@@ -635,6 +637,15 @@ export default function DraftRoom() {
           {/* ── Header row ─────────────────────────────────────────────── */}
           <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
             <div className="flex-1 min-w-0 flex flex-col gap-3">
+              {/* Iter 232b — live presence pill. Renders only when at
+                  least one manager is connected to the draft room. */}
+              <div className="flex items-center gap-2 -mb-1">
+                <OnlinePresenceBadge
+                  onlineUserIds={onlineUserIds}
+                  label="in room"
+                  testIdSuffix="draft-room"
+                />
+              </div>
               <DraftHeaderActions
                 currentDraft={currentDraft}
                 currentCriteria={currentCriteria}
