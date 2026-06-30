@@ -13,6 +13,8 @@ import TradeDeadlineRibbon from "@/lovable/components/TradeDeadlineRibbon";
 import ProtectionListRibbon from "@/lovable/components/ProtectionListRibbon";
 // Iter 207 — surface a sticky banner when user.status is banned/suspended.
 import BannedUserBanner from "@/components/BannedUserBanner";
+// Iter 232c — Mobile bottom-tab nav with live presence bubble on Chat.
+import MobileBottomNav from "@/components/MobileBottomNav";
 
 export function AppLayout({ children, onSettingsClick }) {
   const { user } = useAuth();
@@ -106,13 +108,15 @@ export function AppLayout({ children, onSettingsClick }) {
           {/* Iter 129 — Trade Deadline Countdown Ribbon (auto-hides when unset) */}
           <TradeDeadlineRibbon />
           <ProtectionListRibbon />
-          <main className="flex-1 overflow-auto p-6">
+          <main className="flex-1 overflow-auto p-6 pb-20 md:pb-6">
             {children}
           </main>
         </div>
       </div>
       {/* Persistent floating Trade Builder — survives route changes */}
       <GlobalTradeBuilder />
+      {/* Iter 232c — Mobile-only bottom-tab nav with Chat-presence bubble. */}
+      <MobileBottomNav />
     </SidebarProvider>
   );
 }
