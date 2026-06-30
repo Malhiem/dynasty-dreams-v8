@@ -14,6 +14,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import TeamLogo from "@/lovable/components/TeamLogo";
 import TeamLink from "@/lovable/components/TeamLink";
 import { useNavigate } from "react-router-dom";
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
+import PullToRefreshIndicator from "@/components/PullToRefreshIndicator";
 
 interface MatchupPlayer {
   id: number | string;
@@ -80,6 +82,13 @@ const Matchup = () => {
   const [matchup, setMatchup] = useState(null);
   const [myLive, setMyLive] = useState(null);
   const [oppLive, setOppLive] = useState(null);
+  // Iter 231au — Pull-to-refresh tick. Threaded into every fetch
+  // effect's dep array so a finger-drag forces the matchup grid +
+  // live-scoring rails to re-pull from the network.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const ptr = usePullToRefresh({
+    onRefresh: async () => setRefreshTick((t) => t + 1),
+  });
 
   // ── Inter-matchup viewer ───────────────────────────────────────
   // When a user clicks a side-rail matchup card, we override the focus from
@@ -92,7 +101,7 @@ const Matchup = () => {
     let cancelled = false;
     api.get(`/matchups/${league.id}/current-week`).then(({data}) => !cancelled && setMatchup(data)).catch(() => {});
     return () => { cancelled = true; };
-  }, [league]);
+  }, [league, refreshTick]);
 
   // Find my matchup (where my team is either home or away)
   const myMatchup = useMemo(() => {
@@ -132,12 +141,12 @@ const Matchup = () => {
     const tid = focusedMyTeam?.id;
     if (!tid) return;
     api.get(`/live-scoring/team/${tid}`).then(({data}) => setMyLive(data)).catch(() => {});
-  }, [focusedMyTeam]);
+  }, [focusedMyTeam, refreshTick]);
 
   useEffect(() => {
     if (!opponentTeam?.id) return;
     api.get(`/live-scoring/team/${opponentTeam.id}`).then(({data}) => setOppLive(data)).catch(() => {});
-  }, [opponentTeam]);
+  }, [opponentTeam, refreshTick]);
 
   // Transform live players into MatchupPlayer shape
   const makePlayers = (data) => {
@@ -193,6 +202,7 @@ const Matchup = () => {
 
   return (
     <AppLayout>
+      <PullToRefreshIndicator distance={ptr.distance} refreshing={ptr.refreshing} engaged={ptr.engaged} />
       <div className="container py-8">
         {/* Top-level page tab nav: Matchup vs Live Scoring */}
         <div className="mb-4 flex items-center gap-2" data-testid="matchup-page-tabs">

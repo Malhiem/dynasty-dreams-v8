@@ -14,6 +14,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Settings, ChevronUp, ChevronDown, Minus, Crown } from "lucide-react";
 import TeamLogo from "@/lovable/components/TeamLogo";
+import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
+import PullToRefreshIndicator from "@/components/PullToRefreshIndicator";
 // Iter 207 — Report this team's owner
 import ReportUserButton from "@/components/ReportUserButton";
 import { PlayoffBracketView } from "@/lovable/pages/PlayoffBracket";
@@ -667,6 +669,13 @@ const StandingsPage = () => {
   // sequence from completed matchups + live cap_remaining for each team.
   const [backendStandings, setBackendStandings] = useState<Record<string, any>>({});
   const [standingsMeta, setStandingsMeta] = useState<{ has_divisions: boolean; has_conferences: boolean; divisions: string[]; conferences: string[]; }>({ has_divisions: false, has_conferences: false, divisions: [], conferences: [] });
+  // Iter 231au — Pull-to-refresh tick. Bumped on finger-drag; threaded
+  // into the standings fetch dep array so the table re-pulls fresh
+  // W/L/T + cap_remaining values.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const ptr = usePullToRefresh({
+    onRefresh: async () => setRefreshTick((t) => t + 1),
+  });
   useEffect(() => {
     if (!leagueId) return;
     let cancelled = false;
@@ -700,7 +709,7 @@ const StandingsPage = () => {
       }
     }).catch(() => {});
     return () => { cancelled = true; };
-  }, [leagueId]);
+  }, [leagueId, refreshTick]);
 
   // Build real-data teams list shaped like the Lovable mock so the UI below works as-is.
   const liveTeams: StandingsTeam[] = useMemo(() => {
@@ -831,6 +840,7 @@ const StandingsPage = () => {
 
   return (
     <AppLayout>
+      <PullToRefreshIndicator distance={ptr.distance} refreshing={ptr.refreshing} engaged={ptr.engaged} />
       <div className="container py-8">
         <div className="mb-6 flex items-start justify-between flex-wrap gap-4">
           <div>
