@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Settings, Shield, Users, Calendar, DollarSign, Gavel, Play, Trash2, AlertTriangle, CheckCircle2, Clock, Sparkles, Loader2 } from "lucide-react";
+import { Settings, Shield, Users, Calendar, DollarSign, Gavel, Play, Trash2, AlertTriangle, CheckCircle2, Clock, Sparkles, Loader2, ClipboardList, Gift } from "lucide-react";
+import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -218,6 +219,7 @@ export default function CommissionerPage() {
         <Tabs defaultValue="season">
           <TabsList>
             <TabsTrigger value="season">Season Management</TabsTrigger>
+            <TabsTrigger value="draft" data-testid="commissioner-draft-tab-trigger">Draft</TabsTrigger>
             <TabsTrigger value="waivers">Waivers ({pendingClaims.length})</TabsTrigger>
             <TabsTrigger value="trades">Trades ({pendingTrades.length})</TabsTrigger>
             <TabsTrigger value="teams">Teams ({teams.length})</TabsTrigger>
@@ -243,7 +245,7 @@ export default function CommissionerPage() {
               <Card className="border-white/10">
                 <CardHeader>
                   <CardTitle className="text-white flex items-center gap-2"><Play className="h-5 w-5 text-[#34C759]" />Simulation</CardTitle>
-                  <CardDescription className="text-[#A1A1AA]">Simulate the current week's matchups</CardDescription>
+                  <CardDescription className="text-[#A1A1AA]">Simulate the current week&apos;s matchups</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <Button className="w-full bg-[#34C759] text-black hover:bg-[#34C759]/80" onClick={handleSimulateWeek} disabled={simulating} data-testid="simulate-week-btn">
@@ -269,6 +271,85 @@ export default function CommissionerPage() {
                   <div><Label className="text-[#A1A1AA] text-xs">Salary Cap</Label><p className="text-white font-medium">{selectedLeague?.salary_cap ? `$${selectedLeague.salary_cap}` : "Disabled"}</p></div>
                   <div><Label className="text-[#A1A1AA] text-xs">Privacy</Label><p className="text-white font-medium">{selectedLeague?.is_private ? "Private" : "Public"}</p></div>
                   <div><Label className="text-[#A1A1AA] text-xs">Status</Label><Badge className="mt-1">{selectedLeague?.status}</Badge></div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Iter 232j — Draft tab surfaces the draft management flows
+              (Scheduled Drafts + bonus picks + draft order + auction
+              settings + lottery) directly at the /commissioner top
+              level. The full editing UI lives at
+              /commissioner/settings?tab=draft (Lovable Commissioner
+              Settings) so this tab is a curated launchpad rather than
+              a duplicate — cheap to render, deep-links preserve state,
+              and reviewers no longer have to hunt through League
+              Administration to find compensation/expansion picks. */}
+          <TabsContent value="draft" className="space-y-4 mt-4" data-testid="commissioner-draft-tab-content">
+            <Card className="border-white/10">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Gavel className="h-5 w-5 text-[#00D2FF]" />
+                  Draft Management
+                </CardTitle>
+                <CardDescription className="text-[#A1A1AA]">
+                  Schedule drafts, edit settings, and grant compensation or expansion picks.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Link
+                    to="/commissioner/settings?tab=draft"
+                    className="group flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-4 hover:bg-white/[0.06] transition-colors"
+                    data-testid="commissioner-draft-open-scheduled"
+                  >
+                    <ClipboardList className="h-5 w-5 text-[#00D2FF] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-white font-medium">Scheduled Drafts</p>
+                      <p className="text-xs text-[#A1A1AA] mt-0.5">
+                        Create, edit, or reschedule drafts. Configure snake/linear, rounds, timer, and player pool criteria.
+                      </p>
+                    </div>
+                  </Link>
+                  <Link
+                    to="/commissioner/settings?tab=draft"
+                    className="group flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-4 hover:bg-white/[0.06] transition-colors"
+                    data-testid="commissioner-draft-open-bonus-picks"
+                  >
+                    <Gift className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-white font-medium">Bonus Picks (Compensation / Expansion)</p>
+                      <p className="text-xs text-[#A1A1AA] mt-0.5">
+                        Grant extra picks to specific teams — pre- or mid-draft. Insert at end of a round or a specific overall pick.
+                      </p>
+                    </div>
+                  </Link>
+                  <Link
+                    to="/commissioner/settings?tab=draft"
+                    className="group flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-4 hover:bg-white/[0.06] transition-colors"
+                    data-testid="commissioner-draft-open-order"
+                  >
+                    <Users className="h-5 w-5 text-[#34C759] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-white font-medium">Draft Order</p>
+                      <p className="text-xs text-[#A1A1AA] mt-0.5">
+                        Set the pick order for the next draft — manual, lottery, or by reverse standings.
+                      </p>
+                    </div>
+                  </Link>
+                  <Link
+                    to="/commissioner/settings?tab=draft"
+                    className="group flex items-start gap-3 rounded-lg border border-white/10 bg-white/[0.03] p-4 hover:bg-white/[0.06] transition-colors"
+                    data-testid="commissioner-draft-open-lottery"
+                  >
+                    <Sparkles className="h-5 w-5 text-purple-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-white font-medium">Lottery &amp; Chat Settings</p>
+                      <p className="text-xs text-[#A1A1AA] mt-0.5">
+                        Configure the lottery odds, prospect-only draft toggle, and in-draft chat behavior.
+                      </p>
+                    </div>
+                  </Link>
                 </div>
               </CardContent>
             </Card>

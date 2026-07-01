@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select";
 import { Settings, Users, Trophy, Shield, Target, LayoutGrid, AlertTriangle, ClipboardCheck, ScrollText, UserCog, Sliders, DollarSign } from "lucide-react";
 import { useState, useRef, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import api from "@/lib/api";
@@ -70,7 +71,40 @@ const CommissionerSettings = () => {
   // Iter 231an — Controlled active tab so the mobile <Select> dropdown
   // can mirror clicks on the desktop tab strip (and vice-versa) and
   // `onJumpToTab` callbacks can navigate without a DOM-click hack.
-  const [activeTab, setActiveTab] = useState<string>("league-setup");
+  // Iter 232j — Also honour a `?tab=` query param so deep-links from
+  // the legacy /commissioner top-level nav (or any external anchor)
+  // can land users directly on the right tab. The list of valid tab
+  // values is kept in sync with the TabsTrigger `value=` attrs below.
+  const [searchParams] = useSearchParams();
+  const VALID_TABS = new Set([
+    "league-setup", "player-pool", "rosters", "divisions", "rules-schedule",
+    "salary-cap-contracts", "scoring", "draft", "tanking", "roster-monitor",
+    "prospects", "constitution", "audit",
+  ]);
+  const initialTab = (() => {
+    const raw = searchParams.get("tab");
+    if (raw && VALID_TABS.has(raw)) return raw;
+    return "league-setup";
+  })();
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
+  // Iter 232j — Keep the URL query param in sync with the active tab
+  // so a browser refresh / back-button on any tab preserves state.
+  useEffect(() => {
+    const raw = searchParams.get("tab");
+    if (raw !== activeTab) {
+      const next = new URLSearchParams(searchParams);
+      next.set("tab", activeTab);
+      // Replace so we don't spam history with a new entry per tab click.
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}?${next.toString()}`,
+      );
+    }
+    // Note: intentionally omit `searchParams` from deps — we only
+    // want to sync when `activeTab` changes (writes), not when the
+    // URL updates below (which would create a redundant loop).
+  }, [activeTab]);
 
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
   const [scoringFormat, setScoringFormat] = useState("h2h-points");
