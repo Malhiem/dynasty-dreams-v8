@@ -12,6 +12,8 @@ import useDraftChat from "@/hooks/use-draft-chat";
 import { OnlinePresenceBadge } from "@/components/OnlinePresenceBadge";
 // Iter 232f — Haptic buzzes for on-clock moments (pick start + final 10s warning).
 import { triggerHaptic } from "@/hooks/use-haptic-preference";
+// Iter 232g — Cross-modal audio chirps paired with the haptics.
+import { playDing, playBuzz } from "@/lib/draft-sounds";
 // Iter 228f — Defer-to-User missed-pick dialog
 import DeferPickDialog from "@/lovable/components/DeferPickDialog";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -458,6 +460,11 @@ export default function DraftRoom() {
     prevIsMyPickRef.current = isMyPickActive;
     if (!wasMine && isMyPickActive && isDraftActive) {
       triggerHaptic(30);
+      // Iter 232g — Cross-modal chirp: soft "ding" at pick start,
+      // gated by the "Draft sounds" Preferences toggle. No-op when
+      // the toggle is off, volume is 0, or the AudioContext is
+      // still suspended (iOS Safari pre-gesture).
+      playDing();
     }
   }, [isMyPickActive, isDraftActive]);
   useEffect(() => {
@@ -471,6 +478,9 @@ export default function DraftRoom() {
     ) {
       warnedForPickRef.current = draftConfig.currentPick;
       triggerHaptic([80, 80, 80, 80, 80]);
+      // Iter 232g — Cross-modal buzz tone: three short 80ms
+      // square-wave bursts matching the haptic pattern.
+      playBuzz();
     }
   }, [isMyPickActive, isClockActive, timerPaused, pickTimeLeft, draftConfig.currentPick]);
 
