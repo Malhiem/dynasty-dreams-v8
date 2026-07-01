@@ -364,6 +364,39 @@ input:focus, select:focus, textarea:focus {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* Iter 232d — Mobile-nav Chat-tab bubble pulse.
+ *
+ * Fires for ~3s when the online-count increases (a league member
+ * just came online). Two-layered feel:
+ *   1. A ring "halo" that scales out + fades to signal arrival.
+ *   2. A gentle 1.0 → 1.15 → 1.0 scale on the bubble itself so
+ *      users feel the arrival in peripheral vision without a
+ *      distracting flash.
+ * `prefers-reduced-motion` collapses to a static ring so users on
+ * reduced-motion OS settings still see acknowledgement of the
+ * event, just without animation.
+ */
+@keyframes mobileNavChatPulseRing {
+  0%   { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.55); }
+  70%  { box-shadow: 0 0 0 10px rgba(52, 199, 89, 0);  }
+  100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0);     }
+}
+@keyframes mobileNavChatPulseScale {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.15); }
+}
+.mobile-nav-chat-pulse {
+  animation:
+    mobileNavChatPulseRing 1.2s ease-out 0s 3,
+    mobileNavChatPulseScale 1.2s ease-in-out 0s 3;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mobile-nav-chat-pulse {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.5);
+  }
+}
+
 /* Status badges */
 .badge {
   display: inline-flex;

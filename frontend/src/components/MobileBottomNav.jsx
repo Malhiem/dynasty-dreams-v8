@@ -22,6 +22,7 @@
  * Safe-area padding inset honours the iOS home-indicator (the PWA
  * runs in `standalone` mode — see iter 231as).
  */
+import { useEffect, useRef, useState } from "react";
 import { Home, MessageSquare, Users, ListChecks, Menu } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useSidebar } from "@/components/ui/sidebar";
@@ -37,6 +38,11 @@ const TABS = [
   { key: "team", label: "Roster", icon: Users, path: "/team" },
 ];
 
+// Iter 232d — Length of the "someone just came online" bubble pulse
+// (ms). Long enough to be felt in peripheral vision, short enough
+// that a burst of joins doesn't turn the icon into a rave.
+const PULSE_MS = 3000;
+
 export default function MobileBottomNav() {
   const location = useLocation();
   const { user } = useAuth();
@@ -50,6 +56,26 @@ export default function MobileBottomNav() {
   // event listeners on the existing one.
   const { onlineUserIds } = useLeagueSocket(leagueId, { userId: user?.id });
   const onlineCount = onlineUserIds?.size || 0;
+
+  // Iter 232d — Pulse the Chat-tab bubble when the count *goes up*.
+  // Ref-compare against the previous value so we only fire on
+  // increases (not decreases / re-renders with same count). The
+  // very first render establishes the baseline WITHOUT pulsing so
+  // users don't see a mystery pulse on page load.
+  const prevCountRef = useRef(null);
+  const [pulsing, setPulsing] = useState(false);
+  useEffect(() => {
+    const prev = prevCountRef.current;
+    prevCountRef.current = onlineCount;
+    // Baseline — first observed value, no pulse.
+    if (prev === null) return undefined;
+    if (onlineCount > prev) {
+      setPulsing(true);
+      const id = setTimeout(() => setPulsing(false), PULSE_MS);
+      return () => clearTimeout(id);
+    }
+    return undefined;
+  }, [onlineCount]);
 
   // Hide on auth routes.
   if (
@@ -106,8 +132,15 @@ export default function MobileBottomNav() {
                         // Subtle ping ring so users notice the
                         // first time someone else comes online.
                         "shadow-[0_0_0_1px_rgba(52,199,89,0.5)]",
+                        // Iter 232d — 3s pulse on count increase (a
+                        // manager just came online). Halo ring + gentle
+                        // scale so users feel the arrival in
+                        // peripheral vision without the icon flashing
+                        // aggressively.
+                        pulsing && "mobile-nav-chat-pulse",
                       )}
                       data-testid="mobile-bottom-nav-chat-presence"
+                      data-pulsing={pulsing ? "true" : "false"}
                       aria-label={`${onlineCount} online in league chat`}
                       title={`${onlineCount} online`}
                     >
