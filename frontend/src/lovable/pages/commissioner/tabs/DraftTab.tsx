@@ -101,6 +101,10 @@ export default function DraftTab({ ctx }: DraftTabProps) {
   // defer_user_options, round_time_overrides, plus the existing
   // name/scheduled_time/total_rounds/time_per_pick/eligibility flags.
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  // Iter 232i — Extra draft metadata surfaced to <BonusPicksSection>.
+  const [editingDraftMeta, setEditingDraftMeta] = useState<{
+    currentPick: number; status: string;
+  } | null>(null);
   const [editForm, setEditForm] = useState<{
     name: string; scheduledDate: string; scheduledTime: string;
     totalRounds: number; timePerPick: number;
@@ -138,6 +142,12 @@ export default function DraftTab({ ctx }: DraftTabProps) {
 
   const openEditDraft = (draft: any) => {
     setEditingDraftId(draft.id);
+    // Iter 232i — Cache current pick + status so the bonus-picks
+    // section can decide which rows to mark "used" vs deletable.
+    setEditingDraftMeta({
+      currentPick: Number(draft.currentPick ?? draft.current_pick ?? 1) || 1,
+      status: String(draft.status || draft.rawStatus || "scheduled"),
+    });
     let sd = "", st = "19:00";
     if (draft.scheduledISO) {
       const dt = new Date(draft.scheduledISO);
@@ -180,7 +190,7 @@ export default function DraftTab({ ctx }: DraftTabProps) {
     });
     setEditPreview(null);
   };
-  const closeEditDraft = () => { setEditingDraftId(null); setEditForm(null); setEditPreview(null); };
+  const closeEditDraft = () => { setEditingDraftId(null); setEditForm(null); setEditPreview(null); setEditingDraftMeta(null); };
   const submitEditDraft = async () => {
     if (!editingDraftId || !editForm) return;
     setSavingEdit(true);
@@ -1144,6 +1154,10 @@ export default function DraftTab({ ctx }: DraftTabProps) {
           onClose={closeEditDraft}
           playerCriteriaOptions={playerCriteriaOptions || []}
           activeLeagueName={activeLeague?.name}
+          draftId={editingDraftId || undefined}
+          currentPick={editingDraftMeta?.currentPick}
+          draftStatus={editingDraftMeta?.status}
+          leagueTeams={lotteryTeams}
         />
     </div>
   );

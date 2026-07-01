@@ -98,7 +98,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
 
     # Iter 170g — abbr derivation aligned with the draft's stored team_map.
     team = await _db().teams.find_one({"league_id": draft["league_id"], "owner_id": user["_id"]})
-    on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"])
+    on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"], draft.get("bonus_picks"))
     on_clock_team_id = (draft.get("team_map") or {}).get(on_clock, {}).get("id")
 
     # Commissioner / co-commissioner / platform admin can pick for any team,
@@ -154,7 +154,11 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
     }
 
     next_pick = current_pick + 1
-    total_picks = draft["total_rounds"] * total_teams
+    # Iter 232i — Total picks now includes any commissioner-granted
+    # bonus picks (compensation / expansion) so the "draft complete"
+    # transition doesn't fire early when extras are layered on top of
+    # the standard rounds × teams grid.
+    total_picks = draft["total_rounds"] * total_teams + len(draft.get("bonus_picks") or [])
     new_status = "completed" if next_pick > total_picks else "active"
 
     await _db().drafts.update_one(
@@ -183,7 +187,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
     await _broadcast(f"draft_{draft_id}", "draft_pick", {
         **pick_doc,
         "next_pick": next_pick,
-        "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"]) if new_status == "active" else None,
+        "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"], draft.get("bonus_picks")) if new_status == "active" else None,
         "draft_complete": new_status == "completed",
     })
 
@@ -246,7 +250,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
                 future_pick = next_pick + offset
                 if future_pick > total_picks:
                     break
-                future_abbr = get_team_for_pick(draft["team_abbrs"], future_pick, draft["snake_draft"])
+                future_abbr = get_team_for_pick(draft["team_abbrs"], future_pick, draft["snake_draft"], draft.get("bonus_picks"))
                 future_team_id = (draft.get("team_map") or {}).get(future_abbr, {}).get("id")
                 future_team = team_by_id.get(future_team_id) if future_team_id else None
                 if not future_team:
@@ -362,7 +366,7 @@ async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, reques
         "sender": "System",
         "text": (
             f"Commissioner undid {count} pick{'s' if count != 1 else ''} — "
-            f"on the clock returns to {get_team_for_pick(draft['team_abbrs'], new_current, draft['snake_draft'])}"
+            f"on the clock returns to {get_team_for_pick(draft['team_abbrs'], new_current, draft['snake_draft'], draft.get('bonus_picks'))}"
         ),
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -372,12 +376,12 @@ async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, reques
         "count": count,
         "removed_overalls": [p.get("overall") for p in removed],
         "current_pick": new_current,
-        "on_the_clock": get_team_for_pick(draft["team_abbrs"], new_current, draft["snake_draft"]),
+        "on_the_clock": get_team_for_pick(draft["team_abbrs"], new_current, draft["snake_draft"], draft.get("bonus_picks")),
     })
     return {
         "undone": count,
         "current_pick": new_current,
-        "on_the_clock": get_team_for_pick(draft["team_abbrs"], new_current, draft["snake_draft"]),
+        "on_the_clock": get_team_for_pick(draft["team_abbrs"], new_current, draft["snake_draft"], draft.get("bonus_picks")),
     }
 
 

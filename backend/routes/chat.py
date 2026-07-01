@@ -90,6 +90,81 @@ async def _user_team(db, league_id: str, user_id: str) -> Optional[dict]:
     return await db.teams.find_one({"league_id": league_id, "owner_id": user_id})
 
 
+async def _is_league_member(db, league_id: str, user_id: str) -> bool:
+    """SEC-001 (iter 232h) — league-membership predicate used by every
+    chat channel/message endpoint. A user counts as a member when any
+    of the following holds:
+      • They own (`owner_id`) a team in the league.
+      • They co-own a team in the league (present in `co_owner_ids`).
+      • They are the league's commissioner or a co-commissioner.
+    Global admin / super-admin roles are NOT treated as auto-members
+    on purpose — chat is private social space, admins can still read
+    it via direct DB inspection if needed but shouldn't casually
+    show up as a chatter.
+    """
+    if not league_id or not user_id:
+        return False
+    # Team-owner or co-owner check (single roundtrip covers both).
+    team = await db.teams.find_one(
+        {
+            "league_id": league_id,
+            "$or": [
+                {"owner_id": user_id},
+                {"co_owner_ids": user_id},
+            ],
+        },
+        {"_id": 1},
+    )
+    if team:
+        return True
+    # Commissioner / co-commissioner check.
+    try:
+        league = await db.leagues.find_one(
+            {"_id": ObjectId(league_id)},
+            {"commissioner_id": 1, "co_commissioners": 1},
+        )
+    except Exception:
+        return False
+    if not league:
+        return False
+    return (
+        league.get("commissioner_id") == user_id
+        or user_id in (league.get("co_commissioners") or [])
+    )
+
+
+async def _require_league_member(db, league_id: str, user_id: str) -> None:
+    """Raises 403 unless the user belongs to the league. Used at every
+    channel/message boundary that previously only ran `_get_user`."""
+    if not await _is_league_member(db, league_id, user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="You are not a member of this league.",
+        )
+
+
+async def _require_channel_access(db, channel: dict, user_id: str) -> None:
+    """Combined access gate for a specific channel doc.
+
+    • DMs: must be in `participants`.
+    • Non-DM channels: must be a member of the channel's league.
+
+    Both branches raise 403 on failure. `channel` MUST already be
+    fetched by the caller so we don't repeat the round-trip.
+    """
+    if not channel:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    if channel.get("kind") == "dm":
+        if user_id not in (channel.get("participants") or []):
+            raise HTTPException(status_code=403, detail="Not a participant")
+        return
+    league_id = channel.get("league_id")
+    if not league_id:
+        # Malformed channel — deny by default.
+        raise HTTPException(status_code=403, detail="Channel has no league scope")
+    await _require_league_member(db, league_id, user_id)
+
+
 async def _ensure_dm_channel(db, league_id: str, team_a_id: str, team_b_id: str) -> dict:
     """Get or create the DM channel between two teams. Pair is order-independent."""
     pair = sorted([team_a_id, team_b_id])
@@ -123,6 +198,9 @@ async def _ensure_dm_channel(db, league_id: str, team_a_id: str, team_b_id: str)
 async def list_channels(league_id: str, request: Request):
     db = _db()
     user = await _get_user(request)
+    # SEC-001 (iter 232h) — non-members previously could enumerate
+    # every channel id in any league.
+    await _require_league_member(db, league_id, user["_id"])
     await _ensure_default_channels(db, league_id)
 
     # Teams in this league — used to materialize one DM per team-pair
@@ -235,11 +313,9 @@ async def list_messages(channel_id: str, request: Request, limit: int = 100):
     db = _db()
     user = await _get_user(request)
     chan = await db.chat_channels.find_one({"_id": ObjectId(channel_id)})
-    if not chan:
-        raise HTTPException(status_code=404, detail="Channel not found")
-    # DM access check
-    if chan["kind"] == "dm" and user["_id"] not in (chan.get("participants") or []):
-        raise HTTPException(status_code=403, detail="Not a participant")
+    # SEC-001 (iter 232h) — previously only DMs enforced a check;
+    # open channels leaked history to any authenticated user.
+    await _require_channel_access(db, chan, user["_id"])
 
     cursor = db.chat_messages.find({"channel_id": channel_id}).sort("created_at", -1).limit(limit)
     msgs = [_serialize(m) async for m in cursor]
@@ -260,10 +336,10 @@ async def post_message(channel_id: str, payload: dict, request: Request):
     db = _db()
     user = await _get_user(request)
     chan = await db.chat_channels.find_one({"_id": ObjectId(channel_id)})
-    if not chan:
-        raise HTTPException(status_code=404, detail="Channel not found")
-    if chan["kind"] == "dm" and user["_id"] not in (chan.get("participants") or []):
-        raise HTTPException(status_code=403, detail="Not a participant")
+    # SEC-001 (iter 232h) — previously only DM channels enforced a
+    # check; any authenticated user could inject spoofed messages into
+    # any league's chat and fan out notifications to all members.
+    await _require_channel_access(db, chan, user["_id"])
     text = (payload.get("content") or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="Message empty")
@@ -533,10 +609,9 @@ async def mark_channel_read(channel_id: str, request: Request):
     db = _db()
     user = await _get_user(request)
     chan = await db.chat_channels.find_one({"_id": ObjectId(channel_id)})
-    if not chan:
-        raise HTTPException(status_code=404, detail="Channel not found")
-    if chan["kind"] == "dm" and user["_id"] not in (chan.get("participants") or []):
-        raise HTTPException(status_code=403, detail="Not a participant")
+    # SEC-001 (iter 232h) — mark-read must also verify membership so
+    # non-members can't silently poke another league's channel.
+    await _require_channel_access(db, chan, user["_id"])
     now = datetime.now(timezone.utc)
     await db.chat_reads.update_one(
         {"user_id": user["_id"], "channel_id": channel_id},
@@ -553,8 +628,11 @@ async def set_mute(channel_id: str, payload: dict, request: Request):
     db = _db()
     user = await _get_user(request)
     chan = await db.chat_channels.find_one({"_id": ObjectId(channel_id)})
-    if not chan:
-        raise HTTPException(status_code=404, detail="Channel not found")
+    # SEC-001 (iter 232h) — enforcing membership here too so a
+    # non-member can't silently pin a mute entry on another league's
+    # channel (which could pollute the mute collection or, worse, be
+    # a fingerprinting side-channel).
+    await _require_channel_access(db, chan, user["_id"])
 
     duration = payload.get("duration")
     if duration is None:
@@ -589,9 +667,18 @@ async def set_mute(channel_id: str, payload: dict, request: Request):
 @router.get("/chat/league/{league_id}/members")
 async def list_league_members(league_id: str, request: Request):
     """League members for @mention autocomplete. Returns one row per team in
-    the league: { team_id, team_name, owner_name, abbr }."""
+    the league: { team_id, team_name, owner_name, abbr }.
+
+    SEC-002 (iter 232h) — gated to league members only. Previously any
+    authenticated user could enumerate every other league's rosters and
+    the fallback branch below leaked owner emails when `owner_name`
+    wasn't set. Emails are never exposed here — if we don't have a
+    friendly display name, we fall back to a stable "Owner" placeholder
+    so nothing PII-adjacent leaks through the autocomplete surface.
+    """
     db = _db()
-    await _get_user(request)
+    user = await _get_user(request)
+    await _require_league_member(db, league_id, user["_id"])
     teams = await db.teams.find(
         {"league_id": league_id},
         {"_id": 1, "name": 1, "owner_id": 1, "owner_name": 1, "abbreviation": 1},
@@ -601,9 +688,13 @@ async def list_league_members(league_id: str, request: Request):
         owner_name = t.get("owner_name")
         if not owner_name and t.get("owner_id"):
             try:
-                u = await db.users.find_one({"_id": ObjectId(t["owner_id"])}, {"name": 1, "email": 1})
+                # Only fall back to the user's display name — never
+                # to their email address.
+                u = await db.users.find_one(
+                    {"_id": ObjectId(t["owner_id"])}, {"name": 1},
+                )
                 if u:
-                    owner_name = u.get("name") or u.get("email")
+                    owner_name = u.get("name")
             except Exception:
                 pass
         out.append({

@@ -19,6 +19,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+// Iter 232i — Commissioner bonus draft picks section.
+import BonusPicksSection from "@/lovable/pages/commissioner/BonusPicksSection";
 
 export interface RoundTimeRange {
   from: number;
@@ -69,6 +71,13 @@ export interface EditDraftDialogProps {
   onClose: () => void;
   playerCriteriaOptions: PlayerCriteriaOption[];
   activeLeagueName?: string;
+  // Iter 232i — Bonus picks context. Optional so the dialog still
+  // works from any legacy call sites; when supplied, the bonus-picks
+  // section renders at the bottom of the form.
+  draftId?: string;
+  currentPick?: number;
+  draftStatus?: string;
+  leagueTeams?: Array<{ _id: string; name: string }>;
 }
 
 const TIME_PRESETS: Array<{ value: string; label: string }> = [
@@ -93,6 +102,7 @@ export default function EditDraftDialog(props: EditDraftDialogProps) {
   const {
     open, form, onFormChange, preview, previewLoading,
     saving, onSave, onClose, playerCriteriaOptions, activeLeagueName,
+    draftId, currentPick, draftStatus, leagueTeams,
   } = props;
 
   if (!open || !form) return null;
@@ -423,6 +433,19 @@ export default function EditDraftDialog(props: EditDraftDialogProps) {
               <span>Meets minors eligibility</span>
             </label>
           </div>
+          {/* Iter 232i — Commissioner bonus picks (compensation / expansion).
+              Only renders when the parent supplies the required draft
+              context, so legacy call sites remain unaffected. */}
+          {draftId && leagueTeams && Array.isArray(leagueTeams) && (
+            <BonusPicksSection
+              draftId={draftId}
+              totalRounds={form.totalRounds || 1}
+              teamCount={leagueTeams.length}
+              currentPick={currentPick || 1}
+              draftStatus={draftStatus || "scheduled"}
+              teams={leagueTeams}
+            />
+          )}
         </div>
         <div className="p-4 border-t border-border flex items-center justify-end gap-2">
           <Button

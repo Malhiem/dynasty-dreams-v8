@@ -48,23 +48,31 @@ const SHELL_PRELOAD = [
   "/apple-touch-icon.png",
 ];
 
-// SWR'd API path prefixes. Order matters: more specific first.
+// SEC-003 (iter 232h) — SWR'd API path prefixes. Order matters:
+// more specific first. NOTE: /api/users/me/* is deliberately NOT in
+// this list — per-user "me" endpoints returned different data for
+// different sessions from the same origin cache, so a shared browser
+// could serve user A's Week At a Glance to user B on their next
+// login. All personalised endpoints must fetch fresh from network.
 const SWR_PATTERNS = [
   /^\/api\/matchups\//,
   /^\/api\/leagues\/[^/]+\/standings/,
   /^\/api\/leagues\/[^/]+\/teams/,
   /^\/api\/teams\/[^/]+$/,
   /^\/api\/players(\?|$)/,
-  /^\/api\/users\/me\/week-at-a-glance/,
 ];
 
 // API paths that must NEVER be cached (auth state, admin-only data,
-// websocket upgrades).
+// per-user data, websocket upgrades).
 const NEVER_CACHE = [
   /^\/api\/auth\//,
   /^\/api\/admin\//,
   /^\/api\/client-errors/,
   /^\/api\/socket\.io/,
+  // SEC-003 — every /users/me/* endpoint is per-caller. Never cache.
+  /^\/api\/users\/me(\/|$|\?)/,
+  // Same reasoning: chat is per-user gated and must always hit the wire.
+  /^\/api\/chat\//,
 ];
 
 
@@ -187,8 +195,27 @@ self.addEventListener("fetch", (event) => {
 
 // Listen for `{ type: 'SKIP_WAITING' }` from the page so a user can
 // opt into the new SW immediately (the registration helper sends it).
+// SEC-003 (iter 232h) — also handles `{ type: 'PURGE_API_CACHE' }`
+// which the frontend sends on logout so a shared-device next-user
+// never sees the outgoing user's cached league / standings / matchup
+// data. The SHELL cache (JS/CSS bundles, icons) is preserved because
+// it doesn't contain per-user data — purging it would just slow the
+// login form's next paint for no security benefit.
 self.addEventListener("message", (event) => {
-  if (event.data && event.data.type === "SKIP_WAITING") {
+  const data = event.data || {};
+  if (data.type === "SKIP_WAITING") {
     self.skipWaiting();
+    return;
+  }
+  if (data.type === "PURGE_API_CACHE") {
+    event.waitUntil(
+      (async () => {
+        try {
+          await caches.delete(API_CACHE);
+        } catch {
+          /* swallow — cache API can throw in exotic browsers */
+        }
+      })(),
+    );
   }
 });

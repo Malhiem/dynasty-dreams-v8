@@ -1,0 +1,38 @@
+{
+  "summary": "Iter 232h + 232i review: SEC-001/002 chat authorization + email leak fixes verified via live curl-driven pytest against the preview URL, all 3 bonus-picks API endpoints (GET/POST/DELETE) work end-to-end for a real commissioner, and non-commissioner is correctly denied with 403. All 32 pre-existing local pytest guards (test_iter232h_security_fixes, test_iter232i_bonus_picks, test_iter232i_engine_ordering) pass. Frontend BonusPicksSection data-testids are validated by the existing frontend-structure guards in test_iter232i_bonus_picks.py. Live browser walkthrough could not surface the Edit Draft dialog because the Draft management screen is nested under League Administration rather than the top-level 'Draft' sidebar section (which routes to Draft Board/Room/History) — a path-navigation quirk, not a code bug.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Sidebar navigation", "issues": ["Commissioner-side Draft tab discoverability: /commissioner top tabs are Season Management/Waivers/Trades/Teams/Premium — the Draft management page (with Scheduled Drafts + Edit Draft dialog that hosts BonusPicksSection) is reached via 'League Administration' rather than the sidebar 'Draft' group which routes to end-user Draft Board/Room/History. Consider surfacing the commissioner Draft tab where reviewers naturally look."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232hi_review.py",
+    "/app/test_reports/pytest/iter232hi_review.xml"
+  ],
+  "action_items": [
+    "None — all 11 live integration tests + all 32 pre-existing local guards pass. SEC-001, SEC-002 verified via live curl. Bonus picks add+delete round-trip verified against a real commissioner-owned draft in the preview DB.",
+    "OPTIONAL: consider adding a direct link/tab to the Commissioner Draft management screen from /commissioner so reviewers/QA can reach the Edit Draft dialog without going through League Administration."
+  ],
+  "critical_code_review_comments": [
+    "draft_bonus_picks.py: solid guardrails — commissioner-only auth, current_pick check prevents inserting into already-drafted position, position-mode dispatch (end_of_round + overall) both clamped/validated, downstream shift of existing bonus picks + draft_picks collection is atomic. Nice touch snapshotting team_name/team_abbr onto the bonus entry so renames don't corrupt the draft board.",
+    "chat.py: _is_league_member / _require_league_member / _require_channel_access are consistently applied to every channel endpoint (list, list-messages, post-messages, mark-read, mute). SEC-002 members endpoint no longer projects email — verified over live API. Global admin correctly NOT auto-treated as a league member (defense in depth).",
+    "service-worker.js + AuthContext.logout(): PURGE_API_CACHE message + /api/users/me/* moved to NEVER_CACHE is a clean SEC-003 fix. Note: preview SW may not be registered in dev mode, so behavior is covered via the pytest guard `test_logout_sends_purge_message_to_service_worker` (PASSED).",
+    "draft_engine.get_team_for_pick with bonus_picks: correctly subtracts prior-bonus count before running snake formula. Engine ordering guards (6/6 PASSED) cover exact-match, downstream shift, multi-bonus stacking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter232hi_review.py (new — 11 live integration tests)"
+  ],
+  "success_rate": {"backend": "100% (11/11 new + 32/32 pre-existing)", "frontend": "not exercised via Playwright (nav path unclear); data-testids validated by frontend-structure pytest guards which pass"},
+  "test_credentials": "chriszarek@gmail.com/Chris2026! (commissioner), admin@dynastydreams.com/Admin123! (used as non-member for SEC-001/002 since admin is not auto-treated as league member)",
+  "seed_data_creation": "None — used existing Chris commissioner draft. Bonus picks were added and cleaned up in-test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Chris (chriszarek@gmail.com) is commissioner of multiple leagues; league 69e46af167999bfb85c39628 is a good target. Admin (admin@dynastydreams.com) works well as a 'non-league-member' for SEC-001/002 tests — DO NOT try to register a throwaway user, there appears to be a background job that reaps freshly-registered users within seconds (their JWT becomes invalid with 'User not found' 401). The Commissioner Draft management page with the Edit Draft dialog (which hosts BonusPicksSection) is under League Administration → Draft, not under the sidebar 'Draft' group. For Playwright, navigate via the 'League Administration' link on the /commissioner page.",
+  "rca of the issue": "N/A — no bugs found. Only observation: during fixture setup we saw newly-registered users get 401 'User not found' within ~1s of a valid /auth/me call. Switched to using the pre-existing admin account as the non-member for SEC-001/002 tests, which is cleaner anyway. All security assertions pass."
+}

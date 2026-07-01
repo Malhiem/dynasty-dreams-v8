@@ -64,6 +64,16 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     await axios.post(`${BACKEND_URL}/api/auth/logout`, {}, { withCredentials: true });
     try { localStorage.removeItem('auth_remember'); } catch { /* noop */ }
+    // SEC-003 (iter 232h) — Tell the service worker to purge the API
+    // cache so a shared-device next-user can't see this user's cached
+    // league / standings / matchup data on the login screen before
+    // their own network fetch completes. Message is fire-and-forget;
+    // browsers without an active SW registration silently no-op.
+    try {
+      if (navigator?.serviceWorker?.controller) {
+        navigator.serviceWorker.controller.postMessage({ type: 'PURGE_API_CACHE' });
+      }
+    } catch { /* noop — old browsers / privacy mode */ }
     setUser(false);
   };
 

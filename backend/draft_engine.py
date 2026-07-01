@@ -93,13 +93,60 @@ def get_draft_order(team_abbrs: list[str], round_num: int, snake: bool) -> list[
     return list(team_abbrs)
 
 
-def get_team_for_pick(team_abbrs: list[str], overall_pick: int, snake: bool) -> str:
-    """Determine which team picks at a given overall pick number."""
+def get_team_for_pick(
+    team_abbrs: list[str],
+    overall_pick: int,
+    snake: bool,
+    bonus_picks: Optional[list[dict]] = None,
+) -> str:
+    """Determine which team picks at a given overall pick number.
+
+    Iter 232i — Extended to honour commissioner-granted **bonus picks**
+    (compensation / expansion). A bonus pick is a `{overall, team_abbr}`
+    record layered on top of the standard snake ordering:
+
+      • If `overall_pick` matches a bonus pick's `overall`, the bonus
+        team is on the clock — return its abbr directly.
+      • Otherwise, we still consult the snake formula but on the
+        *effective* pick number, which is `overall_pick` minus the
+        count of bonus picks that fall BEFORE it. That way inserting
+        a bonus at overall=13 doesn't distort the round-2 slot order
+        that would otherwise have started at 13 — those picks simply
+        shift forward by one and the original snake pattern resumes.
+
+    `bonus_picks` is optional so every existing call site continues
+    to work unchanged.
+    """
     total_teams = len(team_abbrs)
-    round_num = ((overall_pick - 1) // total_teams) + 1
-    pick_in_round = (overall_pick - 1) % total_teams
+    if bonus_picks:
+        # Exact match — bonus team is on the clock.
+        for bp in bonus_picks:
+            if int(bp.get("overall", 0)) == overall_pick:
+                return str(bp.get("team_abbr") or "")
+        # Subtract the count of bonus picks that fall BEFORE us so
+        # the standard formula operates on the un-inserted pick #.
+        offset = sum(1 for bp in bonus_picks if int(bp.get("overall", 0)) < overall_pick)
+        effective_pick = overall_pick - offset
+    else:
+        effective_pick = overall_pick
+    round_num = ((effective_pick - 1) // total_teams) + 1
+    pick_in_round = (effective_pick - 1) % total_teams
     order = get_draft_order(team_abbrs, round_num, snake)
     return order[pick_in_round]
+
+
+def total_picks_in_draft(
+    team_abbrs: list[str],
+    total_rounds: int,
+    bonus_picks: Optional[list[dict]] = None,
+) -> int:
+    """Iter 232i — Total number of picks the draft will ultimately
+    make, honouring any commissioner-granted bonus picks. Used to
+    detect the draft-complete transition when a league has extras
+    layered on top of the standard `rounds × teams` grid."""
+    base = int(total_rounds) * len(team_abbrs)
+    extras = len(bonus_picks or [])
+    return base + extras
 
 
 def build_draft_board(team_abbrs: list[str], total_rounds: int, snake: bool, picks: list[dict]) -> list[list[dict]]:
