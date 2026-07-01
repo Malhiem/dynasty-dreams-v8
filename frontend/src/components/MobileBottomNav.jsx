@@ -29,6 +29,7 @@ import { useSidebar } from "@/components/ui/sidebar";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useAuth } from "@/contexts/AuthContext";
 import { useLeagueSocket } from "@/hooks/use-socket";
+import { triggerHaptic } from "@/hooks/use-haptic-preference";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -71,6 +72,13 @@ export default function MobileBottomNav() {
     if (prev === null) return undefined;
     if (onlineCount > prev) {
       setPulsing(true);
+      // Iter 232e — Layer a subtle 30ms haptic buzz alongside the
+      // pulse when a manager comes online. Gated by
+      // `useHapticPreference` (localStorage 'dd-haptics') so users
+      // on shared devices can opt out. `triggerHaptic` is a safe
+      // no-op on browsers without `navigator.vibrate` and when the
+      // OS `prefers-reduced-motion` setting is on.
+      triggerHaptic(30);
       const id = setTimeout(() => setPulsing(false), PULSE_MS);
       return () => clearTimeout(id);
     }

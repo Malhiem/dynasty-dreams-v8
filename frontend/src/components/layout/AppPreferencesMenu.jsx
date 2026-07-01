@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   Settings, Sun, Moon, Monitor, Users as UsersIcon, LayoutGrid, Trophy,
+  Vibrate,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -13,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/hooks/use-theme";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import { useHapticPreference } from "@/hooks/use-haptic-preference";
 import TeamSettingsModal from "@/lovable/components/TeamSettingsModal";
 
 /**
@@ -32,6 +34,10 @@ export default function AppPreferencesMenu({ onPageSettingsClick }) {
   const { theme, setTheme } = useTheme();
   const { myTeam, league } = useActiveLeague();
   const [teamSettingsOpen, setTeamSettingsOpen] = useState(false);
+  // Iter 232e — Haptic buzz preference (used for the "someone came
+  // online" pulse in the mobile bottom nav, and reusable for any
+  // future haptic events like trade proposals, on-clock alerts).
+  const { supported: hapticsSupported, enabled: hapticsEnabled, setEnabled: setHapticsEnabled } = useHapticPreference();
 
   // Team-scoped options are only available when the user actually has a team
   // in the active league. Empty/no-team leagues fall back to appearance-only.
@@ -117,6 +123,40 @@ export default function AppPreferencesMenu({ onPageSettingsClick }) {
             )}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          {/* Iter 232e — Haptic buzz toggle. Only surfaces when the
+              device actually supports `navigator.vibrate` — otherwise
+              hiding the row prevents users from tweaking a knob that
+              can't do anything on their hardware. */}
+          {hapticsSupported && (
+            <>
+              <DropdownMenuLabel className="text-xs uppercase tracking-wider text-muted-foreground">
+                Alerts
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                onClick={() => setHapticsEnabled(!hapticsEnabled)}
+                data-testid="prefs-haptics-toggle"
+                data-enabled={hapticsEnabled ? "true" : "false"}
+                className={hapticsEnabled ? "bg-secondary" : ""}
+              >
+                <Vibrate className="h-4 w-4 mr-2" />
+                <div className="flex flex-col leading-tight">
+                  <span>Haptic buzz on live events</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    A tiny wrist tap when a manager comes online
+                  </span>
+                </div>
+                {hapticsEnabled && (
+                  <span
+                    className="ml-auto text-[10px] text-primary"
+                    data-testid="prefs-haptics-active"
+                  >
+                    ON
+                  </span>
+                )}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          )}
           <DropdownMenuItem disabled>
             <Monitor className="h-4 w-4 mr-2" />
             <span className="text-xs text-muted-foreground">
