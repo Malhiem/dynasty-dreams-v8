@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 // Iter 170h — Socket.IO subscription for live draft updates.
 // Iter 203 — extracted into a dedicated hook.
 import useDraftRoomSocket from "@/hooks/use-draft-room-socket";
@@ -10,6 +10,8 @@ import useDraftRoomPersistence from "@/hooks/use-draft-room-persistence";
 import useDraftChat from "@/hooks/use-draft-chat";
 // Iter 232b — Online presence pill rendered next to the Draft Room title.
 import { OnlinePresenceBadge } from "@/components/OnlinePresenceBadge";
+// Iter 232f — Haptic buzzes for on-clock moments (pick start + final 10s warning).
+import { triggerHaptic } from "@/hooks/use-haptic-preference";
 // Iter 228f — Defer-to-User missed-pick dialog
 import DeferPickDialog from "@/lovable/components/DeferPickDialog";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -431,6 +433,46 @@ export default function DraftRoom() {
     deferOnExpiry: shouldDefer,
     onTimerExpired: (_pickNo: number) => setDeferDialogOpen(true),
   });
+
+  // Iter 232f — On-clock haptic feedback.
+  //   • 30ms buzz the moment `isMyPickActive` transitions false → true
+  //     while the draft is active (i.e. your pick just started). This
+  //     is functionally identical to the mobile-nav Chat-tab pulse
+  //     trigger from iter 232e, just at a different event boundary.
+  //   • [80, 80, 80, 80, 80] triple-buzz pattern when the timer enters
+  //     the final 10 seconds so users pulling up their phone from the
+  //     couch feel the urgency without needing to look. Fires ONCE per
+  //     pick (not every tick) via `warnedForPickRef`.
+  // Both calls no-op silently when the user has turned Haptics OFF in
+  // Preferences, when the browser doesn't expose `navigator.vibrate`,
+  // or when `prefers-reduced-motion` is set at the OS level.
+  const prevIsMyPickRef = useRef<boolean>(false);
+  const warnedForPickRef = useRef<number | null>(null);
+  useEffect(() => {
+    // Reset the final-10s warning latch every time the pick changes
+    // so the next "your pick" cycle can warn again.
+    warnedForPickRef.current = null;
+  }, [draftConfig.currentPick]);
+  useEffect(() => {
+    const wasMine = prevIsMyPickRef.current;
+    prevIsMyPickRef.current = isMyPickActive;
+    if (!wasMine && isMyPickActive && isDraftActive) {
+      triggerHaptic(30);
+    }
+  }, [isMyPickActive, isDraftActive]);
+  useEffect(() => {
+    if (
+      isMyPickActive &&
+      isClockActive &&
+      !timerPaused &&
+      pickTimeLeft > 0 &&
+      pickTimeLeft <= 10 &&
+      warnedForPickRef.current !== draftConfig.currentPick
+    ) {
+      warnedForPickRef.current = draftConfig.currentPick;
+      triggerHaptic([80, 80, 80, 80, 80]);
+    }
+  }, [isMyPickActive, isClockActive, timerPaused, pickTimeLeft, draftConfig.currentPick]);
 
   // ─── Shortlist & Queue ─────────────────────────────────────────────────────
   // Iter 230v — toggle handlers + memoised collections extracted to

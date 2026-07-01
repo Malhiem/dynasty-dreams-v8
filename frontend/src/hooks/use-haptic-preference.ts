@@ -110,15 +110,21 @@ export function useHapticPreference(): HapticState {
  * without wiring the full hook (e.g. one-shot event handlers).
  * Reads the same localStorage key. Returns whether the buzz was
  * actually attempted.
+ *
+ * Accepts either a single duration (ms) OR a pattern array
+ * `[buzz, pause, buzz, ...]` matching the native `navigator.vibrate`
+ * API. Longer patterns are useful for signalling urgency — e.g. a
+ * `[80, 80, 80, 80, 80]` triple-buzz for the draft "final 10s"
+ * warning without swamping the user with a continuous rumble.
  */
-export function triggerHaptic(ms: number = 30): boolean {
+export function triggerHaptic(pattern: number | number[] = 30): boolean {
   if (!hasVibrateApi()) return false;
   if (prefersReducedMotion()) return false;
   // Explicit opt-out honoured; missing key = default-on.
   const stored = readStored();
   if (stored === false) return false;
   try {
-    navigator.vibrate(ms);
+    navigator.vibrate(pattern as never);
     return true;
   } catch {
     return false;
