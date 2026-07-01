@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Settings, Shield, Users, Calendar, DollarSign, Gavel, Play, Trash2, AlertTriangle, CheckCircle2, Clock, Sparkles, Loader2, ClipboardList, Gift } from "lucide-react";
 import { Link } from "react-router-dom";
+import DraftStatusStrip from "@/components/DraftStatusStrip";
 import { cn } from "@/lib/utils";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -30,6 +31,12 @@ export default function CommissionerPage() {
   const [confirmAction, setConfirmAction] = useState(null);
   const [premium, setPremium] = useState(null);
   const [upgrading, setUpgrading] = useState(false);
+  // Iter 232k — Draft-tab countdown state. `nextDraft` is the closest
+  // upcoming draft (status != completed/cancelled). `bonusCount`
+  // mirrors `nextDraft.bonus_picks.length` so the pill can render
+  // "N bonus picks configured" without a second render round-trip.
+  const [nextDraft, setNextDraft] = useState(null);
+  const [nextDraftBonusCount, setNextDraftBonusCount] = useState(0);
 
   useEffect(() => {
     const init = async () => {
@@ -50,18 +57,72 @@ export default function CommissionerPage() {
     if (!selectedLeague) return;
     const fetch = async () => {
       try {
-        const [teamsRes, claimsRes, tradesRes, weekRes, premiumRes] = await Promise.all([
+        const [teamsRes, claimsRes, tradesRes, weekRes, premiumRes, draftsRes] = await Promise.all([
           api.get(`/teams?league_id=${selectedLeague.id}`),
           api.get(`/waivers/claims?league_id=${selectedLeague.id}&status=pending`),
           api.get(`/trades?league_id=${selectedLeague.id}&status=pending`),
           api.get(`/matchups/${selectedLeague.id}/current-week`).catch(() => ({ data: { week: 1, matchups: [] } })),
           api.get(`/leagues/${selectedLeague.id}/premium`).catch(() => ({ data: null })),
+          // Iter 232k — Pull the drafts list so the Draft tab card
+          // can surface the *next* scheduled draft's countdown +
+          // config snapshot. Falls back to an empty list on error
+          // so a broken drafts endpoint doesn't break the whole page.
+          api.get(`/drafts?league_id=${selectedLeague.id}`).catch(() => ({ data: [] })),
         ]);
         setTeams(teamsRes.data);
         setPendingClaims(claimsRes.data);
         setPendingTrades(tradesRes.data);
         setMatchupInfo(weekRes.data);
         setPremium(premiumRes.data);
+        // Find the next upcoming draft (scheduled | active | preview),
+        // sorted by `scheduled_at` ascending. Completed drafts are
+        // filtered out so the pill doesn't show yesterday's league.
+        const drafts = Array.isArray(draftsRes.data)
+          ? draftsRes.data
+          : (draftsRes.data?.drafts || []);
+        const now = Date.now();
+        const upcoming = drafts
+          .filter((d) => {
+            const s = String(d.status || "").toLowerCase();
+            return s !== "completed" && s !== "cancelled" && s !== "archived";
+          })
+          .map((d) => {
+            // Iter 232k — Different draft rows use either `scheduled_at`
+            // or `scheduled_time` depending on when they were created.
+            // Normalise to a single `_scheduled_at_ms` field so the
+            // downstream sort + strip render don't have to care.
+            const raw = d.scheduled_at || d.scheduled_time || null;
+            return {
+              ...d,
+              scheduled_at: raw, // canonicalise for the strip prop
+              _scheduled_at_ms: raw ? Date.parse(raw) : null,
+            };
+          })
+          .filter((d) => d._scheduled_at_ms !== null)
+          // Prefer future drafts; if all are past-scheduled + still
+          // active, sort by the freshest one anyway so we surface
+          // whichever the commissioner is currently running.
+          .sort((a, b) => {
+            const aFuture = a._scheduled_at_ms >= now ? 0 : 1;
+            const bFuture = b._scheduled_at_ms >= now ? 0 : 1;
+            if (aFuture !== bFuture) return aFuture - bFuture;
+            return a._scheduled_at_ms - b._scheduled_at_ms;
+          });
+        const next = upcoming[0] || null;
+        setNextDraft(next);
+        // If we found a next draft, also pull its bonus-picks so the
+        // pill can show "N bonus picks configured". Silent failure
+        // (e.g. non-commissioner would 403) simply leaves the count
+        // at 0.
+        if (next?._id || next?.id) {
+          try {
+            const draftId = next._id || next.id;
+            const { data: bpData } = await api.get(`/drafts/${draftId}/bonus-picks`);
+            setNextDraftBonusCount((bpData?.bonus_picks || []).length);
+          } catch { setNextDraftBonusCount(0); }
+        } else {
+          setNextDraftBonusCount(0);
+        }
       } catch (e) { console.error(e); }
     };
     fetch();
@@ -295,6 +356,16 @@ export default function CommissionerPage() {
                 <CardDescription className="text-[#A1A1AA]">
                   Schedule drafts, edit settings, and grant compensation or expansion picks.
                 </CardDescription>
+                {/* Iter 232k — Live status strip. When the league has
+                    a scheduled draft on the books, this pill turns
+                    the tab from a passive launchpad into a game-day
+                    dashboard: countdown + config snapshot at a glance. */}
+                <DraftStatusStrip
+                  nextDraft={nextDraft}
+                  bonusCount={nextDraftBonusCount}
+                  teamCount={teams.length}
+                  maxTeams={selectedLeague?.max_teams}
+                />
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
