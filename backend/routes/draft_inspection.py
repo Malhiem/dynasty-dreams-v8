@@ -476,15 +476,14 @@ async def get_draft_eligible_players(
     players = await _db().players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
     total = await _db().players.count_documents(query)
 
-    # ─── Iter 232N — Previously-drafted-and-dropped set ───────────
-    # Compute the set of players who were picked in a PRIOR draft in
-    # this league but are no longer on any team's roster (i.e. drafted
-    # then dropped). The dedicated symbol in the eligible list flags
-    # these so managers can spot "we've been here before" cases.
-    previously_drafted_dropped: set = set()
+    # ─── Iter 232N — Previously-drafted set (for `undrafted` flag) ───
+    # Compute the set of players who were picked in ANY prior draft in
+    # this league. The `undrafted` badge flags anyone NOT in this set
+    # (i.e. never picked in the fantasy league) so managers can spot
+    # fresh names in the eligible list at a glance.
+    previously_drafted_pids: set = set()
     if league_id_str:
         try:
-            past_pick_pids: set = set()
             async for past in _db().drafts.find(
                 {
                     "league_id": league_id_str,
@@ -496,20 +495,9 @@ async def get_draft_eligible_players(
                 for p in past.get("picks") or []:
                     pid = p.get("player_id")
                     if pid:
-                        past_pick_pids.add(pid)
-            if past_pick_pids:
-                # Anyone still rostered stays OUT of the "dropped" set.
-                rostered: set = set()
-                async for team in _db().teams.find(
-                    {"league_id": league_id_str}, {"players": 1},
-                ):
-                    for tp in team.get("players") or []:
-                        pid = tp.get("player_id") if isinstance(tp, dict) else tp
-                        if pid:
-                            rostered.add(str(pid))
-                previously_drafted_dropped = past_pick_pids - rostered
+                        previously_drafted_pids.add(str(pid))
         except Exception:
-            previously_drafted_dropped = set()
+            previously_drafted_pids = set()
 
     result = []
     for i, p in enumerate(players):
@@ -551,7 +539,12 @@ async def get_draft_eligible_players(
             # `unsigned` is authoritative only for prospects. NHL players
             # under contract are never unsigned in this dataset.
             "unsigned": bool(is_prospect and (p.get("signed") is False)),
-            "previously_drafted_dropped": pid_str in previously_drafted_dropped,
+            # `undrafted` — player has never been picked in ANY prior
+            # draft in this league. Highlights fresh names in the
+            # eligible list. Set only when we have a league_id and were
+            # able to compute the previously-drafted set (otherwise
+            # left False rather than misleadingly True).
+            "undrafted": bool(league_id_str) and (pid_str not in previously_drafted_pids),
         }
         result.append({
             "id": pid_str,

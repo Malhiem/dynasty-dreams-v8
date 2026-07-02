@@ -9,7 +9,7 @@ Two-part fix:
     prospects and "NHL" for NHL players.
 
 (2) `status_flags` on the eligible-players response — computed set of
-    {injured, in_minors, unsigned, previously_drafted_dropped} so the
+    {injured, in_minors, unsigned, undrafted} so the
     frontend badge layer can render status symbols next to each name.
 """
 from __future__ import annotations
@@ -79,8 +79,8 @@ def test_pick_payload_falls_back_to_prospect_for_missing_amateur_league():
 @pytest.mark.asyncio
 async def test_eligible_players_status_flags(db):
     """End-to-end check: the /eligible-players endpoint stamps
-    status_flags for injured, in_minors, unsigned, and
-    previously_drafted_dropped on the correct rows."""
+    status_flags for injured, in_minors, unsigned, and undrafted
+    on the correct rows."""
     from routes import draft_inspection
     from routes.draft_inspection import get_draft_eligible_players
     draft_inspection.setup({"db": db})
@@ -113,8 +113,9 @@ async def test_eligible_players_status_flags(db):
     })
     dropped_pid = str(dropped.inserted_id)
 
-    # A previous league draft that picked the "dropped" player. No
-    # current team roster contains them → they're in the "dropped" set.
+    # A previous league draft that picked the "dropped" player. The
+    # `undrafted` flag should now be False for this player (they WERE
+    # previously drafted) even if they're not currently rostered.
     await db.drafts.insert_one({
         "_id": prev_draft_id, "league_id": league_id,
         "status": "completed",
@@ -133,7 +134,13 @@ async def test_eligible_players_status_flags(db):
     assert by_name[f"Injured Pro {sfx}"]["status_flags"]["injured"] is True
     assert by_name[f"Minors Guy {sfx}"]["status_flags"]["in_minors"] is True
     assert by_name[f"Unsigned Pro {sfx}"]["status_flags"]["unsigned"] is True
-    assert by_name[f"Dropped Pro {sfx}"]["status_flags"]["previously_drafted_dropped"] is True
+    # Previously drafted → undrafted must be False.
+    assert by_name[f"Dropped Pro {sfx}"]["status_flags"]["undrafted"] is False
+    # Never drafted before → undrafted must be True. All three others
+    # in this league had no prior pick, so they carry the undrafted flag.
+    assert by_name[f"Injured Pro {sfx}"]["status_flags"]["undrafted"] is True
+    assert by_name[f"Minors Guy {sfx}"]["status_flags"]["undrafted"] is True
+    assert by_name[f"Unsigned Pro {sfx}"]["status_flags"]["undrafted"] is True
 
     # Cleanup
     await db.players.delete_many({"_id": {"$in": [
@@ -143,9 +150,9 @@ async def test_eligible_players_status_flags(db):
 
 
 @pytest.mark.asyncio
-async def test_previously_drafted_but_still_rostered_is_not_flagged(db):
-    """A player who was drafted in a prior league draft AND is still on
-    a team's current roster must NOT be flagged as `previously_drafted_dropped`."""
+async def test_previously_drafted_player_is_not_undrafted(db):
+    """A player who was drafted in a prior league draft (regardless of
+    current roster status) must NOT be flagged as `undrafted`."""
     from routes import draft_inspection
     from routes.draft_inspection import get_draft_eligible_players
     draft_inspection.setup({"db": db})
@@ -174,7 +181,7 @@ async def test_previously_drafted_but_still_rostered_is_not_flagged(db):
 
     result = await get_draft_eligible_players(str(draft_id), search=sfx, limit=10)
     by_name = {p["name"]: p for p in result["players"]}
-    assert by_name[f"Still Rostered {sfx}"]["status_flags"]["previously_drafted_dropped"] is False
+    assert by_name[f"Still Rostered {sfx}"]["status_flags"]["undrafted"] is False
 
     await db.players.delete_one({"_id": rostered.inserted_id})
     await db.drafts.delete_many({"_id": {"$in": [draft_id, prev_draft_id]}})

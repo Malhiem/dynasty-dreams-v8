@@ -10,18 +10,20 @@
 //   • Cross (medical)   — injured / IR
 //   • Down arrow        — playing in minors (AHL / ECHL / league minors)
 //   • Doc / signature   — unsigned (NHL rights not held OR contract lapsed)
-//   • History arrow     — previously drafted in this league and dropped
+//   • Sparkles          — undrafted in this fantasy league (fresh name)
 //
-// Zero-config: pass `flags` from the API response and the badge row is
-// empty when none apply.
-import { Cross, ArrowDownToLine, FileWarning, History } from "lucide-react";
+// Multiple flags on the same player render side-by-side (e.g. an
+// injured prospect playing in the AHL shows both the medical cross AND
+// the down arrow). Zero-config: pass `flags` from the API response and
+// the badge row is empty when none apply.
+import { Cross, ArrowDownToLine, FileWarning, Sparkles } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface StatusFlags {
   injured?: boolean;
   in_minors?: boolean;
   unsigned?: boolean;
-  previously_drafted_dropped?: boolean;
+  undrafted?: boolean;
 }
 
 const BADGE_META: Record<keyof StatusFlags, { icon: any; tone: string; label: string }> = {
@@ -40,10 +42,10 @@ const BADGE_META: Record<keyof StatusFlags, { icon: any; tone: string; label: st
     tone: "text-purple-300 border-purple-500/40 bg-purple-500/10",
     label: "Unsigned — no active NHL contract",
   },
-  previously_drafted_dropped: {
-    icon: History,
-    tone: "text-sky-300 border-sky-500/40 bg-sky-500/10",
-    label: "Previously drafted in this league and dropped",
+  undrafted: {
+    icon: Sparkles,
+    tone: "text-emerald-300 border-emerald-500/40 bg-emerald-500/10",
+    label: "Undrafted in this fantasy league — never picked before",
   },
 };
 
