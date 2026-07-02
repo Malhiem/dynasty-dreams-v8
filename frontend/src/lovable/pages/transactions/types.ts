@@ -49,6 +49,12 @@ export interface PendingTrade {
   vetoThreshold?: number;
   onVote?: (vote: "approve" | "veto") => void;
   scoringCategories?: ScoringCategoriesMap;
+  // Iter 232M — Held-during-matchup-lock metadata.
+  deferReason?: string | null;
+  deferNextUnlock?: string | null;
+  // Iter 232M — Counter thread linkage.
+  counteredFrom?: string | null;
+  counteredByTradeId?: string | null;
 }
 
 // FPts (season + per-game) vs Categories (dynamic per-league scoring stats).

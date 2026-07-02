@@ -835,22 +835,28 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
     return trade_doc
 
 
-# ─── Iter 231h — Trade state machine ─────────────────────────────────
+# ─── Iter 231h/232M — Trade state machine ────────────────────────────
 #
 # The full proposal lifecycle is:
 #
 #   proposed                                    (recipient hasn't decided)
 #     ├── recipient accepts → pending           (in league review window)
 #     │     ├── review elapsed → executed       (auto-process)
+#     │     │     └── executes IMMEDIATELY unless the league lineup lock
+#     │     │        is currently active — deferred trades stay `pending`
+#     │     │        with `defer_reason: "matchup_locked"` and retry on
+#     │     │        the next sweep after `defer_next_unlock` passes.
 #     │     └── veto threshold hit → vetoed
 #     ├── recipient rejects → rejected
+#     ├── recipient counters → countered        (new `proposed` trade
+#     │                                          created going the other
+#     │                                          way; `countered_by_trade_id`
+#     │                                          stamped for thread linkage)
 #     └── proposer cancels  → cancelled
 #
 # `processes_at` is null while the trade is `proposed` and only stamped
-# at the moment the recipient accepts. This makes the auto-process
-# worker (`_process_pending_trades`) ignore proposals that no one has
-# accepted yet — fixing the user-reported issue that "trades go straight
-# into pending without a recipient accept/reject step".
+# at the moment the recipient accepts. This makes the auto-processor in
+# server.py ignore proposals that no one has accepted yet.
 
 
 @router.post("/trades/{trade_id}/respond")
@@ -875,8 +881,8 @@ async def respond_to_trade_proposal(trade_id: str, request: Request):
     except Exception:
         body = {}
     action = (body.get("action") or "").lower().strip()
-    if action not in {"accept", "reject"}:
-        raise HTTPException(status_code=400, detail="action must be 'accept' or 'reject'")
+    if action not in {"accept", "reject", "counter"}:
+        raise HTTPException(status_code=400, detail="action must be 'accept', 'reject', or 'counter'")
 
     try:
         trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
@@ -953,6 +959,129 @@ async def respond_to_trade_proposal(trade_id: str, request: Request):
             "trade_id": trade_id,
             "status": "pending",
             "processes_at": processes_at,
+            "responded_at": now_iso,
+        }
+
+    # ── Iter 232M — Counter offer ────────────────────────────────
+    # Recipient counters with a modified trade going the other way.
+    # Original trade transitions to `countered` (terminal); a fresh
+    # `proposed` trade is created with proposer/target swapped and a
+    # `countered_from` pointer so the two trades can be threaded in the
+    # UI. The original proposer receives a notification.
+    if action == "counter":
+        counter_offered = body.get("assets_offered") or []
+        counter_requested = body.get("assets_requested") or []
+        counter_message = (body.get("message") or "").strip() or None
+        if not counter_offered and not counter_requested:
+            raise HTTPException(
+                status_code=400,
+                detail="A counter must include at least one player or draft pick on either side.",
+            )
+
+        # Look up the proposer team (they'll be the TARGET of the counter).
+        proposer_team_id = trade.get("proposer_team_id")
+        proposer_team = None
+        try:
+            proposer_team = await db.teams.find_one({"_id": ObjectId(proposer_team_id)})
+        except Exception:
+            pass
+        if not proposer_team:
+            raise HTTPException(status_code=404, detail="Original proposer team not found")
+
+        # Hydrate player details on both sides (same shape as create_trade_proposal).
+        async def _hydrate(items):
+            out = []
+            for a in items or []:
+                d = dict(a)
+                pid = d.get("player_id")
+                if pid:
+                    try:
+                        player = await db.players.find_one({"_id": ObjectId(pid)})
+                    except Exception:
+                        player = None
+                    if player:
+                        d["player_name"] = player["name"]
+                        d["position"] = player["position"]
+                        d["nhl_team"] = player.get("team", "")
+                        d["points"] = player.get("points", 0)
+                        d["goals"] = player.get("goals", 0)
+                        d["assists"] = player.get("assists", 0)
+                out.append(d)
+            return out
+
+        offered_details = await _hydrate(counter_offered)
+        requested_details = await _hydrate(counter_requested)
+
+        # Same review-period-hours resolution as the original trade so the
+        # counter respects the league's configured window when accepted.
+        review_period_hours = trade.get("_review_period_hours")
+        if review_period_hours is None:
+            league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+            review_period_hours = _resolve_review_period_hours(league or {})
+
+        counter_doc = {
+            "league_id": league_id,
+            # Counter is FROM the original target TO the original proposer.
+            "proposer_team_id": target_team_id,
+            "proposer_team_name": target_team["name"],
+            "proposer_id": user["_id"],
+            "target_team_id": proposer_team_id,
+            "target_team_name": proposer_team["name"],
+            "target_owner_id": proposer_team["owner_id"],
+            "assets_offered": offered_details,
+            "assets_requested": requested_details,
+            "conditions": [],
+            "conditional": False,
+            "pick_upgrades": [],
+            "message": counter_message,
+            "status": "proposed",
+            "votes": {"approve": 0, "veto": 0, "voters": []},
+            "submitted_at": now_iso,
+            "processes_at": None,
+            "responded_at": None,
+            "processed_at": None,
+            "_review_period_hours": review_period_hours,
+            # ─── Counter thread linkage ─────────────────────────────
+            "countered_from": trade_id,
+            "counter_thread_root": trade.get("counter_thread_root") or trade_id,
+            "counter_depth": int(trade.get("counter_depth") or 0) + 1,
+        }
+        counter_result = await db.trades.insert_one(counter_doc)
+        counter_id = str(counter_result.inserted_id)
+
+        # Retire the original trade with a link back to the counter.
+        await db.trades.update_one(
+            {"_id": trade["_id"]},
+            {"$set": {
+                "status": "countered",
+                "responded_at": now_iso,
+                "responded_by": user["_id"],
+                "response_action": "counter",
+                "countered_by_trade_id": counter_id,
+            }},
+        )
+
+        await _broadcast(f"league_{league_id}", "trade_countered", {
+            "trade_id": trade_id,
+            "counter_trade_id": counter_id,
+            "proposer": trade.get("target_team_name"),
+            "target": trade.get("proposer_team_name"),
+        })
+
+        # Notify the original proposer (now the recipient of the counter).
+        await _create_notification(
+            trade.get("proposer_id"),
+            NT_TRADE_PROPOSED,
+            "Counter Offer Received",
+            f"{trade.get('target_team_name')} countered your trade proposal. Review, accept, reject, or counter again.",
+            league_id,
+            f"/transactions/trade/{counter_id}",
+        )
+
+        return {
+            "trade_id": trade_id,
+            "status": "countered",
+            "counter_trade_id": counter_id,
             "responded_at": now_iso,
         }
 

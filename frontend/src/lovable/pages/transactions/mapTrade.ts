@@ -85,6 +85,11 @@ export function mapTrade(t, { teamName, leagueTeamsCount, voteState, castVote })
       vetoThreshold: voteState[tradeId]?.veto_threshold?.teams_required ?? 0,
       onVote: (vote) => castVote(tradeId, vote),
       scoringCategories: t.scoring_categories,
+      // Iter 232M — Held during matchup lock + counter thread linkage.
+      deferReason: t.defer_reason || null,
+      deferNextUnlock: t.defer_next_unlock || null,
+      counteredFrom: t.countered_from || null,
+      counteredByTradeId: t.countered_by_trade_id || null,
     },
   };
 }

@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowRightLeft, ThumbsUp, ThumbsDown, AlertTriangle } from "lucide-react";
 import TeamLink from "@/lovable/components/TeamLink";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
-import { statusConfig } from "./statusConfig";
+import { statusConfig, DEFERRED_PILL } from "./statusConfig";
 import { selectCategoriesForAssets, computeAssetTotals, formatCategoryTotal, fmtCapHit } from "./types";
 
 export function TradeCard({ trade, viewMode }) {
@@ -141,10 +141,27 @@ export function TradeCard({ trade, viewMode }) {
               <TeamLink name={trade.teamB} />
             </CardTitle>
           </div>
-          <Badge variant={status.variant} className={status.className}>
-            <StatusIcon className="h-3 w-3 mr-1" />
-            {status.label}
-          </Badge>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Badge variant={status.variant} className={status.className}>
+              <StatusIcon className="h-3 w-3 mr-1" />
+              {status.label}
+            </Badge>
+            {trade.deferReason === "matchup_locked" && (
+              <Badge
+                variant="outline"
+                className={DEFERRED_PILL.className}
+                data-testid={`trade-deferred-${trade.id}`}
+                title={
+                  trade.deferNextUnlock
+                    ? `Trade will execute after lineup lock lifts at ${trade.deferNextUnlock.slice(0, 16).replace("T", " ")}`
+                    : "Held until the next matchup unlock"
+                }
+              >
+                <DEFERRED_PILL.icon className="h-3 w-3 mr-1" />
+                {DEFERRED_PILL.label}
+              </Badge>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
           <span>Submitted: {trade.submittedAt}</span>

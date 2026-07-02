@@ -22,7 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft, Check, X, AlertCircle, Loader2, Clock, ArrowRightLeft } from "lucide-react";
+import { ArrowLeft, Check, X, AlertCircle, Loader2, Clock, ArrowRightLeft, Reply } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -36,6 +36,8 @@ const STATUS_META: Record<string, { label: string; tone: string }> = {
   executed: { label: "Executed", tone: "bg-green-500/20 text-green-300" },
   cancelled: { label: "Cancelled", tone: "bg-zinc-500/20 text-zinc-300" },
   expired: { label: "Expired", tone: "bg-zinc-500/20 text-zinc-300" },
+  // Iter 232M — countered = terminal state; a linked counter proposal exists.
+  countered: { label: "Countered", tone: "bg-sky-500/20 text-sky-300" },
 };
 
 function AssetList({ title, assets, testId }: { title: string; assets: any[]; testId: string }) {
@@ -268,6 +270,32 @@ export default function TradeDetail() {
               </div>
             )}
 
+            {/* Iter 232M — Cross-links for counter thread navigation. */}
+            {trade.countered_by_trade_id && (
+              <div className="rounded-md bg-sky-500/10 border border-sky-500/30 p-3 text-sm text-sky-200 flex items-center justify-between gap-2" data-testid="trade-detail-countered-by">
+                <span>This trade was countered. A new proposal was sent the other way.</span>
+                <Link
+                  to={`/transactions/trade/${trade.countered_by_trade_id}`}
+                  className="text-sky-300 hover:text-sky-100 underline underline-offset-2"
+                  data-testid="trade-detail-countered-by-link"
+                >
+                  View counter →
+                </Link>
+              </div>
+            )}
+            {trade.countered_from && (
+              <div className="rounded-md bg-sky-500/10 border border-sky-500/30 p-3 text-sm text-sky-200 flex items-center justify-between gap-2" data-testid="trade-detail-countered-from">
+                <span>This is a counter to a previous trade proposal.</span>
+                <Link
+                  to={`/transactions/trade/${trade.countered_from}`}
+                  className="text-sky-300 hover:text-sky-100 underline underline-offset-2"
+                  data-testid="trade-detail-countered-from-link"
+                >
+                  View original →
+                </Link>
+              </div>
+            )}
+
             {showRejectInput && canRespond && (
               <div className="space-y-2 pt-2" data-testid="trade-detail-reject-reason-wrap">
                 <p className="text-xs text-[#A1A1AA]">Optional — share why you&apos;re rejecting:</p>
@@ -303,6 +331,25 @@ export default function TradeDetail() {
                 >
                   {acting === "reject" ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <X className="h-4 w-4 mr-1.5" />}
                   {showRejectInput ? "Confirm Reject" : "Reject"}
+                </Button>
+                {/* Iter 232M — Counter offer. Navigates to the Trade Block
+                    with a note; when the user submits their counter it
+                    goes through POST /trades/{originalId}/respond with
+                    action=counter (backend endpoint is live — the deep-
+                    link here is the entry point for the flow). */}
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    navigate(
+                      `/trade-block?counter_from=${tradeId}&with=${trade.proposer_team_id}`,
+                    );
+                  }}
+                  disabled={acting !== ""}
+                  data-testid="trade-detail-counter-btn"
+                  className="w-full sm:w-auto min-h-[44px] border-sky-500/40 text-sky-300 hover:bg-sky-500/10"
+                >
+                  <Reply className="h-4 w-4 mr-1.5" />
+                  Counter
                 </Button>
                 <Button
                   onClick={handleAccept}

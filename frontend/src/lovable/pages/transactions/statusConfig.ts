@@ -1,7 +1,7 @@
 // @ts-nocheck
 // Iter 232L (refactor) — Trade status → badge config used by TradeCard.
 // Extracted so status glyphs + colours have a single source of truth.
-import { Clock, CheckCircle2, XCircle, GitBranch, MinusCircle } from "lucide-react";
+import { Clock, CheckCircle2, XCircle, GitBranch, MinusCircle, Reply, Lock } from "lucide-react";
 
 export const statusConfig: Record<string, { label: string; icon: any; variant: "outline" | "destructive"; className: string }> = {
   pending: { label: "Pending Review", icon: Clock, variant: "outline", className: "border-amber-500/50 text-amber-400" },
@@ -14,4 +14,15 @@ export const statusConfig: Record<string, { label: string; icon: any; variant: "
   conditional: { label: "Conditional", icon: GitBranch, variant: "outline", className: "border-sky-500/50 text-sky-400" },
   withdrawn: { label: "Withdrawn", icon: MinusCircle, variant: "outline", className: "border-muted-foreground/50 text-muted-foreground" },
   rejected: { label: "Rejected", icon: XCircle, variant: "destructive", className: "" },
+  // Iter 232M — recipient countered the proposal; a new `proposed` trade
+  // exists going the other way (see `countered_by_trade_id`).
+  countered: { label: "Countered", icon: Reply, variant: "outline", className: "border-sky-500/50 text-sky-400" },
+};
+
+// Iter 232M — Secondary pill rendered next to the status badge when the
+// trade is deferred because the league lineup lock is currently active.
+export const DEFERRED_PILL = {
+  label: "Held — matchup locked",
+  icon: Lock,
+  className: "border-purple-500/50 text-purple-300",
 };

@@ -1100,6 +1100,42 @@ async def startup():
             await asyncio.sleep(30)
     asyncio.create_task(_pick_trade_sweeper())
 
+    # ── Iter 232M — Pending-trade auto-processor ────────────────────
+    # Every 60s, find `pending` trades whose `processes_at` has elapsed
+    # and call `_execute_trade`. Trades in a locked lineup window are
+    # deferred (see `services/trade_engine.py::_execute_trade`) and re-
+    # tried on the next tick; the engine is idempotent so no double-
+    # executes are possible.
+    async def _pending_trade_processor():
+        from datetime import datetime as _dt, timezone as _tz
+        while True:
+            try:
+                now_iso = _dt.now(_tz.utc).isoformat()
+                cursor = db.trades.find({
+                    "status": "pending",
+                    "processes_at": {"$lte": now_iso, "$ne": None},
+                })
+                async for t in cursor:
+                    try:
+                        result = await _execute_trade(t)
+                        if result and result.get("executed"):
+                            await db.trades.update_one(
+                                {"_id": t["_id"]},
+                                {"$set": {
+                                    "status": "executed",
+                                    "processed_at": _dt.now(_tz.utc).isoformat(),
+                                }},
+                            )
+                    except Exception as ex:
+                        logger.warning(
+                            "pending-trade processor: %s error: %s",
+                            t.get("_id"), ex,
+                        )
+            except Exception as e:
+                logger.error(f"pending-trade processor error: {e}")
+            await asyncio.sleep(60)
+    asyncio.create_task(_pending_trade_processor())
+
     # Iter 210 — Critical Alerts sweeper (broadcasts platform-wide alerts
     # to admins via Socket.IO every 60s).
     asyncio.create_task(platform_ops_routes.alerts_sweeper_loop())

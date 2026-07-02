@@ -829,6 +829,50 @@ async def _execute_trade(trade: dict) -> dict:
     if trade.get("status") == "executed":
         return {"already_executed": True}
 
+    # ── Iter 232M — Defer during a live matchup lock ─────────────
+    # If the league's lineup lock is currently active, do NOT swap
+    # rosters mid-scoring-period. Stamp defer metadata on the trade so
+    # the UI can surface "Held — pending matchup unlock" and let the
+    # auto-processor retry on the next tick after the lock lifts.
+    # Multi-party and manual/commissioner-forced calls bypass this via
+    # trade.get("force_execute") = True.
+    if not trade.get("force_execute"):
+        league_doc = await _db().leagues.find_one({"_id": ObjectId(trade["league_id"])})
+        if league_doc:
+            try:
+                from utils.lineup_lock import evaluate_lineup_lock
+                lock = evaluate_lineup_lock(league_doc)
+            except Exception:
+                lock = {"locked": False}
+            if lock.get("locked"):
+                now_iso = datetime.now(timezone.utc).isoformat()
+                await _db().trades.update_one(
+                    {"_id": trade["_id"]},
+                    {"$set": {
+                        "defer_reason": "matchup_locked",
+                        "defer_next_unlock": lock.get("next_unlock_iso"),
+                        "deferred_at": now_iso,
+                    }},
+                )
+                return {
+                    "executed": False,
+                    "deferred": True,
+                    "reason": "matchup_locked",
+                    "next_unlock_iso": lock.get("next_unlock_iso"),
+                    "message": lock.get("reason"),
+                }
+            elif trade.get("defer_reason"):
+                # Lock has lifted since the last defer — clear the flag
+                # so the UI stops showing the "Held" pill.
+                await _db().trades.update_one(
+                    {"_id": trade["_id"]},
+                    {"$unset": {
+                        "defer_reason": "",
+                        "defer_next_unlock": "",
+                        "deferred_at": "",
+                    }},
+                )
+
     # ── Multi-party (3+ teams) execution path ────────────────
     parties = trade.get("parties") or []
     if parties and trade.get("is_multi_party"):
