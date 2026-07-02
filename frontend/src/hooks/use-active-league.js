@@ -182,6 +182,26 @@ export function useActiveLeague() {
         try { invalidateApiCache(/leagues\?my_leagues=true/); } catch { /* noop */ }
         reloadMyLeagues();
       },
+      // Iter 232N.3 — Player status-flag change toasts. Fires whenever
+      // a player rostered by any of the user's teams flips a status
+      // flag (injured / minors / unsigned). Shown as a low-priority
+      // toast so it doesn't compete with trade/lineup activity.
+      player_status_change: (payload) => {
+        try {
+          const title = payload?.title || `${payload?.player_name || 'Player'} status changed`;
+          const message = payload?.message || '';
+          import('sonner').then(({ toast }) => {
+            toast(title, {
+              description: message,
+              duration: 6000,
+              action: payload?.player_id ? {
+                label: 'View',
+                onClick: () => { window.location.href = `/players/${payload.player_id}`; },
+              } : undefined,
+            });
+          }).catch(() => { /* toast lib unavailable in this route — noop */ });
+        } catch { /* best-effort */ }
+      },
     },
     meId,
   );

@@ -1122,6 +1122,7 @@ export const PlayerRow = ({
     <tr
       className={`border-b border-border/50 hover:bg-secondary/20 transition-colors animate-fade-in ${highlighted ? "bg-success/10" : ""} ${ineligibility.isIneligible ? "bg-destructive/10 border-l-2 border-l-destructive" : ""}`}
       style={{ animationDelay: `${index * 50}ms` }}
+      data-testid={`player-row-${player.id}`}
     >
       <td className="p-2 text-center">
         <PositionButton player={player} highlightedPlayerId={highlightedPlayerId} onToggleHighlight={onToggleHighlight} />

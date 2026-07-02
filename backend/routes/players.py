@@ -1170,3 +1170,49 @@ async def get_player_usage(player_id: str, league_id: str, request: Request):
             "status": m.get("status"),
         })
     return {"player_id": player_id, "league_id": league_id, "weeks": weeks_out}
+
+
+
+@router.post("/players/sync-status-flags")
+async def sync_status_flags(request: Request, league_id: Optional[str] = None):
+    """Iter 232N.3 — Admin/cron trigger for the status-flag change detector.
+
+    Sweeps every player (or every player in the given league — union of
+    all rostered pids), diffs their currently-computed status_flags
+    against the stored snapshot, and emits `player_status_change`
+    websocket events + persistent notifications for every flip.
+
+    Guarded to admins only. Safe to run repeatedly — first run seeds
+    the snapshot silently, subsequent runs only fire on genuine changes.
+    """
+    user = await _get_user(request)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    db = _db()
+    from services.player_status_change_detector import detect_and_emit_status_changes
+
+    if league_id:
+        # Union of every roster in the league.
+        pids: set[str] = set()
+        async for team in db.teams.find(
+            {"league_id": league_id}, {"roster": 1},
+        ):
+            for p in team.get("roster") or []:
+                pids.add(str(p))
+        # Also include every player currently on the players collection
+        # that has an amateur/pro flag — cheap and catches recall events
+        # on players not currently rostered.
+        player_ids = list(pids)
+    else:
+        player_ids = [
+            str(p["_id"]) async for p in db.players.find({}, {"_id": 1})
+        ]
+
+    return await detect_and_emit_status_changes(
+        db,
+        player_ids,
+        broadcast_fn=_deps.get("broadcast_to_room"),
+        create_notification_fn=_deps.get("create_notification"),
+        league_id_for_undrafted=league_id,
+    )
