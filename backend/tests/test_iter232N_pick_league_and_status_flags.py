@@ -81,7 +81,9 @@ async def test_eligible_players_status_flags(db):
     """End-to-end check: the /eligible-players endpoint stamps
     status_flags for injured, in_minors, unsigned, and
     previously_drafted_dropped on the correct rows."""
+    from routes import draft_inspection
     from routes.draft_inspection import get_draft_eligible_players
+    draft_inspection.setup({"db": db})
 
     league_id = str(ObjectId())
     draft_id = ObjectId()
@@ -144,7 +146,9 @@ async def test_eligible_players_status_flags(db):
 async def test_previously_drafted_but_still_rostered_is_not_flagged(db):
     """A player who was drafted in a prior league draft AND is still on
     a team's current roster must NOT be flagged as `previously_drafted_dropped`."""
+    from routes import draft_inspection
     from routes.draft_inspection import get_draft_eligible_players
+    draft_inspection.setup({"db": db})
 
     league_id = str(ObjectId())
     draft_id = ObjectId()

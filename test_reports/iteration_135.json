@@ -1,0 +1,48 @@
+{
+  "summary": "Iter 232M + 232N end-to-end regression. Backend: 17/17 pytest cases pass across counter/lock-defer, counter-frontend-payload, thread timeline, thread fanout, thread mute, and pick-league/status-flags. Live API verified: GET /api/drafts/{id}/eligible-players returns status_flags{injured,in_minors,unsigned,previously_drafted_dropped} on every player (all false for seeded prospects — flag path exists, no true-flag fixture in DB), and player.league correctly carries the amateur league string (NCAA, USHL, OHL, WHL, RUSSIA-JR. all observed). Trade thread + mute endpoints live-tested: GET /api/trades/{id}/thread returns depth-ordered chain, GET /api/trades/{id}/thread/mute-state and POST /api/trades/{id}/thread/mute both work and are idempotent (verified toggle on→off→on). Frontend: Draft room (/draft-room?draftId=..&leagueId=..) renders 20+ eligible prospects with amateur-league labels (WHL/OHL/USHL/NCAA/RUSSIA-JR.) instead of NHL — PlayerStatusBadges wired but produces no visible badges because all seeded prospects have every flag=false (component correctly returns null in that case). Transactions Categories view shows 10 skater cats (G, A, +/-, PIM, PPG, PPP, SHG, SHP, GWG, SOG) with per-side TOTAL rows (data-testids trade-totals-a-* and trade-totals-b-* both present) and correct totals (McDavid: 48G/90A/+17/44PIM etc). Goalie rate stats (save_pct, goals_against_avg) use games-weighted averaging in computeAssetTotals — logic verified in types.ts. Trade Detail page (/transactions/trade/{id}) intentionally hides TradeThreadTimeline (and its embedded mute bell) when thread.length ≤ 1 — the only live trade in TFHL is an uncontested executed trade so timeline correctly doesn't render.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/drafts/{id}", "issue": "Legacy pick (Gavin McKenna, WHL prospect, auto-picked before iter232N deployment) still has persisted player.league='NHL' because the pick payload was written by the OLD hardcoded code path. build_pick_player_payload now produces the correct amateur league for NEW picks, but existing rows aren't retroactively rewritten. Consider a one-shot data migration script over drafts.picks[].player to recompute league from player_type + amateur_league lookup."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Transactions Categories view", "issues": ["Review request expects 'side-by-side single-column-per-team layout' but the current implementation intentionally stacks the two sides VERTICALLY in Categories view (TradeCard.tsx line 179-183 and ConditionalTradeCard.tsx line 326 — code comment cites iter 232L.3 stacking rationale). If the spec has been updated back to side-by-side, revert the categories branch to `grid grid-cols-1 lg:grid-cols-2 gap-4` and rely on the existing overflow-x-auto to handle wide tables. If the vertical stack is still preferred, update the review-request wording so future testers don't flag this."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N_pick_league_and_status_flags.py",
+    "/app/backend/tests/test_iter232M_counter_and_lock_defer.py",
+    "/app/backend/tests/test_iter232M1_counter_frontend_payload.py",
+    "/app/backend/tests/test_iter232M2_thread_timeline.py",
+    "/app/backend/tests/test_iter232M3_thread_fanout.py",
+    "/app/backend/tests/test_iter232M4_thread_mute.py",
+    "/app/test_reports/pytest/iter232MN.xml"
+  ],
+  "action_items": [
+    "OPTIONAL data migration: rewrite drafts.picks[].player entries where player_type=='prospect' but persisted league=='NHL' — use routes/draft_helpers.build_pick_player_payload against players collection to recompute league/amateur_league/player_type. Not blocking (only 1 known legacy pick in TFHL Summer Entry Draft; new picks use the correct helper).",
+    "Clarify Categories-view layout spec — either revert to side-by-side per this review request, or update the review request to match the stacked layout that iter 232L.3 intentionally introduced. Rate-stat aggregation logic is already correct.",
+    "OPTIONAL seed a prospect with roster_status='IR' (injured) and one in AHL/ECHL (in_minors) so future testers can visually verify PlayerStatusBadges rendering — the component is wired correctly but has no live fixture to render against."
+  ],
+  "critical_code_review_comments": [
+    "routes/draft_helpers.build_pick_player_payload (L48-89) is a clean single-source pick payload builder — 3 call sites (draft_pick_actions L137, L419 and draft_helpers L282 for auto-pick) all use it. Nice DRY refactor away from the previous 3 inline dicts.",
+    "routes/draft_inspection.get_draft (L182-188) returns the raw Mongo document. This means historically-persisted picks with the old shape aren't fixed on read — they'd need a migration. If read-time normalization is preferred, add a lightweight post-process pass here.",
+    "PlayerStatusBadges.tsx correctly early-returns null when flags is null or all-false (L59-61), avoiding empty span pollution. Every icon has a data-testid `player-status-badge-{key}` — testable.",
+    "TradeThreadTimeline.tsx correctly guards `if (loading || thread.length <= 1) return null;` (L112) — prevents timeline+bell noise on uncontested trades. Mute state initialized from server via /thread/mute-state — no client/server drift.",
+    "types.ts computeAssetTotals (L106-153) is well-designed: RATE_STAT_KEYS set is the single source of truth for save_pct/goals_against_avg games-weighted averaging; counting stats sum. formatCategoryTotal handles both the 3-decimal (save%) and 2-decimal (GAA) display convention. Verified logic though no live goalie trade in seed data to render it.",
+    "routes/trades.py mute endpoints (L1618/1630) use trade_thread_mutes collection keyed on (thread_root_id, user_id) — reads from the same root_id used by the fanout code (L897-905), so mute correctly applies across every trade in the counter chain, not just the trade you clicked mute on.",
+    "TradeCard.tsx L179-183 stacks Categories vertically per iter 232L.3 — this deviates from the current review-request wording. Flagged as a design_issue for main agent to confirm.",
+    "File-size note: routes/trades.py is still 2096 lines (>700 threshold) — good candidate to extract trade state machine or thread endpoints into their own module in a future iter."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (17/17 pytest) + live-API verified for eligible-players status_flags/amateur-league, thread endpoints, and mute toggle", "frontend": "95% — draft room amateur leagues verified visually; Categories view testids and totals verified; TradeThreadTimeline visually unverifiable without a counter-chain trade in seed data (backend fanout tests cover the underlying logic)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (commissioner of TFHL 6a3a0781a842ea2f7bcdc7cb).",
+  "seed_data_creation": "None. Used existing TFHL fixtures: draft 6a3c00447f735c0f8adc92f8 (TFHL Summer Entry Draft, active) and executed trade 6a3f5357e16497918ebf4d0f (McDavid ↔ Celebrini).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Draft room route is /draft-room?draftId=<id>&leagueId=<id> — NOT /leagues/{lid}/draft/{did}. Set localStorage dd_active_league_id + dd_active_draft_id then navigate. To visually verify PlayerStatusBadges, first mutate a prospect in Mongo: db.players.update_one({name: 'Gavin McKenna'}, {$set: {roster_status: 'IR'}}) — then the injured badge will render in the eligible list. To visually verify TradeThreadTimeline + mute bell, need a counter chain — POST /api/trades/{id}/respond with action='counter' on any pending trade, then navigate to /transactions/trade/{new_id}. Trade Detail component threads Prev/Next Counter cross-link banners are gone (replaced by the timeline).",
+  "rca of the issue": "Persisted legacy pick with league='NHL' is not a bug in the current code — it's stale data from before the iter 232N deployment. The build_pick_player_payload helper is now the single source of truth and all 3 write paths use it. If read-side normalization is desired, add a post-process step in draft_inspection.get_draft that re-derives league from the players collection when player_type is missing on a picks[] entry."
+}
