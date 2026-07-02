@@ -1444,6 +1444,60 @@ async def get_trade(trade_id: str):
     return trade
 
 
+# ─── Iter 232M.2 — Counter thread timeline ───────────────────────────
+# Walks the counter chain (via `counter_thread_root`) from any trade in
+# the thread. Returns every trade in the chain ordered by `counter_depth`
+# with just the fields the timeline UI needs — no full asset hydration,
+# so this is cheap even for long negotiation threads.
+@router.get("/trades/{trade_id}/thread")
+async def get_trade_thread(trade_id: str):
+    db = _db()
+    try:
+        trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    except Exception:
+        trade = None
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+
+    # Root = self when this trade started the thread, else the stored
+    # `counter_thread_root` (a Counter #1 stamps root = original trade id).
+    root_id = trade.get("counter_thread_root") or str(trade["_id"])
+
+    # Any doc whose thread_root matches, plus the root doc itself.
+    cursor = db.trades.find({
+        "$or": [
+            {"_id": ObjectId(root_id)},
+            {"counter_thread_root": root_id},
+        ],
+    })
+    thread = []
+    async for t in cursor:
+        thread.append({
+            "id": str(t["_id"]),
+            "status": t.get("status"),
+            "counter_depth": int(t.get("counter_depth") or 0),
+            "counter_thread_root": t.get("counter_thread_root") or str(t["_id"]),
+            "countered_from": t.get("countered_from"),
+            "countered_by_trade_id": t.get("countered_by_trade_id"),
+            "proposer_team_id": t.get("proposer_team_id"),
+            "proposer_team_name": t.get("proposer_team_name"),
+            "target_team_id": t.get("target_team_id"),
+            "target_team_name": t.get("target_team_name"),
+            "submitted_at": t.get("submitted_at"),
+            "responded_at": t.get("responded_at"),
+            "processed_at": t.get("processed_at"),
+            "response_action": t.get("response_action"),
+            "message": t.get("message"),
+        })
+    thread.sort(key=lambda r: (r["counter_depth"], r.get("submitted_at") or ""))
+    return {
+        "root_id": root_id,
+        "current_id": trade_id,
+        "count": len(thread),
+        "thread": thread,
+    }
+
+
 @router.get("/leagues/{league_id}/pending-trades")
 async def get_pending_trades(league_id: str):
     """Trades currently in flight (status in proposed/pending/voting/conditional).
