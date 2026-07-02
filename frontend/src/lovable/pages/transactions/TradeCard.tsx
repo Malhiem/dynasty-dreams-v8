@@ -117,7 +117,15 @@ export function TradeCard({ trade, viewMode }) {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Iter 232L.3 — In Categories view the per-side asset table has
+            10+ columns; stack the two teams vertically so each side gets
+            the full page width and no columns get clipped. FPts view
+            keeps the side-by-side two-column layout on desktop. */}
+        <div className={
+          viewMode === "categories"
+            ? "grid grid-cols-1 gap-4"
+            : "grid grid-cols-1 lg:grid-cols-2 gap-4"
+        }>
           <div>
             <p className="text-sm font-medium text-muted-foreground mb-2">
               <TeamLink name={trade.teamA} /> sends:

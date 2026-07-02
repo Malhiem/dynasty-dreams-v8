@@ -291,7 +291,13 @@ export function ConditionalTradeCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Iter 232L.3 — Stack teams vertically in Categories view so the
+            wide asset table gets the full page width. */}
+        <div className={
+          viewMode === "categories"
+            ? "grid grid-cols-1 gap-4"
+            : "grid grid-cols-1 lg:grid-cols-2 gap-4"
+        }>
           <div>
             <p className="text-sm font-medium text-muted-foreground mb-2">
               <TeamLink name={mapped.teamA} /> sent:

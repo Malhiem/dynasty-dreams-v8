@@ -253,7 +253,11 @@ const Transactions = () => {
 
   return (
     <AppLayout>
-      <div className="container py-8">
+      {/* Iter 232L.3 — Widen the Transactions page to `max-w-screen-2xl`
+          instead of the default `container` cap so the Categories view's
+          wide asset tables can breathe on desktop. Padding still keeps a
+          comfortable gutter against the sidebar. */}
+      <div className="w-full max-w-screen-2xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <LeagueContextBanner
           title="Transactions"
           kpiLabel="Trades this season"
