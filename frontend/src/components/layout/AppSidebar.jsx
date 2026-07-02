@@ -16,6 +16,7 @@ import {
 import FantasyLevelBadge from "@/components/FantasyLevelBadge";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useChatUnread } from "@/hooks/use-chat-unread";
+import { usePendingWaivers } from "@/hooks/use-pending-waivers";
 import CurrentLeagueDropdown from "./CurrentLeagueDropdown";
 
 const userItems = [
@@ -42,7 +43,8 @@ const socialItems = [
 const managementItems = [
   { title: "Rosters", url: "/roster", icon: Users },
   { title: "Salary Cap", url: "/salary-cap", icon: DollarSign },
-  { title: "Waivers / Players", url: "/waivers", icon: Clock },
+  // Iter 232N.9 — Free Agents unifies Players + Waiver claim management.
+  { title: "Free Agents", url: "/players", icon: Clock },
   { title: "Depth Chart", url: "/depth-chart", icon: Network },
   { title: "Analytics", url: "/analytics", icon: BarChart3 },
   { title: "Trade Analyzer", url: "/trade-analyzer", icon: Scale },
@@ -101,6 +103,9 @@ export function AppSidebar() {
 
   const isActive = (path) => location.pathname === path;
   const { count: chatUnread } = useChatUnread();
+  // Iter 232N.9 — Pending waiver claims count feeds a red badge on the
+  // Free Agents nav link so managers see actionable state at a glance.
+  const { count: pendingWaivers } = usePendingWaivers();
 
   // Iter 231p — Persisted per-user customisation (order + collapse).
   const [groupOrder, setGroupOrder] = useState(loadOrder);
@@ -137,14 +142,19 @@ export function AppSidebar() {
     it.title === "Chat" ? { ...it, badge: chatUnread } : it,
   );
 
+  // Iter 232N.9 — Attach pending-claims badge to the Free Agents link.
+  const managementItemsWithBadge = managementItems.map((it) =>
+    it.title === "Free Agents" ? { ...it, badge: pendingWaivers } : it,
+  );
+
   // Iter 231p — Resolved group registry keyed by stable `key`. Order
   // applied below via `groupOrder`.
   const groupRegistry = useMemo(() => ({
     league_hub: { key: "league_hub", label: "League Hub", items: dynamicLeagueHub },
     social: { key: "social", label: "Social", items: socialItemsWithBadge },
-    team_mgmt: { key: "team_mgmt", label: "Team Management", items: managementItems },
+    team_mgmt: { key: "team_mgmt", label: "Team Management", items: managementItemsWithBadge },
     draft: { key: "draft", label: "Draft", items: draftItems },
-  }), [dynamicLeagueHub, socialItemsWithBadge]);
+  }), [dynamicLeagueHub, socialItemsWithBadge, managementItemsWithBadge]);
 
   const toggleCollapsed = (key) => {
     setCollapsedMap((prev) => ({ ...prev, [key]: !prev[key] }));

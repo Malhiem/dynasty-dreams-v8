@@ -167,6 +167,85 @@ def _resolve_minor_auto_section(
     return "minors"
 
 
+# ─── Shared roster payload builder helpers (iter 232N.10) ──────────
+# Both /roster/{team_id} (light) and /roster/{team_id}/detail (rich)
+# do the same auth + team lookup + player fetch + status_flags/trends
+# enrichment before emitting their (different) payload shapes. Keeping
+# that preamble in a shared helper prevents the two endpoints from
+# silently drifting when we add another badge / bulk-loader.
+
+async def _load_roster_context(request: Request, team_id: str):
+    """Auth, load the team, and pull the raw player documents.
+
+    Returns a tuple ``(team, league, config, players_raw)``. Raises the
+    same HTTPException codes as the endpoints did inline (401/403/404)
+    so callers can bubble them without special handling.
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps.get("_safe_object_id") or (lambda s, _n: ObjectId(s))
+    # SEC-002 — auth first to avoid existence probing.
+    await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    await _require_league_member_for_team(request, team)
+
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
+
+    roster_ids = team.get("roster", []) or []
+    roster_obj_ids = []
+    for pid in roster_ids:
+        try:
+            roster_obj_ids.append(ObjectId(pid))
+        except Exception:
+            pass
+    players_raw = []
+    if roster_obj_ids:
+        players_raw = await db.players.find(
+            {"_id": {"$in": roster_obj_ids}},
+        ).to_list(200)
+    return team, league, config, players_raw
+
+
+async def _build_status_flag_deps(team: dict, roster_ids: list):
+    """Bulk-load the enrichment inputs shared by both roster payloads:
+    the "previously drafted" pid set + the cross-league trends map.
+
+    Returns ``(previously_drafted_pids, trends_map)``.
+    """
+    db = _deps["db"]
+    from routes.player_status import get_previously_drafted_pids
+    from routes.player_trends import fetch_trends_map
+    league_id = team.get("league_id")
+    previously_drafted_pids: set = await get_previously_drafted_pids(
+        db, league_id,
+    )
+    trends_map = await fetch_trends_map(db, [str(pid) for pid in roster_ids])
+    return previously_drafted_pids, trends_map
+
+
+def _player_badge_fields(
+    player: dict,
+    league_id: Optional[str],
+    previously_drafted_pids: set,
+    trends_map: dict,
+) -> dict:
+    """Returns the badge-layer dict (`status_flags` + `trends`) both
+    endpoints attach to each player row. Keeping it in one place means
+    the badge coverage on the light list and the detail payload can
+    never fall out of sync.
+    """
+    from routes.player_status import compute_player_status_flags
+    return {
+        "status_flags": compute_player_status_flags(
+            player, previously_drafted_pids if league_id else None,
+        ),
+        "trends": trends_map.get(str(player["_id"])),
+    }
+
+
 # ─── Models ─────────────────────────────────────────────────────
 
 
@@ -177,41 +256,27 @@ class RosterAction(BaseModel):
 @router.get("/roster/{team_id}")
 async def get_roster(team_id: str, request: Request):
     """Light list — used by player-picker selects + trade modals."""
-    db = _deps["db"]
     calculate_fantasy_points = _deps["calculate_fantasy_points"]
-    # SEC-002 — auth first to avoid existence probing.
-    get_current_user = _deps["get_current_user"]
-    await get_current_user(request)
 
-    team = await db.teams.find_one({"_id": ObjectId(team_id)})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-    # SEC-002 — gate to league members.
-    await _require_league_member_for_team(request, team)
+    # Iter 232N.10 — Shared preamble (auth + team + player fetch).
+    team, _league, config, players_raw = await _load_roster_context(request, team_id)
 
-    roster_players = team.get("roster", [])
     lineup = team.get("lineup") or {}
-    config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
-    # Iter 232N.2 — Pre-compute previously-drafted set once for the
-    # status_flags helper (so we don't fan out queries per player).
-    from routes.player_status import (
-        compute_player_status_flags,
-        get_previously_drafted_pids,
-    )
-    # Iter 232N.7 — Cross-league trend badge attachment on Roster.
-    from routes.player_trends import fetch_trends_map
-    league_id_for_flags = team.get("league_id")
-    previously_drafted_pids: set = await get_previously_drafted_pids(
-        db, league_id_for_flags,
-    )
-    trends_map = await fetch_trends_map(db, [str(p) for p in roster_players])
+    roster_ids = team.get("roster", []) or []
+
+    # Iter 232N.10 — Shared badge-enrichment inputs.
+    previously_drafted_pids, trends_map = await _build_status_flag_deps(team, roster_ids)
+    league_id = team.get("league_id")
+
+    # Index the raw docs by id so we can walk in roster order.
+    by_id = {str(p["_id"]): p for p in players_raw}
     players = []
-    for pid in roster_players:
-        player = await db.players.find_one({"_id": ObjectId(pid)})
+    for pid in roster_ids:
+        player = by_id.get(str(pid))
         if not player:
             continue
         fpts = calculate_fantasy_points(player, config)
-        section_info = lineup.get(pid) or {}
+        section_info = lineup.get(str(pid)) or {}
         section = (section_info.get("section") or "active").lower()
         players.append({
             "player_id": str(player["_id"]),
@@ -241,12 +306,11 @@ async def get_roster(team_id: str, request: Request):
             "shutouts": player.get("shutouts", 0),
             "fantasy_points": fpts,
             "roster_section": section,
-            # Iter 232N.2 — status_flags for badge layer on Roster page.
-            "status_flags": compute_player_status_flags(
-                player, previously_drafted_pids if league_id_for_flags else None,
+            # Iter 232N.10 — shared badge fields (status_flags + trends)
+            # so the light list stays in lockstep with the detail payload.
+            **_player_badge_fields(
+                player, league_id, previously_drafted_pids, trends_map,
             ),
-            # Iter 232N.7 — Cross-league mover badge.
-            "trends": trends_map.get(str(pid)),
         })
     players.sort(key=lambda p: -(p.get("fantasy_points") or 0))
     return {"team_id": team_id, "team_name": team["name"], "players": players}
@@ -366,21 +430,10 @@ async def get_roster_detail(team_id: str, request: Request):
     contracts/eligibility, and roster section assignment with the team's
     lineup overrides honored.
     """
-    db = _deps["db"]
     calculate_fantasy_points = _deps["calculate_fantasy_points"]
-    _safe_object_id = _deps["_safe_object_id"]
-    # SEC-002 — auth first to avoid existence probing.
-    get_current_user = _deps["get_current_user"]
-    await get_current_user(request)
 
-    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
-    # SEC-002 — gate to league members.
-    await _require_league_member_for_team(request, team)
-
-    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
-    config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
+    # Iter 232N.10 — Shared preamble (auth + team + player fetch).
+    team, league, config, players_raw = await _load_roster_context(request, team_id)
 
     roster_ids = team.get("roster", []) or []
     if not roster_ids:
@@ -391,22 +444,11 @@ async def get_roster_detail(team_id: str, request: Request):
             "players": [],
         }
 
-    players_raw = await db.players.find(
-        {"_id": {"$in": [ObjectId(pid) for pid in roster_ids]}},
-    ).to_list(100)
-
-    # Iter 232N.2 + 232N.7 — Bulk-fetch status_flags helper deps + trends
-    # once per request so per-player enrichment doesn't fan out.
-    from routes.player_status import (
-        compute_player_status_flags,
-        get_previously_drafted_pids,
+    # Iter 232N.10 — Shared badge-enrichment inputs.
+    previously_drafted_pids, trends_map_detail = await _build_status_flag_deps(
+        team, [str(p["_id"]) for p in players_raw],
     )
-    from routes.player_trends import fetch_trends_map
     league_id_for_flags = team.get("league_id")
-    previously_drafted_pids: set = await get_previously_drafted_pids(
-        db, league_id_for_flags,
-    )
-    trends_map_detail = await fetch_trends_map(db, [str(p["_id"]) for p in players_raw])
 
     # Imported lazily so importing this router doesn't pull the live-scoring
     # graph at startup (heavy + side-effecting).
@@ -527,12 +569,10 @@ async def get_roster_detail(team_id: str, request: Request):
             "matchupGames": (
                 live.get("games", 0) if isinstance(live.get("games"), int) else 0
             ),
-            # Iter 232N.2 — status_flags for the badge layer on the Team page.
-            "status_flags": compute_player_status_flags(
-                p, previously_drafted_pids if league_id_for_flags else None,
+            # Iter 232N.10 — shared badge fields (status_flags + trends).
+            **_player_badge_fields(
+                p, league_id_for_flags, previously_drafted_pids, trends_map_detail,
             ),
-            # Iter 232N.7 — Cross-league mover trend badge.
-            "trends": trends_map_detail.get(str(p["_id"])),
         })
 
     enriched.sort(key=lambda x: -x["fantasy_points"])

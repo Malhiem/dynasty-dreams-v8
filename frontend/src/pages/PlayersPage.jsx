@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import api from "@/lib/api";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Input } from "@/components/ui/input";
@@ -7,11 +7,13 @@ import { Button } from "@/components/ui/button";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Star, Search, ChevronLeft, ChevronRight, ArrowUp, ArrowDown,
   ArrowUpDown, Calendar,
 } from "lucide-react";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import { usePendingWaivers } from "@/hooks/use-pending-waivers";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
@@ -19,6 +21,7 @@ import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
 import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
+import WaiverManagementPanel from "@/lovable/components/waivers/WaiverManagementPanel";
 
 const VIEWS = [
   { value: "available", label: "All Available Players (default)" },
@@ -348,8 +351,17 @@ function SortHeader({ label, sortKey, currentSort, currentDir, onSort, align = "
 
 export default function PlayersPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { league: activeLeague, leagueId, myTeam, leagueTeams } = useActiveLeague();
   const ownTeamId = myTeam?.id;
+
+  // Iter 232N.9 — Free Agent screen now hosts inline waiver management.
+  // Tab state is URL-synced so deep links (e.g. from notifications) can
+  // land the user directly on My Claims. Legacy `/waivers` route redirects
+  // here with `?tab=waivers`.
+  const initialTab = searchParams.get("tab") === "waivers" ? "waivers" : "players";
+  const [tab, setTab] = useState(initialTab);
+  const { count: pendingWaivers } = usePendingWaivers();
 
   const [view, setView] = useState("available");
   const [position, setPosition] = useState("all");
@@ -433,7 +445,7 @@ export default function PlayersPage() {
       <div className="max-w-[1500px] mx-auto px-2" data-testid="players-page">
         <div className="mb-6 flex items-end justify-between">
           <div>
-            <h1 className="font-heading text-4xl font-bold tracking-tight text-white">PLAYERS</h1>
+            <h1 className="font-heading text-4xl font-bold tracking-tight text-white">FREE AGENTS</h1>
             <p className="text-[#A1A1AA] text-sm">
               {activeLeague ? `Filtered against ${activeLeague.name}` : "Browse every NHL player"}
               {" · "}{total.toLocaleString()} matches
@@ -441,6 +453,35 @@ export default function PlayersPage() {
           </div>
         </div>
 
+        <Tabs
+          value={tab}
+          onValueChange={(v) => {
+            setTab(v);
+            const next = new URLSearchParams(searchParams);
+            if (v === "waivers") next.set("tab", "waivers");
+            else next.delete("tab");
+            setSearchParams(next, { replace: true });
+          }}
+          className="space-y-4"
+        >
+          <TabsList className="bg-secondary" data-testid="free-agent-tabs">
+            <TabsTrigger value="players" data-testid="free-agent-tab-players">
+              Players
+            </TabsTrigger>
+            <TabsTrigger value="waivers" data-testid="free-agent-tab-waivers">
+              Waivers
+              {pendingWaivers > 0 && (
+                <span
+                  className="ml-2 h-4 min-w-[16px] px-1 rounded-full bg-[#FF3B5C] text-white text-[10px] font-bold flex items-center justify-center"
+                  data-testid="free-agent-tab-waivers-badge"
+                >
+                  {pendingWaivers > 99 ? "99+" : pendingWaivers}
+                </span>
+              )}
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="players" className="space-y-4">
         {/* Filter bar */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-2 mb-4 items-center">
           <div className="md:col-span-3">
@@ -676,6 +717,12 @@ export default function PlayersPage() {
             </div>
           </div>
         )}
+          </TabsContent>
+
+          <TabsContent value="waivers" data-testid="free-agent-tab-waivers-content">
+            <WaiverManagementPanel />
+          </TabsContent>
+        </Tabs>
       </div>
     </AppLayout>
   );

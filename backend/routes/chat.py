@@ -176,7 +176,7 @@ async def _ensure_dm_channel(db, league_id: str, team_a_id: str, team_b_id: str)
     # Resolve team docs for participants + display name
     teams = await db.teams.find({"_id": {"$in": [ObjectId(p) for p in pair]}}).to_list(2)
     participants = [t.get("owner_id") for t in teams if t.get("owner_id")]
-    display = " ↔ ".join(t.get("name", "?") for t in teams)
+    display = " ↔ ".join((t.get("name") or "?") for t in teams)
     doc = {
         "league_id": league_id,
         "name": display,
@@ -221,9 +221,19 @@ async def list_channels(league_id: str, request: Request):
             continue
         sc = _serialize(c)
         # Unread count
+        # Iter 232N.9 — Exclude the user's own messages from their
+        # unread badge (was previously counting self-authored messages
+        # in channels that had never been marked read, producing a
+        # phantom `#` badge on channels the user technically hasn't
+        # visited even though nothing NEW from others is there). The
+        # sidebar aggregate at `/chat/unread` already applies this
+        # filter; the per-channel list must match.
         read = await db.chat_reads.find_one({"user_id": user["_id"], "channel_id": str(c["_id"])})
         last_read = read.get("last_read_at") if read else None
-        unread_q = {"channel_id": str(c["_id"])}
+        unread_q: dict = {
+            "channel_id": str(c["_id"]),
+            "user_id": {"$ne": user["_id"]},
+        }
         if last_read:
             unread_q["created_at"] = {"$gt": last_read}
         sc["unread"] = await db.chat_messages.count_documents(unread_q)
