@@ -171,6 +171,21 @@ async def dedupe_dm_channels_and_create_index(db) -> dict:
         logging.getLogger(__name__).warning(
             "chat_channels unique default-channel index skipped: %s", e,
         )
+
+    # Iter 232N.13 — Same dedup safety net for the new `group_dm` kind
+    # so concurrent multi-team-picker submissions can't produce dupes.
+    try:
+        await db.chat_channels.create_index(
+            [("league_id", 1), ("kind", 1), ("group_key", 1)],
+            unique=True,
+            partialFilterExpression={"kind": "group_dm", "group_key": {"$exists": True}},
+            name="uniq_group_dm_key_per_league",
+        )
+    except Exception as e:  # pragma: no cover — log-only
+        import logging
+        logging.getLogger(__name__).warning(
+            "chat_channels unique group-DM index skipped: %s", e,
+        )
     return stats
 
 
@@ -294,7 +309,9 @@ async def _require_channel_access(db, channel: dict, user_id: str) -> None:
     """
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
-    if channel.get("kind") == "dm":
+    # Iter 232N.13 — Group DMs share the DM access model: participants
+    # only. Same code path avoids drift between DM/group_dm gating.
+    if channel.get("kind") in ("dm", "group_dm"):
         if user_id not in (channel.get("participants") or []):
             raise HTTPException(status_code=403, detail="Not a participant")
         return
@@ -350,6 +367,66 @@ async def _ensure_dm_channel(db, league_id: str, team_a_id: str, team_b_id: str)
     return doc
 
 
+async def _ensure_group_dm(db, league_id: str, team_ids: list[str], creator_user_id: str) -> dict:
+    """Iter 232N.13 — Get or create a group DM channel for 3+ teams.
+
+    Dedup key is `group_key = "|".join(sorted(team_ids))`, stored as a
+    scalar so we can partial-unique-index it (Mongo indexes each array
+    element individually, so we can't unique-index the raw team_ids
+    array). `participants` is the union of team owner_ids — access
+    control reuses the DM path via `_require_channel_access`.
+
+    The name is auto-generated from team names ("Team A · Team B ·
+    Team C", truncated at 60 chars); users can rename via
+    `PATCH /chat/channels/{id}` if that endpoint is added later.
+    """
+    sorted_ids = sorted(set(team_ids))
+    if len(sorted_ids) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Group DMs require at least 3 teams — use a regular DM for 2 teams",
+        )
+    group_key = "|".join(sorted_ids)
+    existing = await db.chat_channels.find_one({
+        "league_id": league_id, "kind": "group_dm", "group_key": group_key,
+    })
+    if existing:
+        return existing
+    teams = await db.teams.find(
+        {"_id": {"$in": [ObjectId(t) for t in sorted_ids]}},
+    ).to_list(len(sorted_ids))
+    if len(teams) != len(sorted_ids):
+        raise HTTPException(status_code=404, detail="One or more teams not found")
+    for t in teams:
+        if t.get("league_id") != league_id:
+            raise HTTPException(
+                status_code=400,
+                detail="All teams must belong to the same league",
+            )
+    participants = list({t.get("owner_id") for t in teams if t.get("owner_id")})
+    display = " · ".join((t.get("name") or "?") for t in teams)
+    if len(display) > 60:
+        display = display[:57] + "…"
+    doc = await db.chat_channels.find_one_and_update(
+        {"league_id": league_id, "kind": "group_dm", "group_key": group_key},
+        {
+            "$setOnInsert": {
+                "league_id": league_id,
+                "name": display,
+                "kind": "group_dm",
+                "participants": participants,
+                "team_ids": sorted_ids,
+                "group_key": group_key,
+                "created_by": creator_user_id,
+                "created_at": datetime.now(timezone.utc),
+            },
+        },
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return doc
+
+
 # ─────────────── Endpoints ──────────────────────────────────────────
 
 
@@ -375,8 +452,8 @@ async def list_channels(league_id: str, request: Request):
     cursor = db.chat_channels.find({"league_id": league_id})
     channels = []
     async for c in cursor:
-        # Open channels are visible to all members; DMs only to participants.
-        if c["kind"] == "dm" and user["_id"] not in (c.get("participants") or []):
+        # Open channels are visible to all members; DMs + group DMs only to participants.
+        if c["kind"] in ("dm", "group_dm") and user["_id"] not in (c.get("participants") or []):
             continue
         sc = _serialize(c)
         # Unread count
@@ -456,6 +533,38 @@ async def create_channel(payload: dict, request: Request):
     return _serialize(doc)
 
 
+@router.post("/chat/group-dm")
+async def create_group_dm(payload: dict, request: Request):
+    """Iter 232N.13 — Get-or-create a 3+ team group DM channel.
+
+    Body: `{ league_id: str, team_ids: [t1, t2, t3, ...] }`. Caller must
+    own one of `team_ids` (i.e. they're inviting themselves in). All
+    teams must belong to `league_id`. Returns the resolved channel doc
+    so the client can navigate straight to the new thread.
+    """
+    db = _db()
+    user = await _get_user(request)
+    league_id = payload.get("league_id")
+    team_ids = payload.get("team_ids") or []
+    if not league_id or not isinstance(team_ids, list) or len(team_ids) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="league_id and at least 3 team_ids are required",
+        )
+    await _require_league_member(db, league_id, user["_id"])
+    # Caller must own one of the teams — otherwise anyone in the league
+    # could spin up group threads that include them but talk about
+    # other people (spam / harassment vector).
+    my_team = await _user_team(db, league_id, user["_id"])
+    if not my_team or str(my_team["_id"]) not in team_ids:
+        raise HTTPException(
+            status_code=403,
+            detail="You must include your own team in the group DM",
+        )
+    chan = await _ensure_group_dm(db, league_id, team_ids, user["_id"])
+    return _serialize(chan)
+
+
 @router.delete("/chat/channels/{channel_id}")
 async def delete_channel(channel_id: str, request: Request):
     db = _db()
@@ -465,7 +574,7 @@ async def delete_channel(channel_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Channel not found")
     if chan.get("is_default"):
         raise HTTPException(status_code=400, detail="Default channels can't be deleted")
-    if chan["kind"] == "dm":
+    if chan["kind"] in ("dm", "group_dm"):
         raise HTTPException(status_code=400, detail="DMs can't be deleted")
     if not await _is_commissioner(db, chan["league_id"], user["_id"]):
         raise HTTPException(status_code=403, detail="Only commissioners can delete channels")
@@ -726,7 +835,7 @@ async def total_unread(request: Request, league_id: Optional[str] = None):
     cursor = db.chat_channels.find(chan_q)
     channel_ids: list[str] = []
     async for c in cursor:
-        if c["kind"] == "dm":
+        if c["kind"] in ("dm", "group_dm"):
             if uid not in (c.get("participants") or []):
                 continue
         else:

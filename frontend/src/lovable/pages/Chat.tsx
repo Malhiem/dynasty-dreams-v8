@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Send, Users, Hash, Plus, BellOff, Bell, Trash2, MoreHorizontal, Loader2, Check,
+  UserPlus,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
@@ -58,7 +59,7 @@ function initialsFor(name) {
 
 const Chat = () => {
   const { user } = useAuth();
-  const { leagueId, league, myLeagues } = useActiveLeague();
+  const { leagueId, league, myLeagues, leagueTeams, myTeam } = useActiveLeague();
   const { refresh: refreshUnread } = useChatUnread();
 
   // Iter 232b — Subscribe to the league socket room so the header
@@ -80,6 +81,10 @@ const Chat = () => {
   const [creating, setCreating] = useState(false);
   const [newChanName, setNewChanName] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  // Iter 232N.13 — Group DM composer state (multi-team picker).
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupPicked, setGroupPicked] = useState<Record<string, boolean>>({});
+  const [groupCreating, setGroupCreating] = useState(false);
   // Iter 230aw — One-time onboarding pulse for the channel swipes.
   const [hintActive, markHintShown] = useOnboardingHint("chat-channels");
 
@@ -249,7 +254,7 @@ const Chat = () => {
   // ── Delete channel (commissioner-only, non-default) ───────
   const handleDeleteChannel = async (chan) => {
     if (chan.is_default) return;
-    if (chan.kind === "dm") return;
+    if (chan.kind === "dm" || chan.kind === "group_dm") return;
     if (!window.confirm(`Delete #${chan.name}? This will remove all messages.`)) return;
     try {
       await api.delete(`/chat/channels/${chan._id}`);
@@ -258,6 +263,38 @@ const Chat = () => {
       await loadChannels();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not delete channel");
+    }
+  };
+
+  // Iter 232N.13 — Create/open a 3+ team group DM. Auto-selects the
+  // caller's own team (they must always be in the group they open).
+  const handleCreateGroupDm = async () => {
+    if (!leagueId || !myTeam?.id) return;
+    const teamIds = Array.from(new Set([
+      myTeam.id,
+      ...Object.entries(groupPicked)
+        .filter(([_, v]) => v)
+        .map(([k]) => k),
+    ]));
+    if (teamIds.length < 3) {
+      toast.error("Pick at least 2 other teams to start a group DM");
+      return;
+    }
+    setGroupCreating(true);
+    try {
+      const { data } = await api.post(`/chat/group-dm`, {
+        league_id: leagueId,
+        team_ids: teamIds,
+      });
+      toast.success("Group DM opened");
+      setGroupOpen(false);
+      setGroupPicked({});
+      await loadChannels();
+      if (data?._id) setSelectedId(data._id);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not open group DM");
+    } finally {
+      setGroupCreating(false);
     }
   };
 
@@ -303,13 +340,29 @@ const Chat = () => {
         }`}
       >
         <button
-          data-testid={c.kind === "dm" ? `chat-dm-${c._id}` : `chat-channel-${c.name}`}
+          data-testid={
+            c.kind === "dm" ? `chat-dm-${c._id}`
+            : c.kind === "group_dm" ? `chat-group-dm-${c._id}`
+            : `chat-channel-${c.name}`
+          }
           onClick={() => setSelectedId(c._id)}
           className="flex-1 flex items-center justify-between px-3 py-2 truncate"
         >
           <span className="flex items-center gap-2 truncate">
             {c.kind === "dm" ? (
               <Avatar className="h-5 w-5"><AvatarFallback className="text-[10px] bg-secondary">{initialsFor(c.name)}</AvatarFallback></Avatar>
+            ) : c.kind === "group_dm" ? (
+              // Iter 232N.13 — Group DMs use the multi-person icon +
+              // a small participant count so 3-way trade threads read
+              // differently from 1:1 DMs in the sidebar.
+              <span className="relative shrink-0">
+                <Users className="h-4 w-4 text-primary" />
+                {Array.isArray(c.team_ids) && (
+                  <span className="absolute -top-1 -right-2 text-[9px] font-bold text-muted-foreground">
+                    {c.team_ids.length}
+                  </span>
+                )}
+              </span>
             ) : (
               <Hash className="h-4 w-4 shrink-0" />
             )}
@@ -397,6 +450,10 @@ const Chat = () => {
 
   const channelList = channels.filter((c) => c.kind === "channel");
   const dmList = channels.filter((c) => c.kind === "dm");
+  // Iter 232N.13 — Group DMs rendered in their own list below the 1:1
+  // DMs so managers can distinguish multi-team trade threads at a
+  // glance without changing the row layout.
+  const groupDmList = channels.filter((c) => c.kind === "group_dm");
   // Iter 230aw — Single row across BOTH lists that gets the
   // onboarding pulse (prefer the first regular channel, fall back to
   // the first DM if the league has none).
@@ -502,6 +559,98 @@ const Chat = () => {
                   {dmList.map(renderRow)}
                 </div>
               </div>
+
+              {/* Iter 232N.13 — Group DMs (3+ team threads) with a
+                  "New group DM" affordance that opens the multi-team
+                  picker. Rendered as its own section so 1:1 vs group
+                  threads are visually distinguishable. */}
+              <div>
+                <div className="flex items-center justify-between mb-2 px-2">
+                  <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                    Group DMs
+                  </h3>
+                  <Dialog open={groupOpen} onOpenChange={(open) => {
+                    setGroupOpen(open);
+                    if (!open) setGroupPicked({});
+                  }}>
+                    <DialogTrigger asChild>
+                      <button
+                        data-testid="chat-new-group-dm-btn"
+                        className="hover:bg-secondary rounded p-1"
+                        title="New group DM (3+ teams)"
+                      >
+                        <UserPlus className="h-3.5 w-3.5" />
+                      </button>
+                    </DialogTrigger>
+                    <DialogContent data-testid="chat-new-group-dm-modal">
+                      <DialogHeader>
+                        <DialogTitle>New group DM</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          Pick at least <strong>2 other teams</strong> — your
+                          team is included automatically. Perfect for 3-way
+                          trade talks.
+                        </p>
+                        <div className="max-h-72 overflow-y-auto space-y-1 border border-border rounded-md p-2">
+                          {(leagueTeams || [])
+                            .filter((t) => t.id !== myTeam?.id)
+                            .map((t) => (
+                              <label
+                                key={t.id}
+                                className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-secondary/50 cursor-pointer"
+                                data-testid={`chat-group-dm-pick-${t.id}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  className="accent-primary"
+                                  checked={!!groupPicked[t.id]}
+                                  onChange={(e) => setGroupPicked((prev) => ({
+                                    ...prev, [t.id]: e.target.checked,
+                                  }))}
+                                />
+                                <span className="text-sm">{t.name}</span>
+                              </label>
+                            ))}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Selected: {Object.values(groupPicked).filter(Boolean).length + 1}{" "}
+                          teams (including you)
+                        </p>
+                      </div>
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          onClick={() => { setGroupOpen(false); setGroupPicked({}); }}
+                          data-testid="chat-new-group-dm-cancel"
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={handleCreateGroupDm}
+                          disabled={
+                            groupCreating ||
+                            Object.values(groupPicked).filter(Boolean).length < 2
+                          }
+                          data-testid="chat-new-group-dm-submit"
+                        >
+                          {groupCreating ? (
+                            <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Opening…</>
+                          ) : "Open group DM"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+                <div className="space-y-1" data-testid="chat-group-dms-list">
+                  {groupDmList.length === 0 && (
+                    <div className="px-2 text-xs text-muted-foreground">
+                      No group DMs yet
+                    </div>
+                  )}
+                  {groupDmList.map(renderRow)}
+                </div>
+              </div>
             </div>
           </ScrollArea>
         </div>
@@ -512,6 +661,8 @@ const Chat = () => {
             <div className="flex items-center gap-2">
               {selected?.kind === "dm" ? (
                 <Avatar className="h-6 w-6"><AvatarFallback className="text-xs bg-secondary">{initialsFor(selected?.name)}</AvatarFallback></Avatar>
+              ) : selected?.kind === "group_dm" ? (
+                <Users className="h-5 w-5 text-primary" />
               ) : (
                 <Hash className="h-5 w-5 text-muted-foreground" />
               )}
