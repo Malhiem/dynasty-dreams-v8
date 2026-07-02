@@ -397,6 +397,37 @@ input:focus, select:focus, textarea:focus {
   }
 }
 
+/* Iter 232l — Draft-tab countdown pulse.
+ *
+ * Fires continuously (2s cycle) whenever the countdown pill enters
+ * the <1h window OR when the draft is live. Layered on top of the
+ * tone class (amber/green) so the underlying colour still telegraphs
+ * proximity while the pulse conveys urgency. Uses `box-shadow` so it
+ * doesn't affect layout / neighbours. Cyan→green tween emphasises
+ * the transition from "getting close" to "happening now".
+ */
+@keyframes draftCountdownPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 0 rgba(0, 210, 255, 0.35),
+      0 0 6px 0 rgba(0, 210, 255, 0.15);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(52, 199, 89, 0.30),
+      0 0 12px 2px rgba(52, 199, 89, 0.35);
+  }
+}
+.draft-countdown-pulse {
+  animation: draftCountdownPulse 2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .draft-countdown-pulse {
+    animation: none;
+    box-shadow: 0 0 0 2px rgba(52, 199, 89, 0.5);
+  }
+}
+
 /* Status badges */
 .badge {
   display: inline-flex;

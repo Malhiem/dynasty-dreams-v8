@@ -365,6 +365,10 @@ export default function CommissionerPage() {
                   bonusCount={nextDraftBonusCount}
                   teamCount={teams.length}
                   maxTeams={selectedLeague?.max_teams}
+                  unclaimedSeats={
+                    (selectedLeague?.max_teams || teams.length) -
+                    teams.filter((t) => t.owner_id).length
+                  }
                 />
               </CardHeader>
               <CardContent className="space-y-3">
