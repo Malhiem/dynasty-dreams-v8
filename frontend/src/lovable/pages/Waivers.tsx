@@ -12,7 +12,7 @@ import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Clock, DollarSign, Plus, History, TrendingUp, ChevronDown, ChevronUp, AlertTriangle, ArrowRight } from "lucide-react";
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import api, { formatApiError } from "@/lib/api";
@@ -562,11 +562,36 @@ const Waivers = () => {
           </Card>
         </div>
 
-        <Tabs defaultValue="available" className="space-y-4">
+        {/* Iter 232N.8 — Free-agent + waivers unified on /players.
+            The Waivers page now focuses on CLAIM management; player
+            discovery + add flow live on the Players page which shows
+            both FA and waiver-eligible players in one table with the
+            same badges + trend chips. */}
+        <div
+          className="mb-6 rounded-lg border border-primary/40 bg-primary/10 p-4 flex flex-wrap items-center justify-between gap-3"
+          data-testid="waivers-unified-cta"
+        >
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-foreground">Looking for available players?</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Free agents and players on waivers are now unified on the Players page —
+              with FA/W status badges and trend chips inline.
+            </p>
+          </div>
+          <Link
+            to="/players?view=available"
+            className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-semibold uppercase tracking-wider hover:bg-primary/90 transition-colors"
+            data-testid="waivers-unified-cta-link"
+          >
+            Browse Players →
+          </Link>
+        </div>
+
+        <Tabs defaultValue="my-claims" className="space-y-4">
           <TabsList className="bg-secondary">
-            <TabsTrigger value="available">Available Players</TabsTrigger>
             <TabsTrigger value="my-claims">My Claims ({myClaims.length})</TabsTrigger>
             <TabsTrigger value="history">Claim History</TabsTrigger>
+            <TabsTrigger value="available">Available Players (legacy)</TabsTrigger>
           </TabsList>
 
           <TabsContent value="available">

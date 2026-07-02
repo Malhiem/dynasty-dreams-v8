@@ -176,6 +176,28 @@ async def get_players(
     )
     # Iter 232N.7 — Cross-league trend badge attachment.
     from routes.player_trends import fetch_trends_map
+    # Iter 232N.8 — Waiver-status enrichment.
+    # For every player about to be surfaced on `/players`, look up
+    # whether the requested league has an active pending waiver claim
+    # against them. If yes, stamp `waiver_status = {on_waivers: True,
+    # processes_at}` so the frontend can render the "W · clears Fri"
+    # pill and pick the correct add-button color. `on_waivers=False`
+    # short-circuits to Free-Agent semantics on the row.
+    pending_waivers_map: dict[str, str] = {}
+    if league_id:
+        async for c in db.waiver_claims.find(
+            {"league_id": league_id, "status": "pending"},
+            {"player_id": 1, "processes_at": 1},
+        ):
+            pid = str(c.get("player_id") or "")
+            proc = c.get("processes_at")
+            if not pid:
+                continue
+            # Earliest processes_at wins (multi-claim clears at the
+            # first one — the whole cohort processes together).
+            prev = pending_waivers_map.get(pid)
+            if prev is None or (proc and proc < prev):
+                pending_waivers_map[pid] = proc
     previously_drafted_pids: set = set()
     if league_id:
         previously_drafted_pids = await get_previously_drafted_pids(db, league_id)
@@ -353,6 +375,14 @@ async def get_players(
         )
         # Iter 232N.7 — Cross-league mover badge.
         player["trends"] = trends_map.get(pid)
+        # Iter 232N.8 — Waiver status for the unified FA table.
+        if pid in pending_waivers_map:
+            player["waiver_status"] = {
+                "on_waivers": True,
+                "processes_at": pending_waivers_map[pid],
+            }
+        else:
+            player["waiver_status"] = {"on_waivers": False, "processes_at": None}
         stats_for_fpts = {
             "goals": player.get("goals", 0), "assists": player.get("assists", 0),
             "points": player.get("points", 0), "plus_minus": player.get("plus_minus", 0),

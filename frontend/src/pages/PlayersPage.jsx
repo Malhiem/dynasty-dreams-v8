@@ -160,6 +160,96 @@ function StarToggle({ player, onToggle }) {
   );
 }
 
+/**
+ * Iter 232N.8 — Free-agent add button.
+ *
+ * Sits inline with the StarToggle so managers can add a player to
+ * their roster (or submit a waiver claim) directly from the free-agent
+ * table without a second page visit. Colour keys off the waiver
+ * status so a manager can tell at a glance which action they're
+ * about to take:
+ *
+ *   • Emerald + / hover glow  → true free agent (immediate add flow)
+ *   • Amber + / hover glow    → on waivers (claim submit flow — the
+ *                                same target page handles both)
+ */
+function AddButton({ player }) {
+  const owned = !!player.owned_by_team_id;
+  if (owned) return null;
+  const onWaivers = !!(player.waiver_status && player.waiver_status.on_waivers);
+  const tone = onWaivers
+    ? "text-amber-300 hover:bg-amber-400/15 border-amber-500/40"
+    : "text-emerald-300 hover:bg-emerald-400/15 border-emerald-500/40";
+  const label = onWaivers ? "Submit waiver claim" : "Add to roster";
+  return (
+    <Link
+      to={`/waivers?add=${player._id}`}
+      title={label}
+      aria-label={label}
+      className={`h-7 w-7 rounded-full inline-flex items-center justify-center transition-colors border ${tone}`}
+      data-testid={`players-add-${player._id}`}
+      data-waiver={onWaivers ? "1" : "0"}
+    >
+      <span className="text-base leading-none font-bold">+</span>
+    </Link>
+  );
+}
+
+/**
+ * Iter 232N.8 — Free-agent / waiver status cell.
+ *
+ * Renders "FA" for a true free agent and "W · clears <date>" for a
+ * player currently in a waiver window. Owned players get an em-dash
+ * so the column stays visually balanced.
+ */
+function StatusCell({ player }) {
+  if (player.owned_by_team_id) {
+    return <span className="text-muted-foreground/50 text-[10px]">—</span>;
+  }
+  const onWaivers = !!(player.waiver_status && player.waiver_status.on_waivers);
+  if (!onWaivers) {
+    return (
+      <span
+        className="text-emerald-300 border border-emerald-500/40 bg-emerald-500/10 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+        data-testid={`players-status-fa-${player._id}`}
+        title="Free agent — immediate add"
+      >
+        FA
+      </span>
+    );
+  }
+  // W badge — try to format the processes_at as a short clear date.
+  let clears = "";
+  const procTs = player.waiver_status?.processes_at;
+  if (procTs) {
+    try {
+      const d = new Date(procTs);
+      const now = new Date();
+      const diffMs = d.getTime() - now.getTime();
+      if (diffMs > 0) {
+        const hrs = Math.round(diffMs / 3600000);
+        clears = hrs < 24
+          ? `${hrs}h`
+          : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      } else {
+        clears = "any time";
+      }
+    } catch {
+      clears = "";
+    }
+  }
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-amber-300 border border-amber-500/40 bg-amber-500/10 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
+      data-testid={`players-status-w-${player._id}`}
+      title={procTs ? `Waiver claim clears ${new Date(procTs).toLocaleString()}` : "On waivers"}
+    >
+      W
+      {clears && <span className="text-amber-200/80 normal-case font-normal">· {clears}</span>}
+    </span>
+  );
+}
+
 function OwnedCell({ player }) {
   if (!player.owned_by_team_id) {
     // Iter 173 — Per user request: undrafted players display "N/A" instead
@@ -478,6 +568,7 @@ export default function PlayersPage() {
                 <SortHeader label="FPTS"    sortKey="fantasy_points" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="FP/G"    sortKey="fantasy_points_per_game" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground">Owned</th>
+                <th className="p-2 text-center text-xs uppercase tracking-wider text-muted-foreground" data-testid="players-status-header">Status</th>
                 <SortHeader label="OWN%"     sortKey="league_pct" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="% Chg 7d" sortKey="pct_change" currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
                 <SortHeader label="% Start"  sortKey="start_pct"  currentSort={sortBy} currentDir={sortDir} onSort={handleSort} />
@@ -489,10 +580,10 @@ export default function PlayersPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={10 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
+                <tr><td colSpan={11 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">Loading…</td></tr>
               )}
               {!loading && players.length === 0 && (
-                <tr><td colSpan={10 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">No players match these filters.</td></tr>
+                <tr><td colSpan={11 + STAT_COLS.length + 1} className="p-8 text-center text-muted-foreground">No players match these filters.</td></tr>
               )}
               {!loading && players.map((p) => {
                 const stats = p.category_breakdown || p.stats || {};
@@ -506,7 +597,10 @@ export default function PlayersPage() {
                 return (
                   <tr key={p._id} className="border-b border-white/5 hover:bg-secondary/10" data-testid={`players-row-${p._id}`}>
                     <td className="p-2">
-                      <StarToggle player={p} onToggle={toggleWatchlist} />
+                      <div className="flex items-center gap-1">
+                        <StarToggle player={p} onToggle={toggleWatchlist} />
+                        <AddButton player={p} />
+                      </div>
                     </td>
                     <td className="p-2">
                       <div className="flex items-center gap-1.5">
@@ -523,6 +617,7 @@ export default function PlayersPage() {
                     <td className="p-2 text-center text-xs font-bold text-cyan-300 tabular-nums" data-testid={`players-fpts-${p._id}`}>{p.fantasy_points != null ? p.fantasy_points.toFixed(1) : "—"}</td>
                     <td className="p-2 text-center text-xs text-cyan-200 tabular-nums" data-testid={`players-fpg-${p._id}`}>{p.fantasy_points_per_game != null ? p.fantasy_points_per_game.toFixed(2) : "—"}</td>
                     <td className="p-2 text-center"><OwnedCell player={p} /></td>
+                    <td className="p-2 text-center"><StatusCell player={p} /></td>
                     <td className="p-2 text-center"><PctCell pct={p.league_pct} /></td>
                     <td className="p-2 text-center"><ChangeCell delta={p.pct_change_7d} /></td>
                     <td className="p-2 text-center"><StartPctCell pct={p.start_pct} /></td>
