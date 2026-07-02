@@ -1,6 +1,6 @@
 // @ts-nocheck
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
@@ -48,6 +48,20 @@ const TradeBlock = () => {
   // "want" side in the proposal modal. Optional; falls back to "show all
   // players from this team" when null (legacy "owner-level" Trade button).
   const [prefilledIds, setPrefilledIds] = useState<number[]>([]);
+  // Iter 232M.1 — Counter-from-existing-trade deep link. When TradeDetail's
+  // Counter button navigates here as `/trade-block?counter_from={id}&with={teamId}`,
+  // auto-open the modal with the specified partner pre-selected and thread
+  // the trade id into the modal so submit posts to /respond (action=counter).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const counterFromTradeId = searchParams.get("counter_from");
+  const counterWithTeamId = searchParams.get("with");
+  useEffect(() => {
+    if (!counterFromTradeId || !counterWithTeamId) return;
+    const partner = (leagueTeams || []).find((t: any) => t.id === counterWithTeamId);
+    if (!partner) return;
+    handleProposeTrade(partner.name);
+    // We keep the query params so a page reload preserves counter mode.
+  }, [counterFromTradeId, counterWithTeamId, leagueTeams?.length]);
 
   // Iter 230j — Data fetching + ownership decoration + derived
   // collections moved into `useTradeBlockData`.
@@ -181,10 +195,26 @@ const TradeBlock = () => {
 
       <TradeProposalModal
         open={tradeModalOpen}
-        onOpenChange={setTradeModalOpen}
+        onOpenChange={(open) => {
+          setTradeModalOpen(open);
+          // Clear counter-mode query params when the user closes the modal
+          // so the next open (via the normal Trade button) isn't stuck in
+          // counter mode.
+          if (!open && (counterFromTradeId || counterWithTeamId)) {
+            setSearchParams({}, { replace: true });
+          }
+        }}
         targetTeam={selectedOwner}
         targetPlayers={selectedOwnerPlayers}
         prefilledTheirPlayerIds={prefilledIds}
+        leagueId={league?.id}
+        targetTeamId={
+          counterWithTeamId
+          || (leagueTeams || []).find((t: any) => t.name === selectedOwner)?.id
+          || null
+        }
+        myTeamId={myTeam?.id}
+        counterFromTradeId={counterFromTradeId}
       />
     </AppLayout>
   );
