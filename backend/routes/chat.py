@@ -431,7 +431,11 @@ async def _ensure_group_dm(db, league_id: str, team_ids: list[str], creator_user
 
 
 @router.get("/chat/channels")
-async def list_channels(league_id: str, request: Request):
+async def list_channels(league_id: str, request: Request, show_archived: bool = False):
+    """Iter 232N.14 — `show_archived=false` (default) hides channels the
+    caller has archived via `POST /chat/channels/{id}/archive`. Archive
+    state is per-user (rows live in `chat_archives`) so one manager
+    tidying their sidebar can't hide the channel from anyone else."""
     db = _db()
     user = await _get_user(request)
     # SEC-001 (iter 232h) — non-members previously could enumerate
@@ -450,12 +454,24 @@ async def list_channels(league_id: str, request: Request):
             await _ensure_dm_channel(db, league_id, str(my_team["_id"]), str(ot["_id"]))
 
     cursor = db.chat_channels.find({"league_id": league_id})
+    # Iter 232N.14 — Pre-fetch this user's archive set for the league
+    # once so the per-channel filter is O(1) instead of O(channels).
+    archived_ids: set = set()
+    async for arch in db.chat_archives.find({
+        "user_id": user["_id"], "league_id": league_id,
+    }, {"channel_id": 1}):
+        archived_ids.add(arch.get("channel_id"))
     channels = []
     async for c in cursor:
         # Open channels are visible to all members; DMs + group DMs only to participants.
         if c["kind"] in ("dm", "group_dm") and user["_id"] not in (c.get("participants") or []):
             continue
+        c_id_str = str(c["_id"])
+        is_archived = c_id_str in archived_ids
+        if is_archived and not show_archived:
+            continue
         sc = _serialize(c)
+        sc["archived"] = is_archived
         # Unread count
         # Iter 232N.9 — Exclude the user's own messages from their
         # unread badge (was previously counting self-authored messages
@@ -583,7 +599,58 @@ async def delete_channel(channel_id: str, request: Request):
     await db.chat_messages.delete_many({"channel_id": channel_id})
     await db.chat_reads.delete_many({"channel_id": channel_id})
     await db.chat_mutes.delete_many({"channel_id": channel_id})
+    await db.chat_archives.delete_many({"channel_id": channel_id})
     return {"deleted": channel_id}
+
+
+@router.post("/chat/channels/{channel_id}/archive")
+async def archive_channel(channel_id: str, request: Request):
+    """Iter 232N.14 — Archive a channel for the current user only.
+
+    Per-user state — one manager tidying their sidebar can't hide the
+    channel from anyone else. Archived channels stop counting toward
+    `/chat/unread` and are omitted from `list_channels` unless the
+    caller passes `?show_archived=true`. Idempotent — repeated calls
+    are no-ops thanks to `find_one_and_update(upsert=True)`.
+    """
+    db = _db()
+    user = await _get_user(request)
+    chan = await db.chat_channels.find_one({"_id": ObjectId(channel_id)})
+    if not chan:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    await _require_channel_access(db, chan, user["_id"])
+    await db.chat_archives.find_one_and_update(
+        {"user_id": user["_id"], "channel_id": channel_id},
+        {"$setOnInsert": {
+            "user_id": user["_id"],
+            "channel_id": channel_id,
+            "league_id": chan.get("league_id"),
+            "archived_at": datetime.now(timezone.utc),
+        }},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
+    return {"archived": True, "channel_id": channel_id}
+
+
+@router.delete("/chat/channels/{channel_id}/archive")
+async def unarchive_channel(channel_id: str, request: Request):
+    """Iter 232N.14 — Unarchive a channel for the current user only.
+
+    Symmetric to `POST .../archive`. Deletes the archive row if any;
+    silently succeeds when there's nothing to remove so the frontend
+    can keep the toggle logic trivial.
+    """
+    db = _db()
+    user = await _get_user(request)
+    chan = await db.chat_channels.find_one({"_id": ObjectId(channel_id)})
+    if not chan:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    await _require_channel_access(db, chan, user["_id"])
+    await db.chat_archives.delete_one({
+        "user_id": user["_id"], "channel_id": channel_id,
+    })
+    return {"archived": False, "channel_id": channel_id}
 
 
 @router.get("/chat/channels/{channel_id}/messages")
@@ -846,6 +913,19 @@ async def total_unread(request: Request, league_id: Optional[str] = None):
             if not lg_id or lg_id not in membership_league_ids:
                 continue
         channel_ids.append(str(c["_id"]))
+    if not channel_ids:
+        return {"unread": 0, "by_channel": {}}
+
+    # Iter 232N.14 — Archived channels don't feed the sidebar badge.
+    # A user tidying stale threads should see their badge count drop
+    # instantly instead of waiting for messages to be marked read.
+    archived_ids: set = set()
+    async for arch in db.chat_archives.find(
+        {"user_id": uid, "channel_id": {"$in": channel_ids}},
+        {"channel_id": 1},
+    ):
+        archived_ids.add(arch.get("channel_id"))
+    channel_ids = [cid for cid in channel_ids if cid not in archived_ids]
     if not channel_ids:
         return {"unread": 0, "by_channel": {}}
 

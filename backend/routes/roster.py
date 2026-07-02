@@ -756,6 +756,10 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     if team["owner_id"] != user["_id"]:
         raise HTTPException(status_code=403, detail="Not your team")
 
+    # Iter 232N.15 — Draft-lock guard on the direct-add path too.
+    from utils.draft_lock import assert_pickups_open
+    await assert_pickups_open(db, team["league_id"])
+
     # Roster-spots gate
     league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
     max_roster = league.get("roster_spots", 20)

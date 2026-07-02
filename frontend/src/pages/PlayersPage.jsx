@@ -21,6 +21,7 @@ import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
 import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
+import PlayerPickupModal from "@/components/player/PlayerPickupModal";
 import WaiverManagementPanel from "@/lovable/components/waivers/WaiverManagementPanel";
 
 const VIEWS = [
@@ -179,7 +180,7 @@ function StarToggle({ player, onToggle }) {
  *   • Amber + / hover glow    → on waivers (claim submit flow — the
  *                                same target page handles both)
  */
-function AddButton({ player }) {
+function AddButton({ player, onPickup }) {
   const owned = !!player.owned_by_team_id;
   if (owned) return null;
   const onWaivers = !!(player.waiver_status && player.waiver_status.on_waivers);
@@ -188,8 +189,9 @@ function AddButton({ player }) {
     : "text-emerald-300 hover:bg-emerald-400/15 border-emerald-500/40";
   const label = onWaivers ? "Submit waiver claim" : "Add to roster";
   return (
-    <Link
-      to={`/waivers?add=${player._id}`}
+    <button
+      type="button"
+      onClick={() => onPickup(player)}
       title={label}
       aria-label={label}
       className={`h-7 w-7 rounded-full inline-flex items-center justify-center transition-colors border ${tone}`}
@@ -197,7 +199,7 @@ function AddButton({ player }) {
       data-waiver={onWaivers ? "1" : "0"}
     >
       <span className="text-base leading-none font-bold">+</span>
-    </Link>
+    </button>
   );
 }
 
@@ -385,6 +387,12 @@ export default function PlayersPage() {
   // surface at the top of the Available view, ordered by soonest clear.
   const [waiversFirst, setWaiversFirst] = useState(false);
 
+  // Iter 232N.15 — Player pickup modal state. Replaces the legacy
+  // `/waivers?add=<pid>` redirect so managers stay on the Free Agent
+  // screen and see draft-lock / cap / roster-space feedback inline.
+  const [pickupPlayer, setPickupPlayer] = useState(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+
   const [players, setPlayers] = useState([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
@@ -416,7 +424,7 @@ export default function PlayersPage() {
       .catch(() => { if (!cancelled) { setPlayers([]); setTotal(0); setPages(1); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers, waiversFirst]);
+  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers, waiversFirst, reloadNonce]);
 
   const toggleWatchlist = async (player) => {
     try {
@@ -669,7 +677,7 @@ export default function PlayersPage() {
                     <td className="p-2">
                       <div className="flex items-center gap-1">
                         <StarToggle player={p} onToggle={toggleWatchlist} />
-                        <AddButton player={p} />
+                        <AddButton player={p} onPickup={setPickupPlayer} />
                       </div>
                     </td>
                     <td className="p-2">
@@ -752,6 +760,15 @@ export default function PlayersPage() {
             <WaiverManagementPanel />
           </TabsContent>
         </Tabs>
+
+        {/* Iter 232N.15 — Inline pickup toast (replaces legacy redirect). */}
+        <PlayerPickupModal
+          open={!!pickupPlayer}
+          player={pickupPlayer}
+          leagueId={leagueId}
+          onClose={() => setPickupPlayer(null)}
+          onSuccess={() => setReloadNonce((n) => n + 1)}
+        />
       </div>
     </AppLayout>
   );

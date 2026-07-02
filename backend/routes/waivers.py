@@ -454,6 +454,21 @@ async def precheck_waiver_claim(
             })
 
     requires_drop = any(b.get("suggested_action") == "drop" for b in blockers)
+
+    # Iter 232N.15 — Draft-lock precheck. The Players + tab needs to
+    # know BEFORE opening the claim UI whether the pool is frozen so
+    # the pickup toast can show a friendly explainer instead of a
+    # generic 400 after submit. The 3 mutation endpoints separately
+    # call `assert_pickups_open()` — this is purely for UI copy.
+    from utils.draft_lock import get_locking_draft, format_draft_lock_message
+    locking_draft = await get_locking_draft(db, league_id)
+    if locking_draft is not None:
+        blockers.append({
+            "code": "draft_locked",
+            "severity": "error",
+            "message": format_draft_lock_message(locking_draft),
+        })
+
     can_claim = len(blockers) == 0
 
     return {
@@ -477,6 +492,14 @@ async def precheck_waiver_claim(
         },
         "issues": issues + blockers,
         "team": {"id": str(team["_id"]), "name": team["name"]},
+        # Iter 232N.15 — Draft-lock payload for the pickup toast.
+        "draft_lock": None if locking_draft is None else {
+            "draft_id": str(locking_draft.get("_id")),
+            "name": locking_draft.get("name"),
+            "status": locking_draft.get("status"),
+            "scheduled_time": locking_draft.get("scheduled_time"),
+            "message": format_draft_lock_message(locking_draft),
+        },
     }
 
 
@@ -488,6 +511,13 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     team = await db.teams.find_one({"league_id": input.league_id, "owner_id": user["_id"]})
     if not team:
         raise HTTPException(status_code=403, detail="You don't have a team in this league")
+
+    # Iter 232N.15 — Reject the claim if the league has an active or
+    # scheduled draft. Shared helper keeps the copy identical to what
+    # the precheck payload advertised, so users don't see one message
+    # in the toast and a different one after submit.
+    from utils.draft_lock import assert_pickups_open
+    await assert_pickups_open(db, input.league_id)
 
     league = await db.leagues.find_one({"_id": ObjectId(input.league_id)}) or {}
 

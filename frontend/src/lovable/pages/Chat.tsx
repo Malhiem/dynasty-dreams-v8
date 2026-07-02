@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Send, Users, Hash, Plus, BellOff, Bell, Trash2, MoreHorizontal, Loader2, Check,
-  UserPlus,
+  UserPlus, Archive,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
@@ -94,12 +94,17 @@ const Chat = () => {
       (league.co_commissioners || []).includes(user.id);
   }, [league, user]);
 
+  // Iter 232N.14 — Show/hide archived channels (per-user state).
+  const [showArchived, setShowArchived] = useState(false);
+
   // ── Load channels ─────────────────────────────────────────
   const loadChannels = useCallback(async () => {
     if (!leagueId) return;
     setLoadingChans(true);
     try {
-      const { data } = await api.get(`/chat/channels?league_id=${leagueId}`);
+      const { data } = await api.get(
+        `/chat/channels?league_id=${leagueId}&show_archived=${showArchived}`,
+      );
       const list = data?.channels || [];
       setChannels(list);
       setMaxChannels(data?.max_channels || 12);
@@ -111,9 +116,29 @@ const Chat = () => {
     } finally {
       setLoadingChans(false);
     }
-  }, [leagueId, selectedId]);
+  }, [leagueId, selectedId, showArchived]);
 
   useEffect(() => { loadChannels(); }, [loadChannels]);
+
+  // Iter 232N.14 — Toggle archive state for a channel (per-user).
+  const handleToggleArchive = async (chan) => {
+    try {
+      if (chan.archived) {
+        await api.delete(`/chat/channels/${chan._id}/archive`);
+        toast.success(`Unarchived ${chan.name}`);
+      } else {
+        await api.post(`/chat/channels/${chan._id}/archive`);
+        toast.success(`Archived ${chan.name}`, {
+          description: "Toggle 'Show archived' to see it again.",
+          duration: 5000,
+        });
+        if (selectedId === chan._id) setSelectedId(null);
+      }
+      await loadChannels();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not update archive");
+    }
+  };
 
   // ── Load members for @mention ─────────────────────────────
   useEffect(() => {
@@ -421,6 +446,17 @@ const Chat = () => {
                 </DropdownMenuItem>
               </>
             )}
+            {/* Iter 232N.14 — Per-user archive so each manager can
+                curate their own sidebar without hiding the channel
+                from others. Default channels can be archived too. */}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              data-testid={`chat-archive-${c._id}`}
+              onClick={() => handleToggleArchive(c)}
+            >
+              <Archive className="h-3.5 w-3.5 mr-2" />
+              {c.archived ? "Unarchive" : "Archive"}
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -491,6 +527,23 @@ const Chat = () => {
                 testIdSuffix="league-chat"
               />
             </div>
+            {/* Iter 232N.14 — Show archived toggle. Per-user state; the
+                sidebar defaults to hiding archived threads so long-time
+                managers can tidy stale DMs without losing history. */}
+            <button
+              type="button"
+              onClick={() => setShowArchived((v) => !v)}
+              className={`mt-3 w-full flex items-center justify-center gap-2 rounded-md border px-2 py-1.5 text-[11px] uppercase tracking-wider font-semibold transition-colors ${
+                showArchived
+                  ? "bg-sky-500/15 border-sky-500/40 text-sky-300"
+                  : "bg-transparent border-border text-muted-foreground hover:text-foreground"
+              }`}
+              data-testid="chat-show-archived-toggle"
+              aria-pressed={showArchived}
+            >
+              <Archive className="h-3.5 w-3.5" />
+              {showArchived ? "Hide archived" : "Show archived"}
+            </button>
           </div>
 
           <ScrollArea className="flex-1 p-3">

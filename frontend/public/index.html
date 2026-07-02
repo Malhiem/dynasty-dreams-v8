@@ -66,7 +66,15 @@
              centered bottom-pill footer. The wrapping <footer> reserves the
              bottom strip so app content never collides with it; the pill is
              tucked in the center so it stays clear of both the left sidebar
-             and the right-edge controls. -->
+             and the right-edge controls.
+             Iter 232N.14 — Hidden on mobile (<=768px) at user request —
+             the floating pill was disrupting mobile UX by sitting on top
+             of native tab bars / bottom action sheets. -->
+        <style>
+            @media (max-width: 768px) {
+                #emergent-footer { display: none !important; }
+            }
+        </style>
         <footer
             id="emergent-footer"
             style="
