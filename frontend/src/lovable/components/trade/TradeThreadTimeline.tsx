@@ -14,7 +14,9 @@ import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import {
   ArrowRightLeft, Reply, CheckCircle2, XCircle, Clock, MinusCircle, GitBranch,
+  Bell, BellOff,
 } from "lucide-react";
+import { toast } from "sonner";
 
 // Icon + colour for each terminal state we might land on in a thread.
 const STEP_ICON: Record<string, any> = {
@@ -66,20 +68,46 @@ function fmtTs(iso?: string | null) {
 export function TradeThreadTimeline({ tradeId }: { tradeId: string }) {
   const [thread, setThread] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  // Iter 232M.4 — per-thread mute state for the current user.
+  const [muted, setMuted] = useState(false);
+  const [mutePending, setMutePending] = useState(false);
 
   useEffect(() => {
     if (!tradeId) return;
     let cancelled = false;
     setLoading(true);
-    api.get(`/trades/${tradeId}/thread`)
-      .then(({ data }) => {
-        if (cancelled) return;
-        setThread(data?.thread || []);
-      })
-      .catch(() => { if (!cancelled) setThread([]); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    Promise.all([
+      api.get(`/trades/${tradeId}/thread`).catch(() => ({ data: { thread: [] } })),
+      api.get(`/trades/${tradeId}/thread/mute-state`).catch(() => ({ data: { muted: false } })),
+    ]).then(([threadRes, muteRes]) => {
+      if (cancelled) return;
+      setThread(threadRes.data?.thread || []);
+      setMuted(Boolean(muteRes.data?.muted));
+    }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [tradeId]);
+
+  const toggleMute = async () => {
+    if (mutePending) return;
+    const next = !muted;
+    setMutePending(true);
+    setMuted(next);  // optimistic
+    try {
+      await api.post(`/trades/${tradeId}/thread/mute`, { muted: next });
+      toast.success(
+        next
+          ? "Notifications muted for this negotiation"
+          : "Notifications on for this negotiation",
+      );
+    } catch (e) {
+      setMuted(!next);  // rollback
+      toast.error("Couldn't update mute", {
+        description: e?.response?.data?.detail || e?.message,
+      });
+    } finally {
+      setMutePending(false);
+    }
+  };
 
   if (loading || thread.length <= 1) return null;
 
@@ -88,9 +116,28 @@ export function TradeThreadTimeline({ tradeId }: { tradeId: string }) {
       className="rounded-lg border border-sky-500/30 bg-sky-500/[0.03] p-4 space-y-3"
       data-testid="trade-thread-timeline"
     >
-      <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-sky-300 font-semibold">
-        <GitBranch className="h-3.5 w-3.5" />
-        Negotiation History · {thread.length} step{thread.length === 1 ? "" : "s"}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-sky-300 font-semibold">
+          <GitBranch className="h-3.5 w-3.5" />
+          Negotiation History · {thread.length} step{thread.length === 1 ? "" : "s"}
+        </div>
+        <button
+          type="button"
+          onClick={toggleMute}
+          disabled={mutePending}
+          aria-pressed={muted}
+          data-testid="trade-thread-mute-toggle"
+          title={muted ? "You're muting this negotiation — click to un-mute" : "Mute this negotiation for you"}
+          className={
+            "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-colors " +
+            (muted
+              ? "bg-secondary/50 text-muted-foreground hover:bg-secondary/70"
+              : "text-sky-300 hover:bg-sky-500/10")
+          }
+        >
+          {muted ? <BellOff className="h-3.5 w-3.5" /> : <Bell className="h-3.5 w-3.5" />}
+          {muted ? "Muted" : "Mute"}
+        </button>
       </div>
       <ol className="space-y-2">
         {thread.map((step, idx) => {

@@ -874,7 +874,8 @@ async def _notify_thread_participants(
     the counter chain rooted at `trade.counter_thread_root` — so managers
     who negotiated earlier steps stay in the loop when a later counter
     resolves. Users in `exclude_user_ids` (typically the acting user +
-    anyone who already received a direct notification) are skipped.
+    anyone who already received a direct notification) are skipped, as
+    are users who explicitly muted this thread (iter 232M.4).
 
     Best-effort — swallows per-recipient failures so one bad notify can't
     block the response path.
@@ -892,6 +893,17 @@ async def _notify_thread_participants(
                 if uid:
                     participants.add(uid)
         recipients = participants - (exclude_user_ids or set())
+
+        # Iter 232M.4 — Filter out users who muted this thread. Reads
+        # from the `trade_thread_mutes` collection in one round-trip.
+        if recipients:
+            muted_rows = await db.trade_thread_mutes.find(
+                {"thread_root_id": root_id, "user_id": {"$in": list(recipients)}},
+                {"user_id": 1},
+            ).to_list(None)
+            muted_uids = {r["user_id"] for r in muted_rows}
+            recipients = recipients - muted_uids
+
         for uid in recipients:
             try:
                 await _create_notification(
@@ -1581,6 +1593,67 @@ async def get_trade_thread(trade_id: str):
         "count": len(thread),
         "thread": thread,
     }
+
+
+# ─── Iter 232M.4 — Per-thread mute toggle ───────────────────────────
+# Managers who've tapped out of a long counter chain can silence
+# fanout notifications for JUST this thread — without touching their
+# global trade-notification preferences. Uses the same collection
+# pattern as `conditional_subscriptions` (one row per user+thread).
+async def _resolve_thread_root_id(db, trade_id: str) -> str:
+    """Given ANY trade id in a chain, return the thread root id.
+    Raises 404 if the trade doesn't exist."""
+    try:
+        t = await db.trades.find_one(
+            {"_id": ObjectId(trade_id)},
+            {"counter_thread_root": 1},
+        )
+    except Exception:
+        t = None
+    if not t:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return t.get("counter_thread_root") or str(t["_id"])
+
+
+@router.get("/trades/{trade_id}/thread/mute-state")
+async def get_thread_mute_state(trade_id: str, request: Request):
+    db = _db()
+    user = await _get_user(request)
+    root_id = await _resolve_thread_root_id(db, trade_id)
+    row = await db.trade_thread_mutes.find_one({
+        "thread_root_id": root_id,
+        "user_id": user["_id"],
+    })
+    return {"thread_root_id": root_id, "muted": bool(row)}
+
+
+@router.post("/trades/{trade_id}/thread/mute")
+async def toggle_thread_mute(trade_id: str, request: Request):
+    """Body: {"muted": bool}. Idempotent — muting twice = still muted."""
+    db = _db()
+    user = await _get_user(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    muted = bool(body.get("muted"))
+    root_id = await _resolve_thread_root_id(db, trade_id)
+    if muted:
+        await db.trade_thread_mutes.update_one(
+            {"thread_root_id": root_id, "user_id": user["_id"]},
+            {"$set": {
+                "thread_root_id": root_id,
+                "user_id": user["_id"],
+                "muted_at": datetime.now(timezone.utc).isoformat(),
+            }},
+            upsert=True,
+        )
+    else:
+        await db.trade_thread_mutes.delete_one({
+            "thread_root_id": root_id,
+            "user_id": user["_id"],
+        })
+    return {"thread_root_id": root_id, "muted": muted}
 
 
 @router.get("/leagues/{league_id}/pending-trades")
