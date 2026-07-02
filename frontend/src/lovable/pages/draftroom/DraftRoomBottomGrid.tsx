@@ -26,6 +26,7 @@ export default function DraftRoomBottomGrid({
   // Player Search panel
   filteredPlayers, searchQuery, setSearchQuery, positionFilter, setPositionFilter,
   typeFilter, setTypeFilter,
+  undraftedOnly, setUndraftedOnly,
   positions, positionColors, selectedPlayerId, setSelectedPlayerId,
   tradeBlockPlayerIds, minorsEnabled,
   queue, shortlist, queuedPlayers, shortlistedPlayers,
