@@ -395,6 +395,19 @@ async def get_roster_detail(team_id: str, request: Request):
         {"_id": {"$in": [ObjectId(pid) for pid in roster_ids]}},
     ).to_list(100)
 
+    # Iter 232N.2 + 232N.7 — Bulk-fetch status_flags helper deps + trends
+    # once per request so per-player enrichment doesn't fan out.
+    from routes.player_status import (
+        compute_player_status_flags,
+        get_previously_drafted_pids,
+    )
+    from routes.player_trends import fetch_trends_map
+    league_id_for_flags = team.get("league_id")
+    previously_drafted_pids: set = await get_previously_drafted_pids(
+        db, league_id_for_flags,
+    )
+    trends_map_detail = await fetch_trends_map(db, [str(p["_id"]) for p in players_raw])
+
     # Imported lazily so importing this router doesn't pull the live-scoring
     # graph at startup (heavy + side-effecting).
     from live_scoring_worker import _fantasy_points_from_live as fp_from_live
@@ -514,6 +527,12 @@ async def get_roster_detail(team_id: str, request: Request):
             "matchupGames": (
                 live.get("games", 0) if isinstance(live.get("games"), int) else 0
             ),
+            # Iter 232N.2 — status_flags for the badge layer on the Team page.
+            "status_flags": compute_player_status_flags(
+                p, previously_drafted_pids if league_id_for_flags else None,
+            ),
+            # Iter 232N.7 — Cross-league mover trend badge.
+            "trends": trends_map_detail.get(str(p["_id"])),
         })
 
     enriched.sort(key=lambda x: -x["fantasy_points"])
