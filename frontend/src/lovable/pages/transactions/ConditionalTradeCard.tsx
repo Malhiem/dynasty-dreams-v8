@@ -14,7 +14,7 @@ import {
   Clock, CheckCircle2, GitBranch, Zap, MinusCircle, Bell, BellOff,
 } from "lucide-react";
 import TeamLink from "@/lovable/components/TeamLink";
-import { selectCategoriesForAssets } from "./types";
+import { selectCategoriesForAssets, computeAssetTotals, formatCategoryTotal, fmtCapHit } from "./types";
 
 // ─── Human-readable metric + operator labels ─────────────────────────
 const METRIC_LABELS: Record<string, string> = {
@@ -53,10 +53,11 @@ export function describeCondition(c: any): string {
 // ─── ConditionalAssetTable — mirrors TradeCard's asset table but with a
 //     tighter column set (no Age/GP; Cap + FPts/G is enough for a
 //     completed trade). Reused via the ConditionalTradeCard.
-function ConditionalAssetTable({ assets, viewMode, categories }) {
+function ConditionalAssetTable({ assets, viewMode, categories, sideLabel, tradeId }) {
   const catsToShow = viewMode === "categories"
     ? selectCategoriesForAssets(assets, categories)
     : [];
+  const totals = computeAssetTotals(assets, catsToShow);
   return (
     <div className="overflow-x-auto -mx-2 sm:mx-0">
       <Table>
@@ -108,6 +109,32 @@ function ConditionalAssetTable({ assets, viewMode, categories }) {
               )}
             </TableRow>
           ))}
+          {totals.hasPlayers && (
+            <TableRow
+              className="border-t-2 border-border/60 bg-secondary/25 font-semibold"
+              data-testid={`conditional-trade-totals-${sideLabel}-${tradeId}`}
+            >
+              <TableCell className="text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                Total
+              </TableCell>
+              <TableCell className="text-sm">—</TableCell>
+              <TableCell className="text-sm whitespace-nowrap">{fmtCapHit(totals.capHit)}</TableCell>
+              {viewMode === "fpts" ? (
+                <>
+                  <TableCell className="text-sm text-primary">{totals.fpts.toFixed(1)}</TableCell>
+                  <TableCell className="text-sm text-primary/80">
+                    {totals.fptsPerGame.toFixed(2)}
+                  </TableCell>
+                </>
+              ) : (
+                catsToShow.map((c) => (
+                  <TableCell key={c.key} className="text-sm">
+                    {formatCategoryTotal(c.key, totals.categories[c.key] ?? 0)}
+                  </TableCell>
+                ))
+              )}
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>
@@ -306,6 +333,8 @@ export function ConditionalTradeCard({
               assets={mapped.assetsFromA}
               viewMode={viewMode}
               categories={mapped.scoringCategories}
+              sideLabel="a"
+              tradeId={trade._id}
             />
           </div>
           <div>
@@ -316,6 +345,8 @@ export function ConditionalTradeCard({
               assets={mapped.assetsFromB}
               viewMode={viewMode}
               categories={mapped.scoringCategories}
+              sideLabel="b"
+              tradeId={trade._id}
             />
           </div>
         </div>

@@ -25,6 +25,9 @@ export function mapAssetRow(a) {
         : "Unknown"),
     position: a.position || "—",
     age: a.age || 0,
+    // Preserve the raw numeric salary alongside the formatted string so
+    // the per-side totals row can sum cap hits.
+    salary: isPick ? 0 : salary,
     capHit: isPick ? "—" : fmtCapHit(salary),
     goals: a.goals || 0,
     assists: a.assists || 0,

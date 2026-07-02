@@ -10,7 +10,7 @@ import { ArrowRightLeft, ThumbsUp, ThumbsDown, AlertTriangle } from "lucide-reac
 import TeamLink from "@/lovable/components/TeamLink";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { statusConfig } from "./statusConfig";
-import { selectCategoriesForAssets } from "./types";
+import { selectCategoriesForAssets, computeAssetTotals, formatCategoryTotal, fmtCapHit } from "./types";
 
 export function TradeCard({ trade, viewMode }) {
   // Fall back to pending badge for unknown backend statuses.
@@ -24,7 +24,9 @@ export function TradeCard({ trade, viewMode }) {
       )
     : [];
 
-  const renderAssetTable = (assets) => (
+  const renderAssetTable = (assets, sideLabel) => {
+    const totals = computeAssetTotals(assets, categoriesToShow);
+    return (
     <div className="overflow-x-auto -mx-2 sm:mx-0">
       <Table>
         <TableHeader>
@@ -86,10 +88,46 @@ export function TradeCard({ trade, viewMode }) {
               )}
             </TableRow>
           ))}
+          {/* Iter 232L.4 — Totals row so managers can compare aggregate
+              output flowing each way in one glance. Rate stats
+              (SV%, GAA) are shown as games-weighted averages; everything
+              else is a straight sum. Hidden when there are no players on
+              the side (e.g. picks-only). */}
+          {totals.hasPlayers && (
+            <TableRow
+              className="border-t-2 border-border/60 bg-secondary/25 font-semibold"
+              data-testid={`trade-totals-${sideLabel}-${trade.id}`}
+            >
+              <TableCell className="text-xs uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                Total
+              </TableCell>
+              <TableCell className="text-sm">—</TableCell>
+              <TableCell className="text-sm">—</TableCell>
+              <TableCell className="text-sm whitespace-nowrap">{fmtCapHit(totals.capHit)}</TableCell>
+              {viewMode === "fpts" ? (
+                <>
+                  <TableCell className="text-sm">{totals.gp}</TableCell>
+                  <TableCell className="text-sm text-primary">
+                    {totals.fpts.toFixed(1)}
+                  </TableCell>
+                  <TableCell className="text-sm text-primary/80">
+                    {totals.fptsPerGame.toFixed(2)}
+                  </TableCell>
+                </>
+              ) : (
+                categoriesToShow.map((c) => (
+                  <TableCell key={c.key} className="text-sm">
+                    {formatCategoryTotal(c.key, totals.categories[c.key] ?? 0)}
+                  </TableCell>
+                ))
+              )}
+            </TableRow>
+          )}
         </TableBody>
       </Table>
     </div>
-  );
+    );
+  };
 
   return (
     <Card className="border-border/50" data-testid={`trade-card-${trade.id}`}>
@@ -130,13 +168,13 @@ export function TradeCard({ trade, viewMode }) {
             <p className="text-sm font-medium text-muted-foreground mb-2">
               <TeamLink name={trade.teamA} /> sends:
             </p>
-            {renderAssetTable(trade.assetsFromA)}
+            {renderAssetTable(trade.assetsFromA, "a")}
           </div>
           <div>
             <p className="text-sm font-medium text-muted-foreground mb-2">
               <TeamLink name={trade.teamB} /> sends:
             </p>
-            {renderAssetTable(trade.assetsFromB)}
+            {renderAssetTable(trade.assetsFromB, "b")}
           </div>
         </div>
 
