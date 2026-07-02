@@ -41,6 +41,10 @@ async def get_players(
     timeframe: str = "season",
     sort_by: Optional[str] = None,
     sort_dir: str = "desc",
+    # Iter 232N.11 — When true (and `league_id` is set) pending-waiver
+    # players sort ahead of everyone else, ordered by soonest-clearing
+    # `processes_at` asc. Non-waiver rows fall back to `sort_by`.
+    waivers_first: bool = False,
     page: int = 1,
     limit: int = 50,
 ):
@@ -232,8 +236,52 @@ async def get_players(
     }
     primary_sort = sort_field_map.get((sort_by or "").lower(), "points")
     direction = -1 if (sort_dir or "desc").lower() != "asc" else 1
-    cursor = db.players.find(query).sort(primary_sort, direction).skip(skip).limit(limit)
-    players = await cursor.to_list(limit)
+
+    # Iter 232N.11 — Waivers-first composite sort. When ON + we have a
+    # league context + at least one pending claim, we drop into an
+    # aggregation pipeline that stamps `_waiver_rank` (position in the
+    # pre-sorted waiver-clearing queue, or a sentinel for non-waiver
+    # rows) and sorts by that rank ascending, then the caller's primary
+    # sort. This surfaces the "you have a claim clearing in 6h" rows at
+    # the very top of the Players tab so managers can't miss them.
+    if waivers_first and league_id and pending_waivers_map:
+        # Sort waiver pids by soonest processes_at first; None-valued
+        # entries drop to the back of the waiver cohort.
+        sorted_waiver_pids = sorted(
+            pending_waivers_map.items(),
+            key=lambda kv: (kv[1] is None, kv[1] or ""),
+        )
+        waiver_oids: list = []
+        for pid, _proc in sorted_waiver_pids:
+            try:
+                waiver_oids.append(ObjectId(pid))
+            except Exception:
+                continue
+        non_waiver_sentinel = 10**9
+        pipeline = [
+            {"$match": query},
+            {"$addFields": {
+                "_waiver_rank": {
+                    "$let": {
+                        "vars": {"idx": {"$indexOfArray": [waiver_oids, "$_id"]}},
+                        "in": {
+                            "$cond": [
+                                {"$eq": ["$$idx", -1]},
+                                non_waiver_sentinel,
+                                "$$idx",
+                            ],
+                        },
+                    },
+                },
+            }},
+            {"$sort": {"_waiver_rank": 1, primary_sort: direction}},
+            {"$skip": skip},
+            {"$limit": limit},
+        ]
+        players = await db.players.aggregate(pipeline).to_list(limit)
+    else:
+        cursor = db.players.find(query).sort(primary_sort, direction).skip(skip).limit(limit)
+        players = await cursor.to_list(limit)
     total = await db.players.count_documents(query)
 
     page_counts: dict[str, int] = {}

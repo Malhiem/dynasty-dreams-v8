@@ -94,7 +94,7 @@ const NHL_TEAMS = [
   "STL","TBL","TOR","UTA","VAN","VGK","WPG","WSH",
 ];
 
-function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers) {
+function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers, waiversFirst) {
   const p = new URLSearchParams();
   if (leagueId) p.append("league_id", leagueId);
   if (search) p.append("search", search);
@@ -108,6 +108,9 @@ function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTe
   // Iter 232N.5 — "Show my players" toggle bypasses the exclude_team_id
   // guard so the free-agent list also includes the user's own roster.
   if (showMyPlayers) p.append("include_my_team", "true");
+  // Iter 232N.11 — Surfaces pending-waiver players at the top, sorted
+  // by soonest processes_at, so a clearing claim is one glance away.
+  if (waiversFirst) p.append("waivers_first", "true");
   p.append("page", String(page));
   p.append("limit", "50");
 
@@ -378,6 +381,9 @@ export default function PlayersPage() {
   // Iter 232N.5 — Toggle to show the caller's own roster inline with
   // free agents for side-by-side comparison. Off by default.
   const [showMyPlayers, setShowMyPlayers] = useState(false);
+  // Iter 232N.11 — Waivers-first sort toggle: pending-claim players
+  // surface at the top of the Available view, ordered by soonest clear.
+  const [waiversFirst, setWaiversFirst] = useState(false);
 
   const [players, setPlayers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -385,12 +391,12 @@ export default function PlayersPage() {
   const [loading, setLoading] = useState(false);
   const [timeframeSupported, setTimeframeSupported] = useState(true);
 
-  useEffect(() => { setPage(1); }, [view, position, nhlTeam, fantasyTeamId, search, timeframe, undraftedOnly, showMyPlayers]);
+  useEffect(() => { setPage(1); }, [view, position, nhlTeam, fantasyTeamId, search, timeframe, undraftedOnly, showMyPlayers, waiversFirst]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const qs = buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers);
+    const qs = buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers, waiversFirst);
     api.get(`/players?${qs}`)
       .then(({ data }) => {
         if (cancelled) return;
@@ -410,7 +416,7 @@ export default function PlayersPage() {
       .catch(() => { if (!cancelled) { setPlayers([]); setTotal(0); setPages(1); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers]);
+  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers, waiversFirst]);
 
   const toggleWatchlist = async (player) => {
     try {
@@ -587,6 +593,29 @@ export default function PlayersPage() {
               title="Include your own roster in the available-player list for comparison"
             >
               {showMyPlayers ? "★ Showing my players" : "Show my players"}
+            </button>
+          )}
+          {/* Iter 232N.11 — Waivers-first sort. Only meaningful in the
+              Available view; when ON, backend switches to an aggregation
+              pipeline that stamps a `_waiver_rank` on every row and
+              sorts by that ascending (soonest processes_at first), then
+              falls back to the caller's primary sort. Turns the Players
+              tab into a passive claim-management dashboard. */}
+          {view === "available" && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={waiversFirst}
+              onClick={() => setWaiversFirst((v) => !v)}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wider transition-colors border ${
+                waiversFirst
+                  ? "bg-amber-500/20 text-amber-300 border-amber-500/40"
+                  : "bg-[#1A1A1A] text-muted-foreground border-white/10 hover:text-foreground"
+              }`}
+              data-testid="players-waivers-first-toggle"
+              title="Surface pending-waiver players at the top, sorted by soonest clear time"
+            >
+              {waiversFirst ? "★ Waivers first" : "Waivers first"}
             </button>
           )}
         </div>
