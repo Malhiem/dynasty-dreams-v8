@@ -150,6 +150,7 @@ async def scrape_news_and_dispatch(
     db,
     *,
     create_notification: Optional[Callable[..., Awaitable]] = None,
+    broadcast_fn: Optional[Callable[..., Awaitable]] = None,
 ) -> dict:
     """Single pass. Returns counts dict for observability + tests."""
     counts = {
@@ -159,6 +160,9 @@ async def scrape_news_and_dispatch(
         "dispatched": 0,
         "deduped": 0,
     }
+    # Iter 232N.4 — Every player_id we mutate this pass. Used at the
+    # end to fan out real-time status-flag toasts.
+    touched_pids: set[str] = set()
     by_last = await _build_lastname_index(db)
     if not by_last:
         return counts
@@ -253,10 +257,26 @@ async def scrape_news_and_dispatch(
                                 "signal_type": change_kind,
                             },
                         )
+                        touched_pids.add(str(m["player_id"]))
                         if summary.get("notifications_sent", 0) > 0 or summary.get("updated"):
                             counts["dispatched"] += 1
                     except Exception as e:
                         logger.exception("dispatch failed for %s: %s", m["player_id"], e)
+    # Iter 232N.4 — Fan out real-time status-flag toasts for every
+    # player whose injury_status we just mutated.
+    if touched_pids and broadcast_fn is not None:
+        try:
+            from services.player_status_change_detector import detect_and_emit_status_changes
+            det = await detect_and_emit_status_changes(
+                db,
+                list(touched_pids),
+                broadcast_fn=broadcast_fn,
+                create_notification_fn=create_notification,
+            )
+            counts["status_flag_events"] = len(det.get("events") or [])
+        except Exception as e:
+            logger.exception("injury_news status-flag detect failed: %s", e)
+
     logger.info("injury_news_scraper: %s", counts)
     return counts
 
@@ -265,6 +285,7 @@ async def injury_news_loop(
     db,
     create_notification: Callable[..., Awaitable],
     interval_sec: int = DEFAULT_INTERVAL_SEC,
+    broadcast_fn: Optional[Callable[..., Awaitable]] = None,
 ):
     """Long-running asyncio task. Defers first pass by 120s so the rest
     of the app boots cleanly."""
@@ -272,7 +293,9 @@ async def injury_news_loop(
     await asyncio.sleep(120)
     while True:
         try:
-            await scrape_news_and_dispatch(db, create_notification=create_notification)
+            await scrape_news_and_dispatch(
+                db, create_notification=create_notification, broadcast_fn=broadcast_fn,
+            )
         except asyncio.CancelledError:
             raise
         except Exception as e:

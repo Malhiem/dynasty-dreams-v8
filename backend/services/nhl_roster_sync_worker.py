@@ -106,6 +106,7 @@ async def sync_once(
     db,
     *,
     create_notification: Optional[Callable[..., Awaitable]] = None,
+    broadcast_fn: Optional[Callable[..., Awaitable]] = None,
     concurrency: int = 8,
 ) -> dict:
     """Single pass: fetch all NHL rosters, build {nhl_id → team_code} map,
@@ -158,6 +159,9 @@ async def sync_once(
 
     diff_count = 0
     notifications_sent = 0
+    # Iter 232N.4 — Track pids we mutated for the real-time status
+    # flag detector fan-out at end of pass.
+    touched_pids: set[str] = set()
     async for player in db.players.find(
         {"nhl_id": {"$exists": True, "$ne": None, "$gt": 0}},
         {"_id": 1, "nhl_id": 1, "current_team_abbrev": 1, "league_status": 1},
@@ -199,6 +203,7 @@ async def sync_once(
             new_fields=new_fields,
             create_notification=create_notification,
         )
+        touched_pids.add(str(player["_id"]))
         notifications_sent += int(summary.get("notifications_sent", 0))
         for t in (summary.get("transitions") or []):
             summary_transitions[t] = summary_transitions.get(t, 0) + 1
@@ -206,6 +211,25 @@ async def sync_once(
     counts["team_changes"] = diff_count
     counts["notifications_sent"] = notifications_sent
     counts["transitions"] = summary_transitions
+
+    # Iter 232N.4 — Real-time status-flag toasts. Fan out
+    # `player_status_change` events for every player we just diffed
+    # so managers see AHL recalls / IR moves the instant the roster
+    # feed lands. Falls back gracefully when broadcast_fn is None
+    # (e.g. tests that don't wire the websocket layer).
+    if touched_pids and broadcast_fn is not None:
+        try:
+            from services.player_status_change_detector import detect_and_emit_status_changes
+            det = await detect_and_emit_status_changes(
+                db,
+                list(touched_pids),
+                broadcast_fn=broadcast_fn,
+                create_notification_fn=create_notification,
+            )
+            counts["status_flag_events"] = len(det.get("events") or [])
+        except Exception as e:
+            logger.exception("nhl_roster_sync status-flag detect failed: %s", e)
+
     logger.info("nhl_roster_sync: %s", counts)
     return counts
 
@@ -214,6 +238,7 @@ async def nhl_roster_sync_loop(
     db,
     create_notification: Callable[..., Awaitable],
     interval_sec: int = DEFAULT_INTERVAL_SEC,
+    broadcast_fn: Optional[Callable[..., Awaitable]] = None,
 ):
     """Run sync_once forever on the given interval. Defers the first
     pass by 90s so the rest of the app boots cleanly first."""
@@ -221,7 +246,9 @@ async def nhl_roster_sync_loop(
     await asyncio.sleep(90)
     while True:
         try:
-            await sync_once(db, create_notification=create_notification)
+            await sync_once(
+                db, create_notification=create_notification, broadcast_fn=broadcast_fn,
+            )
         except asyncio.CancelledError:
             logger.info("nhl_roster_sync loop cancelled")
             raise
@@ -230,3 +257,4 @@ async def nhl_roster_sync_loop(
             await asyncio.sleep(300)
             continue
         await asyncio.sleep(interval_sec)
+

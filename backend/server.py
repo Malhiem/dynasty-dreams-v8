@@ -1386,7 +1386,9 @@ async def startup():
     # to every team that rosters the player.
     try:
         from services.nhl_roster_sync_worker import nhl_roster_sync_loop
-        asyncio.create_task(nhl_roster_sync_loop(db, create_notification))
+        asyncio.create_task(nhl_roster_sync_loop(
+            db, create_notification, broadcast_fn=broadcast_to_room,
+        ))
     except Exception as e:
         logger.error(f"nhl_roster_sync_worker failed to start: {e}")
 
@@ -1396,7 +1398,9 @@ async def startup():
     # notifications via the shared NHL sync dispatcher pipeline.
     try:
         from services.injury_news_scraper import injury_news_loop
-        asyncio.create_task(injury_news_loop(db, create_notification))
+        asyncio.create_task(injury_news_loop(
+            db, create_notification, broadcast_fn=broadcast_to_room,
+        ))
     except Exception as e:
         logger.error(f"injury_news_scraper failed to start: {e}")
     

@@ -68,6 +68,11 @@ def compute_player_status_flags(
     roster_status = (player.get("roster_status") or "").lower()
     injury_status = (player.get("injury_status") or "").lower()
     amateur = (player.get("amateur_league") or "").upper()
+    # Iter 232N.4 — `league_status` is what the nhl_roster_sync_worker
+    # writes when a rostered NHL player disappears from the daily
+    # feed (NHL → AHL). Treat that as a `in_minors` trigger so the
+    # send-down/recall toasts fire off the roster-sync loop.
+    league_status = (player.get("league_status") or "").upper()
 
     injured = bool(
         roster_status in ("ir", "ltir")
@@ -76,6 +81,7 @@ def compute_player_status_flags(
     in_minors = bool(
         roster_status == "minors"
         or (is_prospect and amateur in ("AHL", "ECHL"))
+        or league_status in ("AHL", "ECHL")
     )
     # `unsigned` is authoritative only for prospects — NHL players under
     # contract are never unsigned in this dataset.
