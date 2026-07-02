@@ -44,7 +44,9 @@ const managementItems = [
   { title: "Rosters", url: "/roster", icon: Users },
   { title: "Salary Cap", url: "/salary-cap", icon: DollarSign },
   // Iter 232N.9 — Free Agents unifies Players + Waiver claim management.
-  { title: "Free Agents", url: "/players", icon: Clock },
+  // Label keeps both legacy terms so managers used to "Waivers / Players"
+  // still recognise the entry after the URL migration to /players.
+  { title: "Free Agents / Waivers", url: "/players", icon: Clock },
   { title: "Depth Chart", url: "/depth-chart", icon: Network },
   { title: "Analytics", url: "/analytics", icon: BarChart3 },
   { title: "Trade Analyzer", url: "/trade-analyzer", icon: Scale },
@@ -144,7 +146,7 @@ export function AppSidebar() {
 
   // Iter 232N.9 — Attach pending-claims badge to the Free Agents link.
   const managementItemsWithBadge = managementItems.map((it) =>
-    it.title === "Free Agents" ? { ...it, badge: pendingWaivers } : it,
+    it.title === "Free Agents / Waivers" ? { ...it, badge: pendingWaivers } : it,
   );
 
   // Iter 231p — Resolved group registry keyed by stable `key`. Order

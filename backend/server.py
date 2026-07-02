@@ -1073,6 +1073,16 @@ async def startup():
         )
     except Exception as e:
         logger.warning(f"draft_restart_log TTL index already exists or failed: {e}")
+
+    # Iter 232N.12 — dedupe historical DM channel dupes + create unique
+    # index so future races can't reintroduce them.
+    try:
+        from routes.chat import dedupe_dm_channels_and_create_index
+        dm_stats = await dedupe_dm_channels_and_create_index(db)
+        if dm_stats.get("pairs_merged"):
+            logger.info(f"chat_channels DM dedup: {dm_stats}")
+    except Exception as e:
+        logger.warning(f"chat_channels DM dedup skipped: {e}")
     
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")

@@ -15,6 +15,7 @@ from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
+from pymongo import ReturnDocument
 
 router = APIRouter()
 _deps: dict = {}
@@ -36,6 +37,143 @@ def setup(deps: dict) -> None:
     _deps["post_chat_system_message"] = post_system_message
 
 
+async def dedupe_dm_channels_and_create_index(db) -> dict:
+    """Iter 232N.12 — One-time (idempotent) startup migration.
+
+    Fixes historical duplicate DM channels caused by the pre-232N.12
+    non-atomic `_ensure_dm_channel` (two participants opening chat at
+    the same moment both saw `find_one() -> None` and both called
+    `insert_one()`). For every `(league_id, team_pair)` group we keep
+    the OLDEST channel, migrate every message/read/mute row referring
+    to newer duplicate ids onto the survivor, then drop the duplicates.
+
+    Then backfills a scalar `dm_pair_key` (sorted `"teamA|teamB"`) on
+    every DM doc — we can't put a unique index on the raw `team_pair`
+    array (Mongo indexes each element individually, so two DMs sharing
+    one team collide on that team's id). Finally creates the partial
+    unique index on `{league_id, kind, dm_pair_key}` so future races
+    are rejected at the storage layer.
+    """
+    stats = {"pairs_merged": 0, "channels_deleted": 0,
+             "messages_moved": 0, "keys_backfilled": 0}
+    # Aggregate all DM pairs with duplicates.
+    pipeline = [
+        {"$match": {"kind": "dm", "team_pair": {"$exists": True, "$ne": None}}},
+        {"$group": {
+            "_id": {"league_id": "$league_id", "team_pair": "$team_pair"},
+            "ids": {"$push": "$_id"},
+            "count": {"$sum": 1},
+        }},
+        {"$match": {"count": {"$gt": 1}}},
+    ]
+    async for group in db.chat_channels.aggregate(pipeline):
+        ids = group["ids"]
+        docs = await db.chat_channels.find({"_id": {"$in": ids}}).to_list(len(ids))
+        docs.sort(key=lambda d: d.get("created_at") or datetime.min.replace(tzinfo=timezone.utc))
+        keeper = docs[0]
+        keeper_id_str = str(keeper["_id"])
+        losers = [d["_id"] for d in docs[1:]]
+        loser_id_strs = [str(x) for x in losers]
+
+        msg_res = await db.chat_messages.update_many(
+            {"channel_id": {"$in": loser_id_strs}},
+            {"$set": {"channel_id": keeper_id_str}},
+        )
+        stats["messages_moved"] += msg_res.modified_count
+        await db.chat_reads.update_many(
+            {"channel_id": {"$in": loser_id_strs}},
+            {"$set": {"channel_id": keeper_id_str}},
+        )
+        await db.chat_mutes.update_many(
+            {"channel_id": {"$in": loser_id_strs}},
+            {"$set": {"channel_id": keeper_id_str}},
+        )
+        del_res = await db.chat_channels.delete_many({"_id": {"$in": losers}})
+        stats["channels_deleted"] += del_res.deleted_count
+        stats["pairs_merged"] += 1
+
+    # Backfill scalar `dm_pair_key` on every DM doc that doesn't have it.
+    async for d in db.chat_channels.find({
+        "kind": "dm",
+        "team_pair": {"$exists": True, "$type": "array"},
+        "dm_pair_key": {"$exists": False},
+    }):
+        tp = d.get("team_pair") or []
+        if len(tp) < 2:
+            continue
+        pair_key = "|".join(sorted(str(x) for x in tp))
+        await db.chat_channels.update_one(
+            {"_id": d["_id"]},
+            {"$set": {"dm_pair_key": pair_key}},
+        )
+        stats["keys_backfilled"] += 1
+
+    try:
+        await db.chat_channels.create_index(
+            [("league_id", 1), ("kind", 1), ("dm_pair_key", 1)],
+            unique=True,
+            partialFilterExpression={"kind": "dm", "dm_pair_key": {"$exists": True}},
+            name="uniq_dm_pair_key_per_league",
+        )
+    except Exception as e:  # pragma: no cover — log-only
+        import logging
+        logging.getLogger(__name__).warning(
+            "chat_channels unique DM index skipped: %s", e,
+        )
+
+    # Iter 232N.12 — Same non-atomic race existed in
+    # `_ensure_default_channels` for the auto-seeded `general`/`trades`/
+    # `trash-talk` rows — merge the dupes and create a partial unique
+    # index on `{league_id, kind, name}` scoped to default channels.
+    default_pipeline = [
+        {"$match": {"kind": "channel", "is_default": True}},
+        {"$group": {
+            "_id": {"league_id": "$league_id", "name": "$name"},
+            "ids": {"$push": "$_id"},
+            "count": {"$sum": 1},
+        }},
+        {"$match": {"count": {"$gt": 1}}},
+    ]
+    async for group in db.chat_channels.aggregate(default_pipeline):
+        ids = group["ids"]
+        docs = await db.chat_channels.find({"_id": {"$in": ids}}).to_list(len(ids))
+        docs.sort(key=lambda d: d.get("created_at") or datetime.min.replace(tzinfo=timezone.utc))
+        keeper_id_str = str(docs[0]["_id"])
+        losers = [d["_id"] for d in docs[1:]]
+        loser_id_strs = [str(x) for x in losers]
+
+        msg_res = await db.chat_messages.update_many(
+            {"channel_id": {"$in": loser_id_strs}},
+            {"$set": {"channel_id": keeper_id_str}},
+        )
+        stats["messages_moved"] += msg_res.modified_count
+        await db.chat_reads.update_many(
+            {"channel_id": {"$in": loser_id_strs}},
+            {"$set": {"channel_id": keeper_id_str}},
+        )
+        await db.chat_mutes.update_many(
+            {"channel_id": {"$in": loser_id_strs}},
+            {"$set": {"channel_id": keeper_id_str}},
+        )
+        del_res = await db.chat_channels.delete_many({"_id": {"$in": losers}})
+        stats["channels_deleted"] += del_res.deleted_count
+        stats["pairs_merged"] += 1
+
+    try:
+        await db.chat_channels.create_index(
+            [("league_id", 1), ("kind", 1), ("name", 1)],
+            unique=True,
+            partialFilterExpression={"kind": "channel", "is_default": True},
+            name="uniq_default_channel_per_league",
+        )
+    except Exception as e:  # pragma: no cover — log-only
+        import logging
+        logging.getLogger(__name__).warning(
+            "chat_channels unique default-channel index skipped: %s", e,
+        )
+    return stats
+
+
 def _db(): return _deps["db"]
 async def _get_user(request): return await _deps["get_current_user"](request)
 
@@ -54,26 +192,28 @@ def _serialize(doc: dict) -> dict:
 
 
 async def _ensure_default_channels(db, league_id: str):
-    existing = await db.chat_channels.count_documents({
-        "league_id": league_id, "kind": "channel",
-    })
-    if existing >= len(DEFAULT_CHANNELS):
-        return
-    have = set()
-    async for c in db.chat_channels.find({"league_id": league_id, "kind": "channel"}, {"name": 1}):
-        have.add(c["name"])
+    """Iter 232N.12 — Atomic upsert per default channel name so
+    concurrent `/chat/channels` requests can't race and create dupes.
+    Backed by the partial unique index on `{league_id, kind, name}`
+    (created in `dedupe_default_channels_and_create_index`).
+    """
     for name in DEFAULT_CHANNELS:
-        if name in have:
-            continue
-        await db.chat_channels.insert_one({
-            "league_id": league_id,
-            "name": name,
-            "kind": "channel",
-            "participants": [],   # empty = open to all league members
-            "created_by": None,
-            "created_at": datetime.now(timezone.utc),
-            "is_default": True,
-        })
+        await db.chat_channels.find_one_and_update(
+            {"league_id": league_id, "kind": "channel", "name": name},
+            {
+                "$setOnInsert": {
+                    "league_id": league_id,
+                    "name": name,
+                    "kind": "channel",
+                    "participants": [],
+                    "created_by": None,
+                    "created_at": datetime.now(timezone.utc),
+                    "is_default": True,
+                },
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER,
+        )
 
 
 async def _is_commissioner(db, league_id: str, user_id: str) -> bool:
@@ -166,28 +306,47 @@ async def _require_channel_access(db, channel: dict, user_id: str) -> None:
 
 
 async def _ensure_dm_channel(db, league_id: str, team_a_id: str, team_b_id: str) -> dict:
-    """Get or create the DM channel between two teams. Pair is order-independent."""
+    """Get or create the DM channel between two teams. Pair is order-independent.
+
+    Iter 232N.12 — Uses `find_one_and_update(upsert=True)` on a scalar
+    `dm_pair_key` (sorted `"teamA|teamB"`) so concurrent calls can't
+    race and produce duplicate DM rows. Backed by a unique index on
+    `{league_id, kind, dm_pair_key}` (partial for `kind=dm`). A unique
+    index on the raw `team_pair` array wouldn't work — Mongo indexes
+    each array element individually, so two DMs sharing one team would
+    collide on that team's id.
+    """
     pair = sorted([team_a_id, team_b_id])
-    chan = await db.chat_channels.find_one({
-        "league_id": league_id, "kind": "dm", "team_pair": pair,
+    pair_key = "|".join(pair)
+    # Fast path — DM already exists.
+    existing = await db.chat_channels.find_one({
+        "league_id": league_id, "kind": "dm", "dm_pair_key": pair_key,
     })
-    if chan:
-        return chan
-    # Resolve team docs for participants + display name
+    if existing:
+        return existing
+    # Resolve team docs for participants + display name.
     teams = await db.teams.find({"_id": {"$in": [ObjectId(p) for p in pair]}}).to_list(2)
     participants = [t.get("owner_id") for t in teams if t.get("owner_id")]
     display = " ↔ ".join((t.get("name") or "?") for t in teams)
-    doc = {
-        "league_id": league_id,
-        "name": display,
-        "kind": "dm",
-        "participants": participants,
-        "team_pair": pair,
-        "created_by": None,
-        "created_at": datetime.now(timezone.utc),
-    }
-    res = await db.chat_channels.insert_one(doc)
-    doc["_id"] = res.inserted_id
+    # Atomic upsert — if a parallel request beat us we get their doc
+    # back. The unique index on `dm_pair_key` makes this contention-safe.
+    doc = await db.chat_channels.find_one_and_update(
+        {"league_id": league_id, "kind": "dm", "dm_pair_key": pair_key},
+        {
+            "$setOnInsert": {
+                "league_id": league_id,
+                "name": display,
+                "kind": "dm",
+                "participants": participants,
+                "team_pair": pair,
+                "dm_pair_key": pair_key,
+                "created_by": None,
+                "created_at": datetime.now(timezone.utc),
+            },
+        },
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
     return doc
 
 
