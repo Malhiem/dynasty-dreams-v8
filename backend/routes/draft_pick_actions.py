@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from draft_engine import MakeDraftPickRequest, get_team_for_pick
 # Iter 231n — Direct (non-late-bound) imports of the cross-module helpers.
 from routes.draft_helpers import (
+    build_pick_player_payload,
     early_start_clock_msg,
     seed_draft_picks_for_draft,
 )
@@ -133,22 +134,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         "team": on_clock,
         "team_id": on_clock_team_id,
         "player_id": str(player["_id"]),
-        "player": {
-            "id": str(player["_id"]),
-            "name": player["name"],
-            "position": player["position"],
-            "nhlTeam": player.get("team", ""),
-            "team_name": player.get("team_name", ""),
-            "pts": player.get("points", 0),
-            "g": player.get("goals", 0),
-            "a": player.get("assists", 0),
-            "gp": player.get("games_played", 0),
-            "league": "NHL",
-            "headshot": (
-                f"https://assets.nhle.com/mugs/nhl/20252026/{player.get('team', 'NHL')}/{player.get('nhl_id', '')}.png"
-                if player.get("nhl_id") else None
-            ),
-        },
+        "player": build_pick_player_payload(player),
         "picked_by": user["_id"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -430,22 +416,7 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
     picks[target_idx] = {
         **old_pick,
         "player_id": str(new_player["_id"]),
-        "player": {
-            "id": str(new_player["_id"]),
-            "name": new_player["name"],
-            "position": new_player["position"],
-            "nhlTeam": new_player.get("team", ""),
-            "team_name": new_player.get("team_name", ""),
-            "pts": new_player.get("points", 0),
-            "g": new_player.get("goals", 0),
-            "a": new_player.get("assists", 0),
-            "gp": new_player.get("games_played", 0),
-            "league": "NHL",
-            "headshot": (
-                f"https://assets.nhle.com/mugs/nhl/20252026/{new_player.get('team', 'NHL')}/{new_player.get('nhl_id', '')}.png"
-                if new_player.get("nhl_id") else None
-            ),
-        },
+        "player": build_pick_player_payload(new_player),
         "swapped_at": datetime.now(timezone.utc).isoformat(),
         "swapped_by": user["_id"],
     }

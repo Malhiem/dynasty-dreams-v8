@@ -476,6 +476,41 @@ async def get_draft_eligible_players(
     players = await _db().players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
     total = await _db().players.count_documents(query)
 
+    # ─── Iter 232N — Previously-drafted-and-dropped set ───────────
+    # Compute the set of players who were picked in a PRIOR draft in
+    # this league but are no longer on any team's roster (i.e. drafted
+    # then dropped). The dedicated symbol in the eligible list flags
+    # these so managers can spot "we've been here before" cases.
+    previously_drafted_dropped: set = set()
+    if league_id_str:
+        try:
+            past_pick_pids: set = set()
+            async for past in _db().drafts.find(
+                {
+                    "league_id": league_id_str,
+                    "_id": {"$ne": draft["_id"]},
+                    "status": {"$in": ["scheduled", "active", "completed"]},
+                },
+                {"picks": 1},
+            ):
+                for p in past.get("picks") or []:
+                    pid = p.get("player_id")
+                    if pid:
+                        past_pick_pids.add(pid)
+            if past_pick_pids:
+                # Anyone still rostered stays OUT of the "dropped" set.
+                rostered: set = set()
+                async for team in _db().teams.find(
+                    {"league_id": league_id_str}, {"players": 1},
+                ):
+                    for tp in team.get("players") or []:
+                        pid = tp.get("player_id") if isinstance(tp, dict) else tp
+                        if pid:
+                            rostered.add(str(pid))
+                previously_drafted_dropped = past_pick_pids - rostered
+        except Exception:
+            previously_drafted_dropped = set()
+
     result = []
     for i, p in enumerate(players):
         # Iter 170g — surface a best-effort NHL headshot URL based on
@@ -497,8 +532,29 @@ async def get_draft_eligible_players(
         # display_name strips the "(Prospect)" suffix added at seed time so
         # the UI shows the real human name.
         display_name = p.get("display_name") or p["name"]
+        # ─── Iter 232N — Player status flags for the badge layer ──
+        # Each flag is only set when the underlying data supports it,
+        # so the frontend can safely skip missing keys.
+        pid_str = str(p["_id"])
+        roster_status = (p.get("roster_status") or "").lower()
+        injury_status = (p.get("injury_status") or "").lower()
+        amateur = (p.get("amateur_league") or "").upper()
+        status_flags = {
+            "injured": bool(
+                roster_status in ("ir", "ltir")
+                or (injury_status and injury_status not in ("healthy", "active", ""))
+            ),
+            "in_minors": bool(
+                roster_status == "minors"
+                or (is_prospect and amateur in ("AHL", "ECHL"))
+            ),
+            # `unsigned` is authoritative only for prospects. NHL players
+            # under contract are never unsigned in this dataset.
+            "unsigned": bool(is_prospect and (p.get("signed") is False)),
+            "previously_drafted_dropped": pid_str in previously_drafted_dropped,
+        }
         result.append({
-            "id": str(p["_id"]),
+            "id": pid_str,
             "name": display_name,
             "position": p["position"],
             "nhlTeam": p.get("team", ""),
@@ -520,6 +576,8 @@ async def get_draft_eligible_players(
             # convenience flag that mirrors `player_type == "prospect"`.
             "player_type": player_type,
             "minor_eligible": is_prospect,
+            # Iter 232N — Symbol-layer flags.
+            "status_flags": status_flags,
         })
 
     return {"players": result, "total": total, "page": page, "pages": (total + limit - 1) // limit}

@@ -31,6 +31,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Search, Star, ListOrdered, Megaphone, Sprout } from "lucide-react";
+import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
 import { cn } from "@/lib/utils";
 import SortableQueue from "@/lovable/pages/draftroom/SortableQueue";
 
@@ -218,7 +219,12 @@ export default function PlayerSearchPanel({
                     </Tooltip>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{player.name}</p>
+                    <p className="text-sm font-medium text-foreground truncate flex items-center gap-1.5">
+                      <span className="truncate">{player.name}</span>
+                      {/* Iter 232N — Player status symbols (injury /
+                          minors / unsigned / previously-drafted). */}
+                      <PlayerStatusBadges flags={player.status_flags} />
+                    </p>
                     <p className="text-[10px] text-muted-foreground">
                       {player.league} · {player.age}y · {player.gp}GP {player.g}G {player.a}A {player.pts}P
                     </p>

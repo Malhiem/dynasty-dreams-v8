@@ -44,6 +44,51 @@ def setup(deps: dict) -> None:
     _deps.update(deps)
 
 
+# ─── Iter 232N — Pick payload builder ─────────────────────────────
+def build_pick_player_payload(player: dict) -> dict:
+    """Shared payload the make-pick / auto-pick / seed-picks paths write
+    onto every `picks[]` entry.
+
+    Historically these three sites duplicated an inline dict with a
+    HARDCODED `"league": "NHL"` — meaning a prospect drafted from the
+    WHL / OHL / SHL etc. would render as an "NHL" pick on the draft
+    board. That's what made the user report "the draft is picking NHL
+    starters" even though the underlying `player_type == "prospect"`.
+    This helper computes the correct league label:
+
+        NHL players → "NHL"
+        prospects   → their amateur league (WHL, OHL, KHL, SHL, ...)
+                      falling back to "Prospect" when the amateur field
+                      is missing.
+
+    Also stamps `player_type` on the pick row so the frontend badge
+    layer can render the correct chip (Prospect / NHL / Goalie).
+    """
+    is_prospect = (player.get("player_type") == "prospect")
+    league_label = player.get("amateur_league") if is_prospect else "NHL"
+    if not league_label:
+        league_label = "Prospect" if is_prospect else "NHL"
+    return {
+        "id": str(player["_id"]),
+        "name": player["name"],
+        "position": player["position"],
+        "nhlTeam": player.get("team", ""),
+        "team_name": player.get("team_name", ""),
+        "pts": player.get("points", 0),
+        "g": player.get("goals", 0),
+        "a": player.get("assists", 0),
+        "gp": player.get("games_played", 0),
+        "league": league_label,
+        "player_type": player.get("player_type") or "skater",
+        "amateur_league": player.get("amateur_league"),
+        "age": player.get("age"),
+        "headshot": (
+            f"https://assets.nhle.com/mugs/nhl/20252026/{player.get('team', 'NHL')}/{player.get('nhl_id', '')}.png"
+            if player.get("nhl_id") else None
+        ),
+    }
+
+
 def _db():
     return _deps["db"]
 
@@ -234,22 +279,7 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> di
         "team": on_clock,
         "team_id": on_clock_team_id,
         "player_id": str(chosen_player["_id"]),
-        "player": {
-            "id": str(chosen_player["_id"]),
-            "name": chosen_player["name"],
-            "position": chosen_player["position"],
-            "nhlTeam": chosen_player.get("team", ""),
-            "team_name": chosen_player.get("team_name", ""),
-            "pts": chosen_player.get("points", 0),
-            "g": chosen_player.get("goals", 0),
-            "a": chosen_player.get("assists", 0),
-            "gp": chosen_player.get("games_played", 0),
-            "league": "NHL",
-            "headshot": (
-                f"https://assets.nhle.com/mugs/nhl/20252026/{chosen_player.get('team', 'NHL')}/{chosen_player.get('nhl_id', '')}.png"
-                if chosen_player.get("nhl_id") else None
-            ),
-        },
+        "player": build_pick_player_payload(chosen_player),
         "auto_picked": True,
         "auto_pick_via": via,
         "auto_pick_source": source,

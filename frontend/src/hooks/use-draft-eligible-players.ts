@@ -96,6 +96,8 @@ export function useDraftEligiblePlayers(
           ...(p.team_name ? { team_name: p.team_name } : {}),
           ...(p.player_type ? { player_type: p.player_type } : {}),
           minor_eligible: !!p.minor_eligible,
+          // Iter 232N — Passthrough for the player status badge row.
+          status_flags: (p as any).status_flags || null,
         }) as unknown as DraftEligiblePlayer),
       );
     }
