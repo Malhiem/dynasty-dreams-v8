@@ -46,6 +46,10 @@ export default function PlayerSearchPanel({
   // Optional so legacy callers that don't yet pass it default to "all".
   typeFilter = "all",
   setTypeFilter,
+  // Iter 232N.2 — "Undrafted only" toggle. Optional; when the parent
+  // wires it, a small chip appears next to the type filter.
+  undraftedOnly = false,
+  setUndraftedOnly,
   positions,
   positionColors,
   selectedPlayerId,
@@ -101,47 +105,69 @@ export default function PlayerSearchPanel({
           </Select>
         </div>
 
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <Badge variant="secondary" className="text-[10px]" data-testid="draft-room-eligible-count">
             {filteredPlayers.length} players available
           </Badge>
-          {/* Iter 231al — Tri-segment player-type chip. Lets the user
-              isolate NHL skaters / goalies, the prospect tier, or show
-              both. Defaults to "All" so legacy behaviour is preserved.
-              Each segment carries a dedicated testid for E2E driving. */}
-          {setTypeFilter && (
-            <div
-              role="group"
-              aria-label="Filter by player type"
-              className="inline-flex items-center gap-0.5 rounded-md bg-secondary/40 p-0.5"
-              data-testid="draft-room-eligible-type-filter"
-            >
-              {[
-                { id: "all", label: "All" },
-                { id: "nhl", label: "NHL" },
-                { id: "prospects", label: "Prospects" },
-              ].map(({ id, label }) => {
-                const active = typeFilter === id;
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setTypeFilter(id)}
-                    aria-pressed={active}
-                    className={cn(
-                      "px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-colors",
-                      active
-                        ? "bg-primary text-primary-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
-                    )}
-                    data-testid={`draft-room-eligible-type-${id}`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Iter 231al — Tri-segment player-type chip. Lets the user
+                isolate NHL skaters / goalies, the prospect tier, or show
+                both. Defaults to "All" so legacy behaviour is preserved.
+                Each segment carries a dedicated testid for E2E driving. */}
+            {setTypeFilter && (
+              <div
+                role="group"
+                aria-label="Filter by player type"
+                className="inline-flex items-center gap-0.5 rounded-md bg-secondary/40 p-0.5"
+                data-testid="draft-room-eligible-type-filter"
+              >
+                {[
+                  { id: "all", label: "All" },
+                  { id: "nhl", label: "NHL" },
+                  { id: "prospects", label: "Prospects" },
+                ].map(({ id, label }) => {
+                  const active = typeFilter === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setTypeFilter(id)}
+                      aria-pressed={active}
+                      className={cn(
+                        "px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-colors",
+                        active
+                          ? "bg-primary text-primary-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+                      )}
+                      data-testid={`draft-room-eligible-type-${id}`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {/* Iter 232N.2 — "Undrafted only" toggle. Fresh-names filter
+                surfaces prospects never picked before in this league. */}
+            {setUndraftedOnly && (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={undraftedOnly}
+                onClick={() => setUndraftedOnly(!undraftedOnly)}
+                className={cn(
+                  "px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-colors border",
+                  undraftedOnly
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                    : "bg-secondary/40 text-muted-foreground border-transparent hover:text-foreground",
+                )}
+                data-testid="draft-room-eligible-undrafted-only"
+                title="Show only players never picked in this league"
+              >
+                Undrafted only
+              </button>
+            )}
+          </div>
         </div>
 
         <ScrollArea className="h-[400px]">

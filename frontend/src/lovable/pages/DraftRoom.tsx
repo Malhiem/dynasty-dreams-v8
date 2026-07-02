@@ -217,6 +217,8 @@ export default function DraftRoom() {
   // Kucherov. Defaults to "all" so the existing UX is unchanged for
   // managers who never touch the chip.
   const [typeFilter, setTypeFilter] = useState<"all" | "nhl" | "prospects">("all");
+  // Iter 232N.2 — "Undrafted only" toggle for the Eligible tab.
+  const [undraftedOnly, setUndraftedOnly] = useState(false);
   // Iter 230v — Countdown ticker extracted into `useDraftCountdown`.
   // Iter 204 — `pickTimeLeft`/`timerPaused` moved into `usePickTimer`
   // hook (declared further down after currentDraft is available).
@@ -499,6 +501,7 @@ export default function DraftRoom() {
     searchQuery,
     positionFilter,
     typeFilter,
+    undraftedOnly,
     shortlist,
     setShortlist,
     queue,
@@ -810,6 +813,8 @@ export default function DraftRoom() {
             setPositionFilter={setPositionFilter}
             typeFilter={typeFilter}
             setTypeFilter={setTypeFilter}
+            undraftedOnly={undraftedOnly}
+            setUndraftedOnly={setUndraftedOnly}
             positions={positions}
             positionColors={positionColors}
             selectedPlayerId={selectedPlayerId}

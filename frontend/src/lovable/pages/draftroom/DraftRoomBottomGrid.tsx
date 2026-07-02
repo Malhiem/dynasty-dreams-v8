@@ -49,6 +49,8 @@ export default function DraftRoomBottomGrid({
       setPositionFilter={setPositionFilter}
       typeFilter={typeFilter}
       setTypeFilter={setTypeFilter}
+      undraftedOnly={undraftedOnly}
+      setUndraftedOnly={setUndraftedOnly}
       positions={positions}
       positionColors={positionColors}
       selectedPlayerId={selectedPlayerId}

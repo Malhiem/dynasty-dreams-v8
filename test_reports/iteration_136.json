@@ -1,0 +1,61 @@
+{
+  "summary": "Iter 232N.2 — Backend shared status_flags + undrafted_only filter fully verified (pytest 9/9 + live curl regression). Frontend: Players + Waivers toggles + PlayerStatusBadges render correctly. CRITICAL: Draft Room crashes with ReferenceError 'undraftedOnly is not defined' — entire /draft-room page shows error boundary; toggle + badges unreachable. Roster and Trade Block badge rendering could not be visually verified (roster page rendered empty slots for the 1-player TFHL team in reachable viewport; trade block currently has no PlayerCardChip on the board — only a draft pick).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "DraftRoomBottomGrid (/app/frontend/src/lovable/pages/draftroom/DraftRoomBottomGrid.tsx lines 25-38, 52-53)",
+        "issue": "CRITICAL — ReferenceError: `undraftedOnly is not defined`. Props `undraftedOnly` and `setUndraftedOnly` are used at lines 52-53 but are NOT destructured in the component's props signature (lines 25-38). Parent DraftRoom.tsx passes them (lines 816-817) but they never reach PlayerSearchPanel. Result: /draft-room?draftId=...&leagueId=... throws and shows the 'Something went sideways' error boundary. Toggle [data-testid=draft-room-eligible-undrafted-only] never renders (count=0).",
+        "selector": "[data-testid=\"draft-room-eligible-undrafted-only\"]",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Roster page (/roster → LovableTeam → PlayerRoster → PlayerRow)",
+        "issue": "player-status-badges count = 0 on /roster for TFHL Toronto Singularity (1 rostered player, Connor McDavid, has status_flags.undrafted=true from backend). Waited 8s + scrolled 1500px; roster sections (Bench, IR, Minors, Goalies) showed 'No players' and no visible skater row was reachable. Code wiring in sub-components.tsx L1138 looks correct, so this may be an async-hydration race in /roster where PlayerRoster's shaped livePlayers isn't populating in the current preview environment, OR the visible skater row is above the captured viewport. Needs manual verification with the roster loaded and skater slot filled.",
+        "selector": "[data-testid=\"player-status-badges\"]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Trade Block PlayerCardChip",
+        "issue": "Could not verify PlayerStatusBadges render on trade-block player card headers — TFHL League Trade Block currently only shows a 2026 R2 draft pick chip, no player chips are on the block. Wiring reads correct in PlayerCardChip.jsx but visual verification requires a player added to the block."
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Draft Room load",
+        "issue": "Page-level crash prevents ANY draft-room interaction; blocks eligible-players tab, undrafted toggle, and badge visibility.",
+        "affected_selectors": ["[data-testid=\"draft-room-eligible-undrafted-only\"]", "[data-testid=\"player-status-badges\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N2_status_flags_shared.py",
+    "/app/backend/tests/test_iter232N2_live_regression.py"
+  ],
+  "action_items": [
+    "FIX (main agent) — Add `undraftedOnly` and `setUndraftedOnly` to the destructured props of `DraftRoomBottomGrid` (file: /app/frontend/src/lovable/pages/draftroom/DraftRoomBottomGrid.tsx, function signature at lines 25-38). Once fixed, /draft-room?draftId=6a3c00447f735c0f8adc92f8&leagueId=6a3a0781a842ea2f7bcdc7cb will render again and the toggle + badges become testable.",
+    "Verify roster badges by (a) confirming PlayerRoster.livePlayers actually populates on /roster in this environment, (b) adding a 2nd player or ensuring visible skater slots are in viewport, or (c) adding a data-testid to the outer PlayerRow so tests can assert row rendering independent of scroll."
+  ],
+  "critical_code_review_comments": [
+    "DraftRoomBottomGrid.tsx: props `undraftedOnly` / `setUndraftedOnly` used but not destructured — classic React 'variable not defined' regression when a new prop is added to only one of the two places. Consider adding a prop-types or TS type (currently @ts-nocheck) to catch this at build time.",
+    "Backend `/api/waivers/available?limit=5000` returns 500 — endpoint should either cap limit gracefully or validate + 4xx instead of throwing. Not blocking this iteration but a latent robustness bug.",
+    "Backend eligible-players endpoint returned identical counts with and without `undrafted_only=true` (1338 vs 1338) because the draft already has `exclude_previously_drafted=True`. The redundant filter is safe but the frontend `Undrafted only` toggle on the Eligible tab is effectively a no-op for this draft — worth documenting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter232N2_live_regression.py (NEW — live curl regression, 3/4 pass; roster subtest fails only because /api/leagues/{id}/teams path is 404 — use /api/teams?league_id=... instead)"
+  ],
+  "success_rate": {
+    "backend": "100% (pytest 9/9; live curl confirmed Gavin McKenna excluded from waivers, 3310→3309 players, status_flags stamped on every row)",
+    "frontend": "50% (2 of 4 surfaces confirmed: Players ✓, Waivers ✓, Draft Room ✗ CRASHED, Roster + Trade Block unverified)"
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (commissioner) — verified working via /api/auth/login. TFHL league 6a3a0781a842ea2f7bcdc7cb, Toronto Singularity team 6a3c69fb9a6fc14153c24f21.",
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes DraftRoomBottomGrid props destructure, retest: (1) /draft-room?draftId=6a3c00447f735c0f8adc92f8&leagueId=6a3a0781a842ea2f7bcdc7cb — confirm [data-testid=draft-room-eligible-undrafted-only] toggle renders + fires client-side filter (based on status_flags.undrafted). (2) Roster: navigate to /roster, wait for hydration, scroll to the skater slot row (Connor McDavid); confirm [data-testid=player-status-badges] appears. (3) Trade Block: add a player to trade block first, then verify chip header renders badges. Backend verification stays green — reuse /app/backend/tests/test_iter232N2_live_regression.py (fix roster test's team-list endpoint to /api/teams?league_id=...).",
+  "rca_of_the_issue": "DraftRoomBottomGrid.tsx line 52-53 references `undraftedOnly` and `setUndraftedOnly`, but the function signature at lines 25-38 does not destructure them from props. Because the file is `@ts-nocheck`, TypeScript did not catch this. Parent DraftRoom.tsx (lines 816-817) correctly passes both props. Fix: add `undraftedOnly, setUndraftedOnly,` to the destructured props between `typeFilter, setTypeFilter,` (line 28) and `positions,` (line 29). Reproduction: navigate to /draft-room with valid draftId and leagueId — page renders the error boundary with message 'undraftedOnly is not defined'."
+}

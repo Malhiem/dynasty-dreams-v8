@@ -29,6 +29,7 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Megaphone } from "lucide-react";
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
+import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -1134,6 +1135,7 @@ export const PlayerRow = ({
             <div className="flex items-center gap-1.5 min-w-0">
               <button onClick={() => onPlayerClick(player)} className="font-medium text-sm text-foreground hover:text-primary transition-colors cursor-pointer truncate text-left">{player.name}</button>
               <MinorEligibleBadge eligible={(player as any).minor_eligible || (player as any).player_type === "prospect"} />
+              <PlayerStatusBadges flags={(player as any).status_flags} />
               {newsInfo && <NewsSignalIcon player={{ ...newsInfo, _id: player.id, name: player.name }} />}
               {hasWarnings && (
                 <TooltipProvider>
@@ -1332,4 +1334,6 @@ export const OwnershipCell = ({ player, ownership }: { player: Player; ownership
     </td>
   );
 };
+
+;
 

@@ -313,6 +313,8 @@ const PlayerRoster = ({
           // MinorEligibleBadge renders consistently on the team page.
           minor_eligible: !!p.minor_eligible,
           player_type: p.player_type || "skater",
+          // Iter 232N.2 — passthrough for the badge layer.
+          status_flags: p.status_flags || null,
         }));
         setLivePlayers(shaped);
       })

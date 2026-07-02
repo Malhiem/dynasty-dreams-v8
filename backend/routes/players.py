@@ -35,6 +35,7 @@ async def get_players(
     availability: str = "all",
     injured: Optional[bool] = None,
     minors_eligible: Optional[bool] = None,
+    undrafted_only: bool = False,
     exclude_team_id: Optional[str] = None,
     timeframe: str = "season",
     sort_by: Optional[str] = None,
@@ -163,6 +164,37 @@ async def get_players(
                 existing_nin = list(existing_id["$nin"])
             existing_nin.extend([ObjectId(p) for p in ex_pids])
             query["_id"] = {"$nin": existing_nin}
+
+    # Iter 232N.2 — Undrafted-only filter + shared status_flags helper.
+    from routes.player_status import (
+        compute_player_status_flags,
+        get_previously_drafted_pids,
+    )
+    previously_drafted_pids: set = set()
+    if league_id:
+        previously_drafted_pids = await get_previously_drafted_pids(db, league_id)
+    if undrafted_only and league_id:
+        existing_id = query.get("_id")
+        already_nin: list = []
+        already_in: list = []
+        if isinstance(existing_id, dict):
+            if "$nin" in existing_id:
+                already_nin = list(existing_id["$nin"])
+            if "$in" in existing_id:
+                already_in = list(existing_id["$in"])
+        combined_nin = {oid for oid in already_nin}
+        for pid in previously_drafted_pids:
+            try:
+                combined_nin.add(ObjectId(pid))
+            except Exception:
+                continue
+        new_id_clause: dict = {}
+        if combined_nin:
+            new_id_clause["$nin"] = list(combined_nin)
+        if already_in:
+            new_id_clause["$in"] = already_in
+        if new_id_clause:
+            query["_id"] = new_id_clause
 
     skip = (page - 1) * limit
     sort_field_map = {
@@ -306,6 +338,10 @@ async def get_players(
         # Iter 181 — surface minor-eligibility so the Players directory
         # renders the same Sprout badge as the rest of the app.
         player["minor_eligible"] = compute_minor_eligible(player, league_doc)
+        # Iter 232N.2 — status_flags for the badge layer.
+        player["status_flags"] = compute_player_status_flags(
+            player, previously_drafted_pids if league_id else None,
+        )
         stats_for_fpts = {
             "goals": player.get("goals", 0), "assists": player.get("assists", 0),
             "points": player.get("points", 0), "plus_minus": player.get("plus_minus", 0),

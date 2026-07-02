@@ -91,6 +91,7 @@ async def get_waiver_players(
     league_id: Optional[str] = None,
     search: Optional[str] = None,
     position: Optional[str] = None,
+    undrafted_only: bool = False,
     page: int = 1,
     limit: int = 50,
     timeframe: str = "season",
@@ -122,6 +123,28 @@ async def get_waiver_players(
         ]
     if position and position != "all":
         query["position"] = position
+
+    # Iter 232N.2 — Undrafted-only filter + shared status_flags helper.
+    from routes.player_status import (
+        compute_player_status_flags,
+        get_previously_drafted_pids,
+    )
+    previously_drafted_pids: set = set()
+    if league_id:
+        previously_drafted_pids = await get_previously_drafted_pids(db, league_id)
+    if undrafted_only and league_id and previously_drafted_pids:
+        existing_id = query.get("_id")
+        already_nin: list = []
+        if isinstance(existing_id, dict) and "$nin" in existing_id:
+            already_nin = list(existing_id["$nin"])
+        combined = {oid for oid in already_nin}
+        for pid in previously_drafted_pids:
+            try:
+                combined.add(ObjectId(pid))
+            except Exception:
+                continue
+        if combined:
+            query["_id"] = {"$nin": list(combined)}
 
     skip = (page - 1) * limit
     players = await db.players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
@@ -191,6 +214,10 @@ async def get_waiver_players(
             # leaf badge as the roster, trade block, depth chart, etc.
             "player_type": p.get("player_type") or "skater",
             "minor_eligible": compute_minor_eligible(p, league_doc),
+            # Iter 232N.2 — status_flags for the badge layer.
+            "status_flags": compute_player_status_flags(
+                p, previously_drafted_pids if league_id else None,
+            ),
         })
 
     return {

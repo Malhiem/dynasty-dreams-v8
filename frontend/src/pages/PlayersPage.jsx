@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/tooltip";
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
+import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
 
 const VIEWS = [
   { value: "available", label: "All Available Players (default)" },
@@ -89,7 +90,7 @@ const NHL_TEAMS = [
   "STL","TBL","TOR","UTA","VAN","VGK","WPG","WSH",
 ];
 
-function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir) {
+function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly) {
   const p = new URLSearchParams();
   if (leagueId) p.append("league_id", leagueId);
   if (search) p.append("search", search);
@@ -99,6 +100,7 @@ function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTe
   if (timeframe) p.append("timeframe", timeframe);
   if (sortBy) p.append("sort_by", sortBy);
   if (sortDir) p.append("sort_dir", sortDir);
+  if (undraftedOnly) p.append("undrafted_only", "true");
   p.append("page", String(page));
   p.append("limit", "50");
 
@@ -264,6 +266,9 @@ export default function PlayersPage() {
   const [sortBy, setSortBy] = useState("points");
   const [sortDir, setSortDir] = useState("desc");
   const [page, setPage] = useState(1);
+  // Iter 232N.2 — "Undrafted only" toggle: filters response to players
+  // who have never been picked in any prior draft in this league.
+  const [undraftedOnly, setUndraftedOnly] = useState(false);
 
   const [players, setPlayers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -271,12 +276,12 @@ export default function PlayersPage() {
   const [loading, setLoading] = useState(false);
   const [timeframeSupported, setTimeframeSupported] = useState(true);
 
-  useEffect(() => { setPage(1); }, [view, position, nhlTeam, fantasyTeamId, search, timeframe]);
+  useEffect(() => { setPage(1); }, [view, position, nhlTeam, fantasyTeamId, search, timeframe, undraftedOnly]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const qs = buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir);
+    const qs = buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly);
     api.get(`/players?${qs}`)
       .then(({ data }) => {
         if (cancelled) return;
@@ -296,7 +301,7 @@ export default function PlayersPage() {
       .catch(() => { if (!cancelled) { setPlayers([]); setTotal(0); setPages(1); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId, timeframe, sortBy, sortDir]);
+  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly]);
 
   const toggleWatchlist = async (player) => {
     try {
@@ -404,6 +409,30 @@ export default function PlayersPage() {
           </div>
         </div>
 
+        {/* Iter 232N.2 — "Undrafted only" toggle: fresh names filter. */}
+        <div className="mb-3 flex items-center gap-2">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={undraftedOnly}
+            onClick={() => setUndraftedOnly((v) => !v)}
+            className={`px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wider transition-colors border ${
+              undraftedOnly
+                ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                : "bg-[#1A1A1A] text-muted-foreground border-white/10 hover:text-foreground"
+            }`}
+            data-testid="players-undrafted-only-toggle"
+            title="Show only players never picked in this league"
+          >
+            {undraftedOnly ? "★ Undrafted only" : "Undrafted only"}
+          </button>
+          {undraftedOnly && (
+            <span className="text-[11px] text-muted-foreground" data-testid="players-undrafted-only-hint">
+              Filtering to players never drafted in this league
+            </span>
+          )}
+        </div>
+
         {!timeframeSupported && timeframe !== "season" && (
           <div className="mb-3 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs" data-testid="players-timeframe-banner">
             Timeframe filtering for "{TIMEFRAMES.find((t) => t.value === timeframe)?.label}" is rolling out — currently showing season totals while per-game stats backfill.
@@ -456,6 +485,8 @@ export default function PlayersPage() {
                       <div className="flex items-center gap-1.5">
                         <Link to={`/players/${p._id}`} className="font-medium text-white hover:text-primary">{p.name}</Link>
                         <MinorEligibleBadge eligible={p.minor_eligible || p.player_type === "prospect"} />
+                        {/* Iter 232N.2 — Player status badges (injured / minors / unsigned / undrafted). */}
+                        <PlayerStatusBadges flags={p.status_flags} />
                         {p.news_signal && <NewsSignalIcon player={p} />}
                       </div>
                     </td>

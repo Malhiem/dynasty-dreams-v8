@@ -192,6 +192,16 @@ async def get_roster(team_id: str, request: Request):
     roster_players = team.get("roster", [])
     lineup = team.get("lineup") or {}
     config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
+    # Iter 232N.2 — Pre-compute previously-drafted set once for the
+    # status_flags helper (so we don't fan out queries per player).
+    from routes.player_status import (
+        compute_player_status_flags,
+        get_previously_drafted_pids,
+    )
+    league_id_for_flags = team.get("league_id")
+    previously_drafted_pids: set = await get_previously_drafted_pids(
+        db, league_id_for_flags,
+    )
     players = []
     for pid in roster_players:
         player = await db.players.find_one({"_id": ObjectId(pid)})
@@ -228,6 +238,10 @@ async def get_roster(team_id: str, request: Request):
             "shutouts": player.get("shutouts", 0),
             "fantasy_points": fpts,
             "roster_section": section,
+            # Iter 232N.2 — status_flags for badge layer on Roster page.
+            "status_flags": compute_player_status_flags(
+                player, previously_drafted_pids if league_id_for_flags else None,
+            ),
         })
     players.sort(key=lambda p: -(p.get("fantasy_points") or 0))
     return {"team_id": team_id, "team_name": team["name"], "players": players}

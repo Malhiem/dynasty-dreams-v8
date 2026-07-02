@@ -21,6 +21,7 @@ import TeamLink from "@/lovable/components/TeamLink";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
+import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface WaiverPlayer {
@@ -140,6 +141,8 @@ const Waivers = () => {
   // `timeframe` query-string parameter; backend gates which
   // values produce real (vs placeholder) stats.
   const [availableTimeframe, setAvailableTimeframe] = useState("season");
+  // Iter 232N.2 — "Undrafted only" toggle for the Available Players table.
+  const [availableUndraftedOnly, setAvailableUndraftedOnly] = useState(false);
   const [cancellingClaimId, setCancellingClaimId] = useState<string | null>(null);
 
   // Iter 180 — Drop-player selector inside the claim modal. When the
@@ -173,7 +176,7 @@ const Waivers = () => {
       .then(({ data }) => { if (!cancelled) setTxConfig(data); })
       .catch(() => { if (!cancelled) setTxConfig(null); });
     return () => { cancelled = true; };
-  }, [league?.id, myTeam?.id, availableTimeframe]);
+  }, [league?.id, myTeam?.id, availableTimeframe, availableUndraftedOnly]);
 
   // Re-fetch precheck whenever the modal opens, selected player changes,
   // or the bid amount changes (FAAB blocker depends on bid).
@@ -335,6 +338,8 @@ const Waivers = () => {
       // Iter 181 — surface minor eligibility from the backend so the
       // MinorEligibleBadge can render in the Available Players table.
       minorEligible: !!p.minor_eligible || p.player_type === "prospect",
+      // Iter 232N.2 — passthrough for the badge layer.
+      statusFlags: p.status_flags || null,
     }));
     // Iter 180 — apply free-text filter (name + NHL team abbr,
     // case-insensitive substring match). Applied BEFORE the 20-row
@@ -569,6 +574,23 @@ const Waivers = () => {
                       Clear
                     </Button>
                   )}
+                  {/* Iter 232N.2 — "Undrafted only" toggle. */}
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={availableUndraftedOnly}
+                    onClick={() => setAvailableUndraftedOnly((v) => !v)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wider transition-colors border",
+                      availableUndraftedOnly
+                        ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                        : "bg-secondary text-muted-foreground border-transparent hover:text-foreground",
+                    )}
+                    data-testid="waiver-undrafted-only-toggle"
+                    title="Show only players never picked in this league"
+                  >
+                    {availableUndraftedOnly ? "★ Undrafted only" : "Undrafted only"}
+                  </button>
                   <Select value={availableTimeframe} onValueChange={setAvailableTimeframe}>
                     <SelectTrigger className="w-[200px]" data-testid="waiver-available-timeframe">
                       <SelectValue />
@@ -618,6 +640,7 @@ const Waivers = () => {
                           <div className="flex items-center gap-2">
                             <p className="font-medium">{player.name}</p>
                             <MinorEligibleBadge eligible={(player as any).minorEligible} />
+                            <PlayerStatusBadges flags={(player as any).statusFlags} />
                             {player.trending === "up" && <TrendingUp className="h-3 w-3 text-success" />}
                           </div>
                           {player.previousOwner && (

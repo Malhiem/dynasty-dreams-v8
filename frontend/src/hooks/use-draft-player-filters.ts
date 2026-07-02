@@ -20,6 +20,7 @@ export default function useDraftPlayerFilters({
   searchQuery,
   positionFilter,
   typeFilter = "all",
+  undraftedOnly = false,
   shortlist,
   setShortlist,
   queue,
@@ -35,6 +36,12 @@ export default function useDraftPlayerFilters({
    * NHL stars that dominate the points-sorted list.
    */
   typeFilter?: "all" | "nhl" | "prospects";
+  /**
+   * Iter 232N.2 — "Undrafted only" filter. When true, filters the
+   * eligible list to players whose `status_flags.undrafted === true`
+   * (i.e. never picked in any prior draft in this league).
+   */
+  undraftedOnly?: boolean;
   shortlist: string[];
   setShortlist: (updater: (prev: string[]) => string[]) => void;
   queue: string[];
@@ -51,10 +58,12 @@ export default function useDraftPlayerFilters({
           typeFilter === "all" ||
           (typeFilter === "prospects" && isProspect) ||
           (typeFilter === "nhl" && !isProspect);
-        return matchesSearch && matchesPos && matchesType;
+        const matchesUndrafted =
+          !undraftedOnly || (p as any).status_flags?.undrafted === true;
+        return matchesSearch && matchesPos && matchesType && matchesUndrafted;
       })
       .sort((a, b) => a.ranking - b.ranking);
-  }, [players, searchQuery, positionFilter, typeFilter]);
+  }, [players, searchQuery, positionFilter, typeFilter, undraftedOnly]);
 
   // Iter 170l — preserve the manager's drag-ordered shortlist (was
   // sorted by global ranking before, which made drag-to-reorder

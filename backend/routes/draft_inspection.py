@@ -392,6 +392,7 @@ async def get_draft_eligible_players(
     draft_id: str,
     search: Optional[str] = None,
     position: Optional[str] = None,
+    undrafted_only: bool = False,
     page: int = 1,
     limit: int = 50,
 ):
@@ -472,32 +473,36 @@ async def get_draft_eligible_players(
     if position and position != "all":
         query["position"] = position
 
+    # ─── Iter 232N — Previously-drafted set (for `undrafted` flag) ───
+    from routes.player_status import (
+        compute_player_status_flags,
+        get_previously_drafted_pids,
+    )
+    previously_drafted_pids: set = await get_previously_drafted_pids(
+        _db(), league_id_str, exclude_draft_id=draft["_id"],
+    )
+
+    # Iter 232N.2 — `undrafted_only` query param filters the eligible
+    # list to players who have never been picked in any prior draft
+    # in this league. Injected into the Mongo query BEFORE it fires so
+    # pagination + total counts reflect the filter.
+    if undrafted_only and league_id_str:
+        existing_id = query.get("_id")
+        already_nin: list = []
+        if isinstance(existing_id, dict) and "$nin" in existing_id:
+            already_nin = list(existing_id["$nin"])
+        combined = {oid for oid in already_nin}
+        for pid in previously_drafted_pids:
+            try:
+                combined.add(ObjectId(pid))
+            except Exception:
+                continue
+        if combined:
+            query["_id"] = {"$nin": list(combined)}
+
     skip = (page - 1) * limit
     players = await _db().players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
     total = await _db().players.count_documents(query)
-
-    # ─── Iter 232N — Previously-drafted set (for `undrafted` flag) ───
-    # Compute the set of players who were picked in ANY prior draft in
-    # this league. The `undrafted` badge flags anyone NOT in this set
-    # (i.e. never picked in the fantasy league) so managers can spot
-    # fresh names in the eligible list at a glance.
-    previously_drafted_pids: set = set()
-    if league_id_str:
-        try:
-            async for past in _db().drafts.find(
-                {
-                    "league_id": league_id_str,
-                    "_id": {"$ne": draft["_id"]},
-                    "status": {"$in": ["scheduled", "active", "completed"]},
-                },
-                {"picks": 1},
-            ):
-                for p in past.get("picks") or []:
-                    pid = p.get("player_id")
-                    if pid:
-                        previously_drafted_pids.add(str(pid))
-        except Exception:
-            previously_drafted_pids = set()
 
     result = []
     for i, p in enumerate(players):
@@ -520,32 +525,14 @@ async def get_draft_eligible_players(
         # display_name strips the "(Prospect)" suffix added at seed time so
         # the UI shows the real human name.
         display_name = p.get("display_name") or p["name"]
-        # ─── Iter 232N — Player status flags for the badge layer ──
-        # Each flag is only set when the underlying data supports it,
-        # so the frontend can safely skip missing keys.
         pid_str = str(p["_id"])
-        roster_status = (p.get("roster_status") or "").lower()
-        injury_status = (p.get("injury_status") or "").lower()
-        amateur = (p.get("amateur_league") or "").upper()
-        status_flags = {
-            "injured": bool(
-                roster_status in ("ir", "ltir")
-                or (injury_status and injury_status not in ("healthy", "active", ""))
-            ),
-            "in_minors": bool(
-                roster_status == "minors"
-                or (is_prospect and amateur in ("AHL", "ECHL"))
-            ),
-            # `unsigned` is authoritative only for prospects. NHL players
-            # under contract are never unsigned in this dataset.
-            "unsigned": bool(is_prospect and (p.get("signed") is False)),
-            # `undrafted` — player has never been picked in ANY prior
-            # draft in this league. Highlights fresh names in the
-            # eligible list. Set only when we have a league_id and were
-            # able to compute the previously-drafted set (otherwise
-            # left False rather than misleadingly True).
-            "undrafted": bool(league_id_str) and (pid_str not in previously_drafted_pids),
-        }
+        # ─── Iter 232N — Player status flags for the badge layer ──
+        # Uses the shared `compute_player_status_flags` helper so every
+        # consumer emits the same shape. `undrafted` is stamped only
+        # when we have a league_id (otherwise left False).
+        status_flags = compute_player_status_flags(
+            p, previously_drafted_pids if league_id_str else None,
+        )
         result.append({
             "id": pid_str,
             "name": display_name,

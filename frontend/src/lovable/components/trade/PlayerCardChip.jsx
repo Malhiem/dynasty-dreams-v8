@@ -8,6 +8,7 @@ import { User as UserIcon } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
 
 const formatSalary = (s) => `$${((s || 0) / 1_000_000).toFixed(1)}M`;
 
@@ -38,7 +39,7 @@ export function PlayerCardChip({ player, ownership }) {
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <span className="text-xs font-bold truncate">{player?.name}</span>
           {player?.position && (
             <span className="text-[9px] uppercase tracking-wider text-muted-foreground">
@@ -50,6 +51,8 @@ export function PlayerCardChip({ player, ownership }) {
               · {player.team || player.nhl_team}
             </span>
           )}
+          {/* Iter 232N.2 — Player status badges. */}
+          <PlayerStatusBadges flags={player?.status_flags} />
         </div>
         <div className="grid grid-cols-5 gap-1 mt-1 text-[10px] text-muted-foreground">
           <span><span className="text-foreground font-semibold">{stats.G ?? player?.goals ?? 0}</span> G</span>
