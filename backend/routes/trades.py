@@ -859,6 +859,50 @@ async def create_trade_proposal(input: TradeProposalCreate, request: Request):
 # server.py ignore proposals that no one has accepted yet.
 
 
+# ─── Iter 232M.3 — Thread-wide fanout for counter chains ────────────
+async def _notify_thread_participants(
+    db,
+    trade: dict,
+    *,
+    title: str,
+    body: str,
+    league_id: str,
+    link: str,
+    exclude_user_ids: set,
+) -> None:
+    """Fan out a notification to every unique proposer/target user across
+    the counter chain rooted at `trade.counter_thread_root` — so managers
+    who negotiated earlier steps stay in the loop when a later counter
+    resolves. Users in `exclude_user_ids` (typically the acting user +
+    anyone who already received a direct notification) are skipped.
+
+    Best-effort — swallows per-recipient failures so one bad notify can't
+    block the response path.
+    """
+    root_id = trade.get("counter_thread_root") or str(trade.get("_id"))
+    try:
+        cursor = db.trades.find(
+            {"$or": [{"_id": ObjectId(root_id)}, {"counter_thread_root": root_id}]},
+            {"proposer_id": 1, "target_owner_id": 1},
+        )
+        participants: set = set()
+        async for step in cursor:
+            for k in ("proposer_id", "target_owner_id"):
+                uid = step.get(k)
+                if uid:
+                    participants.add(uid)
+        recipients = participants - (exclude_user_ids or set())
+        for uid in recipients:
+            try:
+                await _create_notification(
+                    uid, NT_TRADE_PROPOSED, title, body, league_id, link,
+                )
+            except Exception as e:
+                _logger().debug(f"thread fanout skipped for {uid}: {e}")
+    except Exception as e:
+        _logger().debug(f"thread fanout query failed: {e}")
+
+
 @router.post("/trades/{trade_id}/respond")
 async def respond_to_trade_proposal(trade_id: str, request: Request):
     """Iter 231h — Recipient (target team owner / co-owner) accepts or
@@ -953,6 +997,19 @@ async def respond_to_trade_proposal(trade_id: str, request: Request):
             f"{trade.get('target_team_name')} accepted your trade. It's now in league review for {hours}h.",
             league_id,
             trade_link,
+        )
+        # Iter 232M.3 — Thread-wide fanout: keep earlier negotiators looped
+        # in when a later counter in the chain gets accepted.
+        await _notify_thread_participants(
+            db, trade,
+            title="Counter Accepted — Pending Review",
+            body=(
+                f"{trade.get('target_team_name')} accepted the counter in a trade "
+                f"you were part of. Now in league review for {hours}h."
+            ),
+            league_id=league_id,
+            link=trade_link,
+            exclude_user_ids={user["_id"], trade.get("proposer_id")},
         )
 
         return {
@@ -1077,6 +1134,20 @@ async def respond_to_trade_proposal(trade_id: str, request: Request):
             league_id,
             f"/transactions/trade/{counter_id}",
         )
+        # Iter 232M.3 — Thread fanout. From counter #2 onward there may
+        # be earlier participants who negotiated but aren't on this
+        # specific step; notify them so they can watch the thread evolve.
+        await _notify_thread_participants(
+            db, trade,
+            title="Counter Chain Updated",
+            body=(
+                f"A trade you were part of just received another counter "
+                f"from {trade.get('target_team_name')}."
+            ),
+            league_id=league_id,
+            link=f"/transactions/trade/{counter_id}",
+            exclude_user_ids={user["_id"], trade.get("proposer_id")},
+        )
 
         return {
             "trade_id": trade_id,
@@ -1111,6 +1182,20 @@ async def respond_to_trade_proposal(trade_id: str, request: Request):
         f"{trade.get('target_team_name')} rejected your trade proposal." + (f' Reason: "{reason}"' if reason else ""),
         league_id,
         trade_link,
+    )
+    # Iter 232M.3 — Thread fanout on rejection too. Anyone who negotiated
+    # earlier steps of this counter chain deserves to know the deal
+    # collapsed.
+    await _notify_thread_participants(
+        db, trade,
+        title="Counter Chain Rejected",
+        body=(
+            f"A trade you were part of was rejected by "
+            f"{trade.get('target_team_name')}." + (f' Reason: "{reason}"' if reason else "")
+        ),
+        league_id=league_id,
+        link=trade_link,
+        exclude_user_ids={user["_id"], trade.get("proposer_id")},
     )
 
     return {
