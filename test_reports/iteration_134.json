@@ -1,0 +1,38 @@
+{
+  "summary": "Iter 232L follow-up (Categories column cap removal + trades.py/Transactions.tsx refactor) verified end-to-end. Backend: 2/2 unit tests + 6/6 live-API tests (1 skipped) all green after the extraction of hydration helpers into routes/trade_hydration.py. GET /leagues/{id}/pending-trades returns trade.scoring_categories.skater with exactly 10 default counting cats (G, A, +/-, PIM, PPG, PPP, SHG, SHP, GWG, SOG), and 6 goalie cats. McDavid asset hydrated with age=29, cap_hit=$13.5M, gp=82, fpts=520.0, fpg=6.34, and all 10 stat_categories with correct values (48G/90A/+17/44 PIM/13 PPG/54 PPP/1 SHG/2 SHP/4 GWG/306 SOG). Celebrini side: age=20, cap=$12.05M, gp=77, fpts=434.0, fpg=5.64. Frontend: /transactions renders Pending McDavid↔Celebrini trade card. FPts view has 7 cols/side (Player, Pos, Age, Cap Hit, GP, FPts, FP/G). Categories view has 14 cols/side (4 fixed + 10 categories) — ALL 10 target cats present, no 8-column cap. Toggle persists to localStorage 'transactions.viewMode' and survives page reload. Asset table container has overflow-x-auto, all <th> use whitespace-nowrap. Mobile viewport (390px) also uses overflow-x-auto. 15/16 data-testids present (transactions-filters-clear is conditionally rendered only when a filter is active — verified in source at line 315-329, not a bug). No import/render errors in the refactored transactions/ modules.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232L_trade_asset_hydration.py",
+    "/app/backend/tests/test_iter232L_trade_hydration_live.py",
+    "/app/test_reports/pytest/iter232L_v2.xml"
+  ],
+  "action_items": [
+    "None — all acceptance criteria for the iter 232L follow-up (categories cap removal + refactor) are met."
+  ],
+  "critical_code_review_comments": [
+    "routes/trade_hydration.py (223 lines) is a clean, single-purpose extraction: STAT_CATEGORY_LABELS + hydrate_trade_assets + hydrate_trades + private helpers (_hydrate_side, _resolve_cap_hit, _compute_age, _is_pick_asset, _fetch_scoring_config, _asset_stat_categories, _order_categories). Uses a deps dict (setup(deps)) so calculate_fantasy_points stays shared with scoring/roster — no duplicate math.",
+    "routes/trades.py now aliases the module's helpers as _hydrate_trade_assets/_hydrate_trades (L51-54) and forwards deps via _trade_hydration_setup(deps) at L32. All 5 GET endpoints still hydrate (L1192, 1303, 1314, 1333, 1364). Backwards-compat preserved — test_iter232L_trade_asset_hydration.py imports the same names and still passes without modification.",
+    "trades.py went from 2257 → 2096 lines. Still >700 threshold, but the biggest reusable helper block was extracted cleanly. Further extraction (conditional trade evaluation, trade state machine) could be a future iter.",
+    "Transactions.tsx went from 1266 → 539 lines — well under the 700 threshold. Extracted modules: types.ts (86L incl. selectCategoriesForAssets), statusConfig.ts (17L), TradeCard.tsx (212L), ConditionalTradeCard.tsx (343L incl. PickUpgradeRow/ConditionalAssetTable/ConditionEvalRow/describeCondition), StatViewToggle.tsx (35L), mapTrade.ts (87L). Clean domain boundaries.",
+    "selectCategoriesForAssets in types.ts renders the FULL scoring_categories list (skater cats + goalie cats appended when a goalie is on the card) — the previous .slice(0, 8) cap is gone. Verified live: TFHL default scoring renders all 10 skater cats.",
+    "Both TradeCard.tsx and ConditionalTradeCard.tsx wrap the asset table in <div className=\"overflow-x-auto -mx-2 sm:mx-0\"> and mark every <th> and content <td> with whitespace-nowrap — the two-column trade grid stays intact at both 1920px and 390px; the categories table scrolls horizontally when it overflows.",
+    "transactions-filters-clear is (correctly) conditionally rendered only when a filter is active (selectedTeamIds.size>0 || dateFrom || dateTo). Reported as MISSING by the naive selector scan but this is by design — not a defect.",
+    "Frontend uses `// @ts-nocheck` per Lovable convention as noted in the review request."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (2/2 unit + 6/6 live, 1 skipped-no-pick-data)", "frontend": "100% (all Categories view acceptance criteria met, overflow-x-auto + whitespace-nowrap verified, viewMode persists across reload, 10/10 target cats render, all conditionally-rendered testids resolved)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (commissioner of TFHL 6a3a0781a842ea2f7bcdc7cb which has a pending Connor McDavid ↔ Macklin Celebrini trade).",
+  "seed_data_creation": "None. Used the pre-existing TFHL pending trade.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "For Transactions page work: use chriszarek@gmail.com in league TFHL (localStorage dd_active_league_id=6a3a0781a842ea2f7bcdc7cb). The pending McDavid↔Celebrini trade is a stable fixture. Route is top-level /transactions. Hydration helpers now live in /app/backend/routes/trade_hydration.py — import the public names hydrate_trade_assets/hydrate_trades (not the _-prefixed aliases in trades.py). Frontend components are under /app/frontend/src/lovable/pages/transactions/. viewMode localStorage key is 'transactions.viewMode' ('fpts' | 'categories').",
+  "rca of the issue": "N/A — no bugs; feature + refactor both work end-to-end."
+}

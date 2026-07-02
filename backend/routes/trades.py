@@ -26,6 +26,10 @@ _deps: dict = {}
 
 def setup(deps: dict) -> None:
     _deps.update(deps)
+    # Iter 232L (refactor) — Trade asset hydration lives in its own module
+    # now; forward the same deps so it can share `calculate_fantasy_points`
+    # and the shared logger.
+    _trade_hydration_setup(deps)
 
 
 def _db(): return _deps["db"]
@@ -41,178 +45,14 @@ async def _evaluate_conditions(trade): return await _deps["_evaluate_conditions"
 # Historical trade docs only store {player_name, position, points, goals,
 # assists} on each asset. The Transactions page needs age, cap hit, fantasy
 # points (season + per-game), and a stat-category breakdown so managers can
-# actually evaluate the trade. This helper enriches assets from the live
-# players + contracts collections, computes fantasy points against the
-# league's current scoring config, and returns the category labels so the
-# frontend can render dynamic Category vs FPts columns.
-
-_STAT_CATEGORY_LABELS = {
-    "goals": "G",
-    "assists": "A",
-    "points": "P",
-    "plus_minus": "+/-",
-    "penalty_minutes": "PIM",
-    "power_play_goals": "PPG",
-    "power_play_points": "PPP",
-    "short_handed_goals": "SHG",
-    "short_handed_points": "SHP",
-    "game_winning_goals": "GWG",
-    "shots": "SOG",
-    "hits": "HIT",
-    "blocked_shots": "BLK",
-    "faceoffs_won": "FOW",
-    "wins": "W",
-    "losses": "L",
-    "saves": "SV",
-    "goals_against": "GA",
-    "shutouts": "SO",
-    "overtime_losses": "OTL",
-    "save_pct": "SV%",
-    "goals_against_avg": "GAA",
-}
-
-
-async def _fetch_scoring_config(db, league_id: str) -> dict:
-    cfg = await db.scoring_configs.find_one({"league_id": league_id})
-    if not cfg:
-        # Fall back to defaults from scoring routes.
-        from routes.scoring import DEFAULT_SKATER_SCORING, DEFAULT_GOALIE_SCORING
-        return {
-            "skater_scoring": DEFAULT_SKATER_SCORING,
-            "goalie_scoring": DEFAULT_GOALIE_SCORING,
-        }
-    return cfg
-
-
-def _asset_stat_categories(player: dict, scoring_cfg: dict) -> dict:
-    """Return {category_key: {label, value}} for the categories the league
-    counts, based on whether the player is a skater or goalie."""
-    is_goalie = (player.get("player_type") == "goalie") or (player.get("position") == "G")
-    cat_map = (scoring_cfg or {}).get("goalie_scoring" if is_goalie else "skater_scoring") or {}
-    out: dict = {}
-    for key in cat_map.keys():
-        out[key] = {
-            "label": _STAT_CATEGORY_LABELS.get(key, key.replace("_", " ").title()),
-            "value": player.get(key, 0) or 0,
-        }
-    return out
-
-
-async def _hydrate_trade_assets(db, trade: dict) -> dict:
-    """Enrich a trade's assets_offered/assets_requested with age, cap hit,
-    fantasy points, per-game FPts, and league scoring category values. Also
-    attach `scoring_categories` (ordered list of {key,label}) at the trade
-    level so the frontend knows which columns to render.
-
-    Idempotent — safe to call on already-hydrated trades (re-writes fields
-    to the latest player + scoring data).
-    """
-    league_id = trade.get("league_id")
-    if not league_id:
-        return trade
-    scoring_cfg = await _fetch_scoring_config(db, league_id)
-    calc_fn = _deps.get("calculate_fantasy_points")
-
-    def _order_cats(cfg_section: dict) -> list:
-        return [
-            {"key": k, "label": _STAT_CATEGORY_LABELS.get(k, k.replace("_", " ").title())}
-            for k in (cfg_section or {}).keys()
-        ]
-
-    trade["scoring_categories"] = {
-        "skater": _order_cats(scoring_cfg.get("skater_scoring") or {}),
-        "goalie": _order_cats(scoring_cfg.get("goalie_scoring") or {}),
-    }
-
-    async def _hydrate_side(assets: list) -> list:
-        if not assets:
-            return assets
-        out = []
-        for a in assets:
-            asset = dict(a) if not isinstance(a, dict) else a
-            pid = asset.get("player_id")
-            if pid and (asset.get("asset_type") != "pick") and (asset.get("item_type") != "pick"):
-                try:
-                    player = await db.players.find_one({"_id": ObjectId(pid)})
-                except Exception:
-                    player = None
-                if player:
-                    # Basic identity
-                    asset["player_name"] = player.get("name") or asset.get("player_name")
-                    asset["position"] = player.get("position") or asset.get("position")
-                    asset["nhl_team"] = player.get("team") or asset.get("nhl_team", "")
-                    # Age — computed from birth_date when the flat `age`
-                    # field is missing (older seeds).
-                    age = player.get("age")
-                    if not age and player.get("birth_date"):
-                        try:
-                            bd = player["birth_date"]
-                            bd_dt = datetime.fromisoformat(bd.split("T")[0]) if isinstance(bd, str) else bd
-                            today = datetime.now(timezone.utc).replace(tzinfo=None)
-                            age = today.year - bd_dt.year - (
-                                (today.month, today.day) < (bd_dt.month, bd_dt.day)
-                            )
-                        except Exception:
-                            age = None
-                    asset["age"] = age or 0
-                    # Cap hit — prefer active contract AAV, fall back to
-                    # player.salary (synthesized), else 0.
-                    try:
-                        contract = await db.contracts.find_one({
-                            "league_id": league_id,
-                            "player_id": pid,
-                        })
-                    except Exception:
-                        contract = None
-                    cap_hit = 0.0
-                    if contract and contract.get("aav"):
-                        cap_hit = float(contract["aav"])
-                    else:
-                        # No stored contract — fall back to the synthesized
-                        # salary the roster/team pages already use so every
-                        # surface shows a consistent cap hit.
-                        try:
-                            from routes.roster import _synthesize_player_salary
-                            cap_hit = float(_synthesize_player_salary(player, scoring_cfg))
-                        except Exception:
-                            cap_hit = float(
-                                player.get("salary") or player.get("aav") or 0
-                            )
-                    asset["salary"] = cap_hit
-                    asset["cap_hit"] = cap_hit
-                    # Counting stats
-                    asset["goals"] = player.get("goals", 0) or 0
-                    asset["assists"] = player.get("assists", 0) or 0
-                    asset["points"] = player.get("points", 0) or 0
-                    gp = int(player.get("games_played", 0) or 0)
-                    asset["games_played"] = gp
-                    # Fantasy points
-                    if callable(calc_fn):
-                        fpts = calc_fn(player, scoring_cfg)
-                    else:
-                        fpts = 0.0
-                    asset["fantasy_points"] = round(float(fpts), 1)
-                    asset["fantasy_points_per_game"] = (
-                        round(float(fpts) / gp, 2) if gp else 0.0
-                    )
-                    # Full category breakdown for the league
-                    asset["stat_categories"] = _asset_stat_categories(player, scoring_cfg)
-                    asset["player_type"] = (player.get("player_type") or "skater")
-            out.append(asset)
-        return out
-
-    trade["assets_offered"] = await _hydrate_side(trade.get("assets_offered") or [])
-    trade["assets_requested"] = await _hydrate_side(trade.get("assets_requested") or [])
-    return trade
-
-
-async def _hydrate_trades(db, trades: list) -> list:
-    for t in trades:
-        try:
-            await _hydrate_trade_assets(db, t)
-        except Exception as e:
-            _logger().debug(f"trade asset hydrate failed for {t.get('_id')}: {e}")
-    return trades
+# actually evaluate the trade. The heavy lifting now lives in
+# `routes/trade_hydration.py` — we alias the public helpers so existing
+# call sites and tests keep working.
+from routes.trade_hydration import (  # noqa: E402
+    hydrate_trade_assets as _hydrate_trade_assets,
+    hydrate_trades as _hydrate_trades,
+    setup as _trade_hydration_setup,
+)
 
 
 # Iter 230 — League-wide notification fanout for "any trade …" events.
