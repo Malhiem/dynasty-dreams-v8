@@ -22,6 +22,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
+import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface WaiverPlayer {
@@ -350,6 +351,8 @@ const Waivers = () => {
       minorEligible: !!p.minor_eligible || p.player_type === "prospect",
       // Iter 232N.2 — passthrough for the badge layer.
       statusFlags: p.status_flags || null,
+      // Iter 232N.7 — cross-league trend badge passthrough.
+      trends: p.trends || null,
       // Iter 232N.5 — is_mine flag drives the visual "on your roster"
       // pill so users can tell at a glance which rows are their own.
       isMine: myPids.has(String(p.id)),
@@ -685,6 +688,7 @@ const Waivers = () => {
                             )}
                             <MinorEligibleBadge eligible={(player as any).minorEligible} />
                             <PlayerStatusBadges flags={(player as any).statusFlags} />
+                            <PlayerTrendBadge trends={(player as any).trends} />
                             {player.trending === "up" && <TrendingUp className="h-3 w-3 text-success" />}
                           </div>
                           {player.previousOwner && (

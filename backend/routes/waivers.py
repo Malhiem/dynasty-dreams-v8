@@ -137,6 +137,8 @@ async def get_waiver_players(
         compute_player_status_flags,
         get_previously_drafted_pids,
     )
+    # Iter 232N.7 — Cross-league trend badge attachment.
+    from routes.player_trends import fetch_trends_map
     previously_drafted_pids: set = set()
     if league_id:
         previously_drafted_pids = await get_previously_drafted_pids(db, league_id)
@@ -182,6 +184,8 @@ async def get_waiver_players(
             season_stats_by_pid = {row["player_id"]: row for row in cached}
 
     result = []
+    # Iter 232N.7 — Bulk-fetch trends once per page.
+    trends_map = await fetch_trends_map(db, [str(p["_id"]) for p in players])
     for p in players:
         active_claim = await db.waiver_claims.find_one({
             "player_id": str(p["_id"]),
@@ -226,6 +230,8 @@ async def get_waiver_players(
             "status_flags": compute_player_status_flags(
                 p, previously_drafted_pids if league_id else None,
             ),
+            # Iter 232N.7 — Cross-league mover badge.
+            "trends": trends_map.get(str(p["_id"])),
         })
 
     return {

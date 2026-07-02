@@ -174,6 +174,8 @@ async def get_players(
         compute_player_status_flags,
         get_previously_drafted_pids,
     )
+    # Iter 232N.7 — Cross-league trend badge attachment.
+    from routes.player_trends import fetch_trends_map
     previously_drafted_pids: set = set()
     if league_id:
         previously_drafted_pids = await get_previously_drafted_pids(db, league_id)
@@ -283,6 +285,9 @@ async def get_players(
     # per-player fantasy points (FPTS) for the Players-page table column.
     list_scoring_cfg = await _scoring_cfg_for(league_id) if league_id else None
     calc_fn = _deps.get("calculate_fantasy_points")
+    # Iter 232N.7 — Bulk-fetch trend badges for the whole page in one
+    # query rather than N per-player lookups.
+    trends_map = await fetch_trends_map(db, [str(p["_id"]) for p in players])
     for player in players:
         pid = str(player["_id"])
         player["_id"] = pid
@@ -346,6 +351,8 @@ async def get_players(
         player["status_flags"] = compute_player_status_flags(
             player, previously_drafted_pids if league_id else None,
         )
+        # Iter 232N.7 — Cross-league mover badge.
+        player["trends"] = trends_map.get(pid)
         stats_for_fpts = {
             "goals": player.get("goals", 0), "assists": player.get("assists", 0),
             "points": player.get("points", 0), "plus_minus": player.get("plus_minus", 0),

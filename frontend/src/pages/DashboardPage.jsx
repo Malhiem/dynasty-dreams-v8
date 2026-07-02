@@ -15,6 +15,8 @@ import MyWeekAtAGlance from '@/components/MyWeekAtAGlance';
 import YourActivityWidget from '@/components/YourActivityWidget';
 // Iter 232N.5 — Cross-league player status feed on the dashboard.
 import { PlayerStatusFeed } from '@/components/player/PlayerStatusFeed';
+// Iter 232N.7 — Cross-league mover leaderboard widget.
+import { LeagueMoversWidget } from '@/components/player/LeagueMoversWidget';
 import FantasyLevelBadge from '@/components/FantasyLevelBadge';
 import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
 import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
@@ -184,6 +186,14 @@ export default function DashboardPage() {
             heading="Player status updates across your leagues"
             emptyMessage="No player status changes in the last 14 days across your teams."
           />
+        </div>
+
+        {/* Iter 232N.7 — Cross-league movers. Nightly-aggregated view
+            of the hottest / most-dropped / most-traded players over
+            the last 7 days across every league in the system. Helps
+            managers spot smart-money signals fast. */}
+        <div className="mb-8 surface p-4">
+          <LeagueMoversWidget heading="League movers · last 7 days" limit={5} />
         </div>
 
         {/* My Leagues Table */}

@@ -18,6 +18,8 @@ import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
 import LastUpdatedBadge from '@/components/LastUpdatedBadge';
 // Iter 232N.5 — Recent player status activity for the user's team.
 import { PlayerStatusFeed } from '@/components/player/PlayerStatusFeed';
+// Iter 232N.7 — Cross-league mover leaderboard widget.
+import { LeagueMoversWidget } from '@/components/player/LeagueMoversWidget';
 
 export default function LeagueDetailPage() {
   const { id } = useParams();
@@ -962,6 +964,11 @@ export default function LeagueDetailPage() {
             />
           </div>
         )}
+
+        {/* Iter 232N.7 — Cross-league movers on the League Home too. */}
+        <div className="mb-8 surface p-4" data-testid="league-home-movers-widget">
+          <LeagueMoversWidget heading="League movers · last 7 days" limit={5} />
+        </div>
 
         {/* Iter 231am — Quick Actions removed. The three cards
             (My Roster / Draft Room / Trade Center) pointed at the

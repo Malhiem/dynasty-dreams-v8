@@ -1,0 +1,52 @@
+{
+  "summary": "Tested iter232N.6 waivers-limit-cap and iter232N.7 cross-league player trends (backend + frontend). Backend: all 11 unit tests + 8 live API tests pass. Frontend: Dashboard/LeagueHome movers widgets, PlayersPage badge, and PlayerStatusFeed wiring verified. Found 1 backend bug: /api/roster/{team_id}/detail (which the frontend Roster page actually calls) does not attach the `trends` field, so PlayerTrendBadge never renders on the Team/Roster page even though McDavid is on the roster.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/roster/{team_id}/detail",
+        "issue": "Missing `trends` attachment. Frontend PlayerRoster.tsx (line 285) calls `/roster/{teamId}/detail` which returns players WITHOUT a `trends` key (verified: McDavid on team 6a3c69fb9a6fc14153c24f21 has trends=null via /detail while /api/roster/{team_id} correctly returns trends={trend:traded, trades_7d:28, distinct_leagues_7d:3}). As a result, PlayerTrendBadge does not render on any Roster page row.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Team/Roster page — PlayerRow (sub-components.tsx line 1141)",
+        "issue": "PlayerTrendBadge is wired correctly in the component tree, but data never arrives (see backend bug above). No player-trend-badge testid found anywhere on /roster page for team owning McDavid.",
+        "selector": "[data-testid='player-trend-badge']",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N6_waivers_limit_cap.py",
+    "/app/backend/tests/test_iter232N7_player_trends.py",
+    "/app/backend/tests/test_iter232N67_live.py",
+    "/app/test_reports/pytest/iter232N67_results.xml"
+  ],
+  "action_items": [
+    "In /app/backend/routes/roster.py, add the same fetch_trends_map + attach loop to the `/roster/{team_id}/detail` handler that already exists on `/roster/{team_id}`. The frontend PlayerRoster.tsx (line 285) calls `/detail`, so trends must be stamped there too. Verified fix path: after building `players` list in the detail handler, do `trends_map = await fetch_trends_map([p['player_id'] for p in players])` then `p['trends'] = trends_map.get(p['player_id'])`."
+  ],
+  "critical_code_review_comments": [
+    "roster.py: the trend attach was applied to only one of the two roster endpoints. The `/detail` handler is the one the Team page actually consumes; the plain `/roster/{team_id}` handler is used elsewhere. Both should share a helper.",
+    "player_trends leaderboard endpoint could use pagination guard similar to iter232N.6 (limit cap).",
+    "Waivers `/api/waivers/available` correctly clamps limit to 200; test coverage includes limit=5000/150/0. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter232N67_live.py (new — 8 live API tests, all pass)"
+  ],
+  "success_rate": {
+    "backend": "95% (19/20 checks — 19 tests pass; roster/detail trends attach missing)",
+    "frontend": "85% (badges verified on Dashboard movers widget, LeagueHome widget, Players page; Roster page badge blocked by backend bug; Waivers + PlayerStatusFeed backends stamp trends but currently no visible trending player in view for TFHL — expected)"
+  },
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (TFHL league_id=6a3a0781a842ea2f7bcdc7cb). McDavid is rostered on team_id=6a3c69fb9a6fc14153c24f21 (Toronto Singularity / displayed as 'Zarek's Frozen').",
+  "seed_data_creation": "None — used existing seeded player_trends collection.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After fix, verify: 1) curl /api/roster/6a3c69fb9a6fc14153c24f21/detail returns McDavid with trends={trend:'traded',...}; 2) UI at /roster shows [data-testid='player-trend-badge'] on McDavid row. Also note: Waivers/Available Players list correctly excludes rostered players so McDavid won't appear there — trend badge on waivers can only be verified with a player who both has an active trend AND is on waivers (none currently in TFHL data). PlayerStatusFeed in Notifications shows 'No player status changes in the last 14 days' for TFHL — feed empty, so badges here have no test surface until a status change occurs.",
+  "rca of the issue": "E1 added `trends` attach logic to the primary `/api/roster/{team_id}` route but overlooked the sibling `/api/roster/{team_id}/detail` route which is what the Lovable PlayerRoster.tsx component actually consumes (see line 285: `api.get('/roster/${teamId}/detail')`). Because the detail handler builds its player dicts through a different code path, the trends bulk-fetch never runs. Fix: apply the same `await fetch_trends_map(pids)` + per-player attach after the players list is assembled in the detail handler. Reproduction: login as chriszarek → GET /api/roster/6a3c69fb9a6fc14153c24f21/detail → observe McDavid entry has no `trends` key; compare with GET /api/roster/6a3c69fb9a6fc14153c24f21 which returns `trends={trend:'traded',trades_7d:28,distinct_leagues_7d:3}`."
+}

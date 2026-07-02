@@ -198,10 +198,13 @@ async def get_roster(team_id: str, request: Request):
         compute_player_status_flags,
         get_previously_drafted_pids,
     )
+    # Iter 232N.7 — Cross-league trend badge attachment on Roster.
+    from routes.player_trends import fetch_trends_map
     league_id_for_flags = team.get("league_id")
     previously_drafted_pids: set = await get_previously_drafted_pids(
         db, league_id_for_flags,
     )
+    trends_map = await fetch_trends_map(db, [str(p) for p in roster_players])
     players = []
     for pid in roster_players:
         player = await db.players.find_one({"_id": ObjectId(pid)})
@@ -242,6 +245,8 @@ async def get_roster(team_id: str, request: Request):
             "status_flags": compute_player_status_flags(
                 player, previously_drafted_pids if league_id_for_flags else None,
             ),
+            # Iter 232N.7 — Cross-league mover badge.
+            "trends": trends_map.get(str(pid)),
         })
     players.sort(key=lambda p: -(p.get("fantasy_points") or 0))
     return {"team_id": team_id, "team_name": team["name"], "players": players}

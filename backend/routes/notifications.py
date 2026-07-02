@@ -163,6 +163,14 @@ async def get_player_status_feed(
     # Sort by most-recent update per player (updates are already
     # sorted desc because notifs came back desc).
     players.sort(key=lambda p: p["updates"][0]["ts"] if p["updates"] else "", reverse=True)
+    # Iter 232N.7 — Enrich each bucket with the cross-league trend
+    # badge so the feed cards can render the same "hot / dropped /
+    # traded" chip that appears on inline player rows.
+    if players:
+        from routes.player_trends import fetch_trends_map
+        trends_map = await fetch_trends_map(db, [p["player_id"] for p in players])
+        for bucket in players:
+            bucket["trends"] = trends_map.get(bucket["player_id"])
     return {
         "players": players,
         "total_updates": sum(len(p["updates"]) for p in players),

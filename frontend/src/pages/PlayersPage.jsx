@@ -18,6 +18,7 @@ import {
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
+import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
 
 const VIEWS = [
   { value: "available", label: "All Available Players (default)" },
@@ -513,6 +514,7 @@ export default function PlayersPage() {
                         <MinorEligibleBadge eligible={p.minor_eligible || p.player_type === "prospect"} />
                         {/* Iter 232N.2 — Player status badges (injured / minors / unsigned / undrafted). */}
                         <PlayerStatusBadges flags={p.status_flags} />
+                        <PlayerTrendBadge trends={p.trends} />
                         {p.news_signal && <NewsSignalIcon player={p} />}
                       </div>
                     </td>

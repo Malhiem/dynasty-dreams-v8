@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import { Cross, ArrowDownToLine, FileWarning, Sparkles, Clock } from "lucide-react";
 import api from "@/lib/api";
 import { Link } from "react-router-dom";
+import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
 
 interface Update {
   notification_id: string;
@@ -33,6 +34,16 @@ interface PlayerBucket {
   player_id: string;
   player_name: string;
   updates: Update[];
+  // Iter 232N.7 — Cross-league mover trend chip surfaced next to
+  // the player's name on the feed card. Backend attaches when the
+  // player has an active trend snapshot.
+  trends?: {
+    trend?: "hot" | "dropped" | "traded" | null;
+    adds_7d?: number;
+    drops_7d?: number;
+    trades_7d?: number;
+    distinct_leagues_7d?: number;
+  } | null;
 }
 
 interface Props {

@@ -994,6 +994,11 @@ api_router.include_router(roster_snapshots_routes.router)
 # Iter 218 — UX analytics
 api_router.include_router(analytics_ux_routes.router)
 
+# Iter 232N.7 — Player trends (cross-league mover leaderboard + badges)
+from routes import player_trends as player_trends_routes  # noqa: E402
+player_trends_routes.setup(_router_deps)
+api_router.include_router(player_trends_routes.router)
+
 
 # Admin endpoint /admin/snapshot-ownership → routes/admin.py (iter 115)
 
@@ -1403,6 +1408,16 @@ async def startup():
         ))
     except Exception as e:
         logger.error(f"injury_news_scraper failed to start: {e}")
+
+    # Iter 232N.7 — Nightly player-trends aggregator. Rolls
+    # `activity` + `waiver_claims` + executed `trades` from the last
+    # 7d into `player_trends` snapshots so the cross-league mover
+    # badges + League Movers widget render in O(1) reads.
+    try:
+        from services.player_trends_aggregator import player_trends_loop
+        asyncio.create_task(player_trends_loop(db))
+    except Exception as e:
+        logger.error(f"player_trends_aggregator failed to start: {e}")
     
     # Write test credentials
     import os as os_module

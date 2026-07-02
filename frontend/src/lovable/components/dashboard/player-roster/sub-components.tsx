@@ -30,6 +30,7 @@ import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
+import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -1137,6 +1138,7 @@ export const PlayerRow = ({
               <button onClick={() => onPlayerClick(player)} className="font-medium text-sm text-foreground hover:text-primary transition-colors cursor-pointer truncate text-left">{player.name}</button>
               <MinorEligibleBadge eligible={(player as any).minor_eligible || (player as any).player_type === "prospect"} />
               <PlayerStatusBadges flags={(player as any).status_flags} />
+              <PlayerTrendBadge trends={(player as any).trends} />
               {newsInfo && <NewsSignalIcon player={{ ...newsInfo, _id: player.id, name: player.name }} />}
               {hasWarnings && (
                 <TooltipProvider>

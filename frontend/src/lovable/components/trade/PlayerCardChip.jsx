@@ -9,6 +9,7 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
+import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
 
 const formatSalary = (s) => `$${((s || 0) / 1_000_000).toFixed(1)}M`;
 
@@ -53,6 +54,8 @@ export function PlayerCardChip({ player, ownership }) {
           )}
           {/* Iter 232N.2 — Player status badges. */}
           <PlayerStatusBadges flags={player?.status_flags} />
+          {/* Iter 232N.7 — Cross-league mover trend badge. */}
+          <PlayerTrendBadge trends={player?.trends} />
         </div>
         <div className="grid grid-cols-5 gap-1 mt-1 text-[10px] text-muted-foreground">
           <span><span className="text-foreground font-semibold">{stats.G ?? player?.goals ?? 0}</span> G</span>

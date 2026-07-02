@@ -315,6 +315,8 @@ const PlayerRoster = ({
           player_type: p.player_type || "skater",
           // Iter 232N.2 — passthrough for the badge layer.
           status_flags: p.status_flags || null,
+          // Iter 232N.7 — passthrough for the mover trend badge.
+          trends: p.trends || null,
         }));
         setLivePlayers(shaped);
       })
