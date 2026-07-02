@@ -103,7 +103,15 @@ async def get_waiver_players(
     matchup-window data isn't available yet. Real historical stats
     will be supplied by the iter 182 NHL-API backfill once the
     `player_season_stats` collection is populated.
+
+    Iter 232N.6 — `limit` is now clamped to [1, 200]. Previously an
+    unbounded value (e.g. limit=5000) triggered per-row queries
+    (waiver_claims, active_claim, minor_eligible) that OOM'd the
+    endpoint and returned a 500. Any caller passing >200 is silently
+    clamped so existing consumers keep working while the fault mode
+    is closed.
     """
+    limit = max(1, min(int(limit or 50), 200))
     db = _db()
     # Iter 181 — load the league so minor-eligibility is computed against
     # the same thresholds the commissioner configured (minors_max_age,
