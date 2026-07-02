@@ -143,6 +143,10 @@ const Waivers = () => {
   const [availableTimeframe, setAvailableTimeframe] = useState("season");
   // Iter 232N.2 — "Undrafted only" toggle for the Available Players table.
   const [availableUndraftedOnly, setAvailableUndraftedOnly] = useState(false);
+  // Iter 232N.5 — When ON, includes the user's own roster in the
+  // available-players list for side-by-side comparison. Off by
+  // default so the Waivers add-player UX stays focused on FA targets.
+  const [showMyPlayers, setShowMyPlayers] = useState(false);
   const [cancellingClaimId, setCancellingClaimId] = useState<string | null>(null);
 
   // Iter 180 — Drop-player selector inside the claim modal. When the
@@ -323,6 +327,12 @@ const Waivers = () => {
   const waiverPriority = Math.max(1, waiverOrder.findIndex((w: any) => w.teamId === myTeam?.id) + 1);
 
   const waiverPlayers: WaiverPlayer[] = useMemo(() => {
+    // Iter 232N.5 — Compute the caller's own roster pid set so we can
+    // filter them out by default and re-include when `showMyPlayers`
+    // is on. Read from `myTeam.roster` (populated by useActiveLeague).
+    const myPids = new Set<string>(
+      ((myTeam as any)?.roster || []).map((p: any) => String(p)),
+    );
     const all = (livePlayers || []).map((p: any, i: number) => ({
       id: p.id || i,
       name: p.name,
@@ -340,20 +350,25 @@ const Waivers = () => {
       minorEligible: !!p.minor_eligible || p.player_type === "prospect",
       // Iter 232N.2 — passthrough for the badge layer.
       statusFlags: p.status_flags || null,
+      // Iter 232N.5 — is_mine flag drives the visual "on your roster"
+      // pill so users can tell at a glance which rows are their own.
+      isMine: myPids.has(String(p.id)),
     }));
+    // Iter 232N.5 — By default, exclude the user's own roster.
+    const scoped = showMyPlayers ? all : all.filter((p) => !p.isMine);
     // Iter 180 — apply free-text filter (name + NHL team abbr,
     // case-insensitive substring match). Applied BEFORE the 20-row
     // slice so a player matching the search isn't cut off.
     const q = availableSearch.trim().toLowerCase();
     const filtered = q
-      ? all.filter((p) =>
+      ? scoped.filter((p) =>
           p.name.toLowerCase().includes(q)
           || (p.team || "").toLowerCase().includes(q)
           || (p.position || "").toLowerCase().includes(q),
         )
-      : all;
+      : scoped;
     return filtered.slice(0, 20);
-  }, [livePlayers, availableSearch]);
+  }, [livePlayers, availableSearch, showMyPlayers, myTeam]);
 
   const myClaims: WaiverClaim[] = useMemo(() => (liveClaims || []).map((c: any, i: number) => ({
     id: c._id || i,
@@ -591,6 +606,26 @@ const Waivers = () => {
                   >
                     {availableUndraftedOnly ? "★ Undrafted only" : "Undrafted only"}
                   </button>
+                  {/* Iter 232N.5 — Show my players toggle. When OFF
+                      (default) the user's own roster is filtered out
+                      client-side; when ON the caller's own players
+                      appear inline with an "On your roster" pill. */}
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showMyPlayers}
+                    onClick={() => setShowMyPlayers((v) => !v)}
+                    className={cn(
+                      "px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wider transition-colors border",
+                      showMyPlayers
+                        ? "bg-sky-500/20 text-sky-300 border-sky-500/40"
+                        : "bg-secondary text-muted-foreground border-transparent hover:text-foreground",
+                    )}
+                    data-testid="waiver-show-my-players-toggle"
+                    title="Include your own roster in the available-player list for comparison"
+                  >
+                    {showMyPlayers ? "★ Showing my players" : "Show my players"}
+                  </button>
                   <Select value={availableTimeframe} onValueChange={setAvailableTimeframe}>
                     <SelectTrigger className="w-[200px]" data-testid="waiver-available-timeframe">
                       <SelectValue />
@@ -639,6 +674,15 @@ const Waivers = () => {
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <p className="font-medium">{player.name}</p>
+                            {(player as any).isMine && (
+                              <span
+                                className="text-[9px] uppercase tracking-wider text-sky-300 border border-sky-500/40 bg-sky-500/10 rounded px-1 py-0.5"
+                                data-testid={`waiver-row-mine-${player.id}`}
+                                title="On your roster"
+                              >
+                                Mine
+                              </span>
+                            )}
                             <MinorEligibleBadge eligible={(player as any).minorEligible} />
                             <PlayerStatusBadges flags={(player as any).statusFlags} />
                             {player.trending === "up" && <TrendingUp className="h-3 w-3 text-success" />}

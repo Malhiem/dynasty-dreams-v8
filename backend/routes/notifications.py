@@ -78,3 +78,92 @@ async def delete_notification(notif_id: str, request: Request):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Notification not found")
     return {"message": "Deleted"}
+
+
+
+@router.get("/player-status/feed")
+async def get_player_status_feed(
+    request: Request,
+    scope: str = "user",  # "user" | "league" | "team"
+    league_id: str = None,
+    team_id: str = None,
+    days: int = 7,
+    limit: int = 200,
+):
+    """Iter 232N.5 — Grouped-by-player feed of `player_status_change`
+    notifications. Powers three surfaces:
+      • Notifications inbox "Player Status" tab (scope="user")
+      • League Home recent activity card (scope="league" or "team")
+      • User Dashboard cross-league feed (scope="user")
+
+    Returns `[{player_id, player_name, updates: [{flag, value, title,
+    message, ts, league_id}, ...]}]` sorted so the player with the
+    most-recent update comes first.
+    """
+    from datetime import datetime, timezone, timedelta
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, days))).isoformat()
+    query: dict = {
+        "user_id": user["_id"],
+        "type": "player_status_change",
+        "created_at": {"$gte": cutoff},
+    }
+    if scope == "league" and league_id:
+        query["league_id"] = league_id
+    elif scope == "team" and team_id:
+        # Filter by player_ids on the specified team's current roster.
+        team = await db.teams.find_one({"_id": ObjectId(team_id)}, {"roster": 1, "league_id": 1})
+        if team:
+            roster_pids = [str(p) for p in (team.get("roster") or [])]
+            if roster_pids:
+                query["reason.player_id"] = {"$in": roster_pids}
+            else:
+                # Empty roster → no updates.
+                return {"players": [], "total_updates": 0}
+            # Also scope league_id when a team is given so cross-league
+            # noise doesn't creep in for identical player_ids.
+            if team.get("league_id"):
+                query["league_id"] = team["league_id"]
+        else:
+            return {"players": [], "total_updates": 0}
+
+    notifs = (
+        await db.notifications.find(query).sort("created_at", -1).limit(limit).to_list(limit)
+    )
+
+    grouped: dict = {}
+    for n in notifs:
+        reason = n.get("reason") or {}
+        pid = reason.get("player_id")
+        if not pid:
+            # Legacy notifications (pre-232N.5) without reason.player_id
+            # are dropped — the feed intentionally shows only rows that
+            # can be grouped.
+            continue
+        bucket = grouped.setdefault(pid, {
+            "player_id": pid,
+            "player_name": reason.get("player_name") or "Player",
+            "updates": [],
+        })
+        bucket["updates"].append({
+            "notification_id": str(n["_id"]),
+            "flag": reason.get("flag"),
+            "value": bool(reason.get("value")),
+            "title": n.get("title"),
+            "message": n.get("message"),
+            "ts": n.get("created_at"),
+            "league_id": n.get("league_id"),
+            "read": bool(n.get("read")),
+        })
+
+    players = list(grouped.values())
+    # Sort by most-recent update per player (updates are already
+    # sorted desc because notifs came back desc).
+    players.sort(key=lambda p: p["updates"][0]["ts"] if p["updates"] else "", reverse=True)
+    return {
+        "players": players,
+        "total_updates": sum(len(p["updates"]) for p in players),
+    }

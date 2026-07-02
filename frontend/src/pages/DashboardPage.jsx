@@ -13,6 +13,8 @@ import PendingTradesBanner from '@/components/PendingTradesBanner';
 import { useActiveLeague } from '@/hooks/use-active-league';
 import MyWeekAtAGlance from '@/components/MyWeekAtAGlance';
 import YourActivityWidget from '@/components/YourActivityWidget';
+// Iter 232N.5 — Cross-league player status feed on the dashboard.
+import { PlayerStatusFeed } from '@/components/player/PlayerStatusFeed';
 import FantasyLevelBadge from '@/components/FantasyLevelBadge';
 import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
 import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
@@ -170,6 +172,19 @@ export default function DashboardPage() {
 
         {/* Live Scoring widget */}
         <LiveScoringWidget />
+
+        {/* Iter 232N.5 — Cross-league player status feed. Aggregates
+            every `player_status_change` notification the user has
+            received in the last 14 days across ALL their leagues,
+            grouped by player for scannable milestone audit. */}
+        <div className="mb-8 surface p-4">
+          <PlayerStatusFeed
+            scope="user"
+            days={14}
+            heading="Player status updates across your leagues"
+            emptyMessage="No player status changes in the last 14 days across your teams."
+          />
+        </div>
 
         {/* My Leagues Table */}
         <div className="mb-8">

@@ -175,7 +175,15 @@ async def detect_and_emit_status_changes(
                             message=message,
                             league_id=league_id or None,
                             link=f"/players/{oid}",
-                            reason={"flag": flag, "value": bool(now)},
+                            reason={
+                                "flag": flag,
+                                "value": bool(now),
+                                # Iter 232N.5 — Player identity in the
+                                # reason blob so the grouped-by-player
+                                # feed can render without a JOIN.
+                                "player_id": str(oid),
+                                "player_name": player.get("name"),
+                            },
                         )
                     except Exception:
                         pass

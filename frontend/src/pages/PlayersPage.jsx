@@ -90,7 +90,7 @@ const NHL_TEAMS = [
   "STL","TBL","TOR","UTA","VAN","VGK","WPG","WSH",
 ];
 
-function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly) {
+function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers) {
   const p = new URLSearchParams();
   if (leagueId) p.append("league_id", leagueId);
   if (search) p.append("search", search);
@@ -101,6 +101,9 @@ function buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTe
   if (sortBy) p.append("sort_by", sortBy);
   if (sortDir) p.append("sort_dir", sortDir);
   if (undraftedOnly) p.append("undrafted_only", "true");
+  // Iter 232N.5 — "Show my players" toggle bypasses the exclude_team_id
+  // guard so the free-agent list also includes the user's own roster.
+  if (showMyPlayers) p.append("include_my_team", "true");
   p.append("page", String(page));
   p.append("limit", "50");
 
@@ -269,6 +272,9 @@ export default function PlayersPage() {
   // Iter 232N.2 — "Undrafted only" toggle: filters response to players
   // who have never been picked in any prior draft in this league.
   const [undraftedOnly, setUndraftedOnly] = useState(false);
+  // Iter 232N.5 — Toggle to show the caller's own roster inline with
+  // free agents for side-by-side comparison. Off by default.
+  const [showMyPlayers, setShowMyPlayers] = useState(false);
 
   const [players, setPlayers] = useState([]);
   const [total, setTotal] = useState(0);
@@ -276,12 +282,12 @@ export default function PlayersPage() {
   const [loading, setLoading] = useState(false);
   const [timeframeSupported, setTimeframeSupported] = useState(true);
 
-  useEffect(() => { setPage(1); }, [view, position, nhlTeam, fantasyTeamId, search, timeframe, undraftedOnly]);
+  useEffect(() => { setPage(1); }, [view, position, nhlTeam, fantasyTeamId, search, timeframe, undraftedOnly, showMyPlayers]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    const qs = buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly);
+    const qs = buildQueryFromView(view, leagueId, position, search, nhlTeam, fantasyTeamId, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers);
     api.get(`/players?${qs}`)
       .then(({ data }) => {
         if (cancelled) return;
@@ -301,7 +307,7 @@ export default function PlayersPage() {
       .catch(() => { if (!cancelled) { setPlayers([]); setTotal(0); setPages(1); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly]);
+  }, [view, leagueId, position, nhlTeam, fantasyTeamId, search, page, ownTeamId, timeframe, sortBy, sortDir, undraftedOnly, showMyPlayers]);
 
   const toggleWatchlist = async (player) => {
     try {
@@ -430,6 +436,26 @@ export default function PlayersPage() {
             <span className="text-[11px] text-muted-foreground" data-testid="players-undrafted-only-hint">
               Filtering to players never drafted in this league
             </span>
+          )}
+          {/* Iter 232N.5 — Show my players toggle. Only meaningful in
+              the free-agent view; when on, the backend bypasses
+              exclude_team_id so the user's roster appears inline. */}
+          {view === "available" && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showMyPlayers}
+              onClick={() => setShowMyPlayers((v) => !v)}
+              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wider transition-colors border ${
+                showMyPlayers
+                  ? "bg-sky-500/20 text-sky-300 border-sky-500/40"
+                  : "bg-[#1A1A1A] text-muted-foreground border-white/10 hover:text-foreground"
+              }`}
+              data-testid="players-show-my-players-toggle"
+              title="Include your own roster in the available-player list for comparison"
+            >
+              {showMyPlayers ? "★ Showing my players" : "Show my players"}
+            </button>
           )}
         </div>
 

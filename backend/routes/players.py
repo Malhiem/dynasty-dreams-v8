@@ -36,6 +36,7 @@ async def get_players(
     injured: Optional[bool] = None,
     minors_eligible: Optional[bool] = None,
     undrafted_only: bool = False,
+    include_my_team: bool = False,
     exclude_team_id: Optional[str] = None,
     timeframe: str = "season",
     sort_by: Optional[str] = None,
@@ -157,7 +158,10 @@ async def get_players(
     if exclude_team_id and league_id:
         ex_team = await db.teams.find_one({"_id": ObjectId(exclude_team_id)})
         ex_pids = (ex_team.get("roster") or []) if ex_team else []
-        if ex_pids:
+        # Iter 232N.5 — `include_my_team=true` bypasses the exclusion so
+        # managers can see their own roster inline with free agents on
+        # the /players and Waivers add-player surfaces (comparison view).
+        if ex_pids and not include_my_team:
             existing_nin = []
             existing_id = query.get("_id")
             if isinstance(existing_id, dict) and "$nin" in existing_id:

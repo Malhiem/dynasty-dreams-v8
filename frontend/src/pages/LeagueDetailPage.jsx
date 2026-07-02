@@ -16,6 +16,8 @@ import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
 import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
 // Iter 232b — Freshness pill rendered next to the league name.
 import LastUpdatedBadge from '@/components/LastUpdatedBadge';
+// Iter 232N.5 — Recent player status activity for the user's team.
+import { PlayerStatusFeed } from '@/components/player/PlayerStatusFeed';
 
 export default function LeagueDetailPage() {
   const { id } = useParams();
@@ -148,6 +150,13 @@ export default function LeagueDetailPage() {
     window.addEventListener('matchup-star-changed', onChange);
     return () => { cancelled = true; window.removeEventListener('matchup-star-changed', onChange); };
   }, [id]);
+
+  // Iter 232N.5 — Memoized user's team_id in this league (used by
+  // the player status feed card near the bottom of the page).
+  const myLeagueTeamId = useMemo(
+    () => teams.find(t => t.owner_id === user?.id)?.id || null,
+    [teams, user?.id],
+  );
 
   // Sort matchups: MY matchup pinned first, then starred, then auto-watched, then rest
   const sortedWeekMatchups = useMemo(() => {
@@ -933,6 +942,25 @@ export default function LeagueDetailPage() {
           )}
         </div>
         </SortableSection>
+        )}
+
+        {/* Iter 232N.5 — Recent player status activity filtered to the
+            user's team roster in this league. Sits outside the
+            sortable widget grid because it's a lightweight sidebar
+            card — reordering it doesn't add value. Rendered only when
+            we know the caller's team_id (otherwise the feed can't
+            scope). */}
+        {myLeagueTeamId && (
+          <div className="mb-8 surface p-4" data-testid="league-home-player-status-feed">
+            <PlayerStatusFeed
+              scope="team"
+              teamId={myLeagueTeamId}
+              leagueId={id}
+              days={14}
+              heading="Recent player activity on your team"
+              emptyMessage="No status changes on your roster in the last 14 days."
+            />
+          </div>
         )}
 
         {/* Iter 231am — Quick Actions removed. The three cards

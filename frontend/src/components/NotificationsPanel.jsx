@@ -14,6 +14,8 @@ import { useSocket } from "@/hooks/use-socket";
 import NotificationSettings from "@/components/NotificationSettings";
 // Iter 230at — Swipe-to-dismiss row component for the mobile UX.
 import SwipeableNotificationRow from "@/components/SwipeableNotificationRow";
+// Iter 232N.5 — Player status change feed (new "Player Status" tab).
+import { PlayerStatusFeed } from "@/components/player/PlayerStatusFeed";
 // Iter 230aw — One-time onboarding pulse on the first row so touch
 // users discover the swipe gestures.
 import useOnboardingHint from "@/hooks/use-onboarding-hint";
@@ -124,6 +126,8 @@ export function NotificationsPanel() {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Iter 232N.5 — "All" | "player_status" tab within the panel.
+  const [activeTab, setActiveTab] = useState("all");
   const panelRef = useRef(null);
   // Iter 230aw — One-time onboarding hint pulse on the first row when
   // the user opens the panel on a touch device for the first time.
@@ -260,7 +264,7 @@ export function NotificationsPanel() {
           <div className="flex items-center justify-between p-4 border-b border-white/10 shrink-0">
             <h3 className="font-semibold text-white">Notifications</h3>
             <div className="flex items-center gap-1">
-              {unreadCount > 0 && (
+              {unreadCount > 0 && activeTab === "all" && (
                 <Button variant="ghost" size="sm" className="text-[#00D2FF] text-xs" onClick={handleMarkAllRead} data-testid="mark-all-read">
                   <CheckCheck className="h-3.5 w-3.5 mr-1" />Mark all read
                 </Button>
@@ -277,6 +281,41 @@ export function NotificationsPanel() {
               </Button>
             </div>
           </div>
+          {/* Iter 232N.5 — Segmented tab strip. "All" retains the
+              existing feed; "Player Status" renders the grouped feed
+              from /api/player-status/feed?scope=user. Kept as buttons
+              rather than a shadcn <Tabs> because the tabs live inside
+              a compact popover and don't need aria-tabbing overhead. */}
+          <div
+            className="flex items-center gap-1 px-3 py-2 border-b border-white/5 shrink-0"
+            role="tablist"
+            aria-label="Notification categories"
+          >
+            {[
+              { id: "all", label: "All" },
+              { id: "player_status", label: "Player Status" },
+            ].map((t) => {
+              const active = activeTab === t.id;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setActiveTab(t.id)}
+                  className={cn(
+                    "px-2.5 py-1 rounded text-[11px] font-semibold uppercase tracking-wider transition-colors",
+                    active
+                      ? "bg-[#00D2FF]/15 text-[#00D2FF]"
+                      : "text-[#A1A1AA] hover:text-white",
+                  )}
+                  data-testid={`notifications-tab-${t.id}`}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
           {/* Iter 230as — Use a native scroller capped to the
               remaining viewport space (computed via the flex parent's
               max-h) so the panel never overflows the screen in
@@ -287,7 +326,16 @@ export function NotificationsPanel() {
             className="flex-1 min-h-0 overflow-y-auto overscroll-contain"
             data-testid="notifications-panel-scroll"
           >
-            {notifications.length === 0 ? (
+            {activeTab === "player_status" ? (
+              <div className="p-3">
+                <PlayerStatusFeed
+                  scope="user"
+                  days={14}
+                  emptyMessage="No player status changes in the last 14 days."
+                  hideHeading
+                />
+              </div>
+            ) : notifications.length === 0 ? (
               <div className="p-8 text-center text-[#A1A1AA]">
                 <Bell className="h-8 w-8 mx-auto mb-2 opacity-50" />
                 <p>No notifications yet</p>
