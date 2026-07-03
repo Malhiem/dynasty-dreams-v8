@@ -21,7 +21,7 @@ const LEVEL_COLORS = {
   'Stanley Cup Dynasty': 'from-yellow-400/30 to-amber-700/30 border-yellow-400/50 text-yellow-300',
 };
 
-export default function FantasyLevelBadge({ compact = false }) {
+export default function FantasyLevelBadge({ compact = false, extraStats }) {
   const [data, setData] = useState(null);
 
   useEffect(() => {
@@ -88,17 +88,46 @@ export default function FantasyLevelBadge({ compact = false }) {
 
       {/* Iter 232N.21 — Mobile-tight stat row. Reduced label text to
           9px + condensed leading so all three stats sit on one line
-          on a 320px viewport (previously wrapped/overflowed at ≤360px). */}
-      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mt-3 text-[9px] sm:text-[10px] uppercase tracking-wider opacity-70">
-        <div className="min-w-0">
+          on a 320px viewport (previously wrapped/overflowed at ≤360px).
+          Iter 232N.22 — Baked the dashboard stat cards (My Leagues,
+          Upcoming Drafts, Win Rate) into the badge and dropped the
+          separate "Total Teams" tile — 5-up grid on desktop, 3-up on
+          mobile with the account-lifetime stats wrapping below. */}
+      <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5 sm:gap-2 mt-3 text-[9px] sm:text-[10px] uppercase tracking-wider opacity-70">
+        {extraStats && (
+          <>
+            <div className="min-w-0" data-testid="badge-stat-leagues">
+              <div className="opacity-60 truncate">Leagues</div>
+              <div className="text-sm sm:text-base font-bold text-white tabular-nums">
+                {extraStats.leagues ?? "--"}
+              </div>
+            </div>
+            <div className="min-w-0" data-testid="badge-stat-upcoming">
+              <div className="opacity-60 truncate">Upcoming</div>
+              <div className="text-sm sm:text-base font-bold text-white tabular-nums">
+                {extraStats.upcoming ?? "--"}
+              </div>
+            </div>
+            <div className="min-w-0" data-testid="badge-stat-win-rate">
+              <div className="opacity-60 truncate">Win Rate</div>
+              <div className="text-sm sm:text-base font-bold text-white tabular-nums">
+                {extraStats.winRate ?? "--"}
+              </div>
+            </div>
+          </>
+        )}
+        <div className="min-w-0" data-testid="badge-stat-wins">
           <div className="opacity-60 truncate">Wins</div>
           <div className="text-sm sm:text-base font-bold text-white tabular-nums">{data.stats.total_wins}</div>
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0" data-testid="badge-stat-trades">
           <div className="opacity-60 truncate">Trades</div>
           <div className="text-sm sm:text-base font-bold text-white tabular-nums">{data.stats.trades_accepted}</div>
         </div>
-        <div className="min-w-0">
+        {/* Iter 232N.22 — Drafts + Trades still exposed side-by-side on
+            desktop (5 cols total); mobile shows Leagues/Upcoming/WinRate
+            on row 1 and Wins/Trades/Drafts on row 2 via `grid-cols-3`. */}
+        <div className="min-w-0" data-testid="badge-stat-drafts">
           <div className="opacity-60 truncate">Drafts</div>
           <div className="text-sm sm:text-base font-bold text-white tabular-nums">{data.stats.drafts_completed}</div>
         </div>

@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import api from '@/lib/api';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { StatCard } from '@/components/ui/stat-card';
 import { DataTable } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import RecommendedForYou from '@/components/RecommendedForYou';
@@ -22,7 +21,7 @@ import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';
 import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
 // Iter 232b — "Last updated · 14s ago" freshness pill.
 import LastUpdatedBadge from '@/components/LastUpdatedBadge';
-import { Trophy, Users, Calendar, Rocket, Plus, ArrowRight } from '@phosphor-icons/react';
+import { Trophy, Plus, ArrowRight } from '@phosphor-icons/react';
 import { SortableSections, SortableSection } from '@/components/SortableSections';
 
 // Iter 232N.16 — Dashboard widget registry.
@@ -34,48 +33,67 @@ import { SortableSections, SortableSection } from '@/components/SortableSections
 // sees on first load. "My Leagues" is intentionally at position 0 so
 // managers can jump straight into a league on page load.
 const DASHBOARD_WIDGET_ORDER_KEY = "dd_dashboard_widget_order_v1";
-const DASHBOARD_WIDGETS = [
-  { id: "my-leagues", render: () => <MyLeaguesOrderedList /> },
-  { id: "pending-trades", render: () => <PendingTradesBanner /> },
-  { id: "week-at-a-glance", render: () => <MyWeekAtAGlance /> },
-  { id: "your-activity", render: () => (
-    <div><YourActivityWidget /></div>
-  ) },
-  { id: "live-scoring", render: () => <LiveScoringWidget /> },
-  { id: "player-status", render: () => (
-    <div className="surface p-4">
-      <PlayerStatusFeed
-        scope="user"
-        days={14}
-        heading="Player status updates across your leagues"
-        emptyMessage="No player status changes in the last 14 days across your teams."
-      />
-    </div>
-  ) },
-  { id: "league-movers", render: () => (
-    <div className="surface p-4">
-      <LeagueMoversWidget heading="League movers · last 7 days" limit={5} />
-    </div>
-  ) },
+// Iter 232N.22 — Registry now includes `fantasy-level` (the player
+// badge). Renders a full-width card carrying every account-lifetime
+// stat + the account stats formerly in the bottom StatCard row
+// (Leagues, Upcoming Drafts, Win Rate). Users can drag it anywhere.
+function buildWidgetRegistry(stats) {
+  return [
+    { id: "fantasy-level", render: () => (
+      <FantasyLevelBadge extraStats={{
+        leagues: stats.leagues,
+        upcoming: stats.upcoming,
+        winRate: stats.winRate ?? "--",
+      }} />
+    ) },
+    { id: "my-leagues", render: () => <MyLeaguesOrderedList /> },
+    { id: "pending-trades", render: () => <PendingTradesBanner /> },
+    { id: "week-at-a-glance", render: () => <MyWeekAtAGlance /> },
+    { id: "your-activity", render: () => (
+      <div><YourActivityWidget /></div>
+    ) },
+    { id: "live-scoring", render: () => <LiveScoringWidget /> },
+    { id: "player-status", render: () => (
+      <div className="surface p-4">
+        <PlayerStatusFeed
+          scope="user"
+          days={14}
+          heading="Player status updates across your leagues"
+          emptyMessage="No player status changes in the last 14 days across your teams."
+        />
+      </div>
+    ) },
+    { id: "league-movers", render: () => (
+      <div className="surface p-4">
+        <LeagueMoversWidget heading="League movers · last 7 days" limit={5} />
+      </div>
+    ) },
+  ];
+}
+
+// Stable id list — order values must match `buildWidgetRegistry` ids.
+const DASHBOARD_WIDGET_IDS = [
+  "fantasy-level", "my-leagues", "pending-trades", "week-at-a-glance",
+  "your-activity", "live-scoring", "player-status", "league-movers",
 ];
 
 function loadWidgetOrder() {
   try {
     const raw = localStorage.getItem(DASHBOARD_WIDGET_ORDER_KEY);
-    if (!raw) return DASHBOARD_WIDGETS.map((w) => w.id);
+    if (!raw) return [...DASHBOARD_WIDGET_IDS];
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return DASHBOARD_WIDGETS.map((w) => w.id);
+    if (!Array.isArray(parsed)) return [...DASHBOARD_WIDGET_IDS];
     // Drop unknown ids + append any new widgets we shipped after this
     // user last saved their order (so new additions surface at the
     // bottom rather than vanish silently).
-    const known = new Set(DASHBOARD_WIDGETS.map((w) => w.id));
+    const known = new Set(DASHBOARD_WIDGET_IDS);
     const filtered = parsed.filter((id) => known.has(id));
-    for (const w of DASHBOARD_WIDGETS) {
-      if (!filtered.includes(w.id)) filtered.push(w.id);
+    for (const wid of DASHBOARD_WIDGET_IDS) {
+      if (!filtered.includes(wid)) filtered.push(wid);
     }
     return filtered;
   } catch {
-    return DASHBOARD_WIDGETS.map((w) => w.id);
+    return [...DASHBOARD_WIDGET_IDS];
   }
 }
 
@@ -123,10 +141,10 @@ export default function DashboardPage() {
         // Reconcile against the registry the same way loadWidgetOrder
         // does — drops unknown ids, appends any newer widgets so users
         // whose saved order predates a shipped widget still see it.
-        const known = new Set(DASHBOARD_WIDGETS.map((w) => w.id));
+        const known = new Set(DASHBOARD_WIDGET_IDS);
         const filtered = remote.filter((id) => known.has(id));
-        for (const w of DASHBOARD_WIDGETS) {
-          if (!filtered.includes(w.id)) filtered.push(w.id);
+        for (const wid of DASHBOARD_WIDGET_IDS) {
+          if (!filtered.includes(wid)) filtered.push(wid);
         }
         setWidgetOrder(filtered);
         try { localStorage.setItem(DASHBOARD_WIDGET_ORDER_KEY, JSON.stringify(filtered)); } catch { /* noop */ }
@@ -246,14 +264,12 @@ export default function DashboardPage() {
               <span>{customizing ? "Done" : "Customize layout"}</span>
             </button>
           </div>
-          <div className="w-full sm:w-80 flex flex-col items-end gap-2 order-last sm:order-none">
-            <FantasyLevelBadge />
-            {/* Iter 232N.17 — Customize layout button. Toggles a
-                reorder mode where every widget gets a dashed outline
-                + a pulsing grip so the drag affordance is obvious.
-                Iter 232N.18 — Hidden on mobile (see the inline copy
-                above the Fantasy Level card) so the button stays
-                above-the-fold on small screens. */}
+          <div className="w-full sm:w-auto flex flex-col items-end gap-2 order-last sm:order-none">
+            {/* Iter 232N.22 — Fantasy Level Badge relocated into the
+                sortable widget stack below (as its own draggable
+                widget) so users can move it around. Header column now
+                only carries the Customize toggle on desktop. */}
+            {/* Iter 232N.17 — Customize layout button (desktop). */}
             <button
               type="button"
               onClick={() => setCustomizing((v) => !v)}
@@ -300,24 +316,27 @@ export default function DashboardPage() {
           onReorder={handleWidgetReorder}
           customize={customizing}
         >
-          {widgetOrder.map((id) => {
-            const widget = DASHBOARD_WIDGETS.find((w) => w.id === id);
-            if (!widget) return null;
-            return (
-              <SortableSection key={id} id={id} className="mb-8">
-                {widget.render()}
-              </SortableSection>
-            );
-          })}
+          {(() => {
+            // Iter 232N.22 — Build the registry once per render so the
+            // Fantasy Level widget receives the latest account stats
+            // (leagues / upcoming / win rate) as props.
+            const widgetRegistry = buildWidgetRegistry(stats);
+            return widgetOrder.map((id) => {
+              const widget = widgetRegistry.find((w) => w.id === id);
+              if (!widget) return null;
+              return (
+                <SortableSection key={id} id={id} className="mb-8">
+                  {widget.render()}
+                </SortableSection>
+              );
+            });
+          })()}
         </SortableSections>
 
-        {/* Stats Grid */}
-        <div className="control-room-grid mb-8">
-          <StatCard label="My Leagues" value={stats.leagues} icon={Trophy} />
-          <StatCard label="Total Teams" value={stats.teams} icon={Users} />
-          <StatCard label="Upcoming Drafts" value={stats.upcoming} icon={Calendar} />
-          <StatCard label="Win Rate" value="--" icon={Rocket} />
-        </div>
+        {/* Iter 232N.22 — Old StatCard grid (Leagues / Total Teams /
+            Upcoming Drafts / Win Rate) removed. Those tiles are now
+            baked into the Fantasy Level Badge above, and "Total Teams"
+            is dropped per user request. */}
 
         {/* Quick Actions */}
         <div className="flex flex-wrap gap-4 mb-8">
