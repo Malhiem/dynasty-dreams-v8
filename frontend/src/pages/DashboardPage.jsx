@@ -100,7 +100,7 @@ function loadWidgetOrder() {
 export default function DashboardPage() {
   const { user } = useAuth();
   const { league: activeLeague } = useActiveLeague();
-  const [stats, setStats] = useState({ leagues: 0, teams: 0, upcoming: 0 });
+  const [stats, setStats] = useState({ leagues: 0, upcoming: 0 });
   const [leagues, setLeagues] = useState([]);
   const [loading, setLoading] = useState(true);
   // Iter 231at — Bump a reload tick to force every dependent widget
@@ -157,30 +157,18 @@ export default function DashboardPage() {
   // that the whole dashboard is drag-to-reorder. Off by default.
   const [customizing, setCustomizing] = useState(false);
 
-  const fetchData = useCallback(async (force = false) => {
+  const fetchData = useCallback(async (_force = false) => {
     try {
-      // Iter 230g — `/teams?owner_id=me` returns the user's actual teams
-      // (including co-owned, excluding archived/test leagues), so the
-      // "Total Teams" stat reflects the dashboard's Week at a Glance
-      // exactly. Falls back to summing league.current_teams ONLY if
-      // the dedicated endpoint isn't available.
-      // Iter 232a — `force=true` (pull-to-refresh path) appends
-      // `?nocache=1` to the service-worker-cached week-at-a-glance
-      // request so the user actually sees fresh data, not the
-      // stale-while-revalidate copy.
-      const wagPath = force
-        ? '/users/me/week-at-a-glance?nocache=1'
-        : '/users/me/week-at-a-glance';
-      const [leaguesRes, wagRes] = await Promise.all([
-        api.get('/leagues?my_leagues=true'),
-        api.get(wagPath).catch(() => ({ data: { summaries: [] } })),
-      ]);
+      // Iter 232N.22 — Simplified to a single `/leagues` fetch. The
+      // `/week-at-a-glance` call was previously used only to populate
+      // `stats.teams` for the now-removed StatCard row; MyWeekAtAGlance
+      // widget owns its own fetch so this endpoint is no longer
+      // needed at the page level.
+      const leaguesRes = await api.get('/leagues?my_leagues=true');
       setLeagues(leaguesRes.data);
-      const myTeamsCount = (wagRes.data?.summaries || []).length;
       setStats({
         leagues: leaguesRes.data.length,
-        teams: myTeamsCount,
-        upcoming: leaguesRes.data.filter(l => l.status === 'setup').length
+        upcoming: leaguesRes.data.filter(l => l.status === 'setup').length,
       });
       setLastUpdatedAt(Date.now());
     } catch (err) {

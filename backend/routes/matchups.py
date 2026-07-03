@@ -798,6 +798,43 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
             await db.teams.update_one({"_id": ObjectId(m["away_team_id"])},
                                       {"$inc": {"ties": 1, "points_for": away_score, "points_against": home_score}})
 
+        # Iter 232N.24 — Fire an XP toast to the winning owner (and any
+        # co-owners) as soon as their matchup settles. Best-effort so
+        # a broadcast hiccup can't roll back the win increment above.
+        if winner in (m.get("home_team_id"), m.get("away_team_id")):
+            try:
+                from utils.xp import emit_xp_gain
+                broadcast_fn = _deps.get("broadcast_to_room")
+                winner_team = await db.teams.find_one(
+                    {"_id": ObjectId(winner)},
+                    {"owner_id": 1, "co_owner_ids": 1, "name": 1},
+                )
+                if winner_team and broadcast_fn:
+                    winning_name = winner_team.get("name", "your team")
+                    losing_id = (
+                        m["away_team_id"] if winner == m["home_team_id"]
+                        else m["home_team_id"]
+                    )
+                    losing_team = await db.teams.find_one(
+                        {"_id": ObjectId(losing_id)}, {"name": 1}
+                    )
+                    meta = {
+                        "matchup_id": str(m["_id"]),
+                        "week": int(input.week),
+                        "opponent": (losing_team or {}).get("name"),
+                        "team_name": winning_name,
+                    }
+                    for uid in [winner_team.get("owner_id")] + list(winner_team.get("co_owner_ids") or []):
+                        if uid:
+                            await emit_xp_gain(
+                                db, uid,
+                                source="matchup_won",
+                                broadcast_fn=broadcast_fn,
+                                meta=meta,
+                            )
+            except Exception as ex:
+                logger.debug(f"xp_awarded (matchup) skipped: {ex}")
+
         # Iter 108: When a playoff matchup settles, fire a one-time top-bell
         # notification to every league member ("Round N advanced — Team A defeats
         # Team B"). Idempotent within 22h via the existing tbd_deadline_pings

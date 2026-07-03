@@ -30,6 +30,13 @@ import { GripVertical } from "lucide-react";
 
 const SortableCtx = createContext({ ids: [], onReorder: () => {}, customize: false });
 
+// Iter 232N.23 — Consumer hook so nested widgets can react to
+// customize-mode being toggled (e.g. `MyLeaguesOrderedList` disables
+// its internal HTML5 row drag so the outer section-drag can win).
+export function useSortableCustomize() {
+  return useContext(SortableCtx).customize;
+}
+
 export function SortableSections({ ids, onReorder, children, customize = false }) {
   const sensors = useSensors(
     // Iter 232N.21 — Loosened activation constraints. `distance: 6`

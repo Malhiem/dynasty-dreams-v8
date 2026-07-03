@@ -17,6 +17,10 @@ import SwipeableRow from '@/components/SwipeableRow';
 import { useActiveLeague } from '@/hooks/use-active-league';
 // Iter 230aw — One-time onboarding pulse for the swipe gestures.
 import useOnboardingHint from '@/hooks/use-onboarding-hint';
+// Iter 232N.23 — Read the parent SortableSections' customize state so
+// we can disable the row-level HTML5 drag + swipe gestures while the
+// user is trying to reorder the WHOLE widget on the dashboard.
+import { useSortableCustomize } from '@/components/SortableSections';
 
 const ORDER_KEY = 'dd_league_order_v1';
 
@@ -65,6 +69,12 @@ export default function MyLeaguesOrderedList() {
   // Iter 230aw — One-time pulse on the first row so touch users
   // discover the swipe gestures.
   const [hintActive, markHintShown] = useOnboardingHint('my-leagues');
+  // Iter 232N.23 — When the dashboard is in Customize layout mode,
+  // suppress the widget's OWN row-level drag + swipe gestures so the
+  // whole section can be grabbed for widget reorder. Without this,
+  // HTML5 native `draggable` on each row wins the pointer event first
+  // and the parent dnd-kit section drag never activates.
+  const customizingLayout = useSortableCustomize();
 
   useEffect(() => {
     // Iter 230am — Fetch leagues + the server-side order preference
@@ -236,7 +246,9 @@ export default function MyLeaguesOrderedList() {
           )}
         </div>
         <span className="text-[11px] text-[#52525B] italic hidden sm:block">
-          Drag to reorder • your preference is saved locally
+          {customizingLayout
+            ? 'Customize mode — drag the whole card to reorder widgets'
+            : 'Drag to reorder • your preference is saved locally'}
         </span>
       </div>
 
@@ -249,43 +261,24 @@ export default function MyLeaguesOrderedList() {
           // (we still let the gesture commit so the user gets a
           // "already default" toast for clarity).
           const isDefault = (leagues[0]?.id === lg.id) && (lg.id === activeLeagueId);
-          return (
-            <SwipeableRow
-              key={lg.id}
-              testId={`my-leagues-swipe-row-${lg.id}`}
-              showOnboardingHint={hintActive && idx === 0}
-              onHintShown={markHintShown}
-              rightAction={{
-                label: isDefault ? 'Already default' : 'Set as default',
-                icon: <Star className="h-4 w-4" />,
-                bg: 'bg-amber-500/25',
-                color: 'text-amber-200',
-                testId: `my-leagues-swipe-default-hint-${lg.id}`,
-              }}
-              leftAction={{
-                label: 'Hide',
-                icon: <EyeOff className="h-4 w-4" />,
-                bg: 'bg-rose-600/25',
-                color: 'text-rose-200',
-                testId: `my-leagues-swipe-hide-hint-${lg.id}`,
-              }}
-              onSwipeRight={() => { markHintShown(); handleSetDefault(lg.id, lg.name); }}
-              onSwipeLeft={() => { markHintShown(); handleHideLeague(lg.id, lg.name); }}
-            >
+          // Iter 232N.23 — Row body extracted so we can either drop it
+          // straight in (customize mode → the outer dashboard section
+          // owns all pointer events) or wrap it in SwipeableRow +
+          // HTML5-draggable behaviour (normal mode).
+          const rowBody = (
             <div
-              key={lg.id}
-              draggable={!isTouch}
-              onDragStart={isTouch ? undefined : (e) => onDragStart(e, lg.id)}
-              onDragOver={isTouch ? undefined : (e) => onDragOver(e, lg.id)}
-              onDragLeave={isTouch ? undefined : onDragLeave}
-              onDrop={isTouch ? undefined : (e) => onDrop(e, lg.id)}
-              onDragEnd={isTouch ? undefined : onDragEnd}
+              draggable={!isTouch && !customizingLayout}
+              onDragStart={(isTouch || customizingLayout) ? undefined : (e) => onDragStart(e, lg.id)}
+              onDragOver={(isTouch || customizingLayout) ? undefined : (e) => onDragOver(e, lg.id)}
+              onDragLeave={(isTouch || customizingLayout) ? undefined : onDragLeave}
+              onDrop={(isTouch || customizingLayout) ? undefined : (e) => onDrop(e, lg.id)}
+              onDragEnd={(isTouch || customizingLayout) ? undefined : onDragEnd}
               data-testid={`my-leagues-row-${lg.id}`}
               className={`surface border border-white/5 p-3 flex items-center gap-3 transition-all select-none ${
                 isDragging ? 'opacity-50 border-[#00D2FF]/50' : ''
               } ${
                 isDragOver && !isDragging ? 'border-[#00D2FF] bg-[#00D2FF]/5' : ''
-              } hover:border-[#00D2FF]/40 ${isTouch ? '' : 'cursor-grab active:cursor-grabbing'}`}
+              } hover:border-[#00D2FF]/40 ${(isTouch || customizingLayout) ? '' : 'cursor-grab active:cursor-grabbing'}`}
             >
               <GripVertical size={16} className="text-[#52525B] shrink-0" />
               <div className="min-w-0 flex-1">
@@ -374,6 +367,34 @@ export default function MyLeaguesOrderedList() {
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
+          );
+          if (customizingLayout) {
+            return <div key={lg.id}>{rowBody}</div>;
+          }
+          return (
+            <SwipeableRow
+              key={lg.id}
+              testId={`my-leagues-swipe-row-${lg.id}`}
+              showOnboardingHint={hintActive && idx === 0}
+              onHintShown={markHintShown}
+              rightAction={{
+                label: isDefault ? 'Already default' : 'Set as default',
+                icon: <Star className="h-4 w-4" />,
+                bg: 'bg-amber-500/25',
+                color: 'text-amber-200',
+                testId: `my-leagues-swipe-default-hint-${lg.id}`,
+              }}
+              leftAction={{
+                label: 'Hide',
+                icon: <EyeOff className="h-4 w-4" />,
+                bg: 'bg-rose-600/25',
+                color: 'text-rose-200',
+                testId: `my-leagues-swipe-hide-hint-${lg.id}`,
+              }}
+              onSwipeRight={() => { markHintShown(); handleSetDefault(lg.id, lg.name); }}
+              onSwipeLeft={() => { markHintShown(); handleHideLeague(lg.id, lg.name); }}
+            >
+              {rowBody}
             </SwipeableRow>
           );
         })}

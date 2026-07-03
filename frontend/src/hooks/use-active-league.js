@@ -202,6 +202,39 @@ export function useActiveLeague() {
           }).catch(() => { /* toast lib unavailable in this route — noop */ });
         } catch { /* best-effort */ }
       },
+      // Iter 232N.24 — Gamified XP toast fires whenever the backend
+      // credits the user with career XP (trade accepted, matchup won,
+      // etc.). Copy mirrors the Fantasy Level badge — "+25 XP · Line
+      // Captain in 3" — so the badge feels alive without needing a
+      // full page refresh.
+      xp_awarded: (payload) => {
+        try {
+          const delta = Number(payload?.delta || 0);
+          if (delta <= 0) return;
+          const title = `+${delta} XP`;
+          const remaining = Number(payload?.xp_to_next_level || 0);
+          const levelTitle = payload?.title || 'Fantasy Level';
+          const source = payload?.source;
+          const sourceLabel = source === 'trade_accepted'
+            ? 'Trade accepted'
+            : source === 'matchup_won'
+              ? 'Matchup win'
+              : source === 'waiver_claim_won'
+                ? 'Waiver claim won'
+                : source === 'draft_completed'
+                  ? 'Draft completed'
+                  : 'Career progress';
+          const desc = remaining > 0
+            ? `${sourceLabel} · ${levelTitle} in ${remaining}`
+            : `${sourceLabel} · ${levelTitle}`;
+          import('sonner').then(({ toast }) => {
+            toast.success(title, {
+              description: desc,
+              duration: 5000,
+            });
+          }).catch(() => { /* toast lib unavailable — noop */ });
+        } catch { /* best-effort */ }
+      },
     },
     meId,
   );

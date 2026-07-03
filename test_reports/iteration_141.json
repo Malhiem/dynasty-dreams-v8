@@ -1,0 +1,32 @@
+{
+  "summary": "Iter 232N.23 + 232N.24 fully validated. Backend: all 8 XP helper tests + 2 endpoint regression tests pass (10/10). Frontend: chriszarek and admin both show universal customize-mode behaviour for MY LEAGUES widget — dashed outline, cyan pulsing drag handle at top-right, league rows switch to draggable=false in customize mode, hint text flips to 'Customize mode — drag the whole card to reorder widgets', and dragging the section-drag-handle-my-leagues successfully reorders widgets (my-leagues moved from index 2 to index 1 in DOM). On exit, rows return to draggable=true and hint reverts to 'Drag to reorder • your preference is saved locally'. Chris's saved dashboard layout was restored via PATCH /api/users/me/dashboard-layout.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N24_xp_helper.py",
+    "/app/backend/tests/test_iter232N24_endpoints.py",
+    "/app/test_reports/pytest/iter232N24.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "socket.io websocket handshake fails with 403 (Kubernetes ingress preview URL). Pre-existing across many iterations, not caused by 232N.24, but the new xp_awarded toast listener depends on this transport. In preview env the toast will not fire until WS is authorized — verify locally or via test doubles.",
+    "The dashboard-layout endpoint uses body key `widget_order` (not `layout`); reference doc string in review_request said 'layout' — kept as informational only, actual code is correct."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter232N24_endpoints.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "chriszarek@gmail.com/Chris2026!, admin@dynastydreams.com/Admin123! — both worked.",
+  "seed_data_creation": "none (only ephemeral test users inside pytest fixture, cleaned up).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Chris's dashboard layout restored to canonical order at end of run. Backend test file test_iter232N24_endpoints.py uses `widget_order` payload — correct schema. Note socket.io 403 in preview env means xp_awarded toast integration test cannot be end-to-end verified via UI; recommend a unit-level or in-app socket mock test instead.",
+  "rca of the issue": "Not applicable — this iteration is a feature validation, no bugs found. Prior bug (HTML5-native row drag swallowing dnd-kit section drag) is confirmed fixed: rows have draggable=false in customize mode allowing the section-drag-handle to receive pointer events cleanly."
+}

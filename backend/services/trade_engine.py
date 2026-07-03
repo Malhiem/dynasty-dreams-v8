@@ -822,6 +822,27 @@ async def _execute_multi_party_trade(trade: dict) -> dict:
     refreshed = await _db().trades.find_one({"_id": trade["_id"]})
     if refreshed:
         await _apply_pick_upgrades(refreshed, final_eval=False)
+
+    # Iter 232N.24 — XP toast for every party in a multi-team trade.
+    try:
+        from utils.xp import emit_xp_gain
+        broadcast_fn = _deps.get("broadcast_to_room")
+        meta = {
+            "trade_id": str(trade.get("_id")),
+            "parties": [p.get("team_name") for p in parties],
+            "is_multi_party": True,
+        }
+        for p in parties:
+            if p.get("owner_id"):
+                await emit_xp_gain(
+                    _db(), p["owner_id"],
+                    source="trade_accepted",
+                    broadcast_fn=broadcast_fn,
+                    meta=meta,
+                )
+    except Exception as e:
+        _logger().debug(f"xp_awarded emit skipped (multi-party): {e}")
+
     return {"executed": True, "moves": moves, "parties": [p["team_name"] for p in parties]}
 
 
@@ -1130,4 +1151,28 @@ async def _execute_trade(trade: dict) -> dict:
     refreshed = await _db().trades.find_one({"_id": trade["_id"]})
     if refreshed:
         await _apply_pick_upgrades(refreshed, final_eval=False)
+
+    # Iter 232N.24 — Real-time XP toast for both trade participants.
+    # Fires AFTER the trade + notification pipeline runs so the
+    # `xp_awarded` broadcast reflects the freshly-incremented career
+    # XP total. Best-effort — failures never break the trade path.
+    try:
+        from utils.xp import emit_xp_gain
+        broadcast_fn = _deps.get("broadcast_to_room")
+        meta = {
+            "trade_id": str(trade.get("_id")),
+            "proposer_team": trade.get("proposer_team_name"),
+            "target_team": trade.get("target_team_name"),
+        }
+        for uid in (trade.get("proposer_id"), trade.get("target_owner_id")):
+            if uid:
+                await emit_xp_gain(
+                    _db(), uid,
+                    source="trade_accepted",
+                    broadcast_fn=broadcast_fn,
+                    meta=meta,
+                )
+    except Exception as e:
+        _logger().debug(f"xp_awarded emit skipped (two-team): {e}")
+
     return {"executed": True, "moves": moves}
