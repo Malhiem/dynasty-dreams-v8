@@ -58,23 +58,23 @@ export default function FantasyLevelBadge({ compact = false }) {
   return (
     <div
       data-testid="fantasy-level-card"
-      className={`rounded-xl p-4 bg-gradient-to-br ${palette} border`}
+      className={`rounded-xl p-3 sm:p-4 bg-gradient-to-br ${palette} border`}
     >
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <Icon size={18} />
-          <span className="text-[10px] uppercase tracking-wider opacity-70">
+      <div className="flex items-center justify-between mb-2 gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <Icon size={18} className="shrink-0" />
+          <span className="text-[10px] uppercase tracking-wider opacity-70 truncate">
             Fantasy Level
           </span>
         </div>
-        <Badge className="bg-black/40 text-white border-white/10 text-[10px]">
+        <Badge className="bg-black/40 text-white border-white/10 text-[10px] shrink-0 max-w-[55%] truncate">
           {data.title}
         </Badge>
       </div>
 
-      <div className="flex items-baseline gap-2 mb-3">
-        <div className="text-4xl font-black tabular-nums">{data.level}</div>
-        <div className="text-xs opacity-70">
+      <div className="flex items-baseline gap-2 mb-3 flex-wrap">
+        <div className="text-3xl sm:text-4xl font-black tabular-nums">{data.level}</div>
+        <div className="text-[11px] sm:text-xs opacity-70">
           {data.xp_in_level}/{data.xp_required_for_next} XP
         </div>
       </div>
@@ -86,18 +86,21 @@ export default function FantasyLevelBadge({ compact = false }) {
         />
       </div>
 
-      <div className="grid grid-cols-3 gap-2 mt-3 text-[10px] uppercase tracking-wider opacity-70">
-        <div>
-          <div className="opacity-60">Wins</div>
-          <div className="text-base font-bold text-white">{data.stats.total_wins}</div>
+      {/* Iter 232N.21 — Mobile-tight stat row. Reduced label text to
+          9px + condensed leading so all three stats sit on one line
+          on a 320px viewport (previously wrapped/overflowed at ≤360px). */}
+      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mt-3 text-[9px] sm:text-[10px] uppercase tracking-wider opacity-70">
+        <div className="min-w-0">
+          <div className="opacity-60 truncate">Wins</div>
+          <div className="text-sm sm:text-base font-bold text-white tabular-nums">{data.stats.total_wins}</div>
         </div>
-        <div>
-          <div className="opacity-60">Trades</div>
-          <div className="text-base font-bold text-white">{data.stats.trades_accepted}</div>
+        <div className="min-w-0">
+          <div className="opacity-60 truncate">Trades</div>
+          <div className="text-sm sm:text-base font-bold text-white tabular-nums">{data.stats.trades_accepted}</div>
         </div>
-        <div>
-          <div className="opacity-60">Drafts</div>
-          <div className="text-base font-bold text-white">{data.stats.drafts_completed}</div>
+        <div className="min-w-0">
+          <div className="opacity-60 truncate">Drafts</div>
+          <div className="text-sm sm:text-base font-bold text-white tabular-nums">{data.stats.drafts_completed}</div>
         </div>
       </div>
     </div>

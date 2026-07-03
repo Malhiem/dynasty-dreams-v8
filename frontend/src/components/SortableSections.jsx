@@ -32,12 +32,14 @@ const SortableCtx = createContext({ ids: [], onReorder: () => {}, customize: fal
 
 export function SortableSections({ ids, onReorder, children, customize = false }) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    // Iter 232N.18 — Explicit TouchSensor for mobile drag-reorder. The
-    // 200ms hold + 5px tolerance lets a tap-and-hold on the grip start
-    // the drag without stealing normal taps/scroll on the rest of the
-    // widget card.
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    // Iter 232N.21 — Loosened activation constraints. `distance: 6`
+    // on the PointerSensor was rejecting slow drags where the user
+    // held the mouse still for a moment before moving; lowered to 4.
+    // TouchSensor now uses `distance` too (5px) instead of the 200ms
+    // hold — a hold-first pattern was confusing users who expected a
+    // straight drag to work identically on mobile.
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
@@ -101,6 +103,11 @@ export function SortableSection({ id, children, className = "", style: extraStyl
         data-testid={`section-drag-handle-${id}`}
         title="Drag to reorder"
         aria-label="Drag to reorder section"
+        // Iter 232N.21 — Explicit `touchAction: 'none'` so mobile browsers
+        // don't hijack the pointer for vertical scrolling before the
+        // TouchSensor's `distance: 5` threshold fires. Without this the
+        // browser would swallow the first ~10px of finger movement.
+        style={{ touchAction: "none" }}
         className={handleClass}
       >
         <GripVertical className={customize ? "h-5 w-5" : "h-4 w-4"} />
