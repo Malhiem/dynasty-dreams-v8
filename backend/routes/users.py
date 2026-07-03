@@ -524,6 +524,66 @@ async def update_my_profile(payload: ProfileUpdate, request: Request):
     return {"updated": True, "user": _public_user(fresh)}
 
 
+# Iter 232N.19 — Dashboard layout sync (widget order across devices).
+# Stored as `dashboard_layout` on the user doc:
+#   { widget_order: ["my-leagues", "pending-trades", ...],
+#     updated_at: ISO-8601 UTC }
+# We keep this deliberately schema-light: any string ids the client
+# doesn't recognise are dropped/appended by the client's `loadWidgetOrder`
+# helper so we don't have to migrate server-side when new widgets ship.
+
+
+@router.get("/users/me/dashboard-layout")
+async def get_my_dashboard_layout(request: Request):
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    fresh = await db.users.find_one(
+        {"_id": ObjectId(user["_id"])},
+        {"dashboard_layout": 1},
+    )
+    layout = (fresh or {}).get("dashboard_layout") or {}
+    return {
+        "widget_order": layout.get("widget_order") or [],
+        "updated_at": layout.get("updated_at"),
+    }
+
+
+@router.patch("/users/me/dashboard-layout")
+async def patch_my_dashboard_layout(payload: dict, request: Request):
+    """Persist the caller's widget order across devices.
+
+    Body: `{ "widget_order": ["my-leagues", "pending-trades", ...] }`.
+    Order is stored verbatim — clients drop unknown ids on load. Payload
+    is capped to prevent unbounded growth (32 entries, each ≤64 chars).
+    """
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    widget_order = payload.get("widget_order")
+    if not isinstance(widget_order, list):
+        raise HTTPException(
+            status_code=400, detail="widget_order must be a list of ids",
+        )
+    if len(widget_order) > 32:
+        raise HTTPException(status_code=400, detail="widget_order is too long")
+    cleaned = []
+    for wid in widget_order:
+        if not isinstance(wid, str):
+            continue
+        wid = wid.strip()
+        if not wid or len(wid) > 64:
+            continue
+        cleaned.append(wid)
+    now = datetime.now(timezone.utc)
+    await db.users.update_one(
+        {"_id": ObjectId(user["_id"])},
+        {"$set": {
+            "dashboard_layout": {"widget_order": cleaned, "updated_at": now},
+            "updated_at": now,
+        }},
+    )
+    return {"widget_order": cleaned, "updated_at": now.isoformat()}
+
+
 @router.post("/users/me/avatar")
 async def upload_my_avatar(request: Request, file: UploadFile = File(...)):
     """Upload an avatar image (PNG/JPEG/WEBP/GIF, max 1 MB, resized to 256×256 PNG)."""

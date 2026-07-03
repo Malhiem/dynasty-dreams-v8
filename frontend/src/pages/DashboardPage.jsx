@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import api from '@/lib/api';
@@ -92,12 +92,47 @@ export default function DashboardPage() {
   // Iter 232b — Freshness timestamp for the LastUpdatedBadge.
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   // Iter 232N.16 — Persisted widget order (drag-and-drop across all
-  // widget sections). Layout preference is per-browser (localStorage),
-  // not per-user server-side — keeps the request path free of writes.
+  // widget sections). Layout preference is per-user server-side (iter
+  // 232N.19) with localStorage as first-paint cache + offline fallback.
   const [widgetOrder, setWidgetOrder] = useState(() => loadWidgetOrder());
+  const layoutSaveTimer = useRef(null);
   const handleWidgetReorder = useCallback((next) => {
     setWidgetOrder(next);
     try { localStorage.setItem(DASHBOARD_WIDGET_ORDER_KEY, JSON.stringify(next)); } catch { /* noop */ }
+    // Iter 232N.19 — Debounced server sync so a rapid drag flurry
+    // fires one PATCH instead of N. 400ms is long enough for a
+    // multi-move reorder to settle without feeling laggy.
+    if (layoutSaveTimer.current) clearTimeout(layoutSaveTimer.current);
+    layoutSaveTimer.current = setTimeout(() => {
+      api.patch("/users/me/dashboard-layout", { widget_order: next })
+        .catch(() => { /* offline / auth blip — localStorage is authoritative */ });
+    }, 400);
+  }, []);
+  // Iter 232N.19 — On mount, hydrate the order from the server.
+  // If the server has a saved layout, it wins over localStorage so
+  // desktop → mobile handoffs match. If not, we keep the local
+  // default. Runs once per session (no polling).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/users/me/dashboard-layout");
+        if (cancelled) return;
+        const remote = Array.isArray(data?.widget_order) ? data.widget_order : [];
+        if (remote.length === 0) return;  // nothing saved server-side
+        // Reconcile against the registry the same way loadWidgetOrder
+        // does — drops unknown ids, appends any newer widgets so users
+        // whose saved order predates a shipped widget still see it.
+        const known = new Set(DASHBOARD_WIDGETS.map((w) => w.id));
+        const filtered = remote.filter((id) => known.has(id));
+        for (const w of DASHBOARD_WIDGETS) {
+          if (!filtered.includes(w.id)) filtered.push(w.id);
+        }
+        setWidgetOrder(filtered);
+        try { localStorage.setItem(DASHBOARD_WIDGET_ORDER_KEY, JSON.stringify(filtered)); } catch { /* noop */ }
+      } catch { /* offline / unauth — keep local */ }
+    })();
+    return () => { cancelled = true; };
   }, []);
   // Iter 232N.17 — Customize-layout mode. When ON, every widget gets a
   // dashed cyan outline + a big pulsing grip handle so users discover
