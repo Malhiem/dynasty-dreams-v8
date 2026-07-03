@@ -36,6 +36,7 @@ import { SortableSections, SortableSection } from '@/components/SortableSections
 const DASHBOARD_WIDGET_ORDER_KEY = "dd_dashboard_widget_order_v1";
 const DASHBOARD_WIDGETS = [
   { id: "my-leagues", render: () => <MyLeaguesOrderedList /> },
+  { id: "pending-trades", render: () => <PendingTradesBanner /> },
   { id: "week-at-a-glance", render: () => <MyWeekAtAGlance /> },
   { id: "your-activity", render: () => (
     <div><YourActivityWidget /></div>
@@ -98,6 +99,10 @@ export default function DashboardPage() {
     setWidgetOrder(next);
     try { localStorage.setItem(DASHBOARD_WIDGET_ORDER_KEY, JSON.stringify(next)); } catch { /* noop */ }
   }, []);
+  // Iter 232N.17 — Customize-layout mode. When ON, every widget gets a
+  // dashed cyan outline + a big pulsing grip handle so users discover
+  // that the whole dashboard is drag-to-reorder. Off by default.
+  const [customizing, setCustomizing] = useState(false);
 
   const fetchData = useCallback(async (force = false) => {
     try {
@@ -189,21 +194,57 @@ export default function DashboardPage() {
               <LastUpdatedBadge timestamp={lastUpdatedAt} testIdSuffix="dashboard" />
             </div>
           </div>
-          <div className="w-full sm:w-80">
+          <div className="w-full sm:w-80 flex flex-col items-end gap-2">
             <FantasyLevelBadge />
+            {/* Iter 232N.17 — Customize layout button. Toggles a
+                reorder mode where every widget gets a dashed outline
+                + a pulsing grip so the drag affordance is obvious. */}
+            <button
+              type="button"
+              onClick={() => setCustomizing((v) => !v)}
+              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider border transition-colors ${
+                customizing
+                  ? "bg-[#00D2FF] text-black border-[#00D2FF]"
+                  : "bg-transparent border-white/15 text-[#A1A1AA] hover:text-white hover:border-white/40"
+              }`}
+              data-testid="dashboard-customize-toggle"
+              aria-pressed={customizing}
+            >
+              <span>{customizing ? "Done" : "Customize layout"}</span>
+            </button>
           </div>
         </div>
 
-        {/* Iter 231j — Pending trades banner: surfaces "Pending Response"
-            (recipient) + "Pending Review" (proposer) trades across all
-            leagues so users see open trades immediately on load. */}
-        <PendingTradesBanner />
+        {customizing && (
+          <div
+            className="mb-6 rounded-lg border border-[#00D2FF]/40 bg-[#00D2FF]/10 px-4 py-3 text-sm text-[#00D2FF] flex items-start gap-3"
+            data-testid="dashboard-customize-hint"
+          >
+            <span className="text-lg">↕</span>
+            <div>
+              <p className="font-semibold">Reorder mode</p>
+              <p className="text-[#00D2FF]/80 text-xs mt-0.5">
+                Drag any section by its highlighted handle to reorder
+                the dashboard. Preferences save automatically. Click
+                <span className="font-semibold text-white/90"> Done </span>
+                when finished.
+              </p>
+            </div>
+          </div>
+        )}
 
-        {/* Iter 232N.16 — Sortable widget stack. "My Leagues" defaults
-            to the top so users can dive into a league immediately on
-            load; every section is drag-to-reorder via the grip handle
-            in its top-right corner. Order persists in localStorage. */}
-        <SortableSections ids={widgetOrder} onReorder={handleWidgetReorder}>
+        {/* Iter 232N.16 + 232N.17 — Sortable widget stack. Now the
+            FIRST content after the welcome header, so managers see
+            "My Leagues" (the default top entry) immediately without
+            scrolling past a huge Pending Trades banner. The banner
+            itself is now part of the sortable set — users can drag it
+            below My Leagues (default) or hoist it back up if they
+            prefer trade-first triage. */}
+        <SortableSections
+          ids={widgetOrder}
+          onReorder={handleWidgetReorder}
+          customize={customizing}
+        >
           {widgetOrder.map((id) => {
             const widget = DASHBOARD_WIDGETS.find((w) => w.id === id);
             if (!widget) return null;

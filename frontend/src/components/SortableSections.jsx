@@ -27,9 +27,9 @@ import { GripVertical } from "lucide-react";
  * Used by the legacy League Home (LeagueDetailPage.jsx).
  */
 
-const SortableCtx = createContext({ ids: [], onReorder: () => {} });
+const SortableCtx = createContext({ ids: [], onReorder: () => {}, customize: false });
 
-export function SortableSections({ ids, onReorder, children }) {
+export function SortableSections({ ids, onReorder, children, customize = false }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -48,7 +48,7 @@ export function SortableSections({ ids, onReorder, children }) {
   };
 
   return (
-    <SortableCtx.Provider value={{ ids, onReorder }}>
+    <SortableCtx.Provider value={{ ids, onReorder, customize }}>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={ids} strategy={verticalListSortingStrategy}>
           {children}
@@ -59,7 +59,7 @@ export function SortableSections({ ids, onReorder, children }) {
 }
 
 export function SortableSection({ id, children, className = "", style: extraStyle = {} }) {
-  useContext(SortableCtx);
+  const { customize } = useContext(SortableCtx);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -69,13 +69,23 @@ export function SortableSection({ id, children, className = "", style: extraStyl
     position: "relative",
     ...extraStyle,
   };
+  // Iter 232N.17 — In "customize" mode we outline the section itself
+  // (dashed cyan border) so the whole card reads as draggable, not
+  // just the tiny handle in the corner. Handle also grows to 36px and
+  // pulses to catch the eye.
+  const outline = customize
+    ? "outline outline-2 outline-dashed outline-[#00D2FF]/50 outline-offset-2 rounded-lg"
+    : "";
+  const handleClass = customize
+    ? "absolute top-3 right-3 z-20 h-9 w-9 rounded-md bg-[#00D2FF] text-black border border-[#00D2FF] shadow-lg shadow-cyan-500/30 flex items-center justify-center cursor-grab active:cursor-grabbing animate-pulse"
+    : "absolute top-3 right-3 z-20 h-7 w-7 rounded-md bg-background/90 backdrop-blur border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center cursor-grab active:cursor-grabbing";
   return (
     <div
       ref={setNodeRef}
       style={style}
       // Reserve 2.5rem on the right so the floating drag handle never overlaps
       // section titles or pinned content (League Home reorder fix, iter 82).
-      className={`${className} pr-10`}
+      className={`${className} pr-10 ${outline}`}
       data-testid={`sortable-section-${id}`}
     >
       <button
@@ -84,9 +94,10 @@ export function SortableSection({ id, children, className = "", style: extraStyl
         {...listeners}
         data-testid={`section-drag-handle-${id}`}
         title="Drag to reorder"
-        className="absolute top-3 right-3 z-20 h-7 w-7 rounded-md bg-background/90 backdrop-blur border border-border hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors flex items-center justify-center cursor-grab active:cursor-grabbing"
+        aria-label="Drag to reorder section"
+        className={handleClass}
       >
-        <GripVertical className="h-4 w-4" />
+        <GripVertical className={customize ? "h-5 w-5" : "h-4 w-4"} />
       </button>
       {children}
     </div>
