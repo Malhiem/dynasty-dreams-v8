@@ -75,6 +75,7 @@ import LovableTeamsOwners from "@/lovable/pages/TeamsOwners";
 import LovableNotFound from "@/lovable/pages/NotFound";
 import LovableLeagueSearch from "@/lovable/pages/LeagueSearch";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 function PageviewTrackerMount() {
   usePageviewTracker();
@@ -85,6 +86,12 @@ function App() {
   return (
     <GlobalErrorBoundary>
     <AuthProvider>
+      {/* Iter 232N.16 — Global TooltipProvider so any <Tooltip> the app
+          renders (including inside portaled Sonner toasts) has a
+          provider ancestor. Fixes the "Tooltip must be used within
+          TooltipProvider" runtime error users hit when the drop toast
+          on the roster page tried to render tooltip-decorated content. */}
+      <TooltipProvider delayDuration={150}>
       <Toaster position="top-right" richColors closeButton />
       <BrowserRouter>
         <ImpersonationBanner />
@@ -167,6 +174,7 @@ function App() {
         </Routes>
         </TradeBuilderProvider>
       </BrowserRouter>
+      </TooltipProvider>
     </AuthProvider>
     </GlobalErrorBoundary>
   );

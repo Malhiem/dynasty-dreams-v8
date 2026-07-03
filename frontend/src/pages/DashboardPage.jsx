@@ -23,6 +23,60 @@ import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';
 // Iter 232b — "Last updated · 14s ago" freshness pill.
 import LastUpdatedBadge from '@/components/LastUpdatedBadge';
 import { Trophy, Users, Calendar, Rocket, Plus, ArrowRight } from '@phosphor-icons/react';
+import { SortableSections, SortableSection } from '@/components/SortableSections';
+
+// Iter 232N.16 — Dashboard widget registry.
+//   • `id`: stable key used both as the localStorage entry AND the
+//     `data-testid` suffix. Never rename after ship.
+//   • `render`: pure component, no props — each widget is a
+//     self-contained data island.
+// Ordering is user-configurable; the default order is what everyone
+// sees on first load. "My Leagues" is intentionally at position 0 so
+// managers can jump straight into a league on page load.
+const DASHBOARD_WIDGET_ORDER_KEY = "dd_dashboard_widget_order_v1";
+const DASHBOARD_WIDGETS = [
+  { id: "my-leagues", render: () => <MyLeaguesOrderedList /> },
+  { id: "week-at-a-glance", render: () => <MyWeekAtAGlance /> },
+  { id: "your-activity", render: () => (
+    <div><YourActivityWidget /></div>
+  ) },
+  { id: "live-scoring", render: () => <LiveScoringWidget /> },
+  { id: "player-status", render: () => (
+    <div className="surface p-4">
+      <PlayerStatusFeed
+        scope="user"
+        days={14}
+        heading="Player status updates across your leagues"
+        emptyMessage="No player status changes in the last 14 days across your teams."
+      />
+    </div>
+  ) },
+  { id: "league-movers", render: () => (
+    <div className="surface p-4">
+      <LeagueMoversWidget heading="League movers · last 7 days" limit={5} />
+    </div>
+  ) },
+];
+
+function loadWidgetOrder() {
+  try {
+    const raw = localStorage.getItem(DASHBOARD_WIDGET_ORDER_KEY);
+    if (!raw) return DASHBOARD_WIDGETS.map((w) => w.id);
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DASHBOARD_WIDGETS.map((w) => w.id);
+    // Drop unknown ids + append any new widgets we shipped after this
+    // user last saved their order (so new additions surface at the
+    // bottom rather than vanish silently).
+    const known = new Set(DASHBOARD_WIDGETS.map((w) => w.id));
+    const filtered = parsed.filter((id) => known.has(id));
+    for (const w of DASHBOARD_WIDGETS) {
+      if (!filtered.includes(w.id)) filtered.push(w.id);
+    }
+    return filtered;
+  } catch {
+    return DASHBOARD_WIDGETS.map((w) => w.id);
+  }
+}
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -36,6 +90,14 @@ export default function DashboardPage() {
   const [reloadTick, setReloadTick] = useState(0);
   // Iter 232b — Freshness timestamp for the LastUpdatedBadge.
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+  // Iter 232N.16 — Persisted widget order (drag-and-drop across all
+  // widget sections). Layout preference is per-browser (localStorage),
+  // not per-user server-side — keeps the request path free of writes.
+  const [widgetOrder, setWidgetOrder] = useState(() => loadWidgetOrder());
+  const handleWidgetReorder = useCallback((next) => {
+    setWidgetOrder(next);
+    try { localStorage.setItem(DASHBOARD_WIDGET_ORDER_KEY, JSON.stringify(next)); } catch { /* noop */ }
+  }, []);
 
   const fetchData = useCallback(async (force = false) => {
     try {
@@ -137,6 +199,22 @@ export default function DashboardPage() {
             leagues so users see open trades immediately on load. */}
         <PendingTradesBanner />
 
+        {/* Iter 232N.16 — Sortable widget stack. "My Leagues" defaults
+            to the top so users can dive into a league immediately on
+            load; every section is drag-to-reorder via the grip handle
+            in its top-right corner. Order persists in localStorage. */}
+        <SortableSections ids={widgetOrder} onReorder={handleWidgetReorder}>
+          {widgetOrder.map((id) => {
+            const widget = DASHBOARD_WIDGETS.find((w) => w.id === id);
+            if (!widget) return null;
+            return (
+              <SortableSection key={id} id={id} className="mb-8">
+                {widget.render()}
+              </SortableSection>
+            );
+          })}
+        </SortableSections>
+
         {/* Stats Grid */}
         <div className="control-room-grid mb-8">
           <StatCard label="My Leagues" value={stats.leagues} icon={Trophy} />
@@ -161,40 +239,10 @@ export default function DashboardPage() {
           </Link>
         </div>
 
-        {/* My Leagues — drag and drop to reorder */}
-        <MyLeaguesOrderedList />
-
-        {/* My Week at a Glance — per-league daily/weekly/top performer/rank */}
-        <MyWeekAtAGlance />
-
-        {/* Iter 218 — Your Activity (personal UX engagement signal) */}
-        <div className="mb-6">
-          <YourActivityWidget />
-        </div>
-
-        {/* Live Scoring widget */}
-        <LiveScoringWidget />
-
-        {/* Iter 232N.5 — Cross-league player status feed. Aggregates
-            every `player_status_change` notification the user has
-            received in the last 14 days across ALL their leagues,
-            grouped by player for scannable milestone audit. */}
-        <div className="mb-8 surface p-4">
-          <PlayerStatusFeed
-            scope="user"
-            days={14}
-            heading="Player status updates across your leagues"
-            emptyMessage="No player status changes in the last 14 days across your teams."
-          />
-        </div>
-
-        {/* Iter 232N.7 — Cross-league movers. Nightly-aggregated view
-            of the hottest / most-dropped / most-traded players over
-            the last 7 days across every league in the system. Helps
-            managers spot smart-money signals fast. */}
-        <div className="mb-8 surface p-4">
-          <LeagueMoversWidget heading="League movers · last 7 days" limit={5} />
-        </div>
+        {/* Iter 232N.16 — Sortable widget stack moved above (see the
+            block just after the header). The stats grid + quick
+            actions sit BELOW leagues now so managers land on the
+            "pick a league" path first. */}
 
         {/* My Leagues Table */}
         <div className="mb-8">

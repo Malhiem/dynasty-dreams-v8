@@ -494,7 +494,11 @@ const Team = () => {
                               data-testid="drop-toast-add-player-btn"
                               onClick={() => {
                                 toast.dismiss(st);
-                                navigate("/waivers");
+                                // Iter 232N.16 — Route to the unified Free
+                                // Agent screen so the manager lands on the
+                                // player table + pickup toast, not the
+                                // legacy standalone /waivers page.
+                                navigate("/players");
                               }}
                             >{suggestion ? "Browse" : "+ Add Player"}</button>
                             <button
