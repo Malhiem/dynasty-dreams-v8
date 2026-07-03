@@ -5,6 +5,7 @@ import {
   closestCenter,
   KeyboardSensor,
   PointerSensor,
+  TouchSensor,
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
@@ -32,6 +33,11 @@ const SortableCtx = createContext({ ids: [], onReorder: () => {}, customize: fal
 export function SortableSections({ ids, onReorder, children, customize = false }) {
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    // Iter 232N.18 — Explicit TouchSensor for mobile drag-reorder. The
+    // 200ms hold + 5px tolerance lets a tap-and-hold on the grip start
+    // the drag without stealing normal taps/scroll on the rest of the
+    // widget card.
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 

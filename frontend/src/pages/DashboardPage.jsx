@@ -181,7 +181,7 @@ export default function DashboardPage() {
       <div className="max-w-7xl mx-auto">
         {/* Welcome Section */}
         <div className="mb-6 sm:mb-8 flex items-start justify-between gap-4 flex-wrap">
-          <div>
+          <div className="flex-1 min-w-0">
             {/* Iter 231k — Mobile-friendly heading: text-3xl on small screens
                 so "WELCOME BACK, <USERNAME>" fits on 1-2 lines instead of 3+. */}
             <h1 className="font-heading text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight text-white mb-2">
@@ -193,16 +193,36 @@ export default function DashboardPage() {
                   successful pull-to-refresh). */}
               <LastUpdatedBadge timestamp={lastUpdatedAt} testIdSuffix="dashboard" />
             </div>
-          </div>
-          <div className="w-full sm:w-80 flex flex-col items-end gap-2">
-            <FantasyLevelBadge />
-            {/* Iter 232N.17 — Customize layout button. Toggles a
-                reorder mode where every widget gets a dashed outline
-                + a pulsing grip so the drag affordance is obvious. */}
+            {/* Iter 232N.18 — Customize button inline under the tagline
+                on mobile so it stays in the initial viewport without
+                being pushed below the Fantasy Level card. Hidden here on
+                sm+ where the desktop copy renders next to the badge. */}
             <button
               type="button"
               onClick={() => setCustomizing((v) => !v)}
-              className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider border transition-colors ${
+              className={`mt-3 sm:hidden inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider border transition-colors ${
+                customizing
+                  ? "bg-[#00D2FF] text-black border-[#00D2FF]"
+                  : "bg-transparent border-white/15 text-[#A1A1AA]"
+              }`}
+              data-testid="dashboard-customize-toggle-mobile"
+              aria-pressed={customizing}
+            >
+              <span>{customizing ? "Done" : "Customize layout"}</span>
+            </button>
+          </div>
+          <div className="w-full sm:w-80 flex flex-col items-end gap-2 order-last sm:order-none">
+            <FantasyLevelBadge />
+            {/* Iter 232N.17 — Customize layout button. Toggles a
+                reorder mode where every widget gets a dashed outline
+                + a pulsing grip so the drag affordance is obvious.
+                Iter 232N.18 — Hidden on mobile (see the inline copy
+                above the Fantasy Level card) so the button stays
+                above-the-fold on small screens. */}
+            <button
+              type="button"
+              onClick={() => setCustomizing((v) => !v)}
+              className={`hidden sm:inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold uppercase tracking-wider border transition-colors ${
                 customizing
                   ? "bg-[#00D2FF] text-black border-[#00D2FF]"
                   : "bg-transparent border-white/15 text-[#A1A1AA] hover:text-white hover:border-white/40"
