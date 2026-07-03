@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import api from '@/lib/api';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { DataTable } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import RecommendedForYou from '@/components/RecommendedForYou';
 import MyLeaguesOrderedList from '@/components/MyLeaguesOrderedList';
@@ -191,29 +190,11 @@ export default function DashboardPage() {
     },
   });
 
-  const leagueColumns = [
-    {
-      key: 'name',
-      label: 'League Name',
-      render: (v, row) => (
-        <Link
-          to={`/leagues/${row.id}`}
-          data-testid={`dashboard-league-link-${row.id}`}
-          className="text-white hover:text-[#00D2FF] font-semibold"
-        >
-          {v}
-        </Link>
-      ),
-    },
-    { key: 'format', label: 'Format', render: (v) => v?.replace('_', ' ').toUpperCase() },
-    { key: 'scoring_format', label: 'Scoring', render: (v) => v?.replace(/_/g, ' ').toUpperCase() },
-    { key: 'current_teams', label: 'Teams', render: (v, row) => `${v}/${row.max_teams}` },
-    { key: 'status', label: 'Status', render: (v) => (
-      <span className={`badge ${v === 'active' ? 'badge-success' : v === 'setup' ? 'badge-warning' : 'badge-info'}`}>
-        {v}
-      </span>
-    )}
-  ];
+  // Iter 232N.25 — leagueColumns / DataTable removed alongside the
+  // duplicate MY LEAGUES table below. The sortable
+  // MyLeaguesOrderedList widget already renders every column that
+  // block used to show (Format, Scoring, Teams, Status) inline as
+  // Badges — no need for a second view of the same data.
 
   return (
     <AppLayout>
@@ -347,33 +328,16 @@ export default function DashboardPage() {
             actions sit BELOW leagues now so managers land on the
             "pick a league" path first. */}
 
-        {/* My Leagues Table */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-heading text-2xl font-bold text-white">MY LEAGUES</h2>
-            <Link to="/leagues" className="text-[#00D2FF] text-sm hover:underline">View All</Link>
-          </div>
-          {loading ? (
-            <div className="surface p-8 text-center text-[#A1A1AA]">
-              Loading leagues...
-            </div>
-          ) : leagues.length === 0 ? (
-            <div className="surface p-8 text-center">
-              <Trophy size={48} className="text-[#52525B] mx-auto mb-4" />
-              <h3 className="text-white font-semibold mb-2">No leagues yet</h3>
-              <p className="text-[#A1A1AA] mb-4">Create your first league or join an existing one</p>
-              <Link to="/leagues/create">
-                <Button className="bg-[#00D2FF] text-black hover:bg-[#33DBFF]">Create League</Button>
-              </Link>
-            </div>
-          ) : (
-            <DataTable
-              columns={leagueColumns}
-              data={leagues}
-              testId="my-leagues-table"
-            />
-          )}
-        </div>
+        {/* Iter 232N.25 — Removed the legacy DataTable "MY LEAGUES"
+            block that used to render below the widget stack. It was
+            a straight duplicate of the sortable MyLeaguesOrderedList
+            widget above (same "MY LEAGUES" heading, same rows, same
+            /leagues links) and, critically, was NOT wrapped in
+            SortableSections — so users like chriszarek who scrolled
+            past the widget stack saw it, tried to drag it, and got
+            no drag handle at all. Killing the duplicate leaves a
+            single source of truth (the widget) which owns all the
+            drag / customize / swipe / hide behaviour. */}
       </div>
     </div>
     </AppLayout>
