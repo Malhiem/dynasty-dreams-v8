@@ -109,6 +109,15 @@ async def update_draft_config(draft_id: str, input: UpdateDraftConfigRequest, re
         updates["player_criteria"] = input.player_criteria
     if input.missed_pick_action is not None:
         updates["missed_pick_action"] = input.missed_pick_action
+    # Iter 232N.26 — Persist the personal pick-timer cap. Because the
+    # Pydantic model uses `Optional[int]` (no exclude_unset here), a
+    # caller who wants to DISABLE the feature can pass 0 → we store
+    # None so the worker treats it as "off". Any positive value is
+    # copied through verbatim (draft_engine.py already enforces the
+    # 30-86400 range).
+    if "personal_pick_timer_seconds" in input.model_fields_set:
+        raw = input.personal_pick_timer_seconds
+        updates["personal_pick_timer_seconds"] = None if not raw else int(raw)
 
     if updates:
         await _db().drafts.update_one(
