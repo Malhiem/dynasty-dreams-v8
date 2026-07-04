@@ -51,6 +51,12 @@ export default function DraftRoomPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [positionFilter, setPositionFilter] = useState("all");
   const [pickTimeLeft, setPickTimeLeft] = useState(120);
+  // Iter 232N.26 — Personal pick-timer countdown state. Mirrors
+  // pickTimeLeft but resets to draft.personal_pick_timer_seconds. When
+  // the feature is disabled (null/0) we skip rendering the tile.
+  const [personalTimeLeft, setPersonalTimeLeft] = useState(0);
+  const [autoPickPref, setAutoPickPref] = useState("queue_then_best");
+  const [savingAutoPickPref, setSavingAutoPickPref] = useState(false);
   const [timerPaused, setTimerPaused] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -62,6 +68,12 @@ export default function DraftRoomPage() {
       setDraft(data);
       setChatMessages(data.chat_messages || []);
       if (data.time_per_pick) setPickTimeLeft(data.time_per_pick);
+      // Iter 232N.26 — Reset personal timer to the configured cap.
+      if (data.personal_pick_timer_seconds) {
+        setPersonalTimeLeft(data.personal_pick_timer_seconds);
+      } else {
+        setPersonalTimeLeft(0);
+      }
       setTimerPaused(data.timer_paused || false);
       // Fetch league teams so we can render team logos by abbr
       if (data.league_id) {
@@ -114,6 +126,14 @@ export default function DraftRoomPage() {
         if (prev <= 1) return draft.time_per_pick || 120;
         return prev - 1;
       });
+      // Iter 232N.26 — Personal timer ticks alongside the main clock.
+      // Only decrements when a cap is configured; resets on each new pick.
+      if (draft?.personal_pick_timer_seconds) {
+        setPersonalTimeLeft(prev => {
+          if (prev <= 1) return draft.personal_pick_timer_seconds;
+          return prev - 1;
+        });
+      }
     }, 1000);
     return () => clearInterval(interval);
   }, [draft, timerPaused]);
@@ -226,8 +246,37 @@ export default function DraftRoomPage() {
       name: mine.name,
       abbr: mine.logo_abbr || (mine.name || "").slice(0, 3).toUpperCase(),
       owner: user.username || user.email,
+      auto_pick_preference: mine.auto_pick_preference || "queue_then_best",
     };
   }, [user, teams]);
+
+  // Iter 232N.26 — Sync the auto-pick preference selector with the
+  // team's persisted value whenever the team payload refreshes.
+  useEffect(() => {
+    if (myTeam?.auto_pick_preference) {
+      setAutoPickPref(myTeam.auto_pick_preference);
+    }
+  }, [myTeam?.auto_pick_preference]);
+
+  const saveAutoPickPref = useCallback(async (nextValue) => {
+    if (!myTeam?.id) return;
+    setAutoPickPref(nextValue);
+    setSavingAutoPickPref(true);
+    try {
+      await api.patch(`/teams/${myTeam.id}/auto-pick-preference`, {
+        auto_pick_preference: nextValue,
+      });
+      toast.success(
+        nextValue === "best_available"
+          ? "Auto-pick set to best available"
+          : "Auto-pick set to draft queue first"
+      );
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to save auto-pick preference");
+    } finally {
+      setSavingAutoPickPref(false);
+    }
+  }, [myTeam?.id]);
 
   const handleAddDraftPickToTrade = (ownerAbbr, round, overall, player) => {
     if (!myTeam) {
@@ -381,6 +430,76 @@ export default function DraftRoomPage() {
                         </span>
                       </div>
                       <Progress value={(pickTimeLeft / (draft.time_per_pick || 120)) * 100} className="h-1.5" />
+                      {/* Iter 232N.26 — Personal timer tile. Rendered only
+                          when the league has a personal cap AND that cap
+                          is TIGHTER than the main pick clock (otherwise
+                          it never fires first). */}
+                      {draft.personal_pick_timer_seconds
+                        && draft.personal_pick_timer_seconds < (draft.time_per_pick || 120) && (
+                        <div className="mt-2 rounded-md border border-white/10 bg-black/30 p-2" data-testid="personal-timer-tile">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-[#A1A1AA] flex items-center gap-1">
+                              <AlertCircle className="h-3 w-3 text-amber-400" />
+                              Personal Timer
+                            </span>
+                            <span
+                              className={cn(
+                                "font-mono font-bold text-sm",
+                                timerPaused
+                                  ? "text-[#A1A1AA]"
+                                  : personalTimeLeft <= 15
+                                    ? "text-[#FF3B30]"
+                                    : "text-amber-300"
+                              )}
+                              data-testid="personal-timer-value"
+                            >
+                              {formatPickTimer(personalTimeLeft)}
+                            </span>
+                          </div>
+                          <Progress
+                            value={(personalTimeLeft / draft.personal_pick_timer_seconds) * 100}
+                            className="h-1 mt-1.5"
+                          />
+                          <p className="text-[10px] text-[#A1A1AA] mt-1.5 italic">
+                            Auto-pick fires when this runs out — even if the main clock still has time.
+                          </p>
+                        </div>
+                      )}
+                      {/* Iter 232N.26 — My auto-pick fallback selector.
+                          Only visible when the user actually owns a team
+                          in this league. Persists to the team model
+                          via PATCH /teams/{id}/auto-pick-preference. */}
+                      {myTeam?.id && (
+                        <div className="mt-2 rounded-md border border-white/10 bg-black/20 p-2" data-testid="auto-pick-pref-block">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] uppercase tracking-wider text-[#A1A1AA]">
+                              My auto-pick fallback
+                            </span>
+                            {savingAutoPickPref && (
+                              <span className="text-[10px] text-[#00D2FF]">saving…</span>
+                            )}
+                          </div>
+                          <Select
+                            value={autoPickPref}
+                            onValueChange={saveAutoPickPref}
+                          >
+                            <SelectTrigger
+                              className="mt-1 h-8 bg-[#1A1A1A] border-white/10 text-xs"
+                              data-testid="auto-pick-pref-select"
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="queue_then_best" data-testid="auto-pick-pref-queue">
+                                From my draft queue (fall back to best)
+                              </SelectItem>
+                              <SelectItem value="best_available" data-testid="auto-pick-pref-best">
+                                Best available (skip my queue)
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
                       <Button variant={timerPaused ? "default" : "outline"} size="sm" className="w-full mt-1" onClick={handlePauseTimer} data-testid="pause-timer">
                         {timerPaused ? <><Play className="h-3.5 w-3.5 mr-1" />Resume</> : <><Pause className="h-3.5 w-3.5 mr-1" />Pause</>}
                       </Button>

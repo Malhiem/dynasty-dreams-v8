@@ -375,6 +375,61 @@ async def update_team(team_id: str, payload: TeamUpdateInput, request: Request):
     return {"team_id": team_id, "updated": True, "changes": changes}
 
 
+# ─── Iter 232N.26 — Auto-pick preference (per team) ────────────────────────
+class AutoPickPreferenceInput(BaseModel):
+    """Manager-set fallback strategy when the pick timer expires.
+
+    - `queue_then_best` (default) — walk the team's `draft_queue` first,
+      fall back to top-eligible by points. Mirrors existing behaviour so
+      current drafts don't change once this feature ships.
+    - `best_available` — skip the queue entirely and always take the
+      top-eligible player. For managers who forget to maintain a queue
+      but want the auto-picker to just grab the safe pick.
+    """
+    auto_pick_preference: str = Field(..., pattern="^(queue_then_best|best_available)$")
+
+
+@router.patch("/teams/{team_id}/auto-pick-preference")
+async def set_auto_pick_preference(team_id: str, payload: AutoPickPreferenceInput, request: Request):
+    """Owner (or commissioner) sets how the auto-picker should fall back
+    for this team when a pick clock (main or personal) expires.
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    is_commish = bool(
+        league and (
+            league.get("commissioner_id") == user["_id"]
+            or user["_id"] in (league.get("co_commissioners") or [])
+        )
+    )
+    is_owner_or_co = (
+        team.get("owner_id") == user["_id"]
+        or user["_id"] in (team.get("co_owner_ids") or [])
+    )
+    if not (is_owner_or_co or is_commish):
+        raise HTTPException(status_code=403, detail="Not authorized to edit this team")
+
+    await db.teams.update_one(
+        {"_id": team["_id"]},
+        {"$set": {
+            "auto_pick_preference": payload.auto_pick_preference,
+            "updated_at": datetime.now(timezone.utc),
+        }},
+    )
+    return {
+        "team_id": team_id,
+        "auto_pick_preference": payload.auto_pick_preference,
+    }
+
+
 
 # ─── Logo upload + delete ───────────────────────────────────────────────────
 @router.post("/teams/{team_id}/logo")

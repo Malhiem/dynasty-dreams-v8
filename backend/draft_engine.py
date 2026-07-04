@@ -39,6 +39,13 @@ class CreateDraftRequest(BaseModel):
     # the league's actual roster_size at create-time as a soft validation.
     total_rounds: int = Field(default=5, ge=1, le=100)
     time_per_pick: int = Field(default=3600, ge=30, le=86400)
+    # Iter 232N.26 — Optional per-manager pick-timer cap that runs
+    # CONCURRENTLY with `time_per_pick`. When shorter than the main
+    # clock (e.g. 10h personal on a 15h league clock), auto-pick fires
+    # as soon as the personal timer expires — using the on-clock team's
+    # `auto_pick_preference` (queue-then-best OR best-only). None or
+    # zero disables the feature (legacy behaviour).
+    personal_pick_timer_seconds: Optional[int] = Field(default=None, ge=30, le=86400)
     # Iter 228d — per-round time overrides. Each entry: {from, to, seconds}.
     # Inclusive range. Frontend lets commissioners define tiered defaults
     # (e.g. R1-5 = 7200s, R6-30 = 3600s) via the multi-row + button.
@@ -84,6 +91,8 @@ class UpdateDraftConfigRequest(BaseModel):
     snake_draft: Optional[bool] = None
     player_criteria: Optional[list[str]] = None
     missed_pick_action: Optional[str] = None
+    # Iter 232N.26 — Commissioner can retune the personal timer mid-draft.
+    personal_pick_timer_seconds: Optional[int] = Field(default=None, ge=0, le=86400)
 
 
 def get_draft_order(team_abbrs: list[str], round_num: int, snake: bool) -> list[str]:

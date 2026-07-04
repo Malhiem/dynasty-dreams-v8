@@ -206,11 +206,17 @@ async def early_start_clock_msg(draft: dict) -> str:
 # ─────────────────────────────────────────────────────────────────
 
 
-async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> dict:
+async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", preference: str | None = None) -> dict:
     """Iter 221 — Shared core for auto-picking the team currently on the clock.
     Returns the recorded pick document. Raises HTTPException on bad state.
     `source` is stamped into the pick doc / broadcast for audit (timeout,
     eviction, commissioner_skip, etc.).
+
+    Iter 232N.26 — `preference` overrides the on-clock team's stored
+    `auto_pick_preference`. When "best_available", the queue walk is
+    skipped and we jump straight to the top-eligible player. When None
+    (default), the team's own field is used, defaulting to
+    "queue_then_best" for legacy compatibility.
     """
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
@@ -228,18 +234,23 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout") -> di
     chosen_player = None
     via = "top_eligible"
     team = await _db().teams.find_one({"_id": ObjectId(on_clock_team_id)})
-    queue = list((team or {}).get("draft_queue") or [])
-    for pid in queue:
-        if pid in drafted_ids:
-            continue
-        try:
-            cand = await _db().players.find_one({"_id": ObjectId(pid)})
-        except Exception:
-            continue
-        if cand:
-            chosen_player = cand
-            via = "queue"
-            break
+    effective_pref = preference or (team or {}).get("auto_pick_preference") or "queue_then_best"
+    # Iter 232N.26 — Skip the queue walk when the manager opted into
+    # "best available" as their fallback. Both preferences still fall
+    # back to top-eligible when no player matches — never fail-open.
+    if effective_pref != "best_available":
+        queue = list((team or {}).get("draft_queue") or [])
+        for pid in queue:
+            if pid in drafted_ids:
+                continue
+            try:
+                cand = await _db().players.find_one({"_id": ObjectId(pid)})
+            except Exception:
+                continue
+            if cand:
+                chosen_player = cand
+                via = "queue"
+                break
 
     if chosen_player is None:
         # Iter 231r — Defensive: some legacy drafts have `player_criteria`

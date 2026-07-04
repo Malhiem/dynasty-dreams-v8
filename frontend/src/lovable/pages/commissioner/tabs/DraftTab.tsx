@@ -95,6 +95,9 @@ export default function DraftTab({ ctx }: DraftTabProps) {
   // Iter 228n — Eligibility filters that flow into CreateDraftRequest.
   const [excludePreviouslyDrafted, setExcludePreviouslyDrafted] = useState<boolean>(false);
   const [minorsEligibilityRequired, setMinorsEligibilityRequired] = useState<boolean>(false);
+  // Iter 232N.26 — Optional per-manager pick-timer cap (seconds).
+  // Runs concurrently with the main pick clock. `null` (or 0) disables.
+  const [personalPickTimer, setPersonalPickTimer] = useState<string>("0");
   // Iter 228n — Edit-draft modal state. Reused by every row's pencil icon.
   // Iter 228o — Expanded to cover EVERY editable field from CreateDraftRequest:
   // draft_type, snake_draft, player_criteria, missed_pick_action,
@@ -355,6 +358,10 @@ export default function DraftTab({ ctx }: DraftTabProps) {
         // Iter 228n — Eligibility filters (checkbox UI rendered below).
         exclude_previously_drafted: excludePreviouslyDrafted,
         minors_eligibility_required: minorsEligibilityRequired,
+        // Iter 232N.26 — Personal pick timer (0 → send null → feature off).
+        personal_pick_timer_seconds: (parseInt(personalPickTimer, 10) || 0) > 0
+          ? parseInt(personalPickTimer, 10)
+          : null,
       };
       await api.post(`/drafts`, body);
       toast.success("Draft created and added to Scheduled Drafts");
@@ -605,6 +612,51 @@ export default function DraftTab({ ctx }: DraftTabProps) {
                     <SelectItem value="21600">6 hours</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+
+            {/* Iter 232N.26 — Personal Pick Timer.
+                Runs CONCURRENTLY with the main pick clock. If shorter,
+                it fires first and the on-clock team auto-picks using
+                their `auto_pick_preference` (queue-first or best-only).
+                Pauses when a league trade is in vote/veto review. */}
+            <Separator />
+            <div className="space-y-2" data-testid="personal-pick-timer-block">
+              <div className="flex items-start justify-between gap-4 flex-wrap">
+                <div className="max-w-lg">
+                  <Label>Personal Pick Timer (per manager)</Label>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Optional shorter cap that runs alongside the main pick clock. If a manager exceeds this
+                    while the full clock still has time left, we auto-pick using their preference (queue or
+                    best available). Discourages slow managers from stalling the whole draft.
+                  </p>
+                  <p className="text-xs text-muted-foreground italic mt-1">
+                    Example: 10 h personal on a 15 h pick clock → managers must pick within 10 h or be
+                    auto-picked, freeing the other 5 h buffer for the next team.
+                  </p>
+                </div>
+                <div className="w-full sm:w-56">
+                  <Select value={personalPickTimer} onValueChange={setPersonalPickTimer}>
+                    <SelectTrigger className="bg-secondary border-border" data-testid="personal-pick-timer-select">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">Off (no personal cap)</SelectItem>
+                      <SelectItem value="300">5 minutes</SelectItem>
+                      <SelectItem value="600">10 minutes</SelectItem>
+                      <SelectItem value="1200">20 minutes</SelectItem>
+                      <SelectItem value="1800">30 minutes</SelectItem>
+                      <SelectItem value="3600">1 hour</SelectItem>
+                      <SelectItem value="7200">2 hours</SelectItem>
+                      <SelectItem value="14400">4 hours</SelectItem>
+                      <SelectItem value="21600">6 hours</SelectItem>
+                      <SelectItem value="36000">10 hours</SelectItem>
+                      <SelectItem value="43200">12 hours</SelectItem>
+                      <SelectItem value="57600">16 hours</SelectItem>
+                      <SelectItem value="72000">20 hours</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
 

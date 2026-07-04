@@ -210,19 +210,57 @@ async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
             or draft.get("pick_time_seconds")
             or 60
         )
+        # Iter 232N.26 — Personal timer cap. Runs concurrently with the
+        # main pick clock; whichever expires first triggers auto-pick.
+        # Stored as an int (seconds) or None (feature disabled).
+        personal_cap = draft.get("personal_pick_timer_seconds")
+        try:
+            personal_cap = int(personal_cap) if personal_cap else None
+        except (TypeError, ValueError):
+            personal_cap = None
+        # Iter 232N.26 — Pause the personal timer while ANY trade in
+        # this league is under review (pending vote / veto window).
+        # The main pick clock is UNAFFECTED — commissioners can still
+        # rely on the league-wide cap so the draft never stalls
+        # forever. Only the tighter personal cap sits out.
+        trade_voting_pause = False
+        league_id = draft.get("league_id")
+        if personal_cap and league_id:
+            try:
+                trade_voting_pause = await db.trades.count_documents({
+                    "league_id": league_id,
+                    "status": {"$in": ["pending_review", "under_review", "pending_veto"]},
+                }) > 0
+            except Exception:
+                trade_voting_pause = False
+        effective_seconds = pick_time
+        used_personal = False
+        if personal_cap and not trade_voting_pause and personal_cap < pick_time:
+            effective_seconds = personal_cap
+            used_personal = True
         # 3s grace so the worker isn't racing the frontend's own auto-pick.
-        deadline = started.timestamp() + pick_time + 3
+        deadline = started.timestamp() + effective_seconds + 3
         if now.timestamp() < deadline:
             continue
         counts["expired"] += 1
         try:
-            await perform_one_auto_pick(str(draft["_id"]), source="timeout")
+            # Iter 232N.26 — Pass source="personal_timeout" when the
+            # tighter cap is what fired so downstream analytics /
+            # chat messages can distinguish it from a full-clock miss.
+            fire_source = "personal_timeout" if used_personal else source_default_for_timeout()
+            await perform_one_auto_pick(str(draft["_id"]), source=fire_source)
             counts["picked"] += 1
         except Exception as e:
             counts["errors"] += 1
             logger.error(f"draft_pick_timer_worker auto-pick failed for {draft['_id']}: {e}")
 
     return counts
+
+
+def source_default_for_timeout() -> str:
+    """Iter 232N.26 — Wrapper so future hooks (rate limits, silent
+    skip, etc.) have a single tunable audit source."""
+    return "timeout"
 
 
 async def draft_pick_timer_loop(db, interval_seconds: int = 15):

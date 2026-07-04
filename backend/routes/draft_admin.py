@@ -141,6 +141,8 @@ async def create_draft(input: CreateDraftRequest, request: Request):
         "clock_stops_at": getattr(input, "clock_stops_at", None),
         "total_rounds": input.total_rounds,
         "time_per_pick": input.time_per_pick,
+        # Iter 232N.26 — Optional per-manager cap (see CreateDraftRequest).
+        "personal_pick_timer_seconds": getattr(input, "personal_pick_timer_seconds", None),
         "round_time_overrides": input.round_time_overrides or [],
         "snake_draft": input.snake_draft,
         "player_criteria": input.player_criteria,
@@ -399,6 +401,8 @@ async def patch_draft(draft_id: str, body: dict, request: Request):
         # form. Editing them here lets commissioners correct mid-stride
         # before the draft starts.
         "exclude_previously_drafted", "minors_eligibility_required",
+        # Iter 232N.26 — Personal timer cap. Commissioner-editable pre-start.
+        "personal_pick_timer_seconds",
     }
     update: dict = {}
     for k, v in (body or {}).items():
@@ -424,6 +428,19 @@ async def patch_draft(draft_id: str, body: dict, request: Request):
             update["time_per_pick"] = tpp
         except (TypeError, ValueError):
             raise HTTPException(status_code=400, detail="time_per_pick must be 30-86400 seconds")
+    # Iter 232N.26 — Personal timer cap validation. 0 (or absence) → off.
+    if "personal_pick_timer_seconds" in update:
+        raw = update["personal_pick_timer_seconds"]
+        if raw in (None, "", 0, "0"):
+            update["personal_pick_timer_seconds"] = None
+        else:
+            try:
+                ppt = int(raw)
+                if not (30 <= ppt <= 86400):
+                    raise ValueError()
+                update["personal_pick_timer_seconds"] = ppt
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="personal_pick_timer_seconds must be 30-86400 seconds (or 0 to disable)")
 
     await _db().drafts.update_one(
         {"_id": ObjectId(draft_id)}, {"$set": update}
