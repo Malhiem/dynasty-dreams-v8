@@ -1,0 +1,34 @@
+{
+  "summary": "Iter 232N.27 — Draft Leaderboard + Speed-Demon XP bonus fully validated. All 5 new unit tests pass, all 22 prior 232N.24/26 tests still pass, 3 new e2e API tests pass against the live backend, and frontend renders the leaderboard card with all 6 tiles + FINAL REVEAL badge on the completed test draft.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N27_draft_leaderboard.py",
+    "/app/backend/tests/test_iter232N27_api_e2e.py",
+    "/app/test_reports/pytest/iter232N27.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Test file uses `import routes.draft_leaderboard as lb` which requires running pytest from /app/backend (which is correct per pytest.ini rootdir). Documented so future testing agents know to `cd /app/backend` before invoking pytest.",
+    "Pre-existing (unrelated) environment noise: Socket.IO WebSocket handshakes return 403 through the ingress. Does not affect leaderboard REST endpoint or UI render."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter232N27_api_e2e.py (new — 3 e2e tests: auth-gated, 404, shape)"
+  ],
+  "success_rate": { "backend": "100% (27/27 unit + 3/3 e2e)", "frontend": "100%" },
+  "test_credentials": "admin@dynastydreams.com / Admin123! — verified working",
+  "seed_data_creation": "None (e2e uses existing seeded draft 6a408dbdd93ed14d3a8fb393; unit tests self-seed then clean up)",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run backend pytest from /app/backend (not /app). Leaderboard endpoint verified at GET /api/drafts/{id}/leaderboard. Completed draft 6a408dbdd93ed14d3a8fb393 predates time_taken_seconds stamping so shows 'No qualifying data yet' for speed_demon/slow_poke/queue_master/wheeler_dealer — this is expected/correct behavior. iron_man + autopilot tiles do populate. XP note only appears when a speed_demon winner exists (correctly hidden here).",
+  "verification_details": {
+    "unit_tests_iter232N27": "5/5 PASS (aggregation, awards assignment, +50 XP broadcast to user_{owner_id}, hidden_until_final in live mode, <3-picks skip)",
+    "regression_iter232N24_26": "22/22 PASS (XP helper, level formula, admin/dashboard endpoints, personal-timer worker + auto-pick preferences)",
+    "e2e_api": "3/3 PASS — 401 without auth, 404 on unknown draft_id, 200 with full shape {draft_id,league_id,is_final,total_picks,auto_picks_total,rows,awards}",
+    "frontend_dom": "data-testid=draft-leaderboard-card rendered; FINAL REVEAL badge shown; 6/6 tiles present (iron_man, wheeler_dealer, queue_master, speed_demon, slow_poke, autopilot); XP note correctly absent when no speed_demon winner; graceful 'No qualifying data yet' captions displayed"
+  }
+}

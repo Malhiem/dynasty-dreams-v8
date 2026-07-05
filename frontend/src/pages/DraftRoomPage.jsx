@@ -17,6 +17,9 @@ import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
 import { toast } from "sonner";
 import { useDraftSocket } from "@/hooks/use-socket";
 import TeamLogo from "@/lovable/components/TeamLogo";
+// Iter 232N.27 — Slow-poke leaderboard sidebar (Speed Demon, Slow-Poke,
+// Auto-Pilot, Wheeler-Dealer, Iron Man, Queue Master).
+import DraftLeaderboard from "@/components/DraftLeaderboard";
 
 const teamByAbbr = (teams, abbr) => {
   if (!abbr || !teams?.length) return null;
@@ -714,6 +717,9 @@ export default function DraftRoomPage() {
                 </div>
               </CardContent>
             </Card>
+            {/* Iter 232N.27 — Draft Leaderboard sits below the chat so
+                trash-talk about who's stalling is a scroll away. */}
+            <DraftLeaderboard draftId={draftId} refreshTick={draft?.picks?.length || 0} />
           </div>
         </div>
       </div>

@@ -295,6 +295,16 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
         "auto_pick_via": via,
         "auto_pick_source": source,
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        # Iter 232N.27 — Auto-picks also record the elapsed time so the
+        # "slow-poke" leaderboard can weight full-clock stalls against
+        # fast manual picks.
+        "time_taken_seconds": (
+            (lambda raw: (
+                int((datetime.now(timezone.utc) -
+                     datetime.fromisoformat(raw.replace("Z", "+00:00"))).total_seconds())
+                if raw else None
+            ))(draft.get("current_pick_started_at"))
+        ),
     }
     next_pick = current_pick + 1
     total_picks = draft["total_rounds"] * total_teams
@@ -361,4 +371,19 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
         "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"]) if new_status == "active" else None,
         "draft_complete": new_status == "completed",
     })
+    # Iter 232N.27 — When the auto-pick just completed the draft,
+    # hand out the "Speed Demon" XP badge before we return.
+    if new_status == "completed":
+        try:
+            from utils.xp import award_draft_completion_bonuses
+            await award_draft_completion_bonuses(
+                _db(),
+                draft_id=draft_id,
+                broadcast_fn=_deps.get("broadcast_to_room"),
+            )
+        except Exception as ex:
+            import logging
+            logging.getLogger(__name__).debug(
+                f"draft_speed_champion award skipped (auto-pick path): {ex}"
+            )
     return pick_doc

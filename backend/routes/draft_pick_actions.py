@@ -43,6 +43,22 @@ router = APIRouter()
 _deps: dict = {}
 logger = logging.getLogger(__name__)
 
+# Iter 232N.27 — Reused by both manual + auto pick paths (via the
+# shared draft_helpers `perform_one_auto_pick`) to stamp how long the
+# manager took to pick. Returns None if we can't parse the clock
+# anchor (fresh drafts before iter 230ar landed).
+def _seconds_since_clock_start(draft: dict) -> int | None:
+    raw = draft.get("current_pick_started_at")
+    if not raw:
+        return None
+    try:
+        started = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return int((datetime.now(timezone.utc) - started).total_seconds())
+    except Exception:
+        return None
+
+
+
 
 def setup(deps: dict) -> None:
     _deps.update(deps)
@@ -137,6 +153,10 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         "player": build_pick_player_payload(player),
         "picked_by": user["_id"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        # Iter 232N.27 — Stamp how long the manager took vs the clock
+        # start so the leaderboard can compute avg pick time + spotlight
+        # the "slow-poke" / "speed demon" categories.
+        "time_taken_seconds": _seconds_since_clock_start(draft),
     }
 
     next_pick = current_pick + 1
@@ -176,6 +196,18 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"], draft.get("bonus_picks")) if new_status == "active" else None,
         "draft_complete": new_status == "completed",
     })
+
+    # Iter 232N.27 — Draft-complete Speed Demon XP bonus.
+    if new_status == "completed":
+        try:
+            from utils.xp import award_draft_completion_bonuses
+            await award_draft_completion_bonuses(
+                _db(),
+                draft_id=draft_id,
+                broadcast_fn=_deps.get("broadcast_to_room"),
+            )
+        except Exception as ex:
+            logger.debug(f"draft_speed_champion award skipped (manual pick): {ex}")
 
     # Iter 230an — System chat message FIRST so the EVT_DRAFT_PICK_MADE
     # body can reference it without the try/except swallowing the entire
