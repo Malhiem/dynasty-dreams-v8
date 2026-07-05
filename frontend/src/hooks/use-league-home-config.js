@@ -1,13 +1,21 @@
 // @ts-nocheck
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import api from "@/lib/api";
 
 /**
- * Widget visibility hook keyed by league id — persists the user's choice of
- * which sections to hide/show on the League Home screen (`/leagues/:id`).
+ * Widget visibility + order for the League Home screen (`/leagues/:id`).
  *
- * Storage: `localStorage["dynasty-league-home-widgets-${leagueId}"]`.
- * Per-league so commissioners/owners get a clean default when they switch
- * into a different league instead of inheriting the last league's layout.
+ * Storage strategy (Iter 232N.29):
+ *   1. localStorage keys `dynasty-league-home-{widgets|order}-${leagueId}`
+ *      give a zero-flicker first paint before any network round-trip.
+ *   2. On mount we hydrate from `GET /users/me/league-home-layout/{id}` —
+ *      the server copy always wins over localStorage so desktop → mobile
+ *      handoffs match. If the server has nothing yet, we keep the local
+ *      preferences and start syncing them via debounced PATCH on the
+ *      next reorder/toggle.
+ *   3. Every `toggle` / `reorder` writes through to localStorage
+ *      immediately AND schedules a 400 ms debounced PATCH so a rapid
+ *      drag flurry sends one request instead of N.
  */
 export const LEAGUE_HOME_WIDGETS = [
   { id: "matchups", label: "Matchups + Standings", description: "H2H week's head-to-head cards + standings rail." },
@@ -26,13 +34,29 @@ const defaultVisible = () => {
   return out;
 };
 
+// Reconcile a saved order against DEFAULT_ORDER — drop unknown ids,
+// append newer widgets so users whose saved order predates a shipped
+// widget still see it.
+const reconcileOrder = (candidate) => {
+  if (!Array.isArray(candidate) || candidate.length === 0) return DEFAULT_ORDER;
+  const kept = candidate.filter((id) => DEFAULT_ORDER.includes(id));
+  const missing = DEFAULT_ORDER.filter((id) => !kept.includes(id));
+  return [...kept, ...missing];
+};
+
 export function useLeagueHomeConfig(leagueId) {
   const visKey = leagueId ? `dynasty-league-home-widgets-${leagueId}` : null;
   const orderKey = leagueId ? `dynasty-league-home-order-${leagueId}` : null;
 
   const [visibility, setVisibility] = useState(defaultVisible);
   const [order, setOrder] = useState(DEFAULT_ORDER);
+  // Iter 232N.29 — Customize mode. When ON, LeagueDetailPage renders
+  // dashed cyan outlines + prominent grip handles so users discover
+  // the widgets are drag-to-reorder. Off by default.
+  const [customizing, setCustomizing] = useState(false);
+  const saveTimer = useRef(null);
 
+  // ── Local storage hydration ────────────────────────────────────
   useEffect(() => {
     if (!visKey) return;
     try {
@@ -44,36 +68,68 @@ export function useLeagueHomeConfig(leagueId) {
     }
     try {
       const rawOrder = orderKey ? localStorage.getItem(orderKey) : null;
-      if (rawOrder) {
-        const parsed = JSON.parse(rawOrder);
-        if (Array.isArray(parsed) && parsed.length) {
-          // Guard against missing ids after a release added/removed widgets
-          const kept = parsed.filter((id) => DEFAULT_ORDER.includes(id));
-          const missing = DEFAULT_ORDER.filter((id) => !kept.includes(id));
-          setOrder([...kept, ...missing]);
-        } else {
-          setOrder(DEFAULT_ORDER);
-        }
-      } else {
-        setOrder(DEFAULT_ORDER);
-      }
+      setOrder(rawOrder ? reconcileOrder(JSON.parse(rawOrder)) : DEFAULT_ORDER);
     } catch {
       setOrder(DEFAULT_ORDER);
     }
   }, [visKey, orderKey]);
 
+  // ── Server hydration (Iter 232N.29 — cross-device sync) ────────
+  useEffect(() => {
+    if (!leagueId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(`/users/me/league-home-layout/${leagueId}`);
+        if (cancelled) return;
+        const remoteOrder = Array.isArray(data?.widget_order) ? data.widget_order : [];
+        if (remoteOrder.length) {
+          const reconciled = reconcileOrder(remoteOrder);
+          setOrder(reconciled);
+          if (orderKey) {
+            try { localStorage.setItem(orderKey, JSON.stringify(reconciled)); } catch { /* noop */ }
+          }
+        }
+        const remoteVis = data?.visibility && typeof data.visibility === "object" ? data.visibility : null;
+        if (remoteVis && Object.keys(remoteVis).length) {
+          const next = { ...defaultVisible(), ...remoteVis };
+          setVisibility(next);
+          if (visKey) {
+            try { localStorage.setItem(visKey, JSON.stringify(next)); } catch { /* noop */ }
+          }
+        }
+      } catch { /* offline / unauth — localStorage stays authoritative */ }
+    })();
+    return () => { cancelled = true; };
+  }, [leagueId, visKey, orderKey]);
+
+  // Debounced server write for any subsequent local change.
+  const scheduleSync = useCallback((nextOrder, nextVis) => {
+    if (!leagueId) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      const body = {};
+      if (nextOrder) body.widget_order = nextOrder;
+      if (nextVis) body.visibility = nextVis;
+      api.patch(`/users/me/league-home-layout/${leagueId}`, body)
+        .catch(() => { /* offline / auth blip — localStorage is authoritative */ });
+    }, 400);
+  }, [leagueId]);
+
   const toggle = useCallback((id) => {
     setVisibility((prev) => {
       const next = { ...prev, [id]: !prev[id] };
       if (visKey) { try { localStorage.setItem(visKey, JSON.stringify(next)); } catch { /* noop */ } }
+      scheduleSync(null, next);
       return next;
     });
-  }, [visKey]);
+  }, [visKey, scheduleSync]);
 
   const reorder = useCallback((nextOrder) => {
     setOrder(nextOrder);
     if (orderKey) { try { localStorage.setItem(orderKey, JSON.stringify(nextOrder)); } catch { /* noop */ } }
-  }, [orderKey]);
+    scheduleSync(nextOrder, null);
+  }, [orderKey, scheduleSync]);
 
   const reset = useCallback(() => {
     const d = defaultVisible();
@@ -81,7 +137,14 @@ export function useLeagueHomeConfig(leagueId) {
     setOrder(DEFAULT_ORDER);
     if (visKey) { try { localStorage.removeItem(visKey); } catch { /* noop */ } }
     if (orderKey) { try { localStorage.removeItem(orderKey); } catch { /* noop */ } }
-  }, [visKey, orderKey]);
+    // Reset on the server too so a fresh device isn't stuck with the old
+    // layout. Passing empty arrays tells the endpoint to drop the entry
+    // for this league next time it reads.
+    scheduleSync(DEFAULT_ORDER, d);
+  }, [visKey, orderKey, scheduleSync]);
 
-  return { visibility, order, toggle, reorder, reset };
+  return {
+    visibility, order, toggle, reorder, reset,
+    customizing, setCustomizing,
+  };
 }

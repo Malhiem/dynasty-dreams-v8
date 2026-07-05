@@ -584,6 +584,96 @@ async def patch_my_dashboard_layout(payload: dict, request: Request):
     return {"widget_order": cleaned, "updated_at": now.isoformat()}
 
 
+# ─── Iter 232N.29 — League Home layout sync ───────────────────────────────
+# Per-league widget order + visibility so managers get consistent layouts
+# across devices. Stored under `league_home_layouts` on the user doc:
+#   { "<league_id>": { widget_order, visibility, updated_at }, ... }
+# `visibility` is optional — if missing we treat all widgets as visible.
+# Same "schema-light" contract as the dashboard: unknown ids are the
+# client's problem to reconcile (see `useLeagueHomeConfig`).
+
+
+def _validate_league_home_payload(payload: dict) -> tuple[list, dict]:
+    widget_order = payload.get("widget_order")
+    if widget_order is not None and not isinstance(widget_order, list):
+        raise HTTPException(
+            status_code=400, detail="widget_order must be a list of ids",
+        )
+    cleaned_order: list = []
+    for wid in (widget_order or []):
+        if not isinstance(wid, str):
+            continue
+        wid = wid.strip()
+        if not wid or len(wid) > 64:
+            continue
+        cleaned_order.append(wid)
+    if len(cleaned_order) > 32:
+        raise HTTPException(status_code=400, detail="widget_order is too long")
+    visibility = payload.get("visibility") or {}
+    if not isinstance(visibility, dict):
+        raise HTTPException(
+            status_code=400, detail="visibility must be an object of {id: bool}",
+        )
+    cleaned_vis: dict = {}
+    for wid, shown in visibility.items():
+        if isinstance(wid, str) and len(wid) <= 64 and isinstance(shown, bool):
+            cleaned_vis[wid.strip()] = shown
+    if len(cleaned_vis) > 32:
+        raise HTTPException(status_code=400, detail="visibility is too long")
+    return cleaned_order, cleaned_vis
+
+
+@router.get("/users/me/league-home-layout/{league_id}")
+async def get_my_league_home_layout(league_id: str, request: Request):
+    """Return the caller's persisted widget order + visibility for one
+    league. Empty payload if none saved yet — the client will fall back
+    to its LEAGUE_HOME_WIDGETS defaults.
+    """
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    fresh = await db.users.find_one(
+        {"_id": ObjectId(user["_id"])},
+        {"league_home_layouts": 1},
+    )
+    layouts = (fresh or {}).get("league_home_layouts") or {}
+    entry = layouts.get(league_id) or {}
+    return {
+        "league_id": league_id,
+        "widget_order": entry.get("widget_order") or [],
+        "visibility": entry.get("visibility") or {},
+        "updated_at": entry.get("updated_at"),
+    }
+
+
+@router.patch("/users/me/league-home-layout/{league_id}")
+async def patch_my_league_home_layout(league_id: str, payload: dict, request: Request):
+    """Persist per-league widget order + visibility across devices."""
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    cleaned_order, cleaned_vis = _validate_league_home_payload(payload)
+    now = datetime.now(timezone.utc)
+    # Use dotted paths so we only touch the league we're editing;
+    # other leagues' saved layouts stay untouched.
+    updates: dict = {
+        f"league_home_layouts.{league_id}.updated_at": now,
+        "updated_at": now,
+    }
+    if payload.get("widget_order") is not None:
+        updates[f"league_home_layouts.{league_id}.widget_order"] = cleaned_order
+    if payload.get("visibility") is not None:
+        updates[f"league_home_layouts.{league_id}.visibility"] = cleaned_vis
+    await db.users.update_one(
+        {"_id": ObjectId(user["_id"])},
+        {"$set": updates},
+    )
+    return {
+        "league_id": league_id,
+        "widget_order": cleaned_order,
+        "visibility": cleaned_vis,
+        "updated_at": now.isoformat(),
+    }
+
+
 @router.post("/users/me/avatar")
 async def upload_my_avatar(request: Request, file: UploadFile = File(...)):
     """Upload an avatar image (PNG/JPEG/WEBP/GIF, max 1 MB, resized to 256×256 PNG)."""

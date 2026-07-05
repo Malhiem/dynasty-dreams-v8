@@ -35,7 +35,7 @@ export default function LeagueDetailPage() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { visibility: widgetVis, order: widgetOrder, toggle: toggleWidget, reorder: reorderWidgets, reset: resetWidgets } = useLeagueHomeConfig(id);
+  const { visibility: widgetVis, order: widgetOrder, toggle: toggleWidget, reorder: reorderWidgets, reset: resetWidgets, customizing, setCustomizing } = useLeagueHomeConfig(id);
 
   const isCommissioner = league?.commissioner_id === user?.id;
   const hasTeam = teams.some(t => t.owner_id === user?.id);
@@ -337,6 +337,22 @@ export default function LeagueDetailPage() {
                   Join League
                 </Button>
               )}
+              {/* Iter 232N.29 — Customize layout toggle. Mirrors the
+                  same affordance on the user dashboard (232N.17) so
+                  managers get one predictable interaction anywhere
+                  their widgets live. Prominent cyan pulse when ON. */}
+              <Button
+                variant={customizing ? "default" : "outline"}
+                onClick={() => setCustomizing((v) => !v)}
+                data-testid="league-home-customize-toggle"
+                aria-pressed={customizing}
+                className={customizing
+                  ? "bg-[#00D2FF] text-black hover:bg-[#33DBFF] animate-pulse"
+                  : "border-white/10 text-white hover:bg-white/5"}
+              >
+                <Gear size={18} className="mr-2" />
+                {customizing ? "Done customizing" : "Customize layout"}
+              </Button>
               {isCommissioner && (
                 <Button
                   variant="outline"
@@ -349,6 +365,14 @@ export default function LeagueDetailPage() {
               )}
             </div>
           </div>
+          {customizing && (
+            <p
+              className="mt-4 text-xs text-[#00D2FF] italic"
+              data-testid="league-home-customize-hint"
+            >
+              Drag the grip handle on any widget to reorder. Your layout syncs across devices.
+            </p>
+          )}
 
           {/* Invite Code for Private Leagues */}
           {isCommissioner && league.is_private && league.invite_code && (
@@ -369,7 +393,7 @@ export default function LeagueDetailPage() {
             to hide widgets entirely. Section order is persisted to
             localStorage per-league. Uses CSS `order` so source JSX stays
             stable while visual order follows the user's choice. */}
-        <SortableSections ids={widgetOrder} onReorder={reorderWidgets}>
+        <SortableSections ids={widgetOrder} onReorder={reorderWidgets} customize={customizing}>
         <div className="flex flex-col">
 
         {/* Matchups + Standings (side-by-side on desktop) */}

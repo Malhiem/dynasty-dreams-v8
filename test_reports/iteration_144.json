@@ -1,0 +1,31 @@
+{
+  "summary": "Iter 232N.29 League Home layout sync verified. All 6 target pytest cases pass + 5 additional edge cases (32-cap, oversize reject, non-string drop, >64 char id drop, visibility cap). Frontend customize toggle, hint text, dashed cyan outlines (rgba(0,210,255,0.5) dashed 2px), and 36px cyan pulsing drag handles all render exactly as spec'd. Server-persisted order hydrates on reload (verified by direct PATCH + reload showing Recent Transactions rendered on top instead of default Matchups-first order).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N29_league_home_layout.py",
+    "/app/backend/tests/test_iter232N29_league_home_edges.py",
+    "/app/test_reports/pytest/iter232N29.xml",
+    "/app/test_reports/pytest/iter232N29_edges.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "reconcileOrder drops IDs not in DEFAULT_ORDER — good defensive behaviour when a widget is retired.",
+    "Server PATCH only writes widget_order/visibility keys that are explicitly provided (dotted-path $set), so a partial patch correctly preserves the other field.",
+    "chriszarek user only owns one league (69e46af1...) in this env, so the cross-league scoping UI walk was verified via unit tests only. Backend test_patch_scoped_per_league covers this comprehensively."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter232N29_league_home_edges.py (new)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all UI assertions pass)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (League: Frozen Dynasty = 69e46af167999bfb85c3962a)",
+  "seed_data_creation": "None (used existing chriszarek league). Cleaned up post-test by resetting widget_order to [] via PATCH.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Playwright mouse-drag does NOT trigger dnd-kit's PointerSensor reliably in this env, so drag-persistence was verified by directly calling PATCH endpoint via fetch() and observing the visual re-render after reload. The screenshot in run 2 confirmed 'Recent Transactions' rendered above 'Top Trade Block' after PATCH — proving server hydration works. Cross-league scoping was verified at API level (test_patch_scoped_per_league) since the test user only owns one league.",
+  "rca of the issue": "N/A — no issues found."
+}
