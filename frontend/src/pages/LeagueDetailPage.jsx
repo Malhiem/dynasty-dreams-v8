@@ -971,13 +971,17 @@ export default function LeagueDetailPage() {
         )}
 
         {/* Iter 232N.5 — Recent player status activity filtered to the
-            user's team roster in this league. Sits outside the
-            sortable widget grid because it's a lightweight sidebar
-            card — reordering it doesn't add value. Rendered only when
-            we know the caller's team_id (otherwise the feed can't
-            scope). */}
-        {myLeagueTeamId && (
-          <div className="mb-8 surface p-4" data-testid="league-home-player-status-feed">
+            user's team roster in this league. Rendered only when we
+            know the caller's team_id (otherwise the feed can't scope).
+            Iter 232N.30 — Now a first-class SortableSection so managers
+            can reorder or hide it. */}
+        {widgetVis.player_activity && myLeagueTeamId && (
+        <SortableSection
+          id="player_activity"
+          className="mb-8"
+          style={{order: widgetOrder.indexOf("player_activity")}}
+        >
+          <div className="surface p-4" data-testid="league-home-player-status-feed">
             <PlayerStatusFeed
               scope="team"
               teamId={myLeagueTeamId}
@@ -987,12 +991,23 @@ export default function LeagueDetailPage() {
               emptyMessage="No status changes on your roster in the last 14 days."
             />
           </div>
+        </SortableSection>
         )}
 
-        {/* Iter 232N.7 — Cross-league movers on the League Home too. */}
-        <div className="mb-8 surface p-4" data-testid="league-home-movers-widget">
-          <LeagueMoversWidget heading="League movers · last 7 days" limit={5} />
-        </div>
+        {/* Iter 232N.7 — Cross-league movers on the League Home too.
+            Iter 232N.30 — Wrapped in SortableSection alongside the
+            other widgets so users can bury it if they don't care. */}
+        {widgetVis.league_movers && (
+        <SortableSection
+          id="league_movers"
+          className="mb-8"
+          style={{order: widgetOrder.indexOf("league_movers")}}
+        >
+          <div className="surface p-4" data-testid="league-home-movers-widget">
+            <LeagueMoversWidget heading="League movers · last 7 days" limit={5} />
+          </div>
+        </SortableSection>
+        )}
 
         {/* Iter 231am — Quick Actions removed. The three cards
             (My Roster / Draft Room / Trade Center) pointed at the

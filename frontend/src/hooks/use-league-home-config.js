@@ -23,6 +23,11 @@ export const LEAGUE_HOME_WIDGETS = [
   { id: "top_trade_block", label: "Top Trade Block", description: "Most-watched trade-block players across the league." },
   { id: "pending_trades", label: "Pending Trades", description: "Trades awaiting your response or league approval." },
   { id: "transactions", label: "Recent Transactions", description: "Last 20 adds / drops / trades grouped by 5-minute windows." },
+  // Iter 232N.30 — Player Status Feed + League Movers were previously
+  // rendered outside SortableSections. Registering them here lets
+  // managers reorder or hide them alongside the rest of the widgets.
+  { id: "player_activity", label: "Recent Player Activity", description: "Status changes (IR / call-ups / trades) on your roster in the last 14 days." },
+  { id: "league_movers", label: "League Movers", description: "Cross-league risers + fallers over the last 7 days." },
   { id: "quick_actions", label: "Quick Actions", description: "Shortcuts to your roster, the draft room, and the trade center." },
 ];
 
