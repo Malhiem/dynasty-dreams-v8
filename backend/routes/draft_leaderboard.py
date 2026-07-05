@@ -219,3 +219,50 @@ async def get_draft_leaderboard(draft_id: str, request: Request):
         "rows": rows,
         "awards": awards,
     }
+
+
+# ─── Iter 232N.28 — Draft Hall of Awards (Trophy Room integration) ────────
+@router.get("/leagues/{league_id}/draft-hall-of-awards")
+async def get_league_draft_hall_of_awards(league_id: str, request: Request):
+    """Returns every completed draft for a league with its final
+    leaderboard payload — powers the "Draft Hall of Awards" display
+    case in the league Trophy Room. Only the six revealed award
+    categories are surfaced (speed_demon, slow_poke, autopilot,
+    wheeler_dealer, iron_man, queue_master) plus each draft's meta
+    (year, name, total_picks, auto_picks_total).
+    """
+    await _get_user(request)
+
+    drafts = await _db().drafts.find(
+        {"league_id": league_id, "status": "completed"}
+    ).sort("completed_at", -1).to_list(200)
+
+    if not drafts:
+        return {"league_id": league_id, "drafts": []}
+
+    # Reuse the same aggregation as the live endpoint by re-invoking
+    # it per-draft — keeps the two payloads perfectly in sync.
+    hall_entries = []
+    for d in drafts:
+        try:
+            payload = await get_draft_leaderboard(str(d["_id"]), request=request)
+        except Exception:
+            continue
+        completed_at = d.get("completed_at") or d.get("updated_at") or d.get("created_at")
+        year = None
+        if isinstance(completed_at, datetime):
+            year = completed_at.year
+        elif isinstance(completed_at, str):
+            try:
+                year = datetime.fromisoformat(completed_at.replace("Z", "+00:00")).year
+            except ValueError:
+                year = None
+        hall_entries.append({
+            "draft_id": str(d["_id"]),
+            "name": d.get("name") or f"Draft {year or ''}".strip(),
+            "year": year,
+            "total_picks": payload.get("total_picks", 0),
+            "auto_picks_total": payload.get("auto_picks_total", 0),
+            "awards": payload.get("awards", {}),
+        })
+    return {"league_id": league_id, "drafts": hall_entries}

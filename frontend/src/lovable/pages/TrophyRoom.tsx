@@ -5,7 +5,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Crown, Trophy, Star, Shield, Award, Medal } from "lucide-react";
+import { Crown, Trophy, Star, Shield, Award, Medal, Zap, TurtleIcon, RefreshCw, Handshake, ListChecks } from "lucide-react";
 
 const FONT_DISPLAY = `'Cinzel', 'Playfair Display', Georgia, serif`;
 
@@ -138,6 +138,53 @@ const HallPlaque = ({ legend }: { legend: any }) => {
   );
 };
 
+// Iter 232N.28 — Vintage-styled card summarising a single completed
+// draft's leaderboard. Lives inside the Trophy Room's Draft Hall of
+// Awards display case. Icons + captions mirror <DraftLeaderboard/>
+// so the two surfaces feel like one product.
+const DRAFT_AWARD_ROWS: Array<{ id: string; label: string; icon: any }> = [
+  { id: "speed_demon", label: "Speed Demon", icon: Zap },
+  { id: "slow_poke", label: "Slow-Poke", icon: TurtleIcon },
+  { id: "autopilot", label: "Auto-Pilot", icon: RefreshCw },
+  { id: "wheeler_dealer", label: "Wheeler-Dealer", icon: Handshake },
+  { id: "iron_man", label: "Iron Man", icon: ListChecks },
+  { id: "queue_master", label: "Queue Master", icon: Star },
+];
+
+const DraftAwardCard = ({ entry }: { entry: any }) => {
+  const awards = entry?.awards || {};
+  return (
+    <div className="draft-award-card" data-testid={`draft-award-card-${entry.draft_id}`}>
+      <div className="draft-award-header">
+        <span className="draft-award-year">{entry.year ?? "—"}</span>
+        <span className="draft-award-name">{entry.name}</span>
+      </div>
+      <div className="draft-award-meta">
+        {entry.total_picks} picks · {entry.auto_picks_total} auto
+      </div>
+      <div className="draft-award-rows">
+        {DRAFT_AWARD_ROWS.map(({ id, label, icon: Icon }) => {
+          const winner = awards[id];
+          return (
+            <div
+              key={id}
+              className="draft-award-row"
+              data-testid={`draft-award-row-${entry.draft_id}-${id}`}
+            >
+              <Icon size={12} className="draft-award-icon" />
+              <span className="draft-award-label">{label}</span>
+              <span className="draft-award-winner">
+                {winner ? winner.team_name : "—"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+
 export default function TrophyRoom() {
   const { teamId } = useParams<{ teamId?: string }>();
   const { league: activeLeague } = useActiveLeague();
@@ -174,6 +221,16 @@ export function TrophyRoomView({
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [leagueId]);
+
+  // Iter 232N.28 — Pull draft hall of awards (all completed drafts +
+  // their final leaderboards) for the LEAGUE view only.
+  const [hallOfAwards, setHallOfAwards] = useState<any[]>([]);
+  useEffect(() => {
+    if (!leagueId || teamId) { setHallOfAwards([]); return; }
+    api.get(`/leagues/${leagueId}/draft-hall-of-awards`)
+      .then((res) => setHallOfAwards(res.data?.drafts || []))
+      .catch(() => setHallOfAwards([]));
+  }, [leagueId, teamId]);
 
   // If a teamId is provided, pull team trophy room
   useEffect(() => {
@@ -306,6 +363,26 @@ export function TrophyRoomView({
                   <HallPlaque key={i} legend={legend} />
                 ))}
               </div>
+            </div>
+
+            {/* Iter 232N.28 — Draft Hall of Awards.
+                Archives every completed draft's leaderboard so managers
+                can revisit past seasons' trash talk. Rendered only in
+                the LEAGUE view (not team-specific) and only when at
+                least one completed draft exists. */}
+            <div className="display-case" data-testid="draft-hall-of-awards">
+              <div className="case-label">Draft Hall of Awards</div>
+              {hallOfAwards.length === 0 ? (
+                <p className="text-amber-200/40 italic text-xs px-3 py-2">
+                  Complete a draft to enshrine your first Speed Demon and Slow-Poke.
+                </p>
+              ) : (
+                <div className="hall-of-awards-grid" data-testid="hall-of-awards-grid">
+                  {hallOfAwards.map((entry) => (
+                    <DraftAwardCard key={entry.draft_id} entry={entry} />
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Per-team grid for "visit team trophy rooms" */}
@@ -523,6 +600,58 @@ export function TrophyRoomView({
         .team-room-name { font-size: 13px; color: #f0d080; font-weight: 600; }
         .team-room-banners { font-size: 10px; color: #7a6040; margin-top: 4px;
           letter-spacing: 0.1em; text-transform: uppercase; }
+
+        /* Iter 232N.28 — Draft Hall of Awards.
+           Vintage plaques stacked in a responsive grid so old drafts
+           feel like museum exhibits rather than a spreadsheet. */
+        .hall-of-awards-grid {
+          display: grid; gap: 14px;
+          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        }
+        .draft-award-card {
+          background: linear-gradient(180deg,#2a1a0e 0%,#1a0f07 100%);
+          border: 1px solid rgba(200,160,96,0.35);
+          border-radius: 3px;
+          padding: 12px 14px;
+          box-shadow: 0 3px 10px rgba(0,0,0,0.5), inset 0 -2px 6px rgba(0,0,0,0.4);
+          color: #c8a060;
+        }
+        .draft-award-header {
+          display: flex; justify-content: space-between; align-items: baseline;
+          gap: 8px; margin-bottom: 2px;
+        }
+        .draft-award-year {
+          font-size: 11px; letter-spacing: 0.2em;
+          color: #7a6040; text-transform: uppercase;
+        }
+        .draft-award-name {
+          font-size: 13px; color: #f0d080; font-weight: 600;
+          letter-spacing: 0.06em; text-align: right; flex: 1;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .draft-award-meta {
+          font-size: 9px; color: #7a6040; letter-spacing: 0.15em;
+          text-transform: uppercase; margin-bottom: 8px;
+          padding-bottom: 6px; border-bottom: 1px solid rgba(200,160,96,0.15);
+        }
+        .draft-award-rows {
+          display: flex; flex-direction: column; gap: 4px;
+        }
+        .draft-award-row {
+          display: flex; align-items: center; gap: 6px;
+          font-size: 10px; letter-spacing: 0.05em;
+        }
+        .draft-award-icon { color: #c8a060; flex-shrink: 0; }
+        .draft-award-label {
+          color: #7a6040; text-transform: uppercase;
+          letter-spacing: 0.12em; font-size: 8.5px;
+          min-width: 82px;
+        }
+        .draft-award-winner {
+          color: #f0d080; font-weight: 600;
+          flex: 1; overflow: hidden; text-overflow: ellipsis;
+          white-space: nowrap; text-align: right;
+        }
         @keyframes bannerDrop {
           from { transform: translateY(-30px); opacity: 0; }
           to { transform: translateY(0); opacity: 1; }
