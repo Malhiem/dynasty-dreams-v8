@@ -23,6 +23,8 @@ import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { useState, useEffect, useMemo } from "react";
+// Iter 232N.41 — Player-card drilldown on Salary Cap surfaces.
+import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 
 interface Contract {
   id: string;
@@ -74,6 +76,41 @@ const SalaryCap = () => {
   // Iter 112 — Dead-cap schedule pulled from server (buyouts + retention)
   const [deadCapSchedule, setDeadCapSchedule] = useState<{ schedule: any[]; total_dead_cap: number }>({ schedule: [], total_dead_cap: 0 });
   const [reloadKey, setReloadKey] = useState(0);
+  // Iter 232N.41 — Player-card modal state. `openPlayerCard` builds a
+  // Player-shaped payload from a contract row / dead-cap ledger entry.
+  // Prefers the roster's rich player object (with stats + schedule)
+  // when available so the modal opens with the full drilldown, else
+  // falls back to a lean shim that still populates identity fields.
+  const [cardOpen, setCardOpen] = useState(false);
+  const [cardPlayer, setCardPlayer] = useState<any>(null);
+
+  const openPlayerCard = (playerId: string, fallbackName?: string, fallbackPosition?: string) => {
+    if (!playerId) return;
+    const rich = (rosterDetail?.players || []).find((p: any) => p.id === playerId);
+    // Iter 232N.41 — PlayerCardModal iterates `schedule.filter(...)` on
+    // mount, so a bare roster payload (which lacks `schedule`) will
+    // crash the modal. Merge conservative defaults for every array/
+    // dict the modal touches so the drilldown opens even for the lean
+    // salary-cap payload.
+    const base = {
+      id: playerId,
+      name: fallbackName || rich?.name || "Player",
+      position: fallbackPosition || rich?.position || "—",
+      team: rich?.team || "",
+      points: 0,
+      dynastyValue: 0,
+      trend: "stable",
+      age: 25,
+      contract: { salary: 0, yearsRemaining: 1, type: "UFA" },
+      rosterSection: "bench",
+      statsByPeriod: { season: 0, "1d": 0, "7d": 0, "14d": 0, "30d": 0, "60d": 0, "100d": 0 },
+      categoryBreakdown: { G: 0, A: 0, PPP: 0, SHP: 0, SOG: 0, HIT: 0, BLK: 0, PIM: 0, "+/-": 0, FOW: 0, FOL: 0 },
+      matchupGames: 0,
+      schedule: [],
+    };
+    setCardPlayer({ ...base, ...(rich || {}), schedule: rich?.schedule || [], statsByPeriod: rich?.statsByPeriod || base.statsByPeriod, categoryBreakdown: rich?.categoryBreakdown || base.categoryBreakdown, contract: rich?.contract || base.contract });
+    setCardOpen(true);
+  };
 
   useEffect(() => {
     if (!myTeam?.id) return;
@@ -506,7 +543,15 @@ const SalaryCap = () => {
                               >
                                 {e.source === "retention" ? "RET" : "BO"}
                               </Badge>
-                              <span className="truncate">{e.player_name || "—"}</span>
+                              <button
+                                type="button"
+                                onClick={() => openPlayerCard(e.player_id, e.player_name, undefined)}
+                                className="truncate text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                                data-testid={`salary-cap-deadcap-link-${e.player_id || "unknown"}`}
+                                disabled={!e.player_id}
+                              >
+                                {e.player_name || "—"}
+                              </button>
                             </div>
                             <span className="font-mono text-accent shrink-0">
                               ${(Number(e.amount) / 1_000_000).toFixed(2)}M
@@ -837,7 +882,14 @@ const SalaryCap = () => {
                           {contract.team}
                         </div>
                         <div>
-                          <p className="font-medium">{contract.player}</p>
+                          <button
+                            type="button"
+                            onClick={() => openPlayerCard(contract.id, contract.player, contract.position)}
+                            className="font-medium hover:text-primary hover:underline transition-colors cursor-pointer text-left"
+                            data-testid={`salary-cap-contract-link-${contract.id}`}
+                          >
+                            {contract.player}
+                          </button>
                           <p className="text-xs text-muted-foreground">{contract.team}</p>
                         </div>
                       </div>
@@ -937,7 +989,15 @@ const SalaryCap = () => {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="font-medium text-sm">{e.player_name || "—"}</div>
+                          <button
+                            type="button"
+                            onClick={() => openPlayerCard(e.player_id, e.player_name, undefined)}
+                            className="font-medium text-sm hover:text-primary hover:underline transition-colors cursor-pointer text-left disabled:cursor-default disabled:hover:text-current disabled:no-underline"
+                            data-testid={`salary-cap-ledger-link-${e.player_id || i}`}
+                            disabled={!e.player_id}
+                          >
+                            {e.player_name || "—"}
+                          </button>
                           {e.source === "buyout" && e.original_salary && (
                             <div className="text-[10px] text-muted-foreground">
                               {e.length_option || "default"} · was ${(e.original_salary / 1_000_000).toFixed(2)}M × {e.original_years_remaining}y
@@ -1006,6 +1066,10 @@ const SalaryCap = () => {
           </Card>
         )}
       </div>
+      {/* Iter 232N.41 — Player-card drilldown modal */}
+      {cardPlayer && (
+        <PlayerCardModal open={cardOpen} onOpenChange={setCardOpen} player={cardPlayer} />
+      )}
     </AppLayout>
   );
 };
