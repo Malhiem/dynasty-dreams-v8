@@ -22,6 +22,7 @@ import DraftLeaderboard from "@/components/DraftLeaderboard";
 import DraftTimerCard from "@/components/draft/DraftTimerCard";
 import DraftBoardGrid from "@/components/draft/DraftBoardGrid";
 import DraftChatPanel from "@/components/draft/DraftChatPanel";
+import DraftPresenceBar from "@/components/draft/DraftPresenceBar";
 
 const teamByAbbr = (teams, abbr) => {
   if (!abbr || !teams?.length) return null;
@@ -368,6 +369,10 @@ export default function DraftRoomPage() {
   return (
     <AppLayout>
       <div className="space-y-4" data-testid="draft-room-page">
+        {/* Iter 232N.36 — Presence Bar sits above everything so
+            commissioners can gauge "roll call" before starting the clock. */}
+        <DraftPresenceBar teams={teams} onlineUserIds={onlineUserIds} />
+
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
           <div>
