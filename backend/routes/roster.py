@@ -542,6 +542,12 @@ async def get_roster_detail(team_id: str, request: Request):
             "nhl_id": p.get("nhl_id"),
             "name": p.get("name"),
             "team": p.get("team"),
+            # Iter 232N.37 — Surface the amateur/minor league (WHL, OHL,
+            # USNTP, etc.) so the roster/free-agency/draft-board rows can
+            # render `{league}` with a tooltip revealing the actual team
+            # for prospects, instead of showing a non-NHL team name where
+            # a 3-letter NHL abbr is expected.
+            "amateur_league": p.get("amateur_league"),
             "position": pos,
             "eligiblePositions": eligible,
             "is_goalie": is_g,

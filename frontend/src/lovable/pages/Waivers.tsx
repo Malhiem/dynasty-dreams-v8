@@ -23,6 +23,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
 import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
+// Iter 232N.37 — Amateur-league team cell (tooltip -> team name).
+import PlayerTeamCell from "@/components/PlayerTeamCell";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface WaiverPlayer {
@@ -339,6 +341,9 @@ const Waivers = () => {
       name: p.name,
       position: p.position,
       team: p.team,
+      // Iter 232N.37 — Amateur league passthrough so the free-agency
+      // team column can render `{league}` + tooltip for prospects.
+      amateurLeague: p.amateur_league || null,
       previousOwner: undefined,
       clearTime: "24h",
       weekPoints: 0,
@@ -721,9 +726,15 @@ const Waivers = () => {
                           )}
                         </TableCell>
                         <TableCell className="text-center" data-testid={`waiver-team-${player.id}`}>
-                          {/* Iter 182 — Dedicated Team column for easier filtering. */}
+                          {/* Iter 182 — Dedicated Team column.
+                              Iter 232N.37 — For prospects, render the amateur league (WHL/OHL/etc.)
+                              with a tooltip revealing the actual junior team. */}
                           <Badge variant="outline" className="bg-secondary/40 text-xs font-bold uppercase tracking-wider">
-                            {player.team || "—"}
+                            <PlayerTeamCell
+                              team={player.team}
+                              amateurLeague={(player as any).amateurLeague}
+                              testIdPrefix={`waiver-team-cell-${player.id}`}
+                            />
                           </Badge>
                         </TableCell>
                         <TableCell className="text-center">

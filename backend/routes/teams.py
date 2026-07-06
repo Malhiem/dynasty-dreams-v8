@@ -201,6 +201,15 @@ async def create_team(input: TeamCreate, request: Request):
 
     await db.leagues.update_one({"_id": ObjectId(input.league_id)}, {"$inc": {"current_teams": 1}})
 
+    # Iter 232N.37 — Auto-backfill draft_picks for any scheduled/active
+    # drafts in this league so the newly-added team appears on the
+    # Draft Board with a full column of picks.
+    try:
+        from routes.draft_helpers import backfill_missing_pick_rows_for_league
+        await backfill_missing_pick_rows_for_league(input.league_id)
+    except Exception:
+        pass  # best-effort — don't block team creation on pick seeding
+
     return TeamResponse(
         id=str(result.inserted_id),
         name=team_doc["name"],

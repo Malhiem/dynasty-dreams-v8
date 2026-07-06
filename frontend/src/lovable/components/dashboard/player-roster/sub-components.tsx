@@ -31,6 +31,8 @@ import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
 import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
+// Iter 232N.37 — Amateur-league team cell (tooltip -> team name).
+import PlayerTeamCell from "@/components/PlayerTeamCell";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -1131,7 +1133,7 @@ export const PlayerRow = ({
       <td className="p-3">
         <div className="flex items-center gap-2">
           <div className="h-8 w-8 rounded-md bg-gradient-to-br from-secondary to-muted flex items-center justify-center text-[10px] font-bold shrink-0">
-            {player.team}
+            <PlayerTeamCell team={player.team} amateurLeague={(player as any).amateur_league} testIdPrefix={`roster-team-${player.id}`} />
           </div>
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex items-center gap-1.5 min-w-0">

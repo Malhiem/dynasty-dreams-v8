@@ -225,6 +225,13 @@ async def join_league_by_invite(input: JoinByInviteRequest, request: Request):
     result = await db.teams.insert_one(team_doc)
     await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$inc": {"current_teams": 1}})
 
+    # Iter 232N.37 — Auto-backfill draft picks for existing drafts.
+    try:
+        from routes.draft_helpers import backfill_missing_pick_rows_for_league
+        await backfill_missing_pick_rows_for_league(league_id)
+    except Exception:
+        pass
+
     await log_activity(league_id, "team_joined", f"{user['name']} joined with team '{input.team_name}'", user["_id"])
 
     return {
@@ -317,6 +324,14 @@ async def join_public_league(league_id: str, payload: JoinPublicLeagueRequest, r
     }
     result = await db.teams.insert_one(team_doc)
     await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$inc": {"current_teams": 1}})
+
+    # Iter 232N.37 — Auto-backfill draft picks for existing drafts.
+    try:
+        from routes.draft_helpers import backfill_missing_pick_rows_for_league
+        await backfill_missing_pick_rows_for_league(league_id)
+    except Exception:
+        pass
+
     await log_activity(league_id, "team_joined",
                        f"{user['name']} joined with team '{payload.team_name}'", user["_id"])
     return {
@@ -451,6 +466,12 @@ async def get_pending_team_invites(league_id: str, request: Request):
                 doc["_id"] = _id
                 teams.append(doc)
             teams.sort(key=lambda t: t.get("draft_position") or 9999)
+            # Iter 232N.37 — Auto-backfill picks for existing drafts.
+            try:
+                from routes.draft_helpers import backfill_missing_pick_rows_for_league
+                await backfill_missing_pick_rows_for_league(league_id)
+            except Exception:
+                pass
 
     # Pull all invites for the league in one query.
     invites = await db.league_invites.find({"league_id": league_id}).to_list(256)

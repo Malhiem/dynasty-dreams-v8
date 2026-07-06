@@ -15,6 +15,9 @@ import { DollarSign, Plus, Users, Clock, FileText, AlertTriangle, TrendingUp, Sh
 import { cn } from "@/lib/utils";
 import api, { formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+// Iter 232N.37 — Player-card modal opens on player-name click so users
+// can drill into a contract row without leaving the Salary Cap page.
+import PlayerCardModal from "@/lovable/components/dashboard/PlayerCardModal";
 
 export default function SalaryCapPage() {
   const { user } = useAuth();
@@ -30,6 +33,38 @@ export default function SalaryCapPage() {
   const [searchResults, setSearchResults] = useState([]);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [contractForm, setContractForm] = useState({ aav: 0, total_value: 0, signing_bonus: 0, years: 3, start_year: 2025, player_status: "signed", no_trade_clause: false, no_move_clause: false });
+  // Iter 232N.37 — Player-card drilldown modal state.
+  const [cardOpen, setCardOpen] = useState(false);
+  const [cardPlayer, setCardPlayer] = useState(null);
+
+  // Map a contract row to the shape PlayerCardModal expects. The modal
+  // itself fetches live news + recent games via `player.id`, so the
+  // shim just needs to satisfy the required fields; missing analytics
+  // gracefully fall back to zero-state.
+  const openPlayerCard = (contract) => {
+    if (!contract?.player_id) return;
+    setCardPlayer({
+      id: contract.player_id,
+      name: contract.player_name,
+      position: contract.player_position,
+      team: contract.player_nhl_team,
+      points: 0,
+      dynastyValue: 0,
+      trend: "stable",
+      age: 27,
+      contract: {
+        salary: contract.aav || 0,
+        yearsRemaining: contract.years || 1,
+        type: "Signed",
+      },
+      rosterSection: "bench",
+      statsByPeriod: { season: 0, "1d": 0, "7d": 0, "14d": 0, "30d": 0, "60d": 0, "100d": 0 },
+      categoryBreakdown: { G: 0, A: 0, PPP: 0, SHP: 0, SOG: 0, HIT: 0, BLK: 0, PIM: 0, "+/-": 0, FOW: 0, FOL: 0 },
+      matchupGames: 0,
+      schedule: [],
+    });
+    setCardOpen(true);
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -165,7 +200,16 @@ export default function SalaryCapPage() {
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className="text-white border-white/20 text-[9px]">{c.player_position}</Badge>
-                            <div><p className="text-white font-medium text-sm">{c.player_name}</p><p className="text-[10px] text-[#A1A1AA]">{c.player_nhl_team}</p></div>
+                            <div>
+                              <button
+                                onClick={() => openPlayerCard(c)}
+                                className="text-white font-medium text-sm hover:text-[#00D2FF] hover:underline transition-colors cursor-pointer text-left"
+                                data-testid={`salary-cap-player-link-${c._id}`}
+                              >
+                                {c.player_name}
+                              </button>
+                              <p className="text-[10px] text-[#A1A1AA]">{c.player_nhl_team}</p>
+                            </div>
                           </div>
                         </TableCell>
                         <TableCell className="text-[#A1A1AA] text-sm">{c.team_name}</TableCell>
@@ -202,7 +246,16 @@ export default function SalaryCapPage() {
                   <div key={c._id} className="flex items-center justify-between p-3 rounded-lg bg-[#1A1A1A]/30 mb-2">
                     <div className="flex items-center gap-3">
                       <Badge className={cn("text-[9px]", c.player_status === "ufa" ? "bg-[#FF3B30]/20 text-[#FF3B30]" : "bg-[#FF9F0A]/20 text-[#FF9F0A]")}>{c.player_status?.toUpperCase()}</Badge>
-                      <div><p className="text-white font-medium">{c.player_name}</p><p className="text-xs text-[#A1A1AA]">{c.team_name} · {c.player_position}</p></div>
+                      <div>
+                        <button
+                          onClick={() => openPlayerCard(c)}
+                          className="text-white font-medium hover:text-[#00D2FF] hover:underline transition-colors cursor-pointer text-left"
+                          data-testid={`salary-cap-expiring-link-${c._id}`}
+                        >
+                          {c.player_name}
+                        </button>
+                        <p className="text-xs text-[#A1A1AA]">{c.team_name} · {c.player_position}</p>
+                      </div>
                     </div>
                     <p className="text-[#00D2FF] font-semibold">${c.aav?.toLocaleString()} AAV</p>
                   </div>
@@ -271,6 +324,11 @@ export default function SalaryCapPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Iter 232N.37 — Player-card drilldown */}
+        {cardPlayer && (
+          <PlayerCardModal open={cardOpen} onOpenChange={setCardOpen} player={cardPlayer} />
+        )}
       </div>
     </AppLayout>
   );

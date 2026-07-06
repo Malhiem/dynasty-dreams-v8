@@ -219,6 +219,10 @@ async def get_waiver_players(
             "position": p["position"],
             "team": p.get("team", ""),
             "team_name": p.get("team_name", ""),
+            # Iter 232N.37 — Expose amateur/minor league so the free-
+            # agency table can render `{league}` + tooltip instead of
+            # the minor team where a 3-letter NHL abbr is expected.
+            "amateur_league": p.get("amateur_league"),
             **stats,
             "has_active_claim": active_claim is not None,
             # Iter 181 — surface prospect / minor-eligibility so the

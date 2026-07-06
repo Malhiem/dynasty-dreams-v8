@@ -293,6 +293,9 @@ const PlayerRoster = ({
           eligiblePositions: p.eligiblePositions || [p.position],
           secondaryPositions: [],
           team: p.team || "",
+          // Iter 232N.37 — Amateur league passthrough so the roster row
+          // can render `{league}` + tooltip = team for prospects.
+          amateur_league: p.amateur_league || null,
           points: Math.round(p.fantasy_points || 0),
           gamesPlayed: Number(p.games_played || p.gp || 0),
           dynastyValue: p.dynastyValue || 1000,

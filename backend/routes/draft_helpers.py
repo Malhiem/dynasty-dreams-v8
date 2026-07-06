@@ -168,6 +168,44 @@ async def seed_draft_picks_for_draft(
     return inserted
 
 
+async def backfill_missing_pick_rows_for_league(league_id: str) -> int:
+    """Iter 232N.37 — Called after new teams are inserted into a league
+    to re-seed picks for every existing draft. Fixes the "TFHL Draft
+    Board shows only Hamilton" class of bugs where drafts were seeded
+    while only 1 team existed, then more teams were added later.
+
+    Idempotent via `seed_draft_picks_for_draft`'s dedup key. Returns
+    total picks inserted across all drafts in the league.
+    """
+    drafts = await _db().drafts.find(
+        {"league_id": league_id, "status": {"$in": ["scheduled", "active"]}},
+    ).to_list(200)
+    if not drafts:
+        return 0
+    total = 0
+    for draft in drafts:
+        try:
+            year = int(str(draft.get("year") or draft.get("season") or "0").split("-")[0]) or None
+            if not year:
+                # Fall back to the league's season year.
+                league = await _db().leagues.find_one(
+                    {"_id": draft["league_id"] if hasattr(draft["league_id"], "binary")
+                     else ObjectId(str(draft["league_id"]))},
+                )
+                year = int((league or {}).get("season", "2026").split("-")[0])
+            total += await seed_draft_picks_for_draft(
+                draft_id=str(draft["_id"]),
+                league_id=league_id,
+                rounds=int(draft.get("total_rounds") or 1),
+                year=year,
+            )
+        except Exception:
+            # Best-effort — a single draft failing shouldn't block the
+            # team-add call site.
+            continue
+    return total
+
+
 # ─────────────────────────────────────────────────────────────────
 # 2. Early-start clock activation suffix for notifications.
 # ─────────────────────────────────────────────────────────────────

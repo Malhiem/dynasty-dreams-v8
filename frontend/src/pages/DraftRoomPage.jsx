@@ -18,6 +18,9 @@ import { useDraftSocket } from "@/hooks/use-socket";
 // Iter 232N.27 — Slow-poke leaderboard sidebar (Speed Demon, Slow-Poke,
 // Auto-Pilot, Wheeler-Dealer, Iron Man, Queue Master).
 import DraftLeaderboard from "@/components/DraftLeaderboard";
+// Iter 232N.37 — Reusable "team cell" that renders amateur league
+// with tooltip for prospects, plain NHL abbr for veterans.
+import PlayerTeamCell from "@/components/PlayerTeamCell";
 // Iter 232N.35 — Draft Room split into three focused components.
 import DraftTimerCard from "@/components/draft/DraftTimerCard";
 import DraftBoardGrid from "@/components/draft/DraftBoardGrid";
@@ -517,7 +520,14 @@ export default function DraftRoomPage() {
                         <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border", positionColors[player.position])}>{player.position}</Badge>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-white truncate">{player.name}</p>
-                          <p className="text-[10px] text-[#A1A1AA]">{player.nhlTeam} · {player.gp}GP {player.g}G {player.a}A {player.pts}P</p>
+                          <p className="text-[10px] text-[#A1A1AA]">
+                            <PlayerTeamCell
+                              team={player.nhlTeam}
+                              amateurLeague={player.league && player.league !== "NHL" ? player.league : null}
+                              testIdPrefix={`draft-eligible-team-${player.id}`}
+                            />
+                            {" · "}{player.gp}GP {player.g}G {player.a}A {player.pts}P
+                          </p>
                         </div>
                         <Button
                           variant="ghost"
@@ -563,7 +573,15 @@ export default function DraftRoomPage() {
                       <Badge className={cn("text-[9px] px-1 py-0 h-3.5 border", positionColors[player.position])}>{player.position}</Badge>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-white truncate">{player.name}</p>
-                        <p className="text-[10px] text-[#A1A1AA]">#{player.ranking} · {player.nhlTeam} · {player.pts}P</p>
+                        <p className="text-[10px] text-[#A1A1AA]">
+                          #{player.ranking} ·{" "}
+                          <PlayerTeamCell
+                            team={player.nhlTeam}
+                            amateurLeague={player.league && player.league !== "NHL" ? player.league : null}
+                            testIdPrefix={`draft-shortlist-team-${player.id}`}
+                          />
+                          {" · "}{player.pts}P
+                        </p>
                       </div>
                     </div>
                   ))}
