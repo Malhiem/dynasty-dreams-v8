@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import api, { formatApiError } from '@/lib/api';
+// Iter 232N.32 — Sonner toast used for the one-time "Smart-arranged
+// for you" nudge after the first-run smart-order fires.
+import { toast } from 'sonner';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -224,36 +227,64 @@ export default function LeagueDetailPage() {
   // bottom; widgets with fresh signal float to the top. Runs exactly
   // once per league — every subsequent visit uses whatever the
   // manager saved via drag / toggle. Any explicit reset re-arms it.
+  // Iter 232N.32 — Also fires a one-time "Smart-arranged for you"
+  // toast when the algorithm actually promoted a different widget to
+  // the top slot. The hook returns null on no-op, so the toast is
+  // suppressed automatically when the default order was already ideal.
   useEffect(() => {
     if (loading || txnsLoading) return;
     if (firstRunCompleted) return;
     if (!id) return;
     const signals = {
-      // Matchups only makes sense in H2H formats when the current
-      // week has games — otherwise it's a dead panel.
       matchups: (isH2H && (weekMatchups?.length || 0) > 0) ? 100 : 0,
-      // Points leaderboard is the H2H alternative — show it prominently
-      // when the league is not H2H so it isn't buried on roto leagues.
       points_leaderboard: (!isH2H && (standings?.length || 0) > 0) ? 95 : 0,
-      // Pending trades are almost always the most time-sensitive card
-      // when they exist — surface immediately so the user acts.
       pending_trades: (pendingTrades?.length || 0) > 0 ? 90 + Math.min(pendingTrades.length, 5) : 0,
-      // Trade block is contextual — score scales with player count.
       top_trade_block: Math.min((topBlock?.length || 0) * 3, 40),
-      // League movers gets a modest baseline; the widget fetches its
-      // own data so we don't know yet, but it's usually informative.
       league_movers: 25,
-      // Recent transactions carry weight when a lot happened this week.
       transactions: Math.min((transactions?.length || 0) * 2, 35),
-      // Roster status feed matters when the user actually has a team.
       player_activity: myLeagueTeamId ? 30 : 0,
-      // Quick actions — least dynamic, sinks to the bottom by default.
       quick_actions: 5,
     };
-    applySmartOrder(signals);
-    // Deliberately excluding applySmartOrder / signals from deps so this
-    // effect runs on the mount-time snapshot only; the hook itself
-    // no-ops after the first successful arrangement.
+    const result = applySmartOrder(signals);
+    if (!result) return;
+    const REASONS = {
+      pending_trades: (n) => `${n} trade${n === 1 ? "" : "s"} need${n === 1 ? "s" : ""} your review`,
+      matchups: () => "Your live matchup is here",
+      points_leaderboard: () => "Fresh standings on top",
+      top_trade_block: (n) => `${n} player${n === 1 ? "" : "s"} on the block`,
+      transactions: (n) => `${n} recent move${n === 1 ? "" : "s"} across the league`,
+      player_activity: () => "Roster status updates today",
+      league_movers: () => "Cross-league risers surfaced",
+      quick_actions: () => "Ready when you are",
+    };
+    const LABELS = {
+      pending_trades: "Pending trades",
+      matchups: "Matchups + Standings",
+      points_leaderboard: "Points Leaderboard",
+      top_trade_block: "Top Trade Block",
+      transactions: "Recent Transactions",
+      player_activity: "Recent Player Activity",
+      league_movers: "League Movers",
+      quick_actions: "Quick Actions",
+    };
+    const topId = result.topWidget;
+    const label = LABELS[topId] || topId;
+    const rawCount =
+      topId === "pending_trades" ? (pendingTrades?.length || 0)
+      : topId === "top_trade_block" ? (topBlock?.length || 0)
+      : topId === "transactions" ? (transactions?.length || 0)
+      : 0;
+    const reason = (REASONS[topId] || (() => "Freshest content on top"))(rawCount);
+    toast.success("Smart-arranged for you", {
+      description: `${label} moved to the top · ${reason}`,
+      duration: 5000,
+      action: {
+        label: "Reset",
+        onClick: () => resetWidgets(),
+      },
+    });
+    // Deliberately narrow deps so this effect fires once per
+    // "have-data + first-run" transition.
   }, [loading, txnsLoading, firstRunCompleted, id, myLeagueTeamId]);
 
   const handleJoin = async () => {

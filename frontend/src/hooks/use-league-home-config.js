@@ -169,26 +169,36 @@ export function useLeagueHomeConfig(leagueId) {
   // { widgetId: signalScore } and we push widgets with the highest
   // signal to the top. No-op if firstRunCompleted is already true —
   // never clobbers a user's saved layout.
+  // Iter 232N.32 — Returns { arranged, topWidget, previousTopWidget,
+  // signals } (or null when we no-op) so callers can surface a
+  // "Smart-arranged for you" toast that explains WHICH widget moved.
   const applySmartOrder = useCallback((signals) => {
-    if (firstRunCompleted) return;
-    if (!signals || typeof signals !== "object") return;
-    // Only rank widgets we actually know about; unknown ids drop.
+    if (firstRunCompleted) return null;
+    if (!signals || typeof signals !== "object") return null;
     const scored = DEFAULT_ORDER.map((id, idx) => ({
       id,
-      // High-signal first; ties broken by the DEFAULT_ORDER index so
-      // the sort stays deterministic across renders.
       score: Number.isFinite(signals[id]) ? Number(signals[id]) : 0,
       tie: idx,
     }));
     scored.sort((a, b) => (b.score - a.score) || (a.tie - b.tie));
     const nextOrder = scored.map((s) => s.id);
+    const previousTopWidget = order[0] || DEFAULT_ORDER[0];
+    const topWidget = nextOrder[0];
     setOrder(nextOrder);
     if (orderKey) { try { localStorage.setItem(orderKey, JSON.stringify(nextOrder)); } catch { /* noop */ } }
-    // Persist immediately + latch the first-run marker so we don't
-    // re-arrange on every subsequent page load.
     setFirstRunCompleted(true);
     scheduleSync(nextOrder, null, { first_run_completed: true });
-  }, [firstRunCompleted, orderKey, scheduleSync]);
+    // Only return a "meaningful" arrange result — if the top widget
+    // was already at the top, don't bother the user with a toast.
+    if (topWidget === previousTopWidget) return null;
+    return {
+      arranged: nextOrder,
+      topWidget,
+      previousTopWidget,
+      topScore: scored[0].score,
+      signals,
+    };
+  }, [firstRunCompleted, orderKey, scheduleSync, order]);
 
   return {
     visibility, order, toggle, reorder, reset,
