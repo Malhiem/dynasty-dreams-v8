@@ -484,6 +484,139 @@ function DraftOrderResultsTab({ leagueId, draftOrder, teams }: any) {
   );
 }
 
+// ────────────────────────────────────────────────────────────────
+// Iter 232N.33 — Scheduled Drafts Panel
+// Fetches all drafts scheduled/active/completed for a league and
+// renders one card per draft with its own pick count, status, and
+// on-clock team. Replaces the old year-only Draft Board view that
+// aggregated Summer + Winter drafts into a single "0 picks" grid.
+// ────────────────────────────────────────────────────────────────
+function ScheduledDraftsPanel({ leagueId }: { leagueId?: string }) {
+  const [drafts, setDrafts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!leagueId) return;
+    let cancelled = false;
+    setLoading(true);
+    api.get(`/drafts?league_id=${leagueId}`)
+      .then(({ data }) => {
+        if (cancelled) return;
+        const relevant = (Array.isArray(data) ? data : [])
+          .filter((d: any) => d && ["scheduled", "active", "completed"].includes(d.status))
+          .sort((a: any, b: any) => {
+            // Active first, then scheduled, then completed. Within each
+            // group, sort by scheduled_time ascending so upcoming drafts
+            // show above completed ones.
+            const rank: Record<string, number> = { active: 0, scheduled: 1, completed: 2 };
+            const ra = rank[a.status] ?? 9;
+            const rb = rank[b.status] ?? 9;
+            if (ra !== rb) return ra - rb;
+            return (a.scheduled_time || "").localeCompare(b.scheduled_time || "");
+          });
+        setDrafts(relevant);
+      })
+      .catch(() => setDrafts([]))
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [leagueId]);
+
+  if (loading) {
+    return (
+      <Card className="border-border gradient-card" data-testid="scheduled-drafts-loading">
+        <CardContent className="p-4 text-sm text-muted-foreground italic">
+          Loading scheduled drafts…
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!drafts.length) {
+    return (
+      <Card className="border-border gradient-card" data-testid="scheduled-drafts-empty">
+        <CardContent className="p-4 text-sm text-muted-foreground italic">
+          No drafts scheduled yet — commissioners can create one from League Admin → Draft.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const STATUS_BADGES: Record<string, string> = {
+    scheduled: "border-amber-500/40 text-amber-300 bg-amber-500/10",
+    active: "border-emerald-500/40 text-emerald-300 bg-emerald-500/10",
+    completed: "border-cyan-500/40 text-cyan-300 bg-cyan-500/10",
+  };
+  return (
+    <div className="grid gap-3 md:grid-cols-2" data-testid="scheduled-drafts-panel">
+      {drafts.map((d: any) => {
+        const picksCount = (d.picks || []).length;
+        const totalPicks = (d.total_rounds || 0) * ((d.team_abbrs || []).length || 0);
+        const onClockAbbr = d.status === "active"
+          ? (d.team_abbrs?.[((d.current_pick || 1) - 1) % (d.team_abbrs?.length || 1)] || null)
+          : null;
+        const onClockName = onClockAbbr && d.team_map?.[onClockAbbr]?.name;
+        const when = d.scheduled_time
+          ? new Date(d.scheduled_time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
+          : "TBD";
+        return (
+          <Card
+            key={d.id || d._id}
+            className="border-border gradient-card"
+            data-testid={`scheduled-draft-card-${d.id || d._id}`}
+          >
+            <CardHeader className="pb-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <CardTitle className="text-base truncate">{d.name || "Untitled Draft"}</CardTitle>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {when} · {d.total_rounds || "?"} round{d.total_rounds === 1 ? "" : "s"} · {(d.team_abbrs || []).length} teams
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className={cn("text-[10px] h-5 whitespace-nowrap", STATUS_BADGES[d.status] || "")}
+                >
+                  {String(d.status).toUpperCase()}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-1 pb-3 space-y-1.5">
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground uppercase tracking-wider text-[10px]">Picks</span>
+                <span className="font-mono text-foreground font-semibold">
+                  {picksCount}{totalPicks ? ` / ${totalPicks}` : ""}
+                </span>
+              </div>
+              {onClockName && (
+                <div className="flex items-center gap-2 text-xs text-emerald-300">
+                  <Clock className="h-3 w-3" />
+                  <span>On the clock: <span className="font-semibold">{onClockName}</span></span>
+                </div>
+              )}
+              {d.status === "active" ? (
+                <a
+                  href={`/draft-room/${d.id || d._id}`}
+                  className="inline-block text-[11px] text-primary hover:underline mt-1"
+                  data-testid={`scheduled-draft-open-${d.id || d._id}`}
+                >
+                  Open draft room →
+                </a>
+              ) : d.status === "completed" ? (
+                <a
+                  href={`/draft-room/${d.id || d._id}`}
+                  className="inline-block text-[11px] text-muted-foreground hover:underline mt-1"
+                >
+                  View results →
+                </a>
+              ) : (
+                <p className="text-[11px] text-amber-300/80 italic">Scheduled — waiting to start</p>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function DraftBoardPage() {
   const currentYear = new Date().getFullYear();
   const availableYears = Array.from({ length: maxTradeYears }, (_, i) => String(currentYear + i));
@@ -734,6 +867,14 @@ export default function DraftBoardPage() {
               );
             })}
           </div>
+
+          {/* Iter 232N.33 — Scheduled Drafts panel. Fetches all real
+              drafts for this league (scheduled / active / completed)
+              and renders one card per draft with its own pick summary.
+              This replaces the misleading "all-teams-0-picks" view
+              that used to show up when a league had multiple drafts
+              in the same year (Summer + Winter). */}
+          <ScheduledDraftsPanel leagueId={league?.id} />
 
           {/* Draft Board Table */}
           <Card className="border-border gradient-card">

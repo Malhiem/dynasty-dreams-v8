@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only validation of Draft Board scheduled-drafts panel and Draft Room timer bugs. All 3 bugs verified as FIXED.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "bug1_scheduled_drafts_panel": {
+      "status": "PASS",
+      "details": "[data-testid='scheduled-drafts-panel'] present. Exactly 3 [data-testid^='scheduled-draft-card-'] cards rendered: TFHL Summer Entry Draft (ACTIVE, 3/96, 'Open draft room →' link with scheduled-draft-open- testid), TFHL Inaugural Draft (SCHEDULED, 0/1320, 'Scheduled — waiting to start'), TFHL Winter Draft (SCHEDULED, 0/55, 'Scheduled — waiting to start'). Only ACTIVE card exposes open link (1 open link). 2 'Scheduled — waiting to start' texts as expected."
+    },
+    "bug2_timer_ticks": {
+      "status": "PASS",
+      "details": "Initial Pick Timer read '223:22'; after 5s wait re-read '223:17'. Delta = 5s exactly, within 3–7s tolerance. Pause button label = 'Pause' (running state). Timer format is m:ss with 3-digit minutes (draft uses 225-minute pick clock)."
+    },
+    "bug3_timer_persists_on_reload": {
+      "status": "PASS",
+      "details": "1st reload initial timer = '223:13'; slept 3s; 2nd reload initial timer = '223:06'. Diff = 7s (>= expected 3s given reload overhead). Confirms timer computed from current_pick_started_at rather than resetting to time_per_pick on mount."
+    }
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Non-blocking: WebSocket (socket.io) handshake returns 403 repeatedly on both /draft-board and /draft-room pages (wss://.../api/socket.io/). Reconnect loop floods console. Does not affect timer fix (which is client-side polling) but should be investigated — likely auth cookie not forwarded through ingress on WS upgrade, or socket.io path not proxied."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not tested)", "frontend": "100% (3/3 bugs verified fixed)"},
+  "test_credentials": "chriszarek@gmail.com / Chris2026! (used); active league set via localStorage dd_active_league_id=6a3a0781a842ea2f7bcdc7cb",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Timer displays as m:ss with up to 3-digit minutes (e.g. '223:22') — regex should allow \\d{1,4}:\\d{2}. Main pick timer is inside 'Draft Live' card next to 'Pick Timer' label. WebSocket 403 is pre-existing and unrelated to the fixes tested this run."
+}

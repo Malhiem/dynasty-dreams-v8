@@ -70,10 +70,40 @@ export default function DraftRoomPage() {
       const { data } = await api.get(`/drafts/${draftId}`);
       setDraft(data);
       setChatMessages(data.chat_messages || []);
-      if (data.time_per_pick) setPickTimeLeft(data.time_per_pick);
-      // Iter 232N.26 — Reset personal timer to the configured cap.
+      // Iter 232N.33 — Bug fix: the pick timer used to reset to
+      // `data.time_per_pick` on every page load, so a manager who
+      // opened the page an hour into a 4h pick would see "4h left"
+      // instead of the true "3h left". Compute the actual remaining
+      // time from `current_pick_started_at` so refreshes / tab
+      // returns display the real countdown that the server-side
+      // worker will use to auto-pick.
+      const baseSeconds = Number(data.time_per_pick || data.pick_time_seconds || 120);
+      if (data.current_pick_started_at) {
+        try {
+          const started = new Date(data.current_pick_started_at).getTime();
+          const elapsed = Math.max(0, Math.floor((Date.now() - started) / 1000));
+          setPickTimeLeft(Math.max(0, baseSeconds - elapsed));
+        } catch {
+          setPickTimeLeft(baseSeconds);
+        }
+      } else {
+        setPickTimeLeft(baseSeconds);
+      }
+      // Iter 232N.26/N.33 — Same treatment for the personal cap so a
+      // 10 min personal on a 4h clock doesn't restart every refresh.
       if (data.personal_pick_timer_seconds) {
-        setPersonalTimeLeft(data.personal_pick_timer_seconds);
+        const personalBase = Number(data.personal_pick_timer_seconds);
+        if (data.current_pick_started_at) {
+          try {
+            const startedAt = new Date(data.current_pick_started_at).getTime();
+            const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+            setPersonalTimeLeft(Math.max(0, personalBase - elapsed));
+          } catch {
+            setPersonalTimeLeft(personalBase);
+          }
+        } else {
+          setPersonalTimeLeft(personalBase);
+        }
       } else {
         setPersonalTimeLeft(0);
       }
