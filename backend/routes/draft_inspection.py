@@ -568,19 +568,34 @@ async def get_draft_eligible_players(
 
 
 @router.get("/drafts/{league_id}/picks")
-async def get_draft_picks(league_id: str, year: Optional[int] = None):
+async def get_draft_picks(
+    league_id: str,
+    year: Optional[int] = None,
+    draft_id: Optional[str] = None,
+):
     """Iter 231v — Relocated from `routes/drafts.py`.
 
     Lists the league's draft_picks rows (slot grid for the trade
     center + Draft Board) and decorates each with pending pick-upgrade
     clauses (executed trades whose upgrade hasn't resolved yet) so the
     Board can render a "Protected: top-N / Conditional upgrade" badge.
+
+    Iter 232N.39 — `draft_id` filter added so the Draft Board can
+    show pick ownership for a SPECIFIC scheduled draft (Summer Entry
+    vs Winter Entry vs Inaugural) rather than aggregating every draft
+    in a year into a single misleading grid.
     """
     db = _db()
     query = {"league_id": league_id}
     if year:
         query["year"] = int(year)
-    picks = await db.draft_picks.find(query).sort([("year", 1), ("round", 1)]).to_list(1000)
+    if draft_id:
+        query["draft_id"] = draft_id
+    # Iter 232N.39 — Bumped list limit from 1000 to 10000. A single
+    # 24-team × 55-round draft is 1,320 rows; a league with 3 drafts
+    # in one year easily exceeds the old cap and silently dropped
+    # picks off the tail.
+    picks = await db.draft_picks.find(query).sort([("year", 1), ("round", 1)]).to_list(10000)
 
     # Build a lookup of pending pick-upgrade clauses (status=executed,
     # applied_at/failed_at not yet set) so the DraftBoard can render a
@@ -614,7 +629,7 @@ async def get_draft_picks(league_id: str, year: Optional[int] = None):
     for p in picks:
         p["_id"] = str(p["_id"])
         p["pending_protections"] = pending.get(p["_id"], [])
-    return {"league_id": league_id, "year": year, "picks": picks}
+    return {"league_id": league_id, "year": year, "draft_id": draft_id, "picks": picks}
 
 
 # ─── Iter 204 — Related trades for a completed draft ────────────────────────

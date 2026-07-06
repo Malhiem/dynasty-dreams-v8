@@ -40,8 +40,15 @@ const leagueTeams = [
   { name: "Zero Below", abbr: "ZRO" },
 ].sort((a, b) => a.name.localeCompare(b.name));
 
-const totalRounds = 5;
+const totalRoundsDefault = 5;
 const maxTradeYears = 3; // League allows picks to be dealt up to 3 years out
+
+// Iter 232N.39 — Hockey season label: 2026 → "2026/27 Draft Year".
+function seasonLabel(year: string | number): string {
+  const y = Number(year);
+  const next = String((y + 1) % 100).padStart(2, "0");
+  return `${y}/${next} Draft Year`;
+}
 
 interface PickOwnership {
   originalTeam: string;
@@ -60,7 +67,7 @@ const generatePickData = (): Record<string, Record<string, Record<number, PickOw
     data[year] = {};
     leagueTeams.forEach((team) => {
       data[year][team.abbr] = {};
-      for (let round = 1; round <= totalRounds; round++) {
+      for (let round = 1; round <= totalRoundsDefault; round++) {
         data[year][team.abbr][round] = {
           originalTeam: team.abbr,
           currentOwner: team.abbr,
@@ -94,13 +101,49 @@ export default function DraftBoardPage() {
   const [livePicks, setLivePicks] = useState<any[]>([]);
   // Iter 137 — league's canonical draft order (lottery applied OR reverse standings fallback)
   const [draftOrder, setDraftOrder] = useState<any | null>(null);
+  // Iter 232N.39 — Multi-draft support. `scheduledDrafts` is fed by
+  // the ScheduledDraftsPanel; `selectedDraftId` scopes the pick-
+  // ownership grid + count summary to a single scheduled draft.
+  const [scheduledDrafts, setScheduledDrafts] = useState<any[]>([]);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+
+  // Auto-select the first draft (active → nearest scheduled → completed)
+  // whenever the list arrives or the year filter changes.
+  const handleDraftsLoaded = (list: any[]) => {
+    setScheduledDrafts(list);
+    if (!list.length) {
+      setSelectedDraftId(null);
+      return;
+    }
+    const still = list.find(
+      (d) => selectedDraftId && (d.id || d._id) === selectedDraftId,
+    );
+    if (!still) {
+      const first = list[0];
+      setSelectedDraftId(first.id || first._id || null);
+    }
+  };
+
+  // Selected draft object (for its `total_rounds`, `team_abbrs`, etc.)
+  const selectedDraft = useMemo(
+    () => scheduledDrafts.find((d) => (d.id || d._id) === selectedDraftId) || null,
+    [scheduledDrafts, selectedDraftId],
+  );
+  const totalRounds = Number(selectedDraft?.total_rounds) || totalRoundsDefault;
 
   useEffect(() => {
     if (!league?.id) return;
     let cancelled = false;
-    api.get(`/drafts/${league.id}/picks?year=${selectedYear}`).then(({ data }) => {
+    // Iter 232N.39 — Filter picks by the SPECIFIC selected draft rather
+    // than year-aggregating everything. When no draft is selected yet
+    // we fall back to the year filter so the summary is at least
+    // populated with something.
+    const picksUrl = selectedDraftId
+      ? `/drafts/${league.id}/picks?draft_id=${selectedDraftId}`
+      : `/drafts/${league.id}/picks?year=${selectedYear}`;
+    api.get(picksUrl).then(({ data }) => {
       if (!cancelled) setLivePicks(data?.picks || []);
-    }).catch(() => {});
+    }).catch(() => setLivePicks([]));
     api.get(`/leagues/${league.id}/draft-order?year=${selectedYear}`).then(({ data }) => {
       if (!cancelled) setDraftOrder({
         source: data?.source,
@@ -112,7 +155,7 @@ export default function DraftBoardPage() {
       });
     }).catch(() => setDraftOrder(null));
     return () => { cancelled = true; };
-  }, [league?.id, selectedYear]);
+  }, [league?.id, selectedYear, selectedDraftId]);
 
   // Build teams list + per-team abbr mapping from live data when available.
   const teams = useMemo(() => {
@@ -135,7 +178,23 @@ export default function DraftBoardPage() {
     });
   }, [liveLeagueTeams, draftOrder]);
 
-  // Map live pick rows -> {originalAbbr: {round: {currentOwner: abbr, tradeHistory:[]}}}
+  // Iter 232N.39 — Key by team.id (not abbr) so that leagues with
+  // duplicate placeholder abbrs (e.g. "OS1"/"OS2" for multiple open
+  // slots) don't collapse rows onto one another and mis-count picks.
+  // Falls back to abbr when id is missing (mock data path).
+  const keyOf = (t: any) => (t?.id ? `id:${t.id}` : `abbr:${t.abbr}`);
+  const abbrToKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    teams.forEach((t) => { m[t.abbr] = keyOf(t); });
+    return m;
+  }, [teams]);
+  const teamIdToKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    teams.forEach((t) => { if ((t as any).id) m[(t as any).id] = keyOf(t); });
+    return m;
+  }, [teams]);
+
+  // Map live pick rows -> {originalKey: {round: {currentOwner: abbr, tradeHistory:[]}}}
   const teamIdToAbbr = useMemo(() => {
     const m: Record<string, string> = {};
     teams.forEach(t => { if ((t as any).id) m[(t as any).id] = t.abbr; });
@@ -145,9 +204,9 @@ export default function DraftBoardPage() {
     if (!livePicks?.length) return null;
     const data: Record<string, Record<number, any>> = {};
     livePicks.forEach(p => {
-      const origAbbr = teamIdToAbbr[p.original_team_id];
-      if (!origAbbr) return;
-      if (!data[origAbbr]) data[origAbbr] = {};
+      const origKey = teamIdToKey[p.original_team_id];
+      if (!origKey) return;
+      if (!data[origKey]) data[origKey] = {};
       const history = (p.trade_history || []).map((h: any, i: number) => ({
         step: i + 1,
         from: teamIdToAbbr[h.from_team_id] || h.from_team_name,
@@ -161,9 +220,12 @@ export default function DraftBoardPage() {
         toYear: h.to_year,
         trigger: h.trigger,
       }));
-      data[origAbbr][p.round] = {
-        originalTeam: origAbbr,  // Iter 191 fix — was missing, caused all picks to appear "traded"
-        currentOwner: teamIdToAbbr[p.current_team_id] || origAbbr,
+      data[origKey][p.round] = {
+        // originalTeam stored as key so we can still detect trades
+        originalTeamKey: origKey,
+        originalTeam: teamIdToAbbr[p.original_team_id] || "",
+        currentOwnerKey: teamIdToKey[p.current_team_id] || origKey,
+        currentOwner: teamIdToAbbr[p.current_team_id] || teamIdToAbbr[p.original_team_id] || "",
         isTraded: p.current_team_id !== p.original_team_id,
         tradeHistory: history,
         pickId: p._id,
@@ -171,24 +233,49 @@ export default function DraftBoardPage() {
       };
     });
     return data;
-  }, [livePicks, teamIdToAbbr]);
+  }, [livePicks, teamIdToKey, teamIdToAbbr]);
 
-  const yearData = liveYearData || allPickData[selectedYear] || {};
+  // Legacy mock path expects abbr keys — normalise to team-key form so
+  // both branches feed the same rendering logic.
+  const yearData = useMemo(() => {
+    if (liveYearData) return liveYearData;
+    const raw = allPickData[selectedYear] || {};
+    const out: Record<string, Record<number, any>> = {};
+    Object.entries(raw).forEach(([abbr, byRound]) => {
+      const k = abbrToKey[abbr] || `abbr:${abbr}`;
+      out[k] = {};
+      Object.entries(byRound as any).forEach(([r, pick]) => {
+        out[k][Number(r)] = {
+          ...(pick as any),
+          originalTeamKey: k,
+          currentOwnerKey: k,
+        };
+      });
+    });
+    return out;
+  }, [liveYearData, selectedYear, abbrToKey]);
 
-  // Count how many picks each team owns for this year
+  // Count how many picks each team owns in the SELECTED draft.
+  // Keys are team ids (via keyOf) so identical placeholder abbrs
+  // don't over-count. Total row count for a team = number of rounds
+  // in this specific draft × 1 pick per team per round (before
+  // trades). After trades, the count for the acquiring team goes up,
+  // and the losing team's count goes down.
   const pickCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    teams.forEach((t) => (counts[t.abbr] = 0));
+    teams.forEach((t) => (counts[keyOf(t)] = 0));
     teams.forEach((team) => {
+      const bucket = yearData[keyOf(team)] || {};
       for (let round = 1; round <= totalRounds; round++) {
-        const pick = yearData[team.abbr]?.[round];
+        const pick = bucket[round];
         if (pick) {
-          counts[pick.currentOwner] = (counts[pick.currentOwner] || 0) + 1;
+          const ownerKey = pick.currentOwnerKey || keyOf(team);
+          counts[ownerKey] = (counts[ownerKey] || 0) + 1;
         }
       }
     });
     return counts;
-  }, [yearData, teams]);
+  }, [yearData, teams, totalRounds]);
 
   // Iter 140 — Propose-trade toggle: when ON, every pick cell shows a quick-add button
   const [tradeMode, setTradeMode] = useState(false);
@@ -205,7 +292,7 @@ export default function DraftBoardPage() {
     };
   }, [user, liveLeagueTeams]);
 
-  const rounds = Array.from({ length: totalRounds }, (_, i) => i + 1);
+  const rounds = Array.from({ length: totalRoundsDefault }, (_, i) => i + 1); // legacy helper — not used in the live grid
 
   const handleAddPickToTrade = (pickInfo: any, teamAbbr: string, round: number) => {
     if (!league?.id) {
@@ -221,17 +308,22 @@ export default function DraftBoardPage() {
     const ownerTeam = (liveLeagueTeams || []).find(
       (t: any) => (t.logo_abbr || t.name.slice(0, 3).toUpperCase()) === ownerAbbr,
     );
+    // Iter 232N.39 — Include draft_id + draft_name so a manager can mix
+    // picks from Summer Entry + Winter Draft in the same trade proposal.
+    const draftLabel = selectedDraft?.name || `${selectedYear}`;
     const pickPayload: any = {
-      id: pickInfo?.pickId || `${selectedYear}-${ownerAbbr}-R${round}`,
+      id: pickInfo?.pickId || `${selectedDraftId || selectedYear}-${ownerAbbr}-R${round}`,
       year: Number(selectedYear),
       round,
+      draftId: selectedDraftId || undefined,
+      draftName: selectedDraft?.name || undefined,
       ownerTeamId: ownerTeam?.id,
       ownerTeamName: ownerTeam?.name || ownerAbbr,
       originalTeamId: (liveLeagueTeams || []).find(
         (t: any) => (t.logo_abbr || t.name.slice(0, 3).toUpperCase()) === teamAbbr,
       )?.id,
       originalTeamName: teamAbbr,
-      label: `${selectedYear} Round ${round} (${teamAbbr})`,
+      label: `${draftLabel} · Round ${round} (${teamAbbr})`,
     };
     tradeBuilder.addPick(pickPayload);
   };
@@ -269,13 +361,13 @@ export default function DraftBoardPage() {
                 {tradeMode ? "Trade Mode: On" : "Trade Mode: Off"}
               </Button>
               <Select value={selectedYear} onValueChange={setSelectedYear}>
-                <SelectTrigger className="w-[160px] bg-card border-border" data-testid="draft-board-year-select">
+                <SelectTrigger className="w-[200px] bg-card border-border" data-testid="draft-board-year-select">
                   <SelectValue placeholder="Select Year" />
                 </SelectTrigger>
                 <SelectContent>
                   {availableYears.map((year) => (
                     <SelectItem key={year} value={year}>
-                      {year} Draft
+                      {seasonLabel(year)}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -295,13 +387,26 @@ export default function DraftBoardPage() {
 
             <TabsContent value="board" className="space-y-6 mt-6">
 
-          {/* Summary badges */}
-          <div className="flex flex-wrap gap-2">
+          {/* Iter 232N.39 — Scheduled Drafts tiles. Clickable — the
+              summary + ownership grid below scope to the selected draft.
+              Selection persists across the parent's year-filter change
+              (auto-selects first draft when the previous one falls out). */}
+          <ScheduledDraftsPanel
+            leagueId={league?.id}
+            year={selectedYear}
+            selectedDraftId={selectedDraftId}
+            onSelectDraft={setSelectedDraftId}
+            onDraftsLoaded={handleDraftsLoaded}
+          />
+
+          {/* Summary badges — scoped to the SELECTED draft (Iter 232N.39). */}
+          <div className="flex flex-wrap gap-2" data-testid="draft-board-pick-summary">
             {teams.map((team) => {
-              const count = pickCounts[team.abbr] || 0;
+              const key = keyOf(team);
+              const count = pickCounts[key] || 0;
               const diff = count - totalRounds;
               return (
-                <Tooltip key={(team as any).id || `${team.abbr}-summary`}>
+                <Tooltip key={key}>
                   <TooltipTrigger asChild>
                     <div
                       className={cn(
@@ -310,14 +415,15 @@ export default function DraftBoardPage() {
                           ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
                           : diff < 0
                           ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                          : "bg-secondary border-border text-muted-foreground"
+                          : "bg-secondary border-border text-muted-foreground",
                       )}
+                      data-testid={`draft-board-summary-${team.abbr}`}
                     >
                       {team.abbr}: {count} pick{count !== 1 ? "s" : ""}
                     </div>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>{team.name} — {count} of {totalRounds} picks owned</p>
+                    <p>{team.name} — {count} of {totalRounds} picks in this draft</p>
                     {diff > 0 && <p className="text-emerald-400">+{diff} acquired via trade</p>}
                     {diff < 0 && <p className="text-amber-400">{diff} traded away</p>}
                   </TooltipContent>
@@ -326,24 +432,17 @@ export default function DraftBoardPage() {
             })}
           </div>
 
-          {/* Iter 232N.33 — Scheduled Drafts panel. Fetches all real drafts
-              for this league (scheduled / active / completed) and renders
-              one card per draft with its own pick summary. Replaces the
-              misleading "all-teams-0-picks" view that used to show up when
-              a league had multiple drafts in the same year. */}
-          <ScheduledDraftsPanel leagueId={league?.id} />
-
           {/* Draft Board Table */}
           <Card className="border-border gradient-card">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                {selectedYear} Draft Pick Ownership
+              <CardTitle className="text-base flex items-center gap-2" data-testid="draft-board-grid-title">
+                {selectedDraft?.name || `${selectedYear} Draft`} — Pick Ownership
                 <Tooltip>
                   <TooltipTrigger>
                     <Info className="h-4 w-4 text-muted-foreground" />
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs">
-                    <p>Teams are listed alphabetically (default draft order). Traded picks show the current owner — click for full trade chain.</p>
+                    <p>Teams are listed alphabetically (default draft order). Traded picks show the current owner — click for full trade chain. Trade Mode lets you add picks from any draft to the same trade proposal.</p>
                   </TooltipContent>
                 </Tooltip>
               </CardTitle>
@@ -357,7 +456,7 @@ export default function DraftBoardPage() {
                         <TableHead className="w-[180px] text-xs uppercase tracking-wider text-muted-foreground font-semibold pl-4">
                           Team
                         </TableHead>
-                        {rounds.map((round) => (
+                        {Array.from({ length: totalRounds }, (_, i) => i + 1).map((round) => (
                           <TableHead
                             key={round}
                             className="text-center text-xs uppercase tracking-wider text-muted-foreground font-semibold"
@@ -370,10 +469,10 @@ export default function DraftBoardPage() {
                     <TableBody>
                       {teams.map((team, teamIdx) => (
                         <TableRow
-                          key={(team as any).id || `${team.abbr}-${teamIdx}`}
+                          key={keyOf(team) + "-row"}
                           className={cn(
                             "border-border/50 transition-colors",
-                            teamIdx % 2 === 0 ? "bg-card/30" : "bg-card/10"
+                            teamIdx % 2 === 0 ? "bg-card/30" : "bg-card/10",
                           )}
                         >
                           <TableCell className="pl-4">
@@ -384,14 +483,14 @@ export default function DraftBoardPage() {
                               <div>
                                 <p className="text-sm font-medium text-foreground leading-tight">{team.name}</p>
                                 <p className="text-[10px] text-muted-foreground">
-                                  {pickCounts[team.abbr] || 0} pick{(pickCounts[team.abbr] || 0) !== 1 ? "s" : ""}
+                                  {pickCounts[keyOf(team)] || 0} pick{(pickCounts[keyOf(team)] || 0) !== 1 ? "s" : ""}
                                 </p>
                               </div>
                             </div>
                           </TableCell>
-                          {rounds.map((round) => {
-                            const pick = yearData[team.abbr]?.[round];
-                            const isTraded = pick && pick.currentOwner !== pick.originalTeam;
+                          {Array.from({ length: totalRounds }, (_, i) => i + 1).map((round) => {
+                            const pick = yearData[keyOf(team)]?.[round];
+                            const isTraded = pick && pick.currentOwnerKey && pick.currentOwnerKey !== keyOf(team);
                             const pickKey = `${selectedYear}-${pick?.currentOwner || team.abbr}-${round}`;
                             const isOnTradeBlock = tradeBlockPicks.has(pickKey);
                             const protections = (pick?.pendingProtections as any[]) || [];
