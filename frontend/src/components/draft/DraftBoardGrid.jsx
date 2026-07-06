@@ -50,7 +50,10 @@ export default function DraftBoardGrid({
               <div className="p-1.5 text-[10px] font-semibold text-[#A1A1AA] uppercase">Rd</div>
               {teamAbbrs.map((abbr) => {
                 const t = teamByAbbr(teams, abbr);
-                const ownerOnline = !!(t?.owner_id && onlineUserIds?.has(String(t.owner_id)));
+                const ownerOnline = !!onlineUserIds && (
+                  (t?.owner_id && onlineUserIds.has(String(t.owner_id))) ||
+                  (t?.co_owner_ids || []).some((cid) => onlineUserIds.has(String(cid)))
+                );
                 const isOnClock = abbr === onTheClockTeam && isActive;
                 return (
                   <div

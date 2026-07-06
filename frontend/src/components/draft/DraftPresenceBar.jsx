@@ -9,7 +9,19 @@ import { cn } from "@/lib/utils";
 
 export default function DraftPresenceBar({ teams, onlineUserIds }) {
   if (!teams?.length) return null;
-  const onlineCount = teams.filter((t) => t.owner_id && onlineUserIds?.has(String(t.owner_id))).length;
+  // Iter 232N.38 — Consider a team "here" if the primary owner OR any
+  // co-owner has an active socket in the draft room. Previously only
+  // `owner_id` counted, so a co-owner (e.g. a commissioner-installed
+  // deputy) opening the war room wouldn't turn their team's dot green.
+  const isTeamOnline = (t) => {
+    if (!onlineUserIds) return false;
+    if (t.owner_id && onlineUserIds.has(String(t.owner_id))) return true;
+    for (const cid of (t.co_owner_ids || [])) {
+      if (onlineUserIds.has(String(cid))) return true;
+    }
+    return false;
+  };
+  const onlineCount = teams.filter(isTeamOnline).length;
   const totalCount = teams.length;
   return (
     <Card className="border-white/10 bg-[#141414]" data-testid="draft-presence-bar">
@@ -26,7 +38,7 @@ export default function DraftPresenceBar({ teams, onlineUserIds }) {
         <div className="flex flex-wrap gap-1.5 flex-1 min-w-0" data-testid="draft-presence-list">
           {teams.map((t) => {
             const abbr = t.logo_abbr || (t.name || "").slice(0, 3).toUpperCase();
-            const online = !!(t.owner_id && onlineUserIds?.has(String(t.owner_id)));
+            const online = isTeamOnline(t);
             return (
               <div
                 key={t.id || abbr}

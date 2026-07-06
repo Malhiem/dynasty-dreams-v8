@@ -387,6 +387,18 @@ async def _user_can_join_room(user_id: str, room_id: str) -> bool:
 async def _is_league_member(user_id: str, league_id: str) -> bool:
     if not league_id:
         return False
+    # Iter 232N.38 — Platform admins bypass per-league membership so
+    # they can enter draft rooms + league sockets for support/audit.
+    if ObjectId.is_valid(user_id):
+        user_doc = await db.users.find_one(
+            {"_id": ObjectId(user_id)},
+            {"role": 1, "roles": 1},
+        )
+        if user_doc:
+            if user_doc.get("role") == "admin":
+                return True
+            if "admin" in (user_doc.get("roles") or []):
+                return True
     # Commissioner / admins of the league always count as members.
     lg = None
     if ObjectId.is_valid(league_id):

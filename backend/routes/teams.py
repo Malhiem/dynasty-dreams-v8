@@ -46,7 +46,14 @@ async def _require_league_member(request: Request, league_id: str) -> dict:
     (own/co-own a team, or are the commissioner / a league admin /
     a platform admin). Raises 403 otherwise."""
     user = await _require_user(request)
-    if (user.get("roles") or []) and "admin" in (user.get("roles") or []):
+    # Iter 232N.38 — Accept both `role='admin'` (singular string) and
+    # `roles=['admin']` (list) so platform admins consistently bypass
+    # per-league membership checks. Previous check missed the singular
+    # form, blocking admins from `/teams?league_id=X` calls used by
+    # the WebSocket-driven presence bar and other read-only surfaces.
+    _role = user.get("role")
+    _roles = user.get("roles") or []
+    if _role == "admin" or "admin" in _roles:
         return user  # platform admins bypass per-league checks
     db = _deps["db"]
     _safe_object_id = _deps["_safe_object_id"]
@@ -96,6 +103,10 @@ class TeamResponse(BaseModel):
     # awaiting an owner to claim it).
     owner_id: Optional[str] = None
     owner_name: Optional[str] = None
+    # Iter 232N.38 — Expose co-owner ids so the Draft Presence Bar can
+    # light up a team's dot when either the primary owner OR any co-owner
+    # is in the war room.
+    co_owner_ids: List[str] = []
     salary_used: float
     wins: int
     losses: int
@@ -145,6 +156,7 @@ def team_to_response(team: dict) -> TeamResponse:
         league_id=team["league_id"],
         owner_id=team.get("owner_id"),
         owner_name=team.get("owner_name"),
+        co_owner_ids=[str(c) for c in (team.get("co_owner_ids") or [])],
         salary_used=team.get("salary_used", 0.0),
         wins=team.get("wins", 0),
         losses=team.get("losses", 0),
