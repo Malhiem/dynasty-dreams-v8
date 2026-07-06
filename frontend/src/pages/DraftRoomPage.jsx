@@ -61,7 +61,9 @@ export default function DraftRoomPage() {
   const [timerPaused, setTimerPaused] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Fetch draft data
+  // Fetch draft data — Iter 232N.44 perf: no longer re-fetches teams
+  // on every draft refresh. Teams change rarely; a dedicated effect
+  // below fetches them once per league_id.
   const fetchDraft = useCallback(async () => {
     if (!draftId) return;
     try {
@@ -101,16 +103,22 @@ export default function DraftRoomPage() {
         setPersonalTimeLeft(0);
       }
       setTimerPaused(data.timer_paused || false);
-      if (data.league_id) {
-        try {
-          const { data: t } = await api.get(`/teams?league_id=${data.league_id}`);
-          setTeams(t || []);
-        } catch (e) { /* ignore */ }
-      }
     } catch (e) {
       console.error("Failed to fetch draft", e);
     }
   }, [draftId]);
+
+  // Iter 232N.44 perf — Fetch teams ONCE per league_id (was previously
+  // re-fetching on every pick, timer tick trigger, and chat msg).
+  const leagueId = draft?.league_id;
+  useEffect(() => {
+    if (!leagueId) return;
+    let cancelled = false;
+    api.get(`/teams?league_id=${leagueId}`).then(({ data }) => {
+      if (!cancelled) setTeams(data || []);
+    }).catch(() => { /* ignore */ });
+    return () => { cancelled = true; };
+  }, [leagueId]);
 
   // Fetch eligible players
   const fetchPlayers = useCallback(async () => {
@@ -143,52 +151,97 @@ export default function DraftRoomPage() {
     return () => clearTimeout(t);
   }, [searchQuery, positionFilter, fetchPlayers]);
 
-  // Pick timer
+  // Pick timer — Iter 232N.44 perf:
+  //   • Deps are PRIMITIVE fields off `draft` (not the whole object),
+  //     so the interval isn't torn down on every fetch (was every 30s
+  //     minimum, more if socket events arrived).
+  //   • Interval pauses when the tab is hidden (browsers throttle it
+  //     anyway; explicit stop reclaims the timer slot entirely).
+  const draftStarted = draft?.draft_started;
+  const earlyStart = draft?.early_start;
+  const timePerPick = Number(draft?.time_per_pick || 120);
+  const personalPickSec = Number(draft?.personal_pick_timer_seconds || 0);
   useEffect(() => {
-    if (!draft?.draft_started || draft?.early_start || timerPaused) return;
-    const interval = setInterval(() => {
-      setPickTimeLeft((prev) => {
-        if (prev <= 1) return draft.time_per_pick || 120;
-        return prev - 1;
-      });
-      // Iter 232N.26 — Personal timer ticks alongside the main clock.
-      if (draft?.personal_pick_timer_seconds) {
-        setPersonalTimeLeft((prev) => {
-          if (prev <= 1) return draft.personal_pick_timer_seconds;
-          return prev - 1;
-        });
+    if (!draftStarted || earlyStart || timerPaused) return undefined;
+    let intervalId = null;
+    const tick = () => {
+      setPickTimeLeft((prev) => (prev <= 1 ? timePerPick : prev - 1));
+      if (personalPickSec) {
+        setPersonalTimeLeft((prev) => (prev <= 1 ? personalPickSec : prev - 1));
       }
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [draft, timerPaused]);
+    };
+    const start = () => {
+      if (intervalId == null) intervalId = setInterval(tick, 1000);
+    };
+    const stop = () => {
+      if (intervalId != null) { clearInterval(intervalId); intervalId = null; }
+    };
+    if (typeof document === "undefined" || document.visibilityState === "visible") start();
+    const onVis = () => {
+      if (document.visibilityState === "visible") start();
+      else stop();
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVis);
+    return () => {
+      stop();
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [draftStarted, earlyStart, timerPaused, timePerPick, personalPickSec]);
 
-  // Poll for updates every 30s as WebSocket fallback
+  // Poll for updates — Iter 232N.44 perf: interval also pauses when the
+  // tab is hidden. Rate stays at 30s; the WebSocket handles instant
+  // updates, this is just a safety-net catch-up when the socket blips.
   useEffect(() => {
-    if (!draftId) return;
-    const interval = setInterval(async () => {
+    if (!draftId) return undefined;
+    let intervalId = null;
+    const poll = async () => {
       await fetchDraft();
       await fetchPlayers();
-    }, 30000);
-    return () => clearInterval(interval);
+    };
+    const start = () => {
+      if (intervalId == null) intervalId = setInterval(poll, 30000);
+    };
+    const stop = () => {
+      if (intervalId != null) { clearInterval(intervalId); intervalId = null; }
+    };
+    if (typeof document === "undefined" || document.visibilityState === "visible") start();
+    const onVis = () => {
+      if (document.visibilityState === "visible") start();
+      else stop();
+    };
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVis);
+    return () => {
+      stop();
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVis);
+    };
   }, [draftId, fetchDraft, fetchPlayers]);
 
   // WebSocket: real-time draft events + presence
+  // Iter 232N.44 perf — Callbacks wrapped in useCallback so the hook
+  // isn't torn down + resubscribed on every parent re-render (which
+  // happens once per second from the timer tick).
+  const onSocketDraftStarted = useCallback(() => { fetchDraft(); }, [fetchDraft]);
+  const onSocketDraftPick = useCallback(() => {
+    fetchDraft();
+    fetchPlayers();
+    setPickTimeLeft(timePerPick);
+  }, [fetchDraft, fetchPlayers, timePerPick]);
+  const onSocketChatMessage = useCallback((msg) => {
+    setChatMessages((prev) => [...prev, msg]);
+  }, []);
+  const onSocketTimerToggle = useCallback((data) => {
+    setTimerPaused(!!data?.paused);
+  }, []);
+  const onSocketConfigUpdated = useCallback(() => { fetchDraft(); }, [fetchDraft]);
+  const onSocketDraftCompleted = useCallback(() => { fetchDraft(); }, [fetchDraft]);
   const { onlineUserIds } = useDraftSocket(draftId, {
     userId: user?.id,
-    onDraftStarted: () => { fetchDraft(); },
-    onDraftPick: () => {
-      fetchDraft();
-      fetchPlayers();
-      setPickTimeLeft(draft?.time_per_pick || 120);
-    },
-    onChatMessage: (msg) => {
-      setChatMessages((prev) => [...prev, msg]);
-    },
-    onTimerToggle: (data) => {
-      setTimerPaused(data.paused);
-    },
-    onConfigUpdated: () => { fetchDraft(); },
-    onDraftCompleted: () => { fetchDraft(); },
+    onDraftStarted: onSocketDraftStarted,
+    onDraftPick: onSocketDraftPick,
+    onChatMessage: onSocketChatMessage,
+    onTimerToggle: onSocketTimerToggle,
+    onConfigUpdated: onSocketConfigUpdated,
+    onDraftCompleted: onSocketDraftCompleted,
   });
 
   // Actions
@@ -255,6 +308,12 @@ export default function DraftRoomPage() {
   const onTheClockTeam = getTeamForPick(currentPick);
   const currentRound = totalTeams ? Math.ceil(currentPick / totalTeams) : 1;
   const currentPickInRound = totalTeams ? ((currentPick - 1) % totalTeams) + 1 : 1;
+  // Iter 232N.44 perf — Memoize the on-clock team lookup. Was doing
+  // an O(N) `teams.find(...)` scan on every render (60/min from timer).
+  const onTheClockTeamObj = useMemo(
+    () => teamByAbbr(teams, onTheClockTeam),
+    [teams, onTheClockTeam],
+  );
 
   // Iter 146 — Propose-trade mode (mirrors Draft Board)
   const [tradeMode, setTradeMode] = useState(false);
@@ -327,9 +386,21 @@ export default function DraftRoomPage() {
     });
   };
 
-  const filteredPlayers = players.filter((p) => !p.drafted);
-  const shortlistedPlayers = players.filter((p) => shortlist.has(p.id) && !p.drafted);
-  const queuedPlayers = queue.map((id) => players.find((p) => p.id === id)).filter(Boolean);
+  // Iter 232N.44 perf — Memoize the derived player arrays. Parent
+  // re-renders 60×/min from the timer tick; without memo, the .filter
+  // + .map chains ran that often on a 50-player list.
+  const filteredPlayers = useMemo(
+    () => players.filter((p) => !p.drafted),
+    [players],
+  );
+  const shortlistedPlayers = useMemo(
+    () => players.filter((p) => shortlist.has(p.id) && !p.drafted),
+    [players, shortlist],
+  );
+  const queuedPlayers = useMemo(
+    () => queue.map((id) => players.find((p) => p.id === id)).filter(Boolean),
+    [queue, players],
+  );
 
   // Build pick grid
   const allPicks = useMemo(() => {
@@ -407,7 +478,7 @@ export default function DraftRoomPage() {
             draft={draft}
             teams={teams}
             onTheClockTeam={onTheClockTeam}
-            onTheClockTeamObj={teamByAbbr(teams, onTheClockTeam)}
+            onTheClockTeamObj={onTheClockTeamObj}
             currentRound={currentRound}
             currentPickInRound={currentPickInRound}
             currentPick={currentPick}

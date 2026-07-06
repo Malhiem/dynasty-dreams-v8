@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Repeat } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { memo, useMemo } from "react";
 
 const positionColors = {
   C: "bg-blue-600/80 text-blue-100 border-blue-500/50",
@@ -18,12 +19,7 @@ const positionColors = {
   G: "bg-purple-600/80 text-purple-100 border-purple-500/50",
 };
 
-const teamByAbbr = (teams, abbr) => {
-  if (!abbr || !teams?.length) return null;
-  return teams.find((t) => (t.logo_abbr || (t.name || "").slice(0, 3).toUpperCase()) === abbr) || null;
-};
-
-export default function DraftBoardGrid({
+function DraftBoardGridImpl({
   teams,
   teamAbbrs,
   totalTeams,
@@ -35,6 +31,17 @@ export default function DraftBoardGrid({
   tradeMode,
   onAddPickToTrade,
 }) {
+  // Iter 232N.44 perf — Pre-build a Map<abbr, team> once so the
+  // header/cell rendering below stays O(N) instead of the previous
+  // O(N²) find-per-header on a 24-team grid re-rendering every second.
+  const teamMap = useMemo(() => {
+    const m = new Map();
+    (teams || []).forEach((t) => {
+      const abbr = t.logo_abbr || (t.name || "").slice(0, 3).toUpperCase();
+      m.set(abbr, t);
+    });
+    return m;
+  }, [teams]);
   return (
     <Card className="border-white/10">
       <CardHeader className="pb-2">
@@ -49,7 +56,7 @@ export default function DraftBoardGrid({
             >
               <div className="p-1.5 text-[10px] font-semibold text-[#A1A1AA] uppercase">Rd</div>
               {teamAbbrs.map((abbr) => {
-                const t = teamByAbbr(teams, abbr);
+                const t = teamMap.get(abbr) || null;
                 const ownerOnline = !!onlineUserIds && (
                   (t?.owner_id && onlineUserIds.has(String(t.owner_id))) ||
                   (t?.co_owner_ids || []).some((cid) => onlineUserIds.has(String(cid)))
@@ -142,3 +149,10 @@ export default function DraftBoardGrid({
     </Card>
   );
 }
+
+// Iter 232N.44 perf — Memo wrapper. Parent re-renders 60×/min from the
+// timer tick; without React.memo the grid (with 24 team columns × N
+// round rows) reconciled the entire subtree each time. onlineUserIds
+// is a Set — the shallow-equal default suffices because parent's
+// useDraftSocket returns a fresh Set only when membership changes.
+export default memo(DraftBoardGridImpl);

@@ -6,8 +6,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import TeamLogo from "@/lovable/components/TeamLogo";
 import { Users } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { memo } from "react";
 
-export default function DraftPresenceBar({ teams, onlineUserIds }) {
+function DraftPresenceBarImpl({ teams, onlineUserIds }) {
   if (!teams?.length) return null;
   // Iter 232N.38 — Consider a team "here" if the primary owner OR any
   // co-owner has an active socket in the draft room. Previously only
@@ -65,3 +66,8 @@ export default function DraftPresenceBar({ teams, onlineUserIds }) {
     </Card>
   );
 }
+
+// Iter 232N.44 perf — memo wrapper. Parent re-renders every second; the
+// ribbon (24 avatars) only needs to reconcile when teams or the online
+// set change.
+export default memo(DraftPresenceBarImpl);
