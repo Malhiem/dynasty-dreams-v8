@@ -35,7 +35,7 @@ export default function LeagueDetailPage() {
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const { visibility: widgetVis, order: widgetOrder, toggle: toggleWidget, reorder: reorderWidgets, reset: resetWidgets, customizing, setCustomizing } = useLeagueHomeConfig(id);
+  const { visibility: widgetVis, order: widgetOrder, toggle: toggleWidget, reorder: reorderWidgets, reset: resetWidgets, customizing, setCustomizing, firstRunCompleted, applySmartOrder } = useLeagueHomeConfig(id);
 
   const isCommissioner = league?.commissioner_id === user?.id;
   const hasTeam = teams.some(t => t.owner_id === user?.id);
@@ -216,6 +216,45 @@ export default function LeagueDetailPage() {
       .finally(() => { if (!cancelled) setTxnsLoading(false); });
     return () => { cancelled = true; };
   }, [id, txnSinceKey, txnTeamId]);
+
+  // Iter 232N.31 — First-run smart-arrange.
+  // On the very first visit to a league (no server-saved layout AND
+  // no first_run_completed marker), rank widgets by how much data
+  // each one has right now. Widgets that would be empty stay at the
+  // bottom; widgets with fresh signal float to the top. Runs exactly
+  // once per league — every subsequent visit uses whatever the
+  // manager saved via drag / toggle. Any explicit reset re-arms it.
+  useEffect(() => {
+    if (loading || txnsLoading) return;
+    if (firstRunCompleted) return;
+    if (!id) return;
+    const signals = {
+      // Matchups only makes sense in H2H formats when the current
+      // week has games — otherwise it's a dead panel.
+      matchups: (isH2H && (weekMatchups?.length || 0) > 0) ? 100 : 0,
+      // Points leaderboard is the H2H alternative — show it prominently
+      // when the league is not H2H so it isn't buried on roto leagues.
+      points_leaderboard: (!isH2H && (standings?.length || 0) > 0) ? 95 : 0,
+      // Pending trades are almost always the most time-sensitive card
+      // when they exist — surface immediately so the user acts.
+      pending_trades: (pendingTrades?.length || 0) > 0 ? 90 + Math.min(pendingTrades.length, 5) : 0,
+      // Trade block is contextual — score scales with player count.
+      top_trade_block: Math.min((topBlock?.length || 0) * 3, 40),
+      // League movers gets a modest baseline; the widget fetches its
+      // own data so we don't know yet, but it's usually informative.
+      league_movers: 25,
+      // Recent transactions carry weight when a lot happened this week.
+      transactions: Math.min((transactions?.length || 0) * 2, 35),
+      // Roster status feed matters when the user actually has a team.
+      player_activity: myLeagueTeamId ? 30 : 0,
+      // Quick actions — least dynamic, sinks to the bottom by default.
+      quick_actions: 5,
+    };
+    applySmartOrder(signals);
+    // Deliberately excluding applySmartOrder / signals from deps so this
+    // effect runs on the mount-time snapshot only; the hook itself
+    // no-ops after the first successful arrangement.
+  }, [loading, txnsLoading, firstRunCompleted, id, myLeagueTeamId]);
 
   const handleJoin = async () => {
     if (!teamName.trim()) return;

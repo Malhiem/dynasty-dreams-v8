@@ -641,6 +641,11 @@ async def get_my_league_home_layout(league_id: str, request: Request):
         "league_id": league_id,
         "widget_order": entry.get("widget_order") or [],
         "visibility": entry.get("visibility") or {},
+        # Iter 232N.31 — Sticky flag that gates the first-run smart-order.
+        # Once true (either because the user saved a manual layout OR
+        # the client auto-arranged on first visit), we never re-run the
+        # relevance sort again.
+        "first_run_completed": bool(entry.get("first_run_completed", False)),
         "updated_at": entry.get("updated_at"),
     }
 
@@ -662,6 +667,11 @@ async def patch_my_league_home_layout(league_id: str, payload: dict, request: Re
         updates[f"league_home_layouts.{league_id}.widget_order"] = cleaned_order
     if payload.get("visibility") is not None:
         updates[f"league_home_layouts.{league_id}.visibility"] = cleaned_vis
+    # Iter 232N.31 — Optional first-run marker. `True` locks in the
+    # current order so smart-arrange never touches it again. Once set,
+    # only an explicit reset can flip it back.
+    if isinstance(payload.get("first_run_completed"), bool):
+        updates[f"league_home_layouts.{league_id}.first_run_completed"] = payload["first_run_completed"]
     await db.users.update_one(
         {"_id": ObjectId(user["_id"])},
         {"$set": updates},
@@ -670,6 +680,7 @@ async def patch_my_league_home_layout(league_id: str, payload: dict, request: Re
         "league_id": league_id,
         "widget_order": cleaned_order,
         "visibility": cleaned_vis,
+        "first_run_completed": bool(payload.get("first_run_completed", False)),
         "updated_at": now.isoformat(),
     }
 

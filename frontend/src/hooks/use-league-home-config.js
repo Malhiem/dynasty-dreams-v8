@@ -59,6 +59,10 @@ export function useLeagueHomeConfig(leagueId) {
   // dashed cyan outlines + prominent grip handles so users discover
   // the widgets are drag-to-reorder. Off by default.
   const [customizing, setCustomizing] = useState(false);
+  // Iter 232N.31 — First-run marker. Once true, smart-arrange is
+  // permanently disabled so we never clobber user-chosen orders on
+  // subsequent visits. Hydrated from the server on mount.
+  const [firstRunCompleted, setFirstRunCompleted] = useState(true);
   const saveTimer = useRef(null);
 
   // ── Local storage hydration ────────────────────────────────────
@@ -103,19 +107,27 @@ export function useLeagueHomeConfig(leagueId) {
             try { localStorage.setItem(visKey, JSON.stringify(next)); } catch { /* noop */ }
           }
         }
+        // Iter 232N.31 — Only allow smart-arrange when the server
+        // has NEVER seen a first-run marker AND there's no saved
+        // layout yet. Any saved order or explicit flag flips this off.
+        const serverFirstRun = !!data?.first_run_completed;
+        setFirstRunCompleted(serverFirstRun || remoteOrder.length > 0);
       } catch { /* offline / unauth — localStorage stays authoritative */ }
     })();
     return () => { cancelled = true; };
   }, [leagueId, visKey, orderKey]);
 
   // Debounced server write for any subsequent local change.
-  const scheduleSync = useCallback((nextOrder, nextVis) => {
+  const scheduleSync = useCallback((nextOrder, nextVis, extras = {}) => {
     if (!leagueId) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const body = {};
       if (nextOrder) body.widget_order = nextOrder;
       if (nextVis) body.visibility = nextVis;
+      if (typeof extras.first_run_completed === "boolean") {
+        body.first_run_completed = extras.first_run_completed;
+      }
       api.patch(`/users/me/league-home-layout/${leagueId}`, body)
         .catch(() => { /* offline / auth blip — localStorage is authoritative */ });
     }, 400);
@@ -125,7 +137,10 @@ export function useLeagueHomeConfig(leagueId) {
     setVisibility((prev) => {
       const next = { ...prev, [id]: !prev[id] };
       if (visKey) { try { localStorage.setItem(visKey, JSON.stringify(next)); } catch { /* noop */ } }
-      scheduleSync(null, next);
+      // Iter 232N.31 — Any manual change → mark first-run done so we
+      // never override the user's intent on later visits.
+      scheduleSync(null, next, { first_run_completed: true });
+      setFirstRunCompleted(true);
       return next;
     });
   }, [visKey, scheduleSync]);
@@ -133,7 +148,8 @@ export function useLeagueHomeConfig(leagueId) {
   const reorder = useCallback((nextOrder) => {
     setOrder(nextOrder);
     if (orderKey) { try { localStorage.setItem(orderKey, JSON.stringify(nextOrder)); } catch { /* noop */ } }
-    scheduleSync(nextOrder, null);
+    scheduleSync(nextOrder, null, { first_run_completed: true });
+    setFirstRunCompleted(true);
   }, [orderKey, scheduleSync]);
 
   const reset = useCallback(() => {
@@ -142,14 +158,41 @@ export function useLeagueHomeConfig(leagueId) {
     setOrder(DEFAULT_ORDER);
     if (visKey) { try { localStorage.removeItem(visKey); } catch { /* noop */ } }
     if (orderKey) { try { localStorage.removeItem(orderKey); } catch { /* noop */ } }
-    // Reset on the server too so a fresh device isn't stuck with the old
-    // layout. Passing empty arrays tells the endpoint to drop the entry
-    // for this league next time it reads.
-    scheduleSync(DEFAULT_ORDER, d);
+    // Iter 232N.31 — Explicit reset re-arms smart-arrange for the next
+    // page load. That way a manager who resets on a slow week gets a
+    // freshly-relevant layout on their next visit.
+    setFirstRunCompleted(false);
+    scheduleSync(DEFAULT_ORDER, d, { first_run_completed: false });
   }, [visKey, orderKey, scheduleSync]);
+
+  // Iter 232N.31 — Smart-arrange helper. Callers hand us a map of
+  // { widgetId: signalScore } and we push widgets with the highest
+  // signal to the top. No-op if firstRunCompleted is already true —
+  // never clobbers a user's saved layout.
+  const applySmartOrder = useCallback((signals) => {
+    if (firstRunCompleted) return;
+    if (!signals || typeof signals !== "object") return;
+    // Only rank widgets we actually know about; unknown ids drop.
+    const scored = DEFAULT_ORDER.map((id, idx) => ({
+      id,
+      // High-signal first; ties broken by the DEFAULT_ORDER index so
+      // the sort stays deterministic across renders.
+      score: Number.isFinite(signals[id]) ? Number(signals[id]) : 0,
+      tie: idx,
+    }));
+    scored.sort((a, b) => (b.score - a.score) || (a.tie - b.tie));
+    const nextOrder = scored.map((s) => s.id);
+    setOrder(nextOrder);
+    if (orderKey) { try { localStorage.setItem(orderKey, JSON.stringify(nextOrder)); } catch { /* noop */ } }
+    // Persist immediately + latch the first-run marker so we don't
+    // re-arrange on every subsequent page load.
+    setFirstRunCompleted(true);
+    scheduleSync(nextOrder, null, { first_run_completed: true });
+  }, [firstRunCompleted, orderKey, scheduleSync]);
 
   return {
     visibility, order, toggle, reorder, reset,
     customizing, setCustomizing,
+    firstRunCompleted, applySmartOrder,
   };
 }
