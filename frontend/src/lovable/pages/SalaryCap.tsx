@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import CapFloorWatchlistCard from "@/lovable/components/dashboard/CapFloorWatchlistCard";
 import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBanner";
 import api from "@/lib/api";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -60,6 +60,107 @@ const CHART_COLORS = [
   "#8B5CF6", // purple-2
   "#06B6D4", // cyan-2
 ];
+
+// Iter 232N.43 — Stable module-scoped Legend formatter. Prevents
+// recharts from receiving a fresh function identity on every parent
+// re-render (which the linter flagged as `no-unstable-nested-components`).
+const legendFormatter = (value: any) => (
+  <span className="text-sm text-foreground">{String(value)}</span>
+);
+
+// Iter 232N.43 — Stable sort-direction indicator. Was previously
+// defined inside `SalaryCap`, causing React to see a new component
+// type on every render (destroys focus, breaks reconciliation).
+type SortKey = "player" | "position" | "salary" | "year" | "contract_ends";
+const SortIcon = ({ col, sortKey, sortDir }: { col: SortKey; sortKey: SortKey; sortDir: "asc" | "desc" }) => {
+  if (sortKey !== col) return <ArrowUpDown className="inline h-3 w-3 ml-1 opacity-40" />;
+  return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
+};
+
+// Iter 232N.43 — Standalone BuyoutDialog. Was defined inside SalaryCap
+// (`no-unstable-nested-components` flagged); moved to module scope with
+// the buyout callback + Contract type passed as props.
+interface BuyoutDialogProps {
+  contract: Contract;
+  onConfirm: (id: string, name: string, lengthOpt: string) => void;
+}
+
+function BuyoutDialog({ contract, onConfirm }: BuyoutDialogProps) {
+  const [lengthOpt, setLengthOpt] = useState<string>("default");
+  const previewMath: Record<string, { rate: number; span: number }> = {
+    full: { rate: 1.0, span: Math.max(2, 2 * contract.yearsRemaining) },
+    default: { rate: 2 / 3, span: Math.max(2, 2 * contract.yearsRemaining) },
+    two_thirds: { rate: 2 / 3, span: Math.max(2, 2 * contract.yearsRemaining) },
+    half: { rate: 0.5, span: Math.max(2, 2 * contract.yearsRemaining) },
+    one_year: { rate: 1.0, span: 1 },
+    minimum: { rate: 1 / 3, span: Math.max(1, contract.yearsRemaining) },
+  };
+  const preview = previewMath[lengthOpt] || previewMath.default;
+  const totalDead = Math.round(contract.salary * contract.yearsRemaining * preview.rate);
+  const annual = Math.round(totalDead / preview.span);
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button size="sm" variant="outline" className="h-7 text-[10px] px-2" data-testid={`buyout-btn-${contract.id}`}>
+          <MinusCircle className="h-3 w-3 mr-1" />
+          Buy Out
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Buy out {contract.player}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Choose the buyout terms. The dead-cap charge is spread over future seasons.
+            <span className="block mt-1 text-muted-foreground text-xs">
+              Remaining contract: {contract.yearsRemaining} year(s) × ${(contract.salary / 1_000_000).toFixed(2)}M = ${(contract.salary * contract.yearsRemaining / 1_000_000).toFixed(2)}M total.
+            </span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="space-y-3 py-2">
+          <div>
+            <label className="text-xs text-muted-foreground">Buyout length</label>
+            <Select value={lengthOpt} onValueChange={setLengthOpt}>
+              <SelectTrigger className="w-full mt-1" data-testid={`buyout-length-${contract.id}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">2/3 over 2× term (NHL CBA default)</SelectItem>
+                <SelectItem value="full">Full salary over 2× term</SelectItem>
+                <SelectItem value="half">Half salary over 2× term</SelectItem>
+                <SelectItem value="one_year">Full salary as a single year hit</SelectItem>
+                <SelectItem value="minimum">1/3 over remaining term (minimum)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="rounded-lg bg-secondary/40 border border-border p-3 text-xs space-y-1">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Dead cap total:</span>
+              <span className="font-bold text-accent">${(totalDead / 1_000_000).toFixed(2)}M</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Annual dead cap:</span>
+              <span className="font-bold">${(annual / 1_000_000).toFixed(2)}M / yr</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Span:</span>
+              <span className="font-bold">{preview.span} season(s)</span>
+            </div>
+          </div>
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => onConfirm(contract.id, contract.player, lengthOpt)}
+            data-testid={`buyout-confirm-${contract.id}`}
+          >
+            Confirm Buyout
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
 
 const CAP_SPACE_COLOR = "#34C759";   // bright emerald (was broken hsl(var(--success)))
 const DEAD_CAP_COLOR = "#FFB020";    // gold/accent
@@ -158,85 +259,8 @@ const SalaryCap = () => {
     }
   };
 
-  // Iter 114 — Sub-component renders a single buyout dialog with its own
-  // local "length option" state so we don't need to manage per-row state at
-  // the parent level.
-  const BuyoutDialog = ({ contract }: { contract: Contract }) => {
-    const [lengthOpt, setLengthOpt] = useState<string>("default");
-    const previewMath: Record<string, { rate: number; span: number }> = {
-      full: { rate: 1.0, span: Math.max(2, 2 * contract.yearsRemaining) },
-      default: { rate: 2 / 3, span: Math.max(2, 2 * contract.yearsRemaining) },
-      two_thirds: { rate: 2 / 3, span: Math.max(2, 2 * contract.yearsRemaining) },
-      half: { rate: 0.5, span: Math.max(2, 2 * contract.yearsRemaining) },
-      one_year: { rate: 1.0, span: 1 },
-      minimum: { rate: 1 / 3, span: Math.max(1, contract.yearsRemaining) },
-    };
-    const preview = previewMath[lengthOpt] || previewMath.default;
-    const totalDead = Math.round(contract.salary * contract.yearsRemaining * preview.rate);
-    const annual = Math.round(totalDead / preview.span);
-
-    return (
-      <AlertDialog>
-        <AlertDialogTrigger asChild>
-          <Button size="sm" variant="outline" className="h-7 text-[10px] px-2" data-testid={`buyout-btn-${contract.id}`}>
-            <MinusCircle className="h-3 w-3 mr-1" />
-            Buy Out
-          </Button>
-        </AlertDialogTrigger>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Buy out {contract.player}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Choose the buyout terms. The dead-cap charge is spread over future seasons.
-              <span className="block mt-1 text-muted-foreground text-xs">
-                Remaining contract: {contract.yearsRemaining} year(s) × ${(contract.salary / 1_000_000).toFixed(2)}M = ${(contract.salary * contract.yearsRemaining / 1_000_000).toFixed(2)}M total.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-3 py-2">
-            <div>
-              <label className="text-xs text-muted-foreground">Buyout length</label>
-              <Select value={lengthOpt} onValueChange={setLengthOpt}>
-                <SelectTrigger className="w-full mt-1" data-testid={`buyout-length-${contract.id}`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="default">2/3 over 2× term (NHL CBA default)</SelectItem>
-                  <SelectItem value="full">Full salary over 2× term</SelectItem>
-                  <SelectItem value="half">Half salary over 2× term</SelectItem>
-                  <SelectItem value="one_year">Full salary as a single year hit</SelectItem>
-                  <SelectItem value="minimum">1/3 over remaining term (minimum)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="rounded-lg bg-secondary/40 border border-border p-3 text-xs space-y-1">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Dead cap total:</span>
-                <span className="font-bold text-accent">${(totalDead / 1_000_000).toFixed(2)}M</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Annual dead cap:</span>
-                <span className="font-bold">${(annual / 1_000_000).toFixed(2)}M / yr</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Span:</span>
-                <span className="font-bold">{preview.span} season(s)</span>
-              </div>
-            </div>
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => buyOut(contract.id, contract.player, lengthOpt)}
-              data-testid={`buyout-confirm-${contract.id}`}
-            >
-              Confirm Buyout
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    );
-  };
+  // Iter 232N.43 — BuyoutDialog + SortIcon moved to module scope
+  // (see top of file). Below they're used as normal components.
 
   const contracts: Contract[] = useMemo(() => {
     if (!rosterDetail?.players) return [];
@@ -385,17 +409,14 @@ const SalaryCap = () => {
   const formatCurrency = (value: number) => `$${(value / 1000000).toFixed(2)}M`;
 
   // ── Iter 111 — Sortable Active-Contracts table ────────────────
-  type SortKey = "player" | "position" | "salary" | "year" | "contract_ends";
+  // Iter 232N.43 — `SortKey` moved to module scope; local alias removed.
   const [sortKey, setSortKey] = useState<SortKey>("salary");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const handleSort = (key: SortKey) => {
     if (sortKey === key) setSortDir(sortDir === "asc" ? "desc" : "asc");
     else { setSortKey(key); setSortDir(key === "salary" ? "desc" : "asc"); }
   };
-  const SortIcon = ({ col }: { col: SortKey }) => {
-    if (sortKey !== col) return <ArrowUpDown className="inline h-3 w-3 ml-1 opacity-40" />;
-    return sortDir === "asc" ? <ArrowUp className="inline h-3 w-3 ml-1" /> : <ArrowDown className="inline h-3 w-3 ml-1" />;
-  };
+  // Iter 232N.43 — SortIcon moved to module scope (see top of file).
   const sortedContracts = useMemo(() => {
     const arr = [...contracts];
     const dir = sortDir === "asc" ? 1 : -1;
@@ -579,7 +600,7 @@ const SalaryCap = () => {
               </CardTitle>
               <CardDescription>
                 Minimum team payroll required by this league for {new Date().getFullYear()}: <strong className="text-amber-400">${(floorCurrent / 1_000_000).toFixed(1)}M</strong>.
-                {' '}Teams below the floor on the league's compliance date may be assessed a penalty per the league constitution.
+                {' '}Teams below the floor on the league&apos;s compliance date may be assessed a penalty per the league constitution.
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
@@ -590,7 +611,7 @@ const SalaryCap = () => {
                 return (
                   <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-2 text-sm">
-                      <span className="text-muted-foreground">Your team's payroll:</span>
+                      <span className="text-muted-foreground">Your team&apos;s payroll:</span>
                       <span className="font-mono font-bold">${(cur / 1_000_000).toFixed(1)}M</span>
                     </div>
                     {isMyTeamCompliant ? (
@@ -679,7 +700,7 @@ const SalaryCap = () => {
                     <Legend
                       verticalAlign="bottom"
                       height={36}
-                      formatter={(value) => <span className="text-sm text-foreground">{value}</span>}
+                      formatter={legendFormatter}
                     />
                     <Bar dataKey="locked" stackId="cap" name="Locked Salary" fill={CHART_COLORS[0]} radius={[0, 0, 0, 0]} />
                     <Bar dataKey="dead" stackId="cap" name="Dead Cap (buyouts + retention)" fill={DEAD_CAP_COLOR} radius={[0, 0, 0, 0]} />
@@ -732,7 +753,7 @@ const SalaryCap = () => {
                     <Legend
                       verticalAlign="bottom"
                       height={36}
-                      formatter={(value) => <span className="text-sm text-foreground">{value}</span>}
+                      formatter={legendFormatter}
                     />
                   </PieChart>
                 )}
@@ -838,35 +859,35 @@ const SalaryCap = () => {
                     onClick={() => handleSort("player")}
                     data-testid="contract-sort-player"
                   >
-                    Player <SortIcon col="player" />
+                    Player <SortIcon col="player" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                   <TableHead
                     className="text-center cursor-pointer select-none hover:text-foreground transition-colors"
                     onClick={() => handleSort("position")}
                     data-testid="contract-sort-position"
                   >
-                    POS <SortIcon col="position" />
+                    POS <SortIcon col="position" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                   <TableHead
                     className="text-right cursor-pointer select-none hover:text-foreground transition-colors"
                     onClick={() => handleSort("salary")}
                     data-testid="contract-sort-salary"
                   >
-                    Salary <SortIcon col="salary" />
+                    Salary <SortIcon col="salary" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                   <TableHead
                     className="text-center cursor-pointer select-none hover:text-foreground transition-colors"
                     onClick={() => handleSort("year")}
                     data-testid="contract-sort-year"
                   >
-                    Year <SortIcon col="year" />
+                    Year <SortIcon col="year" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                   <TableHead
                     className="text-center cursor-pointer select-none hover:text-foreground transition-colors"
                     onClick={() => handleSort("contract_ends")}
                     data-testid="contract-sort-ends"
                   >
-                    Contract Ends <SortIcon col="contract_ends" />
+                    Contract Ends <SortIcon col="contract_ends" sortKey={sortKey} sortDir={sortDir} />
                   </TableHead>
                   {buyoutsEnabled && (
                     <TableHead className="text-center text-xs">Actions</TableHead>
@@ -931,7 +952,7 @@ const SalaryCap = () => {
                     {buyoutsEnabled && (
                       <TableCell className="text-center">
                         {contract.yearsRemaining > 1 ? (
-                          <BuyoutDialog contract={contract} />
+                          <BuyoutDialog contract={contract} onConfirm={buyOut} />
                         ) : (
                           <span className="text-[10px] text-muted-foreground italic">expiring</span>
                         )}

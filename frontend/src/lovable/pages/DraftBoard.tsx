@@ -2,7 +2,7 @@
 // Iter 232N.34 — Refactored: TradeHistoryPopover, ScheduledDraftsPanel, and
 // DraftOrderResultsTab / DraftOrderStatus were extracted to
 // /components/draft/*. This file now owns just the page shell + pick grid.
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { useAuth } from "@/contexts/AuthContext";
@@ -106,6 +106,9 @@ export default function DraftBoardPage() {
   // ownership grid + count summary to a single scheduled draft.
   const [scheduledDrafts, setScheduledDrafts] = useState<any[]>([]);
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  // Iter 232N.42 — Ref to the pick-ownership ScrollArea so the "Jump
+  // to Rd" input can scroll the grid to a specific round.
+  const gridScrollRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-select the first draft (active → nearest scheduled → completed)
   // whenever the list arrives or the year filter changes.
@@ -435,17 +438,47 @@ export default function DraftBoardPage() {
           {/* Draft Board Table */}
           <Card className="border-border gradient-card">
             <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2" data-testid="draft-board-grid-title">
-                {selectedDraft?.name || `${selectedYear} Draft`} — Pick Ownership
-                <Tooltip>
-                  <TooltipTrigger>
-                    <Info className="h-4 w-4 text-muted-foreground" />
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs">
-                    <p>Teams are listed alphabetically (default draft order). Traded picks show the current owner — click for full trade chain. Trade Mode lets you add picks from any draft to the same trade proposal.</p>
-                  </TooltipContent>
-                </Tooltip>
-              </CardTitle>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <CardTitle className="text-base flex items-center gap-2" data-testid="draft-board-grid-title">
+                  {selectedDraft?.name || `${selectedYear} Draft`} — Pick Ownership
+                  <Tooltip>
+                    <TooltipTrigger>
+                      <Info className="h-4 w-4 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p>Teams are listed alphabetically (default draft order). Traded picks show the current owner — click for full trade chain. Trade Mode lets you add picks from any draft to the same trade proposal.</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </CardTitle>
+                {/* Iter 232N.42 — Jump-to-round input. On 55-round drafts
+                    the 4000px-wide grid takes several scrubs to reach
+                    late rounds; this shortcut positions the requested
+                    round as the leftmost visible column. Each round is
+                    72px wide, team column 180px, so target scrollLeft
+                    is (round - 1) * 72. */}
+                {totalRounds > 6 && (
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="jump-to-round-block">
+                    Jump to Rd
+                    <input
+                      type="number"
+                      min={1}
+                      max={totalRounds}
+                      defaultValue={1}
+                      onChange={(e) => {
+                        const r = Math.max(1, Math.min(totalRounds, Number(e.target.value) || 1));
+                        const viewport = gridScrollRef.current?.querySelector<HTMLDivElement>(
+                          "[data-radix-scroll-area-viewport]",
+                        );
+                        if (viewport) viewport.scrollTo({ left: (r - 1) * 72, behavior: "smooth" });
+                      }}
+                      className="w-14 h-7 rounded-md border border-border bg-card px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      data-testid="jump-to-round-input"
+                      aria-label="Jump to draft round"
+                    />
+                    <span className="text-[10px] italic">of {totalRounds}</span>
+                  </label>
+                )}
+              </div>
             </CardHeader>
             <CardContent className="p-0">
               {/* Iter 232N.40 — Horizontal scroll for wide drafts. A 55-
@@ -453,7 +486,7 @@ export default function DraftBoardPage() {
                   explicit horizontal ScrollBar the columns got clipped
                   past ~round 36. `min-w` scales per-round so each column
                   keeps ≥72px whether the draft is 4 rounds or 55. */}
-              <ScrollArea className="w-full">
+              <ScrollArea className="w-full" ref={gridScrollRef}>
                 <div style={{ minWidth: `${180 + totalRounds * 72}px` }}>
                   <Table>
                     <TableHeader>
