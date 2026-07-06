@@ -1,4 +1,7 @@
 // @ts-nocheck
+// Iter 232N.34 — Refactored: TradeHistoryPopover, ScheduledDraftsPanel, and
+// DraftOrderResultsTab / DraftOrderStatus were extracted to
+// /components/draft/*. This file now owns just the page shell + pick grid.
 import { useState, useMemo, useEffect } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useActiveLeague } from "@/hooks/use-active-league";
@@ -9,18 +12,17 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowRightLeft, Info, ChevronDown, ShoppingCart, CheckCircle2, Clock, AlertTriangle, CalendarDays, Repeat, Megaphone } from "lucide-react";
+import { ArrowRightLeft, Info, ShoppingCart, Megaphone, Repeat } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useTradeBuilder } from "@/lovable/state/TradeBuilderContext";
+import TradeHistoryPopover from "@/components/draft/TradeHistoryPopover";
+import ScheduledDraftsPanel from "@/components/draft/ScheduledDraftsPanel";
+import { DraftOrderStatus, DraftOrderResultsTab } from "@/components/draft/DraftOrderResults";
 
 // League teams with acronyms (alphabetical default order)
 const leagueTeams = [
@@ -41,24 +43,19 @@ const leagueTeams = [
 const totalRounds = 5;
 const maxTradeYears = 3; // League allows picks to be dealt up to 3 years out
 
-interface TradeRecord {
-  date: string;
-  from: string;
-  to: string;
-  details: string;
-}
-
 interface PickOwnership {
   originalTeam: string;
   currentOwner: string;
-  tradeHistory: TradeRecord[];
+  tradeHistory: any[];
 }
 
-// Mock data: pick ownership by year
+// Mock data: pick ownership by year (kept as fallback when the league has
+// no live pick data yet). Iter 191 removed all mock trade injections — every
+// pick returns to its original owner with empty tradeHistory. Live trades
+// will repopulate as draft-day picks are traded via the iter191 trade flow.
 const generatePickData = (): Record<string, Record<string, Record<number, PickOwnership>>> => {
   const data: Record<string, Record<string, Record<number, PickOwnership>>> = {};
   const years = ["2025", "2026", "2027"];
-
   years.forEach((year) => {
     data[year] = {};
     leagueTeams.forEach((team) => {
@@ -72,12 +69,6 @@ const generatePickData = (): Record<string, Record<string, Record<number, PickOw
       }
     });
   });
-
-  // Iter 191 — Mock trade injections removed at user request.
-  // All picks return to their original owners with empty
-  // tradeHistory. Live trades will repopulate as draft-day picks
-  // are traded via the new iter191 trade flow.
-
   return data;
 };
 
@@ -94,544 +85,15 @@ const tradeBlockPicks: Set<string> = new Set([
   "2027-BLZ-1",    // BLZ offering NTH's 2027 1st they acquired
 ]);
 
-function TradeHistoryPopover({ pick }: { pick: PickOwnership }) {
-  const originalTeam = leagueTeams.find((t) => t.abbr === pick.originalTeam);
-  const currentOwner = leagueTeams.find((t) => t.abbr === pick.currentOwner);
-
-  // Iter 191 — Year-grouped "via X · MMM D" summary. The user spec
-  // says: if multiple trades land in the same calendar year, don't
-  // repeat the year — clump trades together under one year header.
-  // Example output:
-  //   2025: via FRST (Nov 15) · via ICE (Jan 5)
-  //   2026: via NTH (Feb 10)
-  const groupedSummary = (() => {
-    const byYear: Record<string, string[]> = {};
-    const order: string[] = [];
-    (pick.tradeHistory || []).forEach((t: any) => {
-      const raw = t?.date;
-      if (!raw) return;
-      const d = new Date(raw);
-      if (Number.isNaN(d.getTime())) return;
-      const y = String(d.getFullYear());
-      // "via {from team} (Nov 15)"  — `from` is the team relinquishing
-      // the pick at this step in the chain.
-      const mmd = d.toLocaleString(undefined, { month: "short", day: "numeric" });
-      const fromAbbr = t.from || t.from_team_name || "?";
-      const seg = `via ${fromAbbr} (${mmd})`;
-      if (!(y in byYear)) {
-        byYear[y] = [];
-        order.push(y);
-      }
-      byYear[y].push(seg);
-    });
-    return order.map((y) => ({ year: y, segs: byYear[y] }));
-  })();
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button className="flex items-center gap-1 text-xs font-semibold text-primary hover:text-primary/80 transition-colors cursor-pointer group">
-          <span>{pick.currentOwner}</span>
-          <ChevronDown className="h-3 w-3 opacity-60 group-hover:opacity-100 transition-opacity" />
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-80 p-0" align="start">
-        <div className="p-3 border-b border-border">
-          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            <ArrowRightLeft className="h-4 w-4 text-primary" />
-            Trade History
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            Originally: <span className="font-medium text-foreground">{originalTeam?.name} ({pick.originalTeam})</span>
-            {" → "}
-            Now: <span className="font-medium text-primary">{currentOwner?.name} ({pick.currentOwner})</span>
-          </p>
-          {groupedSummary.length > 0 && (
-            <ul
-              className="mt-2 space-y-0.5 text-[11px]"
-              data-testid="pick-trade-grouped-summary"
-            >
-              {groupedSummary.map((g) => (
-                <li key={g.year} className="leading-snug">
-                  <span className="font-semibold text-foreground">{g.year}:</span>{" "}
-                  <span className="text-muted-foreground">{g.segs.join(" · ")}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="p-2 space-y-2 max-h-60 overflow-y-auto">
-          {pick.tradeHistory.map((trade: any, idx) => (
-            <div
-              key={idx}
-              data-testid={trade.kind === "pick_upgrade" ? `pick-upgrade-${idx}` : `pick-trade-${idx}`}
-              className={`p-2 rounded-md border space-y-1 ${
-                trade.kind === "pick_upgrade"
-                  ? "bg-amber-500/10 border-amber-500/30"
-                  : "bg-secondary/50 border-border/50"
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <Badge
-                  variant="outline"
-                  className={`text-[10px] px-1.5 h-4 ${
-                    trade.kind === "pick_upgrade" ? "border-amber-500/50 text-amber-500" : ""
-                  }`}
-                >
-                  {trade.kind === "pick_upgrade"
-                    ? (trade.toRound < trade.fromRound ? "PASS · Upgrade" : "PASS · Downgrade")
-                    : `Trade ${idx + 1}`}
-                </Badge>
-                <span className="text-[10px] text-muted-foreground">
-                  {trade.date ? (typeof trade.date === "string" ? trade.date.slice(0, 10) : String(trade.date)) : ""}
-                </span>
-              </div>
-              {trade.kind === "pick_upgrade" ? (
-                <>
-                  <p className="text-xs leading-relaxed">
-                    <span className="font-medium text-amber-500">
-                      {trade.fromYear || ""} R{trade.fromRound} → {trade.toYear || trade.fromYear || ""} R{trade.toRound}
-                    </span>
-                  </p>
-                  {trade.trigger && (
-                    <p className="text-[11px] text-muted-foreground italic">
-                      Trigger: {trade.trigger}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    <span className="font-medium text-foreground">{trade.from}</span>
-                    {" → "}
-                    <span className="font-medium text-foreground">{trade.to}</span>
-                  </p>
-                  {trade.details && (
-                    <p className="text-[11px] text-muted-foreground">{trade.details}</p>
-                  )}
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────
-// Iter 138 — Draft Order Status banner + Results tab
-// ────────────────────────────────────────────────────────────────
-
-const METHOD_META: Record<string, { label: string; description: string }> = {
-  nhl_lottery: {
-    label: "NHL team draft lottery",
-    description: "Pick order will mirror the official NHL Draft Lottery — date set by the system administrator.",
-  },
-  lottery_generator: {
-    label: "Draft Lottery Generator",
-    description: "League will run its own weighted lottery — commissioner schedules the date.",
-  },
-  manual_entry: {
-    label: "Manual Entry",
-    description: "Commissioner enters the draft order manually after the regular season — optional date.",
-  },
-};
-
-function formatScheduled(iso?: string | null): string {
-  if (!iso) return "TBD";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-}
-
-function DraftOrderStatus({ draftOrder, year }: any) {
-  if (!draftOrder) return null;
-  const method = draftOrder.method || "manual_entry";
-  const meta = METHOD_META[method] || METHOD_META.manual_entry;
-  const isSet = !!draftOrder.is_set;
-  const scheduled = formatScheduled(draftOrder.scheduled_at);
-  return (
-    <div
-      className={cn(
-        "rounded-md border p-3 flex flex-wrap items-center gap-3 text-sm",
-        isSet
-          ? "border-emerald-500/40 bg-emerald-500/5"
-          : "border-amber-500/30 bg-amber-500/5",
-      )}
-      data-testid="draft-order-status-banner"
-    >
-      {isSet ? (
-        <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
-      ) : (
-        <Clock className="h-5 w-5 text-amber-400 shrink-0" />
-      )}
-      <div className="flex flex-col">
-        <span className="font-semibold" data-testid="draft-order-status-headline">
-          {year} pick order: {isSet ? "SET" : "Not yet set"}
-        </span>
-        <span className="text-xs text-muted-foreground" data-testid="draft-order-status-method">
-          Format: {meta.label}
-          {!isSet && (
-            <>
-              {" · "}
-              <span data-testid="draft-order-status-scheduled">
-                Scheduled: {scheduled}
-              </span>
-              {draftOrder.schedule_source === "system" && scheduled !== "TBD" && (
-                <span className="ml-1 italic">(set by system admin)</span>
-              )}
-            </>
-          )}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function DraftOrderResultsTab({ leagueId, draftOrder, teams }: any) {
-  const orderOK = !!draftOrder?.is_set;
-  const method = draftOrder?.method || "manual_entry";
-  const meta = METHOD_META[method] || METHOD_META.manual_entry;
-  const scheduled = formatScheduled(draftOrder?.scheduled_at);
-  const seedById: Record<string, number> = {};
-  (draftOrder?.order || []).forEach((o: any) => { seedById[String(o.team_id)] = o.seed; });
-  const orderedTeams = [...(teams || [])].sort((a: any, b: any) => {
-    const aSeed = seedById[String(a.id)] ?? 9999;
-    const bSeed = seedById[String(b.id)] ?? 9999;
-    return aSeed - bSeed;
-  });
-
-  // Iter 143 — Expansion draft: show unprotected → protected players per team
-  const [expansionBoard, setExpansionBoard] = useState<any[]>([]);
-  const [showExpansion, setShowExpansion] = useState(false);
-  useEffect(() => {
-    if (!leagueId) return;
-    api.get(`/leagues/${leagueId}/expansion-draft-board`)
-      .then(({ data }) => {
-        const rows = data?.teams || [];
-        // Only show the listing when at least one team has players (else this is not an expansion league)
-        const anyPlayers = rows.some((r: any) => (r.unprotected?.length || 0) + (r.protected?.length || 0) > 0);
-        setExpansionBoard(rows);
-        setShowExpansion(anyPlayers);
-      })
-      .catch(() => setShowExpansion(false));
-  }, [leagueId]);
-
-  return (
-    <div className="space-y-6">
-      {/* Iter 139 — Read-only summary; configuration lives in League Admin */}
-      <Card className="border-border gradient-card" data-testid="draft-order-summary-card">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <CalendarDays className="h-4 w-4 text-cyan-300" />
-            Draft Order Configuration
-            <Badge
-              variant="outline"
-              className="ml-1 text-[10px] border-border text-muted-foreground"
-              data-testid="draft-order-summary-method"
-            >
-              {meta.label}
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3 text-sm">
-          <div className="text-xs text-muted-foreground">{meta.description}</div>
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <div data-testid="draft-order-summary-status">
-              <span className="text-muted-foreground text-xs uppercase tracking-wider mr-2">Status</span>
-              {orderOK ? (
-                <Badge variant="outline" className="border-emerald-500/40 text-emerald-300">SET</Badge>
-              ) : (
-                <Badge variant="outline" className="border-amber-500/40 text-amber-300">Not yet set</Badge>
-              )}
-            </div>
-            <div data-testid="draft-order-summary-scheduled">
-              <span className="text-muted-foreground text-xs uppercase tracking-wider mr-2">Scheduled</span>
-              <span className="font-mono">{scheduled}</span>
-              {draftOrder?.schedule_source === "system" && scheduled !== "TBD" && (
-                <span className="ml-1 text-xs italic text-muted-foreground">(set by system admin)</span>
-              )}
-            </div>
-          </div>
-          <div className="rounded-md bg-muted/30 border border-border p-2 text-xs text-muted-foreground" data-testid="draft-order-admin-hint">
-            Format + schedule are configured by the commissioner in{" "}
-            <a
-              href="/commissioner/settings"
-              className="text-cyan-300 hover:underline"
-              data-testid="draft-order-admin-link"
-            >
-              League Administration → Draft
-            </a>.
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Results card — ordered list */}
-      <Card className="border-border gradient-card" data-testid="draft-order-results-card">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            Draft Order Results
-            {orderOK ? (
-              <Badge variant="outline" className="border-emerald-500/40 text-emerald-300 text-[10px]">
-                Final
-              </Badge>
-            ) : (
-              <Badge variant="outline" className="border-amber-500/40 text-amber-300 text-[10px]">
-                Pre-lottery preview
-              </Badge>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow className="border-border hover:bg-transparent">
-                <TableHead className="w-[80px] text-xs uppercase tracking-wider text-muted-foreground pl-4">Pick</TableHead>
-                <TableHead className="text-xs uppercase tracking-wider text-muted-foreground">Team</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {orderedTeams.map((t: any, idx: number) => (
-                <TableRow key={t.id || t.abbr} className="border-border/50" data-testid={`draft-order-row-${idx + 1}`}>
-                  <TableCell className="pl-4 font-mono text-sm">#{seedById[String(t.id)] || idx + 1}</TableCell>
-                  <TableCell className="text-sm">{t.name} <span className="text-muted-foreground">({t.abbr})</span></TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-      {/* Iter 143 — Expansion draft: unprotected → protected listing */}
-      {showExpansion && (
-        <Card className="border-border gradient-card" data-testid="expansion-board-card">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Expansion Draft Board · Available Players</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-xs text-muted-foreground">
-              Each team's unprotected players are listed first (available to be selected),
-              followed by their protected list.
-            </p>
-            <div className="space-y-3" data-testid="expansion-board-teams">
-              {expansionBoard.map((row: any) => (
-                <div
-                  key={row.team_id}
-                  className="rounded-md border border-border p-3 space-y-2"
-                  data-testid={`expansion-board-team-${row.team_abbr}`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="font-semibold text-sm">{row.team_name} <span className="text-muted-foreground">({row.team_abbr})</span></div>
-                    {row.submitted ? (
-                      <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-300">
-                        List submitted
-                      </Badge>
-                    ) : (
-                      <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-300">
-                        No list yet
-                      </Badge>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-emerald-300 font-semibold mb-1">
-                      Unprotected ({row.unprotected?.length || 0})
-                    </div>
-                    {(row.unprotected || []).length === 0 ? (
-                      <div className="text-xs italic text-muted-foreground">— no unprotected players —</div>
-                    ) : (
-                      <ul className="grid sm:grid-cols-2 gap-1 text-xs" data-testid={`expansion-unprotected-${row.team_abbr}`}>
-                        {row.unprotected.map((p: any) => (
-                          <li key={p.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-emerald-500/5">
-                            <span>{p.name} <span className="text-muted-foreground">({p.position})</span></span>
-                            {p.salary != null && (
-                              <span className="font-mono text-muted-foreground">
-                                ${(Number(p.salary) / 1_000_000).toFixed(2)}M
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-[10px] uppercase tracking-wider text-amber-300 font-semibold mb-1 mt-2">
-                      Protected ({row.protected?.length || 0})
-                    </div>
-                    {(row.protected || []).length === 0 ? (
-                      <div className="text-xs italic text-muted-foreground">— none —</div>
-                    ) : (
-                      <ul className="grid sm:grid-cols-2 gap-1 text-xs" data-testid={`expansion-protected-${row.team_abbr}`}>
-                        {row.protected.map((p: any) => (
-                          <li key={p.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-amber-500/5 text-muted-foreground">
-                            <span>{p.name} <span>({p.position})</span></span>
-                            {p.salary != null && (
-                              <span className="font-mono">
-                                ${(Number(p.salary) / 1_000_000).toFixed(2)}M
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
-}
-
-// ────────────────────────────────────────────────────────────────
-// Iter 232N.33 — Scheduled Drafts Panel
-// Fetches all drafts scheduled/active/completed for a league and
-// renders one card per draft with its own pick count, status, and
-// on-clock team. Replaces the old year-only Draft Board view that
-// aggregated Summer + Winter drafts into a single "0 picks" grid.
-// ────────────────────────────────────────────────────────────────
-function ScheduledDraftsPanel({ leagueId }: { leagueId?: string }) {
-  const [drafts, setDrafts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  useEffect(() => {
-    if (!leagueId) return;
-    let cancelled = false;
-    setLoading(true);
-    api.get(`/drafts?league_id=${leagueId}`)
-      .then(({ data }) => {
-        if (cancelled) return;
-        const relevant = (Array.isArray(data) ? data : [])
-          .filter((d: any) => d && ["scheduled", "active", "completed"].includes(d.status))
-          .sort((a: any, b: any) => {
-            // Active first, then scheduled, then completed. Within each
-            // group, sort by scheduled_time ascending so upcoming drafts
-            // show above completed ones.
-            const rank: Record<string, number> = { active: 0, scheduled: 1, completed: 2 };
-            const ra = rank[a.status] ?? 9;
-            const rb = rank[b.status] ?? 9;
-            if (ra !== rb) return ra - rb;
-            return (a.scheduled_time || "").localeCompare(b.scheduled_time || "");
-          });
-        setDrafts(relevant);
-      })
-      .catch(() => setDrafts([]))
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [leagueId]);
-
-  if (loading) {
-    return (
-      <Card className="border-border gradient-card" data-testid="scheduled-drafts-loading">
-        <CardContent className="p-4 text-sm text-muted-foreground italic">
-          Loading scheduled drafts…
-        </CardContent>
-      </Card>
-    );
-  }
-  if (!drafts.length) {
-    return (
-      <Card className="border-border gradient-card" data-testid="scheduled-drafts-empty">
-        <CardContent className="p-4 text-sm text-muted-foreground italic">
-          No drafts scheduled yet — commissioners can create one from League Admin → Draft.
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const STATUS_BADGES: Record<string, string> = {
-    scheduled: "border-amber-500/40 text-amber-300 bg-amber-500/10",
-    active: "border-emerald-500/40 text-emerald-300 bg-emerald-500/10",
-    completed: "border-cyan-500/40 text-cyan-300 bg-cyan-500/10",
-  };
-  return (
-    <div className="grid gap-3 md:grid-cols-2" data-testid="scheduled-drafts-panel">
-      {drafts.map((d: any) => {
-        const picksCount = (d.picks || []).length;
-        const totalPicks = (d.total_rounds || 0) * ((d.team_abbrs || []).length || 0);
-        const onClockAbbr = d.status === "active"
-          ? (d.team_abbrs?.[((d.current_pick || 1) - 1) % (d.team_abbrs?.length || 1)] || null)
-          : null;
-        const onClockName = onClockAbbr && d.team_map?.[onClockAbbr]?.name;
-        const when = d.scheduled_time
-          ? new Date(d.scheduled_time).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-          : "TBD";
-        return (
-          <Card
-            key={d.id || d._id}
-            className="border-border gradient-card"
-            data-testid={`scheduled-draft-card-${d.id || d._id}`}
-          >
-            <CardHeader className="pb-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <CardTitle className="text-base truncate">{d.name || "Untitled Draft"}</CardTitle>
-                  <p className="text-[11px] text-muted-foreground mt-0.5">
-                    {when} · {d.total_rounds || "?"} round{d.total_rounds === 1 ? "" : "s"} · {(d.team_abbrs || []).length} teams
-                  </p>
-                </div>
-                <Badge
-                  variant="outline"
-                  className={cn("text-[10px] h-5 whitespace-nowrap", STATUS_BADGES[d.status] || "")}
-                >
-                  {String(d.status).toUpperCase()}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-1 pb-3 space-y-1.5">
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-muted-foreground uppercase tracking-wider text-[10px]">Picks</span>
-                <span className="font-mono text-foreground font-semibold">
-                  {picksCount}{totalPicks ? ` / ${totalPicks}` : ""}
-                </span>
-              </div>
-              {onClockName && (
-                <div className="flex items-center gap-2 text-xs text-emerald-300">
-                  <Clock className="h-3 w-3" />
-                  <span>On the clock: <span className="font-semibold">{onClockName}</span></span>
-                </div>
-              )}
-              {d.status === "active" ? (
-                <a
-                  href={`/draft-room/${d.id || d._id}`}
-                  className="inline-block text-[11px] text-primary hover:underline mt-1"
-                  data-testid={`scheduled-draft-open-${d.id || d._id}`}
-                >
-                  Open draft room →
-                </a>
-              ) : d.status === "completed" ? (
-                <a
-                  href={`/draft-room/${d.id || d._id}`}
-                  className="inline-block text-[11px] text-muted-foreground hover:underline mt-1"
-                >
-                  View results →
-                </a>
-              ) : (
-                <p className="text-[11px] text-amber-300/80 italic">Scheduled — waiting to start</p>
-              )}
-            </CardContent>
-          </Card>
-        );
-      })}
-    </div>
-  );
-}
-
 export default function DraftBoardPage() {
   const currentYear = new Date().getFullYear();
   const availableYears = Array.from({ length: maxTradeYears }, (_, i) => String(currentYear + i));
   const [selectedYear, setSelectedYear] = useState(availableYears[0]);
   const { league, leagueTeams: liveLeagueTeams } = useActiveLeague();
   const { user } = useAuth();
-  const isCommish = !!league && user && (
-    league.commissioner_id === user.id ||
-    (league.co_commissioners || []).includes(user.id) ||
-    user.role === "admin"
-  );
-  const isSystemAdmin = user?.role === "admin";
   const [livePicks, setLivePicks] = useState<any[]>([]);
   // Iter 137 — league's canonical draft order (lottery applied OR reverse standings fallback)
-  const [draftOrder, setDraftOrder] = useState<{ source: string; order: any[] } | null>(null);
+  const [draftOrder, setDraftOrder] = useState<any | null>(null);
 
   useEffect(() => {
     if (!league?.id) return;
@@ -700,8 +162,7 @@ export default function DraftBoardPage() {
         trigger: h.trigger,
       }));
       data[origAbbr][p.round] = {
-        originalTeam: origAbbr,  // Iter 191 fix — was missing,
-                                  //   caused all picks to appear "traded"
+        originalTeam: origAbbr,  // Iter 191 fix — was missing, caused all picks to appear "traded"
         currentOwner: teamIdToAbbr[p.current_team_id] || origAbbr,
         isTraded: p.current_team_id !== p.original_team_id,
         tradeHistory: history,
@@ -718,7 +179,6 @@ export default function DraftBoardPage() {
   const pickCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     teams.forEach((t) => (counts[t.abbr] = 0));
-
     teams.forEach((team) => {
       for (let round = 1; round <= totalRounds; round++) {
         const pick = yearData[team.abbr]?.[round];
@@ -756,9 +216,7 @@ export default function DraftBoardPage() {
       toast.error("Join a team in this league to propose trades");
       return;
     }
-    // Open the trade builder if it isn't open yet
     tradeBuilder.openBuilder({ leagueId: league.id, myTeam });
-    // Resolve owner team object for the partner side
     const ownerAbbr = pickInfo?.currentOwner || teamAbbr;
     const ownerTeam = (liveLeagueTeams || []).find(
       (t: any) => (t.logo_abbr || t.name.slice(0, 3).toUpperCase()) === ownerAbbr,
@@ -868,12 +326,11 @@ export default function DraftBoardPage() {
             })}
           </div>
 
-          {/* Iter 232N.33 — Scheduled Drafts panel. Fetches all real
-              drafts for this league (scheduled / active / completed)
-              and renders one card per draft with its own pick summary.
-              This replaces the misleading "all-teams-0-picks" view
-              that used to show up when a league had multiple drafts
-              in the same year (Summer + Winter). */}
+          {/* Iter 232N.33 — Scheduled Drafts panel. Fetches all real drafts
+              for this league (scheduled / active / completed) and renders
+              one card per draft with its own pick summary. Replaces the
+              misleading "all-teams-0-picks" view that used to show up when
+              a league had multiple drafts in the same year. */}
           <ScheduledDraftsPanel leagueId={league?.id} />
 
           {/* Draft Board Table */}
@@ -961,7 +418,7 @@ export default function DraftBoardPage() {
                               <TableCell key={round} className="text-center py-3">
                                 {pick && isTraded ? (
                                   <div className="flex flex-col items-center gap-0.5">
-                                    <TradeHistoryPopover pick={pick} />
+                                    <TradeHistoryPopover pick={pick} leagueTeams={leagueTeams} />
                                     <span className="text-[10px] text-muted-foreground/60 flex items-center gap-0.5">
                                       <ArrowRightLeft className="h-2.5 w-2.5" />
                                       traded
