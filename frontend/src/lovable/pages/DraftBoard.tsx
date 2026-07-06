@@ -11,7 +11,7 @@ import LeagueContextBanner from "@/lovable/components/dashboard/LeagueContextBan
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -448,8 +448,13 @@ export default function DraftBoardPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="p-0">
+              {/* Iter 232N.40 — Horizontal scroll for wide drafts. A 55-
+                  round Inaugural draft is >4000px wide; without an
+                  explicit horizontal ScrollBar the columns got clipped
+                  past ~round 36. `min-w` scales per-round so each column
+                  keeps ≥72px whether the draft is 4 rounds or 55. */}
               <ScrollArea className="w-full">
-                <div className="min-w-[700px]">
+                <div style={{ minWidth: `${180 + totalRounds * 72}px` }}>
                   <Table>
                     <TableHeader>
                       <TableRow className="border-border hover:bg-transparent">
@@ -596,6 +601,7 @@ export default function DraftBoardPage() {
                     </TableBody>
                   </Table>
                 </div>
+                <ScrollBar orientation="horizontal" />
               </ScrollArea>
             </CardContent>
           </Card>
