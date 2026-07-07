@@ -158,11 +158,14 @@ async def test_autostart_skips_future_scheduled_drafts():
 
 
 @pytest.mark.asyncio
-async def test_autostart_skips_stale_more_than_24h_late_drafts():
+async def test_autostart_skips_stale_more_than_30_days_late_drafts():
+    # Iter 232N.45 — Late window bumped 24h → 30 days. A draft 2 days
+    # in the past should now boot; only genuinely ancient junk stays
+    # skipped.
     db = _db()
     league_id, uids, _ = await _seed_league_with_teams(db, 2)
 
-    very_late = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    very_late = (datetime.now(timezone.utc) - timedelta(days=40)).isoformat()
     draft_id = ObjectId()
     await db.drafts.insert_one({
         "_id": draft_id, "league_id": league_id,

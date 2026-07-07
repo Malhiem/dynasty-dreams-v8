@@ -29,8 +29,15 @@ from bson import ObjectId
 logger = logging.getLogger("draft_autostart_worker")
 
 # Don't auto-start drafts whose scheduled_time is more than this far
-# in the past — likely abandoned / cancelled.
-MAX_LATE_WINDOW = timedelta(hours=24)
+# in the past — likely abandoned / cancelled. Commissioners who want a
+# draft off should archive it (worker only scans `status: scheduled`).
+# Iter 232N.45 — Bumped from 24h → 30 days after the TFHL Inaugural
+# Draft (scheduled 2026-06-26, 10 days in the past by the time the
+# commissioner noticed) was silently skipped. 30 days is generous
+# enough that a real-world scheduling snafu (misconfigured date,
+# league admin on vacation, commissioner waiting for teams to join)
+# won't wedge the draft, but ancient junk still bounces.
+MAX_LATE_WINDOW = timedelta(days=30)
 
 
 def _parse_iso(value) -> Optional[datetime]:

@@ -46,6 +46,39 @@ def _parse_iso(value):
         return None
 
 
+def _team_owners_present_in_draft_room(draft_id: str, team: dict | None) -> bool:
+    """Iter 232N.45 — Return True when at least one owner (or co-owner)
+    of `team` currently has an authenticated Socket.IO session in the
+    given draft room.
+
+    Used by the pick-timer worker to decide whether a `defer-to-user`
+    draft should auto-pick when its clock elapses: if nobody who could
+    respond to the "make your pick" dialog is actually in the room, the
+    worker fires an auto-pick so the draft doesn't stall forever waiting
+    for an offline manager.
+
+    Presence data lives in `server.connected_users`, populated on every
+    `join_room` socket event. Imported lazily to avoid a circular
+    import at module load time.
+    """
+    if not team:
+        return False
+    owner_ids = {team.get("owner_id"), *(team.get("co_owner_ids") or [])}
+    owner_ids.discard(None)
+    owner_ids = {str(u) for u in owner_ids}
+    if not owner_ids:
+        return False
+    try:
+        from server import connected_users  # noqa: WPS433 (runtime import)
+    except Exception:
+        return False
+    room = f"draft_{draft_id}"
+    for info in connected_users.values():
+        if info.get("room_id") == room and str(info.get("user_id")) in owner_ids:
+            return True
+    return False
+
+
 async def _is_within_clock_window(draft: dict, now: datetime) -> bool:
     """Iter 231y — Time-of-day clock window guard.
 
@@ -183,11 +216,21 @@ async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
                 logger.error(f"draft_pick_timer_worker ownerless auto-pick failed for {draft['_id']}: {e}")
             continue
 
-        if (draft.get("missed_pick_action") or "auto-best") == "defer-to-user":
-            # Don't auto-pick when the league configured the timer to
-            # defer to the owner's dialog choice.
-            counts["skipped"] += 1
-            continue
+        # Iter 232N.45 — `defer-to-user` used to skip UNCONDITIONALLY,
+        # which meant a draft would stall forever when the on-clock
+        # manager was offline (no dialog to click). Now we auto-pick
+        # ONLY when the pick clock has fully elapsed AND no owner or
+        # co-owner of the on-clock team is currently in this draft's
+        # Socket.IO room. If any owner is present, we still defer so
+        # they can pick the response themselves.
+        deferred_to_user = (draft.get("missed_pick_action") or "auto-best") == "defer-to-user"
+        if deferred_to_user:
+            if _team_owners_present_in_draft_room(str(draft["_id"]), on_clock_team):
+                counts["skipped"] += 1
+                continue
+            # Owners are offline — fall through to the timer-expiry
+            # check below. If the clock hasn't hit 0 yet we still
+            # give them the full window to come back online.
         # Iter 231y — Honour the time-of-day clock window (e.g. only
         # auto-pick between 9am–9pm in the league's timezone). Drafts
         # without a window configured fall through (legacy 24/7 behaviour).
@@ -247,7 +290,15 @@ async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
             # Iter 232N.26 — Pass source="personal_timeout" when the
             # tighter cap is what fired so downstream analytics /
             # chat messages can distinguish it from a full-clock miss.
-            fire_source = "personal_timeout" if used_personal else source_default_for_timeout()
+            # Iter 232N.45 — `defer_offline_timeout` when a
+            # `defer-to-user` draft rolled over because the manager
+            # was offline (no dialog could have been shown).
+            if used_personal:
+                fire_source = "personal_timeout"
+            elif deferred_to_user:
+                fire_source = "defer_offline_timeout"
+            else:
+                fire_source = source_default_for_timeout()
             await perform_one_auto_pick(str(draft["_id"]), source=fire_source)
             counts["picked"] += 1
         except Exception as e:

@@ -167,7 +167,13 @@ async def test_expired_clock_triggers_auto_pick():
 
 
 @pytest.mark.asyncio
-async def test_defer_to_user_drafts_are_skipped():
+async def test_defer_to_user_drafts_are_skipped_when_owner_online():
+    # Iter 232N.45 — `defer-to-user` no longer skips unconditionally.
+    # It only skips when an owner or co-owner of the on-clock team is
+    # actually in the draft's Socket.IO room. Offline-owner behaviour
+    # is covered separately in test_iter232N45_draft_engine_hardening.
+    from unittest.mock import patch
+
     db = _db()
     _wire_deps(db)
     league_id, uids, team_ids, abbrs = await _seed_league_with_teams(db, 3)
@@ -180,7 +186,11 @@ async def test_defer_to_user_drafts_are_skipped():
     )
 
     try:
-        counts = await run_once(db, draft_ids_filter=[draft_id])
+        with patch(
+            "services.draft_pick_timer_worker._team_owners_present_in_draft_room",
+            return_value=True,
+        ):
+            counts = await run_once(db, draft_ids_filter=[draft_id])
         assert counts["skipped"] >= 1
         refreshed = await db.drafts.find_one({"_id": ObjectId(draft_id)})
         assert refreshed["picks"] == []
