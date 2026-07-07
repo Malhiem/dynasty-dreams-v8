@@ -33,6 +33,7 @@ import DraftOrderConfigCard from "@/lovable/pages/commissioner/DraftOrderConfigC
 import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard";
 import ExpansionDraftSettingsCard from "@/lovable/pages/commissioner/ExpansionDraftSettingsCard";
 import CommissionerProtectionOverridePanel from "@/lovable/pages/commissioner/CommissionerProtectionOverridePanel";
+import DraftOpsPanel from "@/lovable/pages/commissioner/DraftOpsPanel";
 import { toast } from "sonner";
 
 export interface DraftTabContext {
@@ -385,6 +386,9 @@ export default function DraftTab({ ctx }: DraftTabProps) {
   );
   return (
     <div className="space-y-6" data-testid="commissioner-draft-tab">
+        {/* Iter 232N.46 — Draft Ops health panel at the top so
+            commissioners see stalled/offline drafts before scrolling. */}
+        <DraftOpsPanel leagueId={activeLeague?.id} />
         <Card className="bg-card border-border">
           <CardHeader>
             <CardTitle>Create a Draft</CardTitle>
