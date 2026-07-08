@@ -32,6 +32,7 @@ EVT_DRAFT_YOUR_TURN = "draft_your_turn"
 EVT_DRAFT_ON_DECK = "draft_on_deck"
 EVT_DRAFT_COMING_UP = "draft_coming_up"
 EVT_DRAFT_SCHEDULED = "draft_scheduled"
+EVT_DRAFT_COMMISSIONER_PING = "draft_commissioner_ping"
 
 EVT_WAIVER_CLAIM_SUCCESS = "waiver_claim_success"
 EVT_PLAYER_TO_WAIVERS = "player_to_waivers"
@@ -113,6 +114,10 @@ EVENTS: List[Dict] = [
      "label": "A draft has been scheduled",
      "description": "Commissioner has created or rescheduled a draft in this league.",
      "default_channels": ["in_app", "email"]},
+    {"id": EVT_DRAFT_COMMISSIONER_PING, "category": "draft",
+     "label": "Commissioner pinged you about a draft",
+     "description": "The league commissioner nudged you to come back to the draft room while your team was on the clock.",
+     "default_channels": ["in_app", "push", "email"]},
 
     # ── Player Pool ─────────────────────────────────────────────────────────
     {"id": EVT_WAIVER_CLAIM_SUCCESS, "category": "players",

@@ -235,6 +235,31 @@ export function useActiveLeague() {
           }).catch(() => { /* toast lib unavailable — noop */ });
         } catch { /* best-effort */ }
       },
+      // Iter 232N.47 — Commissioner "ping" arrives on the user_{id}
+      // personal socket room. Show a prominent action toast so the
+      // manager can jump directly to the Draft Room.
+      commissioner_ping: (payload) => {
+        try {
+          const draftName = payload?.draft_name || 'the draft';
+          const commish = payload?.commissioner_name || 'The commissioner';
+          const teamName = payload?.team_name || 'Your team';
+          const custom = payload?.custom_message;
+          const draftId = payload?.draft_id;
+          const desc = custom
+            ? `${commish}: “${custom}”`
+            : `${teamName} is on the clock in ${draftName}. Head to the Draft Room.`;
+          import('sonner').then(({ toast }) => {
+            toast.warning(`Commissioner ping — ${draftName}`, {
+              description: desc,
+              duration: 10000,
+              action: draftId ? {
+                label: 'Open Draft Room',
+                onClick: () => { window.location.href = `/draft-room/${draftId}`; },
+              } : undefined,
+            });
+          }).catch(() => { /* noop */ });
+        } catch { /* best-effort */ }
+      },
     },
     meId,
   );

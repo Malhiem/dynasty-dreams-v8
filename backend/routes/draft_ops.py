@@ -6,10 +6,16 @@ Surfaces the same data the `draft_autostart_worker` and
 and `draft_pick_timer_runs`), plus a live per-draft rollup so
 commissioners can spot stalls before managers do.
 
-Single endpoint:
+Endpoints:
 
-  • GET /api/leagues/{league_id}/draft-ops
-      → { workers, drafts, checked_at }
+  • GET  /api/leagues/{league_id}/draft-ops
+        → { workers, drafts, checked_at }
+  • POST /api/leagues/{league_id}/drafts/{draft_id}/ping-owner
+        → { ok, channels_fired, next_ping_at }
+        Iter 232N.47 — Commissioner-fired nudge (in-app + push + email)
+        to a specific offline owner while their team is on the clock.
+        Rate-limited to one ping per (draft, owner) per 5 minutes to
+        prevent spam.
 
 Auth: commissioner, co-commissioner, or platform admin (via
 `is_league_admin`).
@@ -19,12 +25,14 @@ Wired via the `setup(deps)` injection pattern; see `server.py`.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from routes._authz import is_league_admin
+from routes.notification_events import EVT_DRAFT_COMMISSIONER_PING
 
 
 router = APIRouter()
@@ -246,4 +254,244 @@ async def get_draft_ops(league_id: str, request: Request):
         "checked_at": now.isoformat(),
         "workers": workers,
         "drafts": drafts_out,
+    }
+
+
+# ─── Iter 232N.47 — Commissioner "Ping offline manager" ────────────────
+
+
+class PingOwnerRequest(BaseModel):
+    user_id: str = Field(..., description="Target user (owner/co-owner) to ping")
+    message: str | None = Field(
+        None,
+        description="Optional custom nudge from the commissioner. Truncated to 200 chars.",
+        max_length=200,
+    )
+
+
+# In-memory rate limit: at most one ping per (draft_id, target_user_id) per
+# window. Single-process backend so a dict is sufficient — a Mongo-based
+# store would be needed if we ever fan out to multiple replicas.
+_PING_COOLDOWN_SECONDS = 300  # 5 minutes
+_PING_LAST_FIRED: dict[str, datetime] = {}
+
+
+def _ping_key(draft_id: str, user_id: str) -> str:
+    return f"{draft_id}:{user_id}"
+
+
+@router.post("/leagues/{league_id}/drafts/{draft_id}/ping-owner")
+async def ping_offline_owner(
+    league_id: str,
+    draft_id: str,
+    payload: PingOwnerRequest,
+    request: Request,
+):
+    """Nudge a specific offline owner: in-app notification + Expo push +
+    SendGrid email + Socket.IO `commissioner_ping` broadcast.
+
+    Rate-limited: at most one ping per (draft, target) per 5 minutes.
+    Only the commissioner / co-commissioner / platform admin may fire.
+    Only owners or co-owners of a team in this draft's roster are valid
+    targets — commissioners can't spam arbitrary users through this route.
+    """
+    caller = await _get_user(request)
+    db = _db()
+
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid league id")
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not is_league_admin(caller, league):
+        raise HTTPException(
+            status_code=403,
+            detail="Commissioner / co-commissioner / admin only",
+        )
+
+    try:
+        draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft id")
+    if not draft or draft.get("league_id") != league_id:
+        raise HTTPException(status_code=404, detail="Draft not found in this league")
+    if draft.get("status") not in ("active", "scheduled"):
+        raise HTTPException(
+            status_code=400,
+            detail="Ping only applies to active or scheduled drafts.",
+        )
+
+    # Verify the target is actually an owner/co-owner of a team in this
+    # draft's team_map. Prevents commissioners from using this route to
+    # blast arbitrary users.
+    team_map = draft.get("team_map") or {}
+    valid_owner = False
+    target_team_name = None
+    for _abbr, info in team_map.items():
+        tid = info.get("id")
+        if not tid:
+            continue
+        try:
+            team = await db.teams.find_one(
+                {"_id": ObjectId(tid)},
+                {"owner_id": 1, "co_owner_ids": 1, "name": 1},
+            )
+        except Exception:
+            team = None
+        if not team:
+            continue
+        team_owners = {team.get("owner_id"), *(team.get("co_owner_ids") or [])}
+        team_owners.discard(None)
+        if payload.user_id in {str(u) for u in team_owners}:
+            valid_owner = True
+            target_team_name = team.get("name") or info.get("name") or _abbr
+            break
+    if not valid_owner:
+        raise HTTPException(
+            status_code=400,
+            detail="Target user is not an owner or co-owner of any team in this draft.",
+        )
+
+    # Rate-limit
+    now = datetime.now(timezone.utc)
+    key = _ping_key(draft_id, payload.user_id)
+    last = _PING_LAST_FIRED.get(key)
+    if last and (now - last).total_seconds() < _PING_COOLDOWN_SECONDS:
+        remaining = int(_PING_COOLDOWN_SECONDS - (now - last).total_seconds())
+        raise HTTPException(
+            status_code=429,
+            detail=f"Already pinged this manager recently. Try again in {remaining}s.",
+        )
+
+    # Look up target for the email envelope + audit trail.
+    try:
+        target_user = await db.users.find_one(
+            {"_id": ObjectId(payload.user_id)},
+            {"email": 1, "name": 1, "username": 1},
+        )
+    except Exception:
+        target_user = None
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Target user not found")
+
+    draft_name = draft.get("name") or "the draft"
+    league_name = league.get("name") or "your league"
+    commish_name = caller.get("name") or caller.get("email") or "the commissioner"
+    custom = (payload.message or "").strip()
+    body = (
+        f"{commish_name} nudged you — {target_team_name} is on the clock in {draft_name}. "
+        f"Head to the Draft Room to make your pick."
+    )
+    if custom:
+        body = f"{commish_name} says: “{custom}” — {target_team_name} is on the clock in {draft_name}."
+    title = f"Commissioner ping — {draft_name}"
+
+    channels_fired: list[str] = []
+
+    # 1) In-app + Expo push (bundled in `create_notification`)
+    create_notification = _deps.get("create_notification")
+    if create_notification is not None:
+        try:
+            notif = await create_notification(
+                payload.user_id,
+                EVT_DRAFT_COMMISSIONER_PING,
+                title,
+                body,
+                league_id,
+                "/draft-room",
+                {
+                    "draft_id": draft_id,
+                    "draft_name": draft_name,
+                    "commissioner_id": caller.get("_id"),
+                    "commissioner_name": commish_name,
+                    "team_name": target_team_name,
+                    "custom_message": custom or None,
+                },
+            )
+            if notif:
+                channels_fired.append("in_app")
+                # Expo push is fired inside `create_notification` when the
+                # user has the push channel enabled. We assume push if the
+                # notification broadcast succeeded; the actual delivery
+                # is best-effort inside that helper.
+                channels_fired.append("push")
+        except Exception as e:
+            logger.warning(f"ping_offline_owner in-app notify failed: {e}")
+
+    # 2) SendGrid email — always fires (channel preference for the ping
+    # event defaults to on; a hard opt-out on this event effectively
+    # means the manager doesn't want to be pinged, so we already dropped
+    # the in-app write via `channel_enabled` inside create_notification).
+    send_email = _deps.get("send_sendgrid_email")
+    target_email = target_user.get("email")
+    if send_email is not None and target_email:
+        try:
+            frontend_link = "/draft-room"
+            html = (
+                f"<p>Hi {target_user.get('name') or target_user.get('username') or 'manager'},</p>"
+                f"<p><b>{commish_name}</b> nudged you — <b>{target_team_name}</b> is on the clock in "
+                f"<b>{draft_name}</b> ({league_name}).</p>"
+            )
+            if custom:
+                html += f"<p><i>“{custom}”</i></p>"
+            html += (
+                f"<p><a href=\"{frontend_link}\">Open the Draft Room →</a></p>"
+                f"<p style=\"color:#888;font-size:12px\">Sent by your league commissioner via Dynasty Dreams.</p>"
+            )
+            send_email(target_email, title, html)
+            channels_fired.append("email")
+        except Exception as e:
+            logger.warning(f"ping_offline_owner email failed: {e}")
+
+    # 3) Real-time Socket.IO broadcast to the user's personal room so
+    # any open tab shows a modal/toast immediately (no polling wait).
+    broadcast = _deps.get("broadcast_to_room")
+    if broadcast is not None:
+        try:
+            await broadcast(
+                f"user_{payload.user_id}",
+                "commissioner_ping",
+                {
+                    "draft_id": draft_id,
+                    "draft_name": draft_name,
+                    "league_id": league_id,
+                    "league_name": league_name,
+                    "commissioner_name": commish_name,
+                    "team_name": target_team_name,
+                    "custom_message": custom or None,
+                    "created_at": now.isoformat(),
+                },
+            )
+            channels_fired.append("socket")
+        except Exception as e:
+            logger.debug(f"ping_offline_owner socket broadcast skipped: {e}")
+
+    # Latch the cooldown ONLY if at least one channel actually fired —
+    # a total misfire (all channels failed) shouldn't lock the
+    # commissioner out for 5 minutes.
+    if channels_fired:
+        _PING_LAST_FIRED[key] = now
+
+    # Audit row so the commissioner has a searchable log of pings.
+    try:
+        await db.commissioner_pings.insert_one({
+            "league_id": league_id,
+            "draft_id": draft_id,
+            "commissioner_id": caller.get("_id"),
+            "target_user_id": payload.user_id,
+            "target_team_name": target_team_name,
+            "custom_message": custom or None,
+            "channels_fired": channels_fired,
+            "created_at": now.isoformat(),
+        })
+    except Exception as e:
+        logger.debug(f"ping_offline_owner audit insert skipped: {e}")
+
+    next_ping_at = (now + timedelta(seconds=_PING_COOLDOWN_SECONDS)).isoformat() if channels_fired else None
+    return {
+        "ok": True,
+        "channels_fired": channels_fired,
+        "next_ping_at": next_ping_at,
+        "cooldown_seconds": _PING_COOLDOWN_SECONDS,
     }

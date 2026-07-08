@@ -13,8 +13,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Activity, RefreshCw, AlertTriangle, CircleDot, CircleDashed, Clock, Users, User } from "lucide-react";
+import { Activity, RefreshCw, AlertTriangle, CircleDot, CircleDashed, Clock, Users, User, BellRing } from "lucide-react";
 import api from "@/lib/api";
+import { toast } from "sonner";
 
 interface DraftOpsProps {
   leagueId?: string;
@@ -144,7 +145,36 @@ function WorkerCard({ label, worker }: { label: string; worker: WorkerSummary })
   );
 }
 
-function DraftRowCard({ draft }: { draft: DraftRow }) {
+function DraftRowCard({ draft, leagueId, onPinged }: { draft: DraftRow; leagueId: string; onPinged?: () => void }) {
+  const [pingingUserId, setPingingUserId] = useState<string | null>(null);
+  const [pingedUntil, setPingedUntil] = useState<Record<string, number>>({});
+
+  const nowMs = Date.now();
+  const canPing = (uid: string) => (pingedUntil[uid] ?? 0) <= nowMs;
+
+  const doPing = async (owner: OwnerSlot) => {
+    setPingingUserId(owner.id);
+    try {
+      const { data } = await api.post(
+        `/leagues/${leagueId}/drafts/${draft.id}/ping-owner`,
+        { user_id: owner.id },
+      );
+      const channels = (data?.channels_fired || []).join(", ") || "none";
+      toast.success(`Pinged ${owner.name}`, {
+        description: `Channels fired: ${channels}`,
+      });
+      // Latch cooldown locally so the button dims until the next window.
+      const cooldownMs = (data?.cooldown_seconds ?? 300) * 1000;
+      setPingedUntil((prev) => ({ ...prev, [owner.id]: Date.now() + cooldownMs }));
+      onPinged?.();
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail || "Failed to ping manager";
+      toast.error(detail);
+    } finally {
+      setPingingUserId(null);
+    }
+  };
+
   const onlineCount = draft.on_clock?.owners.filter((o) => o.online).length ?? 0;
   const hasOwners = (draft.on_clock?.owners.length ?? 0) > 0;
   const isStalledOffline =
@@ -237,26 +267,50 @@ function DraftRowCard({ draft }: { draft: DraftRow }) {
           </div>
           {draft.on_clock.owners.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-2">
-              {draft.on_clock.owners.map((o) => (
-                <div
-                  key={o.id}
-                  className="flex items-center gap-1.5 text-[11px]"
-                  data-testid={`draft-ops-owner-${draft.id}-${o.id}`}
-                >
-                  {o.online ? (
-                    <CircleDot className="h-3 w-3 text-emerald-400 fill-emerald-400" />
-                  ) : (
-                    <CircleDashed className="h-3 w-3 text-muted-foreground" />
-                  )}
-                  <User className="h-3 w-3 text-muted-foreground" />
-                  <span className={o.online ? "text-emerald-400" : "text-muted-foreground"}>
-                    {o.name}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    ({o.online ? "online" : "offline"})
-                  </span>
-                </div>
-              ))}
+              {draft.on_clock.owners.map((o) => {
+                const cooldownRemaining = Math.max(
+                  0,
+                  Math.ceil(((pingedUntil[o.id] ?? 0) - Date.now()) / 1000),
+                );
+                const canFire = draft.status === "active" && !o.online && cooldownRemaining === 0;
+                return (
+                  <div
+                    key={o.id}
+                    className="flex items-center gap-1.5 text-[11px]"
+                    data-testid={`draft-ops-owner-${draft.id}-${o.id}`}
+                  >
+                    {o.online ? (
+                      <CircleDot className="h-3 w-3 text-emerald-400 fill-emerald-400" />
+                    ) : (
+                      <CircleDashed className="h-3 w-3 text-muted-foreground" />
+                    )}
+                    <User className="h-3 w-3 text-muted-foreground" />
+                    <span className={o.online ? "text-emerald-400" : "text-muted-foreground"}>
+                      {o.name}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      ({o.online ? "online" : "offline"})
+                    </span>
+                    {draft.status === "active" && !o.online && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-[10px] ml-1 border-amber-500/40 text-amber-300 hover:bg-amber-500/10 disabled:opacity-40"
+                        disabled={!canFire || pingingUserId === o.id}
+                        onClick={() => doPing(o)}
+                        data-testid={`draft-ops-ping-${draft.id}-${o.id}`}
+                      >
+                        {pingingUserId === o.id ? (
+                          <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                        ) : (
+                          <BellRing className="h-3 w-3 mr-1" />
+                        )}
+                        {cooldownRemaining > 0 ? `Pinged (${cooldownRemaining}s)` : "Ping"}
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -411,7 +465,7 @@ export default function DraftOpsPanel({ leagueId }: DraftOpsProps) {
             ) : (
               <div className="space-y-2">
                 {data.drafts.map((d) => (
-                  <DraftRowCard key={d.id} draft={d} />
+                  <DraftRowCard key={d.id} draft={d} leagueId={leagueId} />
                 ))}
               </div>
             )}
