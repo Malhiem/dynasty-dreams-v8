@@ -46,6 +46,83 @@ def _parse_iso(value):
         return None
 
 
+async def _apply_hibernation_grace(db, now: datetime, interval_seconds: int) -> int:
+    """Iter 232N.48 — Compensate for worker hibernation.
+
+    Preview / auto-scaled backends occasionally sleep (K8s scale-to-zero,
+    container restart, deploy). While the worker is asleep, no auto-pick
+    can fire — so when the clock resumes, any draft whose deadline
+    quietly elapsed *inside* the sleep window would previously auto-pick
+    immediately on wake, punishing the on-clock manager for downtime
+    they didn't cause.
+
+    Detection: read the last `draft_pick_timer_runs.latest` heartbeat.
+    If `now - finished_at > 3 × interval_seconds`, the worker was
+    effectively down for `gap` seconds. For every active draft whose
+    `current_pick_started_at` plus `time_per_pick + 3s` grace falls
+    inside `[finished_at, now]`, push `current_pick_started_at` forward
+    by `gap` so the manager gets their full remaining window fresh.
+
+    Returns the number of drafts whose clocks were corrected. Safe to
+    call every tick — no-ops when the previous tick was recent.
+    """
+    latest = await db.draft_pick_timer_runs.find_one({"_id": "latest"})
+    if not latest:
+        return 0
+    last_finished = _parse_iso(latest.get("finished_at"))
+    if not last_finished:
+        return 0
+    gap = (now - last_finished).total_seconds()
+    # Only correct after a meaningful gap. 3× the interval catches real
+    # hibernation while ignoring the routine ~15s cadence.
+    if gap <= interval_seconds * 3:
+        return 0
+
+    corrected = 0
+    async for draft in db.drafts.find({"status": "active"}):
+        started = _parse_iso(draft.get("current_pick_started_at"))
+        if not started:
+            continue
+        if draft.get("timer_paused"):
+            continue
+        pick_time = int(
+            draft.get("time_per_pick")
+            or draft.get("pick_time_seconds")
+            or 60
+        )
+        deadline_ts = started.timestamp() + pick_time + 3
+        # Only correct clocks whose deadline fell INSIDE the downtime
+        # window. A clock whose deadline was already past *before* the
+        # worker went down is a genuine expiry and should still fire.
+        if not (last_finished.timestamp() <= deadline_ts <= now.timestamp()):
+            continue
+        # Push the clock forward by exactly the downtime so the manager
+        # loses zero seconds of their window.
+        new_started_dt = started + (now - last_finished)
+        # Cap the shift at `now` so we never set the clock in the
+        # future (defensive; a bug elsewhere shouldn't push clocks into
+        # tomorrow).
+        if new_started_dt > now:
+            new_started_dt = now
+        await db.drafts.update_one(
+            {"_id": draft["_id"], "status": "active"},
+            {"$set": {
+                "current_pick_started_at": new_started_dt.isoformat(),
+                "last_hibernation_correction": {
+                    "at": now.isoformat(),
+                    "gap_seconds": int(gap),
+                    "original_started_at": started.isoformat(),
+                },
+            }},
+        )
+        corrected += 1
+        logger.warning(
+            f"draft_pick_timer_worker: hibernation grace applied to draft "
+            f"{draft['_id']} (gap={int(gap)}s, pushed clock by {int(gap)}s)"
+        )
+    return corrected
+
+
 def _team_owners_present_in_draft_room(draft_id: str, team: dict | None) -> bool:
     """Iter 232N.45 — Return True when at least one owner (or co-owner)
     of `team` currently has an authenticated Socket.IO session in the
@@ -135,7 +212,16 @@ async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
     from draft_engine import get_team_for_pick
 
     now = datetime.now(timezone.utc)
-    counts = {"checked": 0, "expired": 0, "picked": 0, "skipped": 0, "errors": 0, "ownerless_picks": 0}
+    counts = {"checked": 0, "expired": 0, "picked": 0, "skipped": 0, "errors": 0, "ownerless_picks": 0, "hibernation_corrections": 0}
+
+    # Iter 232N.48 — Compensate for downtime BEFORE scanning drafts so
+    # clocks pushed forward by the grace aren't immediately auto-picked
+    # in the same tick.
+    if draft_ids_filter is None:
+        try:
+            counts["hibernation_corrections"] = await _apply_hibernation_grace(db, now, 15)
+        except Exception as e:
+            logger.error(f"draft_pick_timer_worker hibernation grace failed: {e}")
 
     query: dict = {"status": "active"}
     if draft_ids_filter is not None:
