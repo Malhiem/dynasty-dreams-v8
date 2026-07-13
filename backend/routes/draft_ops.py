@@ -642,3 +642,191 @@ async def list_commissioner_overrides(
         "count": len(merged),
         "events": merged,
     }
+
+
+# ─── Iter 232N.53 — Platform-wide commissioner activity feed ────────────
+
+
+@router.get("/admin/commissioner-activity")
+async def platform_commissioner_activity(
+    request: Request,
+    limit: int = 50,
+    days: int = 30,
+):
+    """Platform-admin-only feed of every commissioner override across
+    ALL leagues on the platform, plus lightweight aggregate stats to
+    surface problem patterns (a commissioner who's undone 12 picks in
+    a week, a league that's had 40 offline-manager pings, etc.).
+
+    Response shape:
+      {
+        checked_at, window_days, count, events: [ ... ],
+        aggregates: {
+          by_league:      [{id, name, undos, pings, total}, ...],
+          by_commissioner:[{id, name, undos, pings, total}, ...],
+          totals: {undos, pings, total},
+        }
+      }
+
+    Events carry `league_id` + `league_name` so the admin UI can group
+    / filter without extra lookups. `limit` is post-merge; aggregates
+    scan the full window (not paginated).
+
+    Auth: `user.role == "admin"` (platform tier). Any other role → 403.
+    """
+    user = await _get_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Platform admin only")
+
+    db = _db()
+    limit = max(1, min(int(limit), 200))
+    days = max(1, min(int(days), 365))
+    now = datetime.now(timezone.utc)
+    cutoff_iso = (now - timedelta(days=days)).isoformat()
+
+    league_cache: dict[str, str] = {}
+
+    async def _league_name(league_id: str | None) -> str | None:
+        if not league_id:
+            return None
+        if league_id in league_cache:
+            return league_cache[league_id]
+        try:
+            lg = await db.leagues.find_one(
+                {"_id": ObjectId(league_id)}, {"name": 1}
+            )
+            name = (lg or {}).get("name")
+        except Exception:
+            name = None
+        league_cache[league_id] = name or "(unknown league)"
+        return league_cache[league_id]
+
+    # ─── pick_undo events ───
+    undos: list[dict] = []
+    async for row in db.draft_undo_audit.find(
+        {"undone_at": {"$gte": cutoff_iso}}
+    ).sort([("undone_at", -1)]).limit(limit * 2):
+        removed_picks = row.get("removed_picks") or []
+        primary = removed_picks[0] if removed_picks else {}
+        undos.append({
+            "type": "pick_undo",
+            "at": row.get("undone_at"),
+            "league_id": row.get("league_id"),
+            "league_name": await _league_name(row.get("league_id")),
+            "commissioner": {
+                "id": row.get("commissioner_id"),
+                "name": row.get("commissioner_name") or "Commissioner",
+            },
+            "reason": row.get("reason"),
+            "detail": {
+                "pick_number": row.get("pick_number"),
+                "removed_count": row.get("removed_count", len(removed_picks)),
+                "cascade": bool(row.get("cascade")),
+                "player_name": (primary.get("player") or {}).get("name")
+                    if isinstance(primary.get("player"), dict) else None,
+                "team": primary.get("team"),
+                "on_the_clock_after": row.get("on_the_clock_after"),
+            },
+        })
+
+    # ─── owner_ping events ───
+    pings: list[dict] = []
+    async for row in db.commissioner_pings.find(
+        {"created_at": {"$gte": cutoff_iso}}
+    ).sort([("created_at", -1)]).limit(limit * 2):
+        commish_name = None
+        try:
+            cuid = row.get("commissioner_id")
+            if cuid:
+                cu = await db.users.find_one(
+                    {"_id": ObjectId(cuid)},
+                    {"name": 1, "username": 1, "email": 1},
+                )
+                if cu:
+                    commish_name = cu.get("name") or cu.get("username") or cu.get("email")
+        except Exception:
+            pass
+        pings.append({
+            "type": "owner_ping",
+            "at": row.get("created_at"),
+            "league_id": row.get("league_id"),
+            "league_name": await _league_name(row.get("league_id")),
+            "commissioner": {
+                "id": row.get("commissioner_id"),
+                "name": commish_name or "Commissioner",
+            },
+            "reason": row.get("custom_message"),
+            "detail": {
+                "target_user_id": row.get("target_user_id"),
+                "target_team_name": row.get("target_team_name"),
+                "draft_id": row.get("draft_id"),
+                "channels_fired": row.get("channels_fired") or [],
+            },
+        })
+
+    def _sort_key(e):
+        v = e.get("at")
+        return v if isinstance(v, str) else ""
+
+    merged = sorted(undos + pings, key=_sort_key, reverse=True)[:limit]
+
+    # ─── Aggregates over the FULL window (not paginated to limit) ─
+    league_agg: dict[str, dict] = {}
+    commish_agg: dict[str, dict] = {}
+
+    def _bump(bucket: dict, key: str, name: str, kind: str):
+        if key not in bucket:
+            bucket[key] = {"id": key, "name": name, "undos": 0, "pings": 0, "total": 0}
+        if kind == "pick_undo":
+            bucket[key]["undos"] += 1
+        elif kind == "owner_ping":
+            bucket[key]["pings"] += 1
+        bucket[key]["total"] += 1
+
+    async for row in db.draft_undo_audit.find(
+        {"undone_at": {"$gte": cutoff_iso}}
+    ):
+        lid = row.get("league_id") or "unknown"
+        ln = await _league_name(row.get("league_id")) or "(unknown league)"
+        _bump(league_agg, lid, ln, "pick_undo")
+        cid = row.get("commissioner_id") or "unknown"
+        cname = row.get("commissioner_name") or "Commissioner"
+        _bump(commish_agg, cid, cname, "pick_undo")
+    async for row in db.commissioner_pings.find(
+        {"created_at": {"$gte": cutoff_iso}}
+    ):
+        lid = row.get("league_id") or "unknown"
+        ln = await _league_name(row.get("league_id")) or "(unknown league)"
+        _bump(league_agg, lid, ln, "owner_ping")
+        cid = row.get("commissioner_id") or "unknown"
+        cname = "Commissioner"
+        if cid != "unknown":
+            try:
+                cu = await db.users.find_one(
+                    {"_id": ObjectId(cid)},
+                    {"name": 1, "username": 1, "email": 1},
+                )
+                if cu:
+                    cname = cu.get("name") or cu.get("username") or cu.get("email") or cname
+            except Exception:
+                pass
+        _bump(commish_agg, cid, cname, "owner_ping")
+
+    by_league = sorted(league_agg.values(), key=lambda x: x["total"], reverse=True)
+    by_commish = sorted(commish_agg.values(), key=lambda x: x["total"], reverse=True)
+
+    return {
+        "checked_at": now.isoformat(),
+        "window_days": days,
+        "count": len(merged),
+        "events": merged,
+        "aggregates": {
+            "by_league": by_league[:10],
+            "by_commissioner": by_commish[:10],
+            "totals": {
+                "undos": sum(l["undos"] for l in by_league),
+                "pings": sum(l["pings"] for l in by_league),
+                "total": sum(l["total"] for l in by_league),
+            },
+        },
+    }

@@ -44,6 +44,7 @@ import { PlatformAnalyticsPanel } from "./components/PlatformAnalyticsPanel";
 import { UsersPanel } from "./components/UsersPanel";
 import { UserDetailDrawer } from "./components/UserDetailDrawer";
 import { CommishActions } from "./components/CommishActions";
+import PlatformCommissionerActivityPanel from "./components/PlatformCommissionerActivityPanel";
 import { TradesPanel } from "./components/TradesPanel";
 import { CollusionPanel } from "./components/CollusionPanel";
 import { TankingPanel } from "./components/TankingPanel";
@@ -220,6 +221,11 @@ export default function AdminDashboard() {
 
           {/* ─── Commish tab ─── */}
           <TabsContent value="commish" className="space-y-3 mt-0">
+            {/* Iter 232N.53 — Platform-wide commissioner activity feed
+                surfaces cross-league override patterns above the
+                existing per-action list so problem leagues + hot
+                commissioners are the first thing an admin sees. */}
+            <PlatformCommissionerActivityPanel />
             <CommishActions
               actions={actions}
               loading={loading}
