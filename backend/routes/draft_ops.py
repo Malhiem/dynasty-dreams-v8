@@ -770,50 +770,106 @@ async def platform_commissioner_activity(
 
     merged = sorted(undos + pings, key=_sort_key, reverse=True)[:limit]
 
-    # ─── Aggregates over the FULL window (not paginated to limit) ─
-    league_agg: dict[str, dict] = {}
-    commish_agg: dict[str, dict] = {}
+    # ─── Aggregates + trend from `commissioner_activity_daily` rollup ───
+    # Iter 232N.54 — Prefer the pre-computed rollup (nightly worker in
+    # `services/commissioner_activity_rollup.py`). Falls back to a live
+    # in-memory aggregation when the rollup collection is empty (first
+    # boot, tests, or during the initial backfill window).
+    cutoff_day = (now - timedelta(days=days)).date().isoformat()
 
-    def _bump(bucket: dict, key: str, name: str, kind: str):
-        if key not in bucket:
-            bucket[key] = {"id": key, "name": name, "undos": 0, "pings": 0, "total": 0}
-        if kind == "pick_undo":
-            bucket[key]["undos"] += 1
-        elif kind == "owner_ping":
-            bucket[key]["pings"] += 1
-        bucket[key]["total"] += 1
-
-    async for row in db.draft_undo_audit.find(
-        {"undone_at": {"$gte": cutoff_iso}}
+    rollup_league: dict[str, dict] = {}
+    rollup_commish: dict[str, dict] = {}
+    trend_by_day: dict[str, dict] = {}
+    async for row in db.commissioner_activity_daily.find(
+        {"day": {"$gte": cutoff_day}}
     ):
-        lid = row.get("league_id") or "unknown"
-        ln = await _league_name(row.get("league_id")) or "(unknown league)"
-        _bump(league_agg, lid, ln, "pick_undo")
-        cid = row.get("commissioner_id") or "unknown"
-        cname = row.get("commissioner_name") or "Commissioner"
-        _bump(commish_agg, cid, cname, "pick_undo")
-    async for row in db.commissioner_pings.find(
-        {"created_at": {"$gte": cutoff_iso}}
-    ):
-        lid = row.get("league_id") or "unknown"
-        ln = await _league_name(row.get("league_id")) or "(unknown league)"
-        _bump(league_agg, lid, ln, "owner_ping")
-        cid = row.get("commissioner_id") or "unknown"
-        cname = "Commissioner"
-        if cid != "unknown":
-            try:
-                cu = await db.users.find_one(
-                    {"_id": ObjectId(cid)},
-                    {"name": 1, "username": 1, "email": 1},
+        kind = row.get("kind")
+        rid = row.get("id")
+        undos_n = int(row.get("undos") or 0)
+        pings_n = int(row.get("pings") or 0)
+        total = undos_n + pings_n
+        if kind == "league":
+            b = rollup_league.setdefault(
+                rid, {"id": rid, "name": row.get("name") or "?", "undos": 0, "pings": 0, "total": 0}
+            )
+            b["undos"] += undos_n
+            b["pings"] += pings_n
+            b["total"] += total
+            # Trend day (aggregated across all leagues for that day).
+            day = row.get("day")
+            if day:
+                d = trend_by_day.setdefault(
+                    day, {"day": day, "undos": 0, "pings": 0, "total": 0}
                 )
-                if cu:
-                    cname = cu.get("name") or cu.get("username") or cu.get("email") or cname
-            except Exception:
-                pass
-        _bump(commish_agg, cid, cname, "owner_ping")
+                d["undos"] += undos_n
+                d["pings"] += pings_n
+                d["total"] += total
+        elif kind == "commissioner":
+            b = rollup_commish.setdefault(
+                rid, {"id": rid, "name": row.get("name") or "?", "undos": 0, "pings": 0, "total": 0}
+            )
+            b["undos"] += undos_n
+            b["pings"] += pings_n
+            b["total"] += total
 
-    by_league = sorted(league_agg.values(), key=lambda x: x["total"], reverse=True)
-    by_commish = sorted(commish_agg.values(), key=lambda x: x["total"], reverse=True)
+    if rollup_league or rollup_commish:
+        # Rollup path — populated.
+        by_league = sorted(rollup_league.values(), key=lambda x: x["total"], reverse=True)
+        by_commish = sorted(rollup_commish.values(), key=lambda x: x["total"], reverse=True)
+        agg_source = "rollup"
+    else:
+        # Live-scan fallback (identical logic to the pre-N.54 path).
+        league_agg: dict[str, dict] = {}
+        commish_agg: dict[str, dict] = {}
+
+        def _bump(bucket: dict, key: str, name: str, kind: str):
+            if key not in bucket:
+                bucket[key] = {"id": key, "name": name, "undos": 0, "pings": 0, "total": 0}
+            if kind == "pick_undo":
+                bucket[key]["undos"] += 1
+            elif kind == "owner_ping":
+                bucket[key]["pings"] += 1
+            bucket[key]["total"] += 1
+
+        async for row in db.draft_undo_audit.find(
+            {"undone_at": {"$gte": cutoff_iso}}
+        ):
+            lid = row.get("league_id") or "unknown"
+            ln = await _league_name(row.get("league_id")) or "(unknown league)"
+            _bump(league_agg, lid, ln, "pick_undo")
+            cid = row.get("commissioner_id") or "unknown"
+            cname = row.get("commissioner_name") or "Commissioner"
+            _bump(commish_agg, cid, cname, "pick_undo")
+        async for row in db.commissioner_pings.find(
+            {"created_at": {"$gte": cutoff_iso}}
+        ):
+            lid = row.get("league_id") or "unknown"
+            ln = await _league_name(row.get("league_id")) or "(unknown league)"
+            _bump(league_agg, lid, ln, "owner_ping")
+            cid = row.get("commissioner_id") or "unknown"
+            cname = "Commissioner"
+            if cid != "unknown":
+                try:
+                    cu = await db.users.find_one(
+                        {"_id": ObjectId(cid)},
+                        {"name": 1, "username": 1, "email": 1},
+                    )
+                    if cu:
+                        cname = cu.get("name") or cu.get("username") or cu.get("email") or cname
+                except Exception:
+                    pass
+            _bump(commish_agg, cid, cname, "owner_ping")
+
+        by_league = sorted(league_agg.values(), key=lambda x: x["total"], reverse=True)
+        by_commish = sorted(commish_agg.values(), key=lambda x: x["total"], reverse=True)
+        agg_source = "live_scan_fallback"
+
+    # Fill trend gaps with zero-day rows so the frontend chart draws
+    # a continuous line instead of a spiky one.
+    trend: list[dict] = []
+    for i in range(days):
+        d = (now - timedelta(days=days - 1 - i)).date().isoformat()
+        trend.append(trend_by_day.get(d) or {"day": d, "undos": 0, "pings": 0, "total": 0})
 
     return {
         "checked_at": now.isoformat(),
@@ -828,5 +884,7 @@ async def platform_commissioner_activity(
                 "pings": sum(l["pings"] for l in by_league),
                 "total": sum(l["total"] for l in by_league),
             },
+            "source": agg_source,
         },
+        "trend": trend,
     }

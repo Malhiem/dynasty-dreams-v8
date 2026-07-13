@@ -131,6 +131,10 @@ async def test_platform_activity_returns_merged_cross_league_feed():
 
     _wire_deps(db, {"_id": admin, "role": "admin"})
     try:
+        # Iter 232N.54 — endpoint now prefers the rollup table; force a
+        # rollup so our seeded audit rows are visible in the aggregate.
+        from services.commissioner_activity_rollup import run_rollup
+        await run_rollup(db, days_back=[0, 1])
         result = await platform_commissioner_activity(None, limit=50, days=30)
 
         # Total events across our 2 test leagues (may include unrelated
@@ -189,6 +193,8 @@ async def test_platform_activity_days_window_filters_old_events():
 
     _wire_deps(db, {"_id": admin, "role": "admin"})
     try:
+        from services.commissioner_activity_rollup import run_rollup
+        await run_rollup(db, days_back=list(range(11)))
         result = await platform_commissioner_activity(None, limit=50, days=7)
         by_league = result["aggregates"]["by_league"]
         my_row = next((r for r in by_league if r["id"] == lg), None)
@@ -221,6 +227,8 @@ async def test_platform_activity_limit_bounded_but_aggregates_full_window():
 
     _wire_deps(db, {"_id": admin, "role": "admin"})
     try:
+        from services.commissioner_activity_rollup import run_rollup
+        await run_rollup(db, days_back=[0])
         result = await platform_commissioner_activity(None, limit=5, days=30)
         # Events capped at 5.
         assert result["count"] == 5

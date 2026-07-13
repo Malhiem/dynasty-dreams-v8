@@ -1400,6 +1400,11 @@ async def startup():
         # trigger it from the frontend.
         from services.draft_pick_timer_worker import draft_pick_timer_loop
         asyncio.create_task(draft_pick_timer_loop(db))
+        # Iter 232N.54 — Commissioner activity daily rollup. Pre-computes
+        # per-league + per-commissioner counts so the admin panel
+        # aggregate query becomes a single indexed read.
+        from services.commissioner_activity_rollup import commissioner_activity_rollup_loop
+        asyncio.create_task(commissioner_activity_rollup_loop(db))
     except Exception as e:
         logger.error(f"draft_autostart_worker failed to start: {e}")
 

@@ -56,7 +56,9 @@ interface Response {
     by_league: AggRow[];
     by_commissioner: AggRow[];
     totals: { undos: number; pings: number; total: number };
+    source?: string;
   };
+  trend?: { day: string; undos: number; pings: number; total: number }[];
 }
 
 function relativeTime(iso: string): string {
@@ -279,6 +281,62 @@ export default function PlatformCommissionerActivityPanel() {
         )}
         {data && (
           <>
+            {/* ─── Iter 232N.54 Trend sparkline (from rollup) ─── */}
+            {data.trend && data.trend.length > 0 && (
+              <div className="rounded-md border border-border/60 bg-card/40 p-3">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2 flex items-center justify-between">
+                  <span>Activity over the last {data.window_days} days</span>
+                  {data.aggregates.source && (
+                    <span className="text-[9px] font-normal italic">
+                      source: {data.aggregates.source === "rollup" ? "rollup ✓" : "live scan (rollup empty)"}
+                    </span>
+                  )}
+                </div>
+                {(() => {
+                  const peak = Math.max(1, ...data.trend!.map((d) => d.total));
+                  return (
+                    <div
+                      className="flex items-end gap-[2px] h-14"
+                      data-testid="platform-commish-activity-trend"
+                    >
+                      {data.trend!.map((d) => {
+                        const undoH = Math.round((d.undos / peak) * 100);
+                        const pingH = Math.round((d.pings / peak) * 100);
+                        const label = `${d.day}: ${d.undos} undo(s), ${d.pings} ping(s)`;
+                        return (
+                          <div
+                            key={d.day}
+                            className="flex-1 flex flex-col justify-end gap-[1px] min-w-[2px]"
+                            title={label}
+                            data-testid={`platform-commish-trend-day-${d.day}`}
+                          >
+                            <div
+                              className="bg-cyan-500/50 rounded-sm"
+                              style={{ height: `${pingH}%` }}
+                            />
+                            <div
+                              className="bg-amber-500/60 rounded-sm"
+                              style={{ height: `${undoH}%` }}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+                <div className="flex items-center gap-3 mt-1.5 text-[9px] text-muted-foreground">
+                  <span className="inline-flex items-center gap-1">
+                    <span className="inline-block w-2 h-2 bg-amber-500/60 rounded-sm" />
+                    undos
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <span className="inline-block w-2 h-2 bg-cyan-500/50 rounded-sm" />
+                    pings
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* ─── Aggregates row ─── */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <AggregateList
