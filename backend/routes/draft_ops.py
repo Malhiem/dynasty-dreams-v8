@@ -888,3 +888,97 @@ async def platform_commissioner_activity(
         },
         "trend": trend,
     }
+
+# ─── Iter 232N.55 — Generic daily metrics endpoint ──────────────────────
+
+
+@router.get("/admin/daily-metrics")
+async def read_daily_metrics(
+    request: Request,
+    metric: str,
+    kind: str = "league",
+    days: int = 30,
+    limit: int = 20,
+):
+    """Platform-admin-only. Reads the generic `daily_metrics` collection
+    populated by the 232N.55 rollup framework. Response includes a
+    leaderboard (top-N by summed count), a per-day trend array, and
+    grand totals + breakdown.
+    """
+    user = await _get_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Platform admin only")
+
+    db = _db()
+    days = max(1, min(int(days), 365))
+    limit = max(1, min(int(limit), 100))
+    now = datetime.now(timezone.utc)
+    cutoff_day = (now - timedelta(days=days)).date().isoformat()
+
+    leaderboard: dict[str, dict] = {}
+    trend_by_day: dict[str, dict] = {}
+    all_breakdown: dict[str, int] = {}
+    total_count = 0
+    async for row in db.daily_metrics.find({
+        "day": {"$gte": cutoff_day},
+        "metric": metric,
+        "kind": kind,
+    }):
+        rid = row.get("id")
+        n = int(row.get("count") or 0)
+        bd = row.get("breakdown") or {}
+        if rid:
+            b = leaderboard.setdefault(
+                rid, {"id": rid, "name": row.get("name") or "?", "count": 0, "breakdown": {}}
+            )
+            b["count"] += n
+            for k, v in bd.items():
+                b["breakdown"][k] = b["breakdown"].get(k, 0) + int(v or 0)
+        day = row.get("day")
+        if day:
+            t = trend_by_day.setdefault(day, {"day": day, "count": 0, "breakdown": {}})
+            t["count"] += n
+            for k, v in bd.items():
+                t["breakdown"][k] = t["breakdown"].get(k, 0) + int(v or 0)
+        total_count += n
+        for k, v in bd.items():
+            all_breakdown[k] = all_breakdown.get(k, 0) + int(v or 0)
+
+    sorted_leaderboard = sorted(
+        leaderboard.values(), key=lambda x: x["count"], reverse=True
+    )[:limit]
+
+    trend: list[dict] = []
+    for i in range(days):
+        d = (now - timedelta(days=days - 1 - i)).date().isoformat()
+        trend.append(trend_by_day.get(d) or {"day": d, "count": 0, "breakdown": {}})
+
+    return {
+        "checked_at": now.isoformat(),
+        "metric": metric,
+        "kind": kind,
+        "window_days": days,
+        "leaderboard": sorted_leaderboard,
+        "trend": trend,
+        "totals": {"count": total_count, "breakdown": all_breakdown},
+    }
+
+
+@router.get("/admin/daily-metrics/registered")
+async def list_registered_metrics(request: Request):
+    """Discovery endpoint — lists every metric the rollup framework
+    knows about. Lets the admin UI populate a metric-picker dropdown
+    without hard-coding the list."""
+    user = await _get_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Platform admin only")
+
+    from services.daily_rollup import registered_metrics, _register_builtins
+    _register_builtins()
+    return {
+        "metrics": [
+            {"key": m.key, "description": m.description}
+            for m in registered_metrics()
+        ],
+    }
+

@@ -1405,6 +1405,12 @@ async def startup():
         # aggregate query becomes a single indexed read.
         from services.commissioner_activity_rollup import commissioner_activity_rollup_loop
         asyncio.create_task(commissioner_activity_rollup_loop(db))
+        # Iter 232N.55 — Generic daily rollup framework. Runs alongside
+        # (not replacing) the 232N.54 loop for backward compat, and
+        # feeds a new `daily_metrics` collection with pluggable metric
+        # kinds (commissioner_activity, draft_picks_made, ...).
+        from services.daily_rollup import daily_rollup_loop
+        asyncio.create_task(daily_rollup_loop(db))
     except Exception as e:
         logger.error(f"draft_autostart_worker failed to start: {e}")
 
