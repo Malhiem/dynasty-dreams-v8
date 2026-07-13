@@ -95,6 +95,24 @@ class UndoDraftPicksRequest(BaseModel):
     count: int = Field(default=1, ge=1, le=50, description="How many of the most recent picks to undo.")
 
 
+class UndoSinglePickRequest(BaseModel):
+    """Iter 232N.51 — Targeted pick-number undo (single-shot)."""
+    reason: str | None = Field(
+        None,
+        max_length=500,
+        description="Optional commissioner note stored on the audit row.",
+    )
+    allow_cascade: bool = Field(
+        default=False,
+        description=(
+            "When true, undoing a pick that's NOT the most recent one also "
+            "rewinds every pick AFTER it (returning them to eligible). "
+            "When false (default), attempting to undo a middle pick returns "
+            "409 to prevent accidental cascade rewinds."
+        ),
+    )
+
+
 class SwapPickPlayerRequest(BaseModel):
     new_player_id: str = Field(..., description="Mongo ObjectId of the replacement player.")
 
@@ -401,6 +419,214 @@ async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, reques
         "current_pick": new_current,
         "on_the_clock": get_team_for_pick(draft["team_abbrs"], new_current, draft["snake_draft"], draft.get("bonus_picks")),
     }
+
+
+# ─── Iter 232N.51 — Targeted single-pick undo with audit persistence ───
+
+
+@router.post("/drafts/{draft_id}/picks/{pick_number}/undo")
+async def undo_specific_pick(
+    draft_id: str,
+    pick_number: int,
+    payload: UndoSinglePickRequest,
+    request: Request,
+):
+    """Commissioner-only: atomically undo a specific pick by its
+    `overall` number.
+
+    Semantics:
+      • Verifies caller is commissioner / co-commissioner / platform admin.
+      • Finds the pick in `draft.picks` by `overall == pick_number`.
+      • If the pick is the MOST RECENT (i.e. every later overall is empty),
+        undoes it cleanly: pulls the drafted player from the team's
+        roster, removes the pick from `draft.picks`, clears the matching
+        `draft_picks` collection row (so the Draft Board grid reflects
+        an unassigned slot again), rewinds `current_pick` to the undone
+        number, resets `current_pick_started_at` to now, posts a
+        `System` chat message, broadcasts `draft_undo`, and writes a
+        row to `draft_undo_audit`.
+      • If the pick is NOT the most recent, returns 409 unless the
+        request opts in via `allow_cascade=true`, in which case every
+        pick with `overall >= pick_number` is undone in reverse order.
+
+    Superset of `POST /drafts/{draft_id}/undo` — the older count-based
+    route stays for backward compat but this route is the one to call
+    from admin UIs going forward.
+    """
+    user = await _get_user(request)
+    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    if not is_league_admin(user, league):
+        raise HTTPException(
+            status_code=403,
+            detail="Only commissioner / co-commissioner / admin can undo picks",
+        )
+
+    picks = list(draft.get("picks", []))
+    if not picks:
+        raise HTTPException(status_code=400, detail="No picks to undo in this draft")
+
+    # `pick_number` refers to the `overall` field (1-based across the
+    # whole draft). Find it and detect if any LATER picks exist.
+    target_idx = next(
+        (i for i, p in enumerate(picks) if int(p.get("overall") or 0) == pick_number),
+        -1,
+    )
+    if target_idx == -1:
+        raise HTTPException(status_code=404, detail=f"Pick #{pick_number} not found")
+
+    # Determine the range of picks to undo. If the target pick is the
+    # last one in the array (or all subsequent picks have empty
+    # player_id), we cleanly undo just this one. Otherwise the caller
+    # must opt in to `allow_cascade` because rolling back a mid-draft
+    # pick removes every pick after it.
+    picks_after_target = [p for p in picks[target_idx + 1:] if p.get("player_id")]
+    if picks_after_target and not payload.allow_cascade:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Pick #{pick_number} is not the most recent pick "
+                f"({len(picks_after_target)} pick(s) made after it). "
+                "Pass `allow_cascade=true` to also undo those later picks."
+            ),
+        )
+
+    # Everything from target onwards gets rewound.
+    removed = picks[target_idx:]
+    kept = picks[:target_idx]
+
+    # ── 1) Pull drafted players off their teams' rosters ─────────
+    for p in removed:
+        tid = p.get("team_id") or (draft.get("team_map") or {}).get(
+            p.get("team", ""), {}
+        ).get("id")
+        pid = p.get("player_id")
+        if tid and pid:
+            try:
+                await _db().teams.update_one(
+                    {"_id": ObjectId(tid)},
+                    {"$pull": {"roster": pid}},
+                )
+            except Exception as e:
+                logger.warning(f"undo_specific_pick roster pull failed for {tid}/{pid}: {e}")
+
+    # ── 2) Clear the matching draft_picks collection rows so the ──
+    #       Draft Board grid stops rendering these slots as filled.
+    #       We ONLY touch fields set by pick execution — pre-seeded
+    #       columns (round/pick_in_round/team_abbr/pick_number) stay.
+    removed_overalls = [int(p.get("overall")) for p in removed if p.get("overall") is not None]
+    if removed_overalls:
+        try:
+            await _db().draft_picks.update_many(
+                {
+                    "draft_id": draft_id,
+                    "pick_number": {"$in": removed_overalls},
+                },
+                {"$set": {
+                    "player_id": None,
+                    "player_name": None,
+                    "player_position": None,
+                    "nhl_team": None,
+                    "picked_at": None,
+                    "auto_picked": False,
+                    "auto_pick_via": None,
+                }},
+            )
+        except Exception as e:
+            logger.warning(f"undo_specific_pick draft_picks reset failed: {e}")
+
+    # ── 3) Rewind the on-the-clock pointer to the undone pick ─
+    new_current = pick_number
+    new_status = "active" if draft.get("draft_started") else draft.get("status", "scheduled")
+    if draft.get("status") == "completed":
+        new_status = "active"
+    now = datetime.now(timezone.utc)
+
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {"$set": {
+            "picks": kept,
+            "current_pick": new_current,
+            "status": new_status,
+            "current_pick_started_at": now.isoformat(),
+        }},
+    )
+
+    # ── 4) Audit trail — searchable log of every undo, so nobody has
+    #       to grep worker logs to understand why a pick vanished.
+    on_the_clock_after = get_team_for_pick(
+        draft["team_abbrs"],
+        new_current,
+        draft.get("snake_draft", True),
+        draft.get("bonus_picks"),
+    )
+    try:
+        await _db().draft_undo_audit.insert_one({
+            "draft_id": draft_id,
+            "league_id": draft.get("league_id"),
+            "pick_number": pick_number,
+            "cascade": bool(picks_after_target),
+            "removed_count": len(removed),
+            "removed_picks": removed,
+            "commissioner_id": user.get("_id"),
+            "commissioner_name": user.get("name") or user.get("email"),
+            "reason": (payload.reason or None),
+            "undone_at": now.isoformat(),
+            "on_the_clock_after": on_the_clock_after,
+        })
+    except Exception as e:
+        logger.warning(f"undo_specific_pick audit insert failed: {e}")
+
+    # ── 5) System chat message so managers see the rollback ───────
+    commish_name = user.get("name") or user.get("email") or "Commissioner"
+    if len(removed) == 1:
+        text = (
+            f"{commish_name} undid pick #{pick_number} — "
+            f"{on_the_clock_after} is back on the clock."
+        )
+    else:
+        text = (
+            f"{commish_name} undid pick #{pick_number} and the "
+            f"{len(removed) - 1} pick(s) after it — {on_the_clock_after} "
+            "is back on the clock."
+        )
+    if payload.reason:
+        text += f' (reason: "{payload.reason}")'
+    msg = {
+        "id": f"undo-{now.timestamp()}",
+        "type": "pick",
+        "sender": "System",
+        "text": text,
+        "timestamp": now.isoformat(),
+    }
+    await _db().drafts.update_one(
+        {"_id": ObjectId(draft_id)},
+        {"$push": {"chat_messages": msg}},
+    )
+
+    # ── 6) Real-time broadcast so open Draft Rooms rerender live ──
+    await _broadcast(f"draft_{draft_id}", "draft_chat", msg)
+    await _broadcast(f"draft_{draft_id}", "draft_undo", {
+        "pick_number": pick_number,
+        "cascade": bool(picks_after_target),
+        "removed_count": len(removed),
+        "removed_overalls": removed_overalls,
+        "current_pick": new_current,
+        "on_the_clock": on_the_clock_after,
+    })
+
+    return {
+        "ok": True,
+        "pick_number": pick_number,
+        "removed_count": len(removed),
+        "cascade": bool(picks_after_target),
+        "current_pick": new_current,
+        "on_the_clock": on_the_clock_after,
+        "clock_reset_at": now.isoformat(),
+    }
+
 
 
 @router.patch("/drafts/{draft_id}/picks/{overall}")
