@@ -46,6 +46,13 @@ export default function PlayerSearchPanel({
   // Optional so legacy callers that don't yet pass it default to "all".
   typeFilter = "all",
   setTypeFilter,
+  // Iter 232N.50 — Server-side pool restriction for this draft. When
+  // the draft is configured with `player_criteria` that already limits
+  // the pool (e.g. an Entry draft restricted to `prospects`), the
+  // ALL/NHL chips would be misleading — the backend won't return the
+  // players they promise. We normalize this into `pinnedType` and use
+  // it to disable / relabel the chip row.
+  playerCriteria = null,
   // Iter 232N.2 — "Undrafted only" toggle. Optional; when the parent
   // wires it, a small chip appears next to the type filter.
   undraftedOnly = false,
@@ -113,40 +120,74 @@ export default function PlayerSearchPanel({
             {/* Iter 231al — Tri-segment player-type chip. Lets the user
                 isolate NHL skaters / goalies, the prospect tier, or show
                 both. Defaults to "All" so legacy behaviour is preserved.
-                Each segment carries a dedicated testid for E2E driving. */}
-            {setTypeFilter && (
-              <div
-                role="group"
-                aria-label="Filter by player type"
-                className="inline-flex items-center gap-0.5 rounded-md bg-secondary/40 p-0.5"
-                data-testid="draft-room-eligible-type-filter"
-              >
-                {[
-                  { id: "all", label: "All" },
-                  { id: "nhl", label: "NHL" },
-                  { id: "prospects", label: "Prospects" },
-                ].map(({ id, label }) => {
-                  const active = typeFilter === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setTypeFilter(id)}
-                      aria-pressed={active}
-                      className={cn(
-                        "px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-colors",
-                        active
-                          ? "bg-primary text-primary-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
-                      )}
-                      data-testid={`draft-room-eligible-type-${id}`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+                Each segment carries a dedicated testid for E2E driving.
+                Iter 232N.50 — When `playerCriteria` restricts the pool
+                server-side (e.g. Entry draft with `prospects` criteria),
+                pin the chip to the restricted type + show a lock icon
+                so users understand the ALL/NHL chips would be no-ops. */}
+            {setTypeFilter && (() => {
+              // Normalise `player_criteria` (may be string OR
+              // single-element array) into a single canonical value.
+              const rawCrit = Array.isArray(playerCriteria)
+                ? playerCriteria[0]
+                : playerCriteria;
+              const crit = String(rawCrit || "").toLowerCase();
+              // Iter 232N.50 — Mirror the backend's `player_criteria`
+              // → server-side filter mapping (see draft_inspection.py
+              // `get_draft_eligible_players`). When the pool is
+              // restricted server-side, pin the chip so the disallowed
+              // segments don't lie about what a click will return.
+              let pinnedType: "prospects" | "nhl" | null = null;
+              if (crit === "entry" || crit === "prospects") {
+                pinnedType = "prospects";
+              } else if (crit && crit !== "all") {
+                // "open" and any legacy / unknown value → NHL only.
+                pinnedType = "nhl";
+              }
+              const chipItems =
+                pinnedType === "prospects"
+                  ? [{ id: "prospects", label: "Prospects only" }]
+                  : pinnedType === "nhl"
+                  ? [{ id: "nhl", label: "NHL only" }]
+                  : [
+                      { id: "all", label: "All" },
+                      { id: "nhl", label: "NHL" },
+                      { id: "prospects", label: "Prospects" },
+                    ];
+              return (
+                <div
+                  role="group"
+                  aria-label={pinnedType ? "Draft pool restricted" : "Filter by player type"}
+                  className="inline-flex items-center gap-0.5 rounded-md bg-secondary/40 p-0.5"
+                  data-testid="draft-room-eligible-type-filter"
+                  title={pinnedType ? "This draft's configuration restricts the pool" : undefined}
+                >
+                  {chipItems.map(({ id, label }) => {
+                    const active = pinnedType ? id === pinnedType : typeFilter === id;
+                    const disabled = !!pinnedType;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => !disabled && setTypeFilter(id)}
+                        aria-pressed={active}
+                        disabled={disabled}
+                        className={cn(
+                          "px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-colors",
+                          active
+                            ? "bg-primary text-primary-foreground shadow-sm"
+                            : "text-muted-foreground hover:text-foreground hover:bg-secondary/60",
+                          disabled && "cursor-not-allowed opacity-90",
+                        )}
+                        data-testid={`draft-room-eligible-type-${id}`}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })()}
             {/* Iter 232N.2 — "Undrafted only" toggle. Fresh-names filter
                 surfaces prospects never picked before in this league. */}
             {setUndraftedOnly && (

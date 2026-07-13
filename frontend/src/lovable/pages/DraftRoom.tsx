@@ -813,6 +813,13 @@ export default function DraftRoom() {
             setPositionFilter={setPositionFilter}
             typeFilter={typeFilter}
             setTypeFilter={setTypeFilter}
+            /* Iter 232N.50 — Pass the draft's server-side player pool
+               restriction so PlayerSearchPanel can disable / relabel
+               the ALL/NHL/Prospects chips when the criteria already
+               limits the pool (e.g. an Entry draft that only surfaces
+               prospects). Prevents users thinking they can flip
+               to "NHL" when the backend won't return any. */
+            playerCriteria={(currentDraft as any)?.player_criteria}
             undraftedOnly={undraftedOnly}
             setUndraftedOnly={setUndraftedOnly}
             positions={positions}

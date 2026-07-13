@@ -26,6 +26,8 @@ export default function DraftRoomBottomGrid({
   // Player Search panel
   filteredPlayers, searchQuery, setSearchQuery, positionFilter, setPositionFilter,
   typeFilter, setTypeFilter,
+  // Iter 232N.50 — server-side pool restriction; passthrough to panel.
+  playerCriteria,
   undraftedOnly, setUndraftedOnly,
   positions, positionColors, selectedPlayerId, setSelectedPlayerId,
   tradeBlockPlayerIds, minorsEnabled,
@@ -50,6 +52,7 @@ export default function DraftRoomBottomGrid({
       setPositionFilter={setPositionFilter}
       typeFilter={typeFilter}
       setTypeFilter={setTypeFilter}
+      playerCriteria={playerCriteria}
       undraftedOnly={undraftedOnly}
       setUndraftedOnly={setUndraftedOnly}
       positions={positions}
