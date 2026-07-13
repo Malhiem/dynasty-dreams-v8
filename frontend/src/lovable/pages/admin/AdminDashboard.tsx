@@ -21,7 +21,7 @@ import {
   Users, ListChecks, TrendingUp, Activity, Shield, RotateCcw, Clock, Filter,
   ArrowLeftRight, AlertTriangle, UserX, Monitor, BarChart3, Heart, ScrollText,
   Headphones, ServerCog, DollarSign, Goal, Wrench, Flag, MessageSquare, Gavel,
-  User, Archive, Home, ShieldCheck,
+  User, Archive, Home, ShieldCheck, Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -68,6 +68,8 @@ import SecurityAuditHistory from "./components/SecurityAuditHistory";
 // Iter 231ag — Database hygiene one-click pollution sweep.
 import DbHygienePanel from "./components/DbHygienePanel";
 import RecentCrashesPanel from "./components/RecentCrashesPanel";
+// Iter 232N.56 — Metric Explorer for the generic daily-rollup framework
+import MetricExplorerPanel from "./components/MetricExplorerPanel";
 export { ModNotesPanel } from "./components/ModNotesPanel";
 import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_shared";
 
@@ -188,6 +190,7 @@ export default function AdminDashboard() {
             <SidebarTab value="players" icon={Users} label="Player Verify" testid="admin-tab-player-verify" />
             <SidebarTab value="db-hygiene" icon={ShieldCheck} label="DB Hygiene" testid="admin-tab-db-hygiene" />
             <SidebarTab value="crashes" icon={AlertTriangle} label="Recent Crashes" testid="admin-tab-crashes" />
+            <SidebarTab value="metric-explorer" icon={Sparkles} label="Metric Explorer" testid="admin-tab-metric-explorer" />
           </TabsList>
 
           {/* Right content pane */}
@@ -336,6 +339,11 @@ export default function AdminDashboard() {
           {/* ─── Iter 231ar — Recent Crashes triage ─── */}
           <TabsContent value="crashes" className="space-y-3 mt-0">
             <RecentCrashesPanel />
+          </TabsContent>
+
+          {/* ─── Iter 232N.56 — Metric Explorer ─── */}
+          <TabsContent value="metric-explorer" className="space-y-3 mt-0">
+            <MetricExplorerPanel />
           </TabsContent>
           </div>
         </Tabs>

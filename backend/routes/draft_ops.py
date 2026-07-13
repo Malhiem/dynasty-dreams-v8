@@ -968,17 +968,37 @@ async def read_daily_metrics(
 async def list_registered_metrics(request: Request):
     """Discovery endpoint — lists every metric the rollup framework
     knows about. Lets the admin UI populate a metric-picker dropdown
-    without hard-coding the list."""
+    without hard-coding the list.
+
+    Iter 232N.56 — Enriched with `kinds` (distinct bucketing dimensions
+    observed in `daily_metrics` per metric) so the Metric Explorer UI
+    can populate a kind picker without a second round-trip, and with
+    `last_seen_day` so admins can spot metrics whose rollup has stalled.
+    """
     user = await _get_user(request)
     if not user or user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Platform admin only")
 
     from services.daily_rollup import registered_metrics, _register_builtins
     _register_builtins()
-    return {
-        "metrics": [
-            {"key": m.key, "description": m.description}
-            for m in registered_metrics()
-        ],
-    }
+
+    db = _db()
+    metrics_out = []
+    for m in registered_metrics():
+        kinds = await db.daily_metrics.distinct("kind", {"metric": m.key})
+        # Sample one recent doc to expose last-seen bucket count for
+        # freshness signalling in the UI.
+        last_day = None
+        recent = await db.daily_metrics.find(
+            {"metric": m.key}, {"day": 1}
+        ).sort("day", -1).limit(1).to_list(1)
+        if recent:
+            last_day = recent[0].get("day")
+        metrics_out.append({
+            "key": m.key,
+            "description": m.description,
+            "kinds": sorted(kinds) if kinds else [],
+            "last_seen_day": last_day,
+        })
+    return {"metrics": metrics_out}
 
