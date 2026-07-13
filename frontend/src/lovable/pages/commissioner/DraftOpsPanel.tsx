@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Activity, RefreshCw, AlertTriangle, CircleDot, CircleDashed, Clock, Users, User, BellRing } from "lucide-react";
 import api from "@/lib/api";
 import { toast } from "sonner";
+import RecentOverridesPanel from "./RecentOverridesPanel";
 
 interface DraftOpsProps {
   leagueId?: string;
@@ -472,6 +473,17 @@ export default function DraftOpsPanel({ leagueId }: DraftOpsProps) {
             <div className="text-[10px] text-muted-foreground text-right">
               Checked at {new Date(data.checked_at).toLocaleTimeString()}
             </div>
+
+            {/* Iter 232N.52 — Recent commissioner overrides feed
+                (undos + pings) below the drafts. Visible to all league
+                members from the same endpoint so the transparency
+                surface is consistent whether the viewer is admin or
+                a regular manager. Defaults collapsed to keep the Draft
+                Ops panel compact — expands on click. */}
+            <RecentOverridesPanel
+              leagueId={leagueId}
+              defaultCollapsed={true}
+            />
           </>
         ) : (
           <div className="text-sm text-muted-foreground">Loading draft ops…</div>

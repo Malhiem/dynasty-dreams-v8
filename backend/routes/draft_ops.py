@@ -495,3 +495,150 @@ async def ping_offline_owner(
         "next_ping_at": next_ping_at,
         "cooldown_seconds": _PING_COOLDOWN_SECONDS,
     }
+
+
+# ─── Iter 232N.52 — Recent commissioner overrides feed ─────────────────
+
+
+async def _user_can_view_league(db, user: dict, league: dict) -> bool:
+    """Any league member (team owner / co-owner / commissioner / admin)
+    may read the overrides feed — this is a transparency surface, not
+    a privileged one."""
+    if is_league_admin(user, league):
+        return True
+    uid = user.get("_id")
+    if not uid:
+        return False
+    # Team ownership implies membership.
+    exists = await db.teams.find_one(
+        {
+            "league_id": str(league["_id"]),
+            "$or": [{"owner_id": uid}, {"co_owner_ids": uid}],
+        },
+        {"_id": 1},
+    )
+    return exists is not None
+
+
+@router.get("/leagues/{league_id}/commissioner-overrides")
+async def list_commissioner_overrides(
+    league_id: str,
+    request: Request,
+    limit: int = 30,
+):
+    """Unified reverse-chronological feed of every commissioner-fired
+    action in this league. Currently surfaces two event types:
+
+      • `pick_undo` — from `draft_undo_audit` (Iter 232N.51). Records
+        who undid which pick, why, cascade impact, and which team was
+        on the clock after.
+      • `owner_ping` — from `commissioner_pings` (Iter 232N.47). Records
+        who was pinged, which team, custom message if any, and which
+        channels fired.
+
+    Auth: any league member (team owner, co-owner, commissioner, or
+    platform admin). Not restricted to commissioners because the whole
+    point is transparency — league mates should be able to see when
+    the commissioner has stepped in.
+    """
+    user = await _get_user(request)
+    db = _db()
+
+    try:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid league id")
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not await _user_can_view_league(db, user, league):
+        raise HTTPException(status_code=403, detail="League members only")
+
+    limit = max(1, min(int(limit), 100))
+    now = datetime.now(timezone.utc)
+
+    # ─── pick_undo events ─────────────────────────────────────────
+    undos: list[dict] = []
+    async for row in db.draft_undo_audit.find(
+        {"league_id": league_id}
+    ).sort([("undone_at", -1)]).limit(limit):
+        removed_picks = row.get("removed_picks") or []
+        primary = removed_picks[0] if removed_picks else {}
+        undos.append({
+            "type": "pick_undo",
+            "at": row.get("undone_at"),
+            "commissioner": {
+                "id": row.get("commissioner_id"),
+                "name": row.get("commissioner_name") or "Commissioner",
+            },
+            "reason": row.get("reason"),
+            "detail": {
+                "pick_number": row.get("pick_number"),
+                "removed_count": row.get("removed_count", len(removed_picks)),
+                "cascade": bool(row.get("cascade")),
+                "player_name": (primary.get("player") or {}).get("name")
+                    if isinstance(primary.get("player"), dict) else None,
+                "team": primary.get("team"),
+                "on_the_clock_after": row.get("on_the_clock_after"),
+            },
+        })
+
+    # ─── owner_ping events ────────────────────────────────────────
+    pings: list[dict] = []
+    async for row in db.commissioner_pings.find(
+        {"league_id": league_id}
+    ).sort([("created_at", -1)]).limit(limit):
+        target_name = None
+        try:
+            tuid = row.get("target_user_id")
+            if tuid:
+                tu = await db.users.find_one(
+                    {"_id": ObjectId(tuid)},
+                    {"name": 1, "username": 1, "email": 1},
+                )
+                if tu:
+                    target_name = tu.get("name") or tu.get("username") or tu.get("email")
+        except Exception:
+            pass
+        commish_name = None
+        try:
+            cuid = row.get("commissioner_id")
+            if cuid:
+                cu = await db.users.find_one(
+                    {"_id": ObjectId(cuid)},
+                    {"name": 1, "username": 1, "email": 1},
+                )
+                if cu:
+                    commish_name = cu.get("name") or cu.get("username") or cu.get("email")
+        except Exception:
+            pass
+        pings.append({
+            "type": "owner_ping",
+            "at": row.get("created_at"),
+            "commissioner": {
+                "id": row.get("commissioner_id"),
+                "name": commish_name or "Commissioner",
+            },
+            "reason": row.get("custom_message"),
+            "detail": {
+                "target_user_id": row.get("target_user_id"),
+                "target_name": target_name or "Manager",
+                "target_team_name": row.get("target_team_name"),
+                "draft_id": row.get("draft_id"),
+                "channels_fired": row.get("channels_fired") or [],
+            },
+        })
+
+    # Merge, sort DESC by timestamp, cap at limit. Rows missing an `at`
+    # sink to the bottom rather than crashing the sort.
+    def _sort_key(e):
+        v = e.get("at")
+        return v if isinstance(v, str) else ""
+
+    merged = sorted(undos + pings, key=_sort_key, reverse=True)[:limit]
+
+    return {
+        "league_id": league_id,
+        "checked_at": now.isoformat(),
+        "count": len(merged),
+        "events": merged,
+    }
