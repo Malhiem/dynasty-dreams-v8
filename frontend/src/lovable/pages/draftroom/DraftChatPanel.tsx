@@ -127,11 +127,25 @@ function TradeRow({ trade, myUserId, isCommissioner, vetoThreshold, onVote, onFo
       <div className="grid grid-cols-2 gap-2 text-[10px]">
         <div>
           <div className="text-muted-foreground uppercase tracking-wide">Sending</div>
-          <div className="text-foreground">{summarizeAssets(trade.proposer_assets || trade.from_assets)}</div>
+          <div className="text-foreground">
+            {summarizeAssets(
+              /* Iter 232N.49 — Trade docs saved by the trade builder
+                 use `assets_offered` / `assets_requested`; older /
+                 alternate shapes (proposer_assets, from_assets, etc.)
+                 remain supported so historical draft chat cards still
+                 render. Without the two `assets_*` fallbacks, every
+                 real trade rendered "Sending —, Receiving —". */
+              trade.proposer_assets || trade.from_assets || trade.assets_offered,
+            )}
+          </div>
         </div>
         <div>
           <div className="text-muted-foreground uppercase tracking-wide">Receiving</div>
-          <div className="text-foreground">{summarizeAssets(trade.target_assets || trade.to_assets)}</div>
+          <div className="text-foreground">
+            {summarizeAssets(
+              trade.target_assets || trade.to_assets || trade.assets_requested,
+            )}
+          </div>
         </div>
       </div>
 
