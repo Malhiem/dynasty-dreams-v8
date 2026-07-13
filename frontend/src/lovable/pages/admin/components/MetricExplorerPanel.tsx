@@ -125,13 +125,6 @@ export default function MetricExplorerPanel() {
       const { data } = await api.get("/admin/daily-metrics/registered");
       const list: MetricEntry[] = data?.metrics ?? [];
       setMetrics(list);
-      // Auto-select first metric if nothing selected yet.
-      setSelectedMetric((prev) => {
-        if (prev) return prev;
-        if (list.length === 0) return "";
-        setSelectedKind(list[0].kinds?.[0] ?? "league");
-        return list[0].key;
-      });
     } catch (e: any) {
       const detail =
         e?.response?.data?.detail || e?.message || "Failed to load metrics";
@@ -144,6 +137,13 @@ export default function MetricExplorerPanel() {
   useEffect(() => {
     loadRegistered();
   }, [loadRegistered]);
+
+  // Auto-select the first metric + a valid kind once discovery lands.
+  useEffect(() => {
+    if (metrics.length === 0 || selectedMetric) return;
+    setSelectedMetric(metrics[0].key);
+    setSelectedKind(metrics[0].kinds?.[0] ?? "league");
+  }, [metrics, selectedMetric]);
 
   // ── When selected metric changes, snap kind to a valid value ───
   const activeMetric = useMemo(
@@ -336,21 +336,23 @@ export default function MetricExplorerPanel() {
               </SelectTrigger>
               <SelectContent>
                 {metrics.map((m) => (
-                  <SelectItem key={m.key} value={m.key}>
-                    <div className="flex flex-col">
-                      <span className="text-xs font-medium">
-                        {humanizeKey(m.key)}
-                      </span>
-                      {m.description && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {m.description}
-                        </span>
-                      )}
-                    </div>
+                  <SelectItem
+                    key={m.key}
+                    value={m.key}
+                    textValue={humanizeKey(m.key)}
+                  >
+                    <span className="text-xs font-medium">
+                      {humanizeKey(m.key)}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            {activeMetric?.description && (
+              <div className="text-[10px] text-muted-foreground italic leading-tight">
+                {activeMetric.description}
+              </div>
+            )}
             {activeMetric?.last_seen_day && (
               <div className="text-[10px] text-muted-foreground">
                 Last rolled up: {activeMetric.last_seen_day}
