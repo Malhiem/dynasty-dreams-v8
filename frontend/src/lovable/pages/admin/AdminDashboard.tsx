@@ -70,6 +70,8 @@ import DbHygienePanel from "./components/DbHygienePanel";
 import RecentCrashesPanel from "./components/RecentCrashesPanel";
 // Iter 232N.56 — Metric Explorer for the generic daily-rollup framework
 import MetricExplorerPanel from "./components/MetricExplorerPanel";
+// Iter 232N.57 — "What needs attention today?" anomaly feed
+import AttentionFeedPanel from "./components/AttentionFeedPanel";
 export { ModNotesPanel } from "./components/ModNotesPanel";
 import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_shared";
 
@@ -198,6 +200,10 @@ export default function AdminDashboard() {
 
           {/* ─── Overview tab ─── */}
           <TabsContent value="overview" className="space-y-6 mt-0">
+            {/* Iter 232N.57 — Compact 'what needs attention today?'
+                anomaly summary at the very top of Overview so admins
+                catch outages / spikes before anything else. */}
+            <AttentionFeedPanel compact />
             <section className="space-y-3">
               <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                 Platform Health
@@ -343,6 +349,9 @@ export default function AdminDashboard() {
 
           {/* ─── Iter 232N.56 — Metric Explorer ─── */}
           <TabsContent value="metric-explorer" className="space-y-3 mt-0">
+            {/* Iter 232N.57 — Full 'what needs attention today?' feed
+                sits above the explorer so anomalies drive drill-down. */}
+            <AttentionFeedPanel />
             <MetricExplorerPanel />
           </TabsContent>
           </div>

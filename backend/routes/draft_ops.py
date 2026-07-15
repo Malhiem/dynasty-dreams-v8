@@ -1002,3 +1002,52 @@ async def list_registered_metrics(request: Request):
         })
     return {"metrics": metrics_out}
 
+
+# ─── Iter 232N.57 — Anomaly detection endpoint ──────────────────────────
+
+
+@router.get("/admin/metric-anomalies")
+async def read_metric_anomalies(
+    request: Request,
+    metric: str | None = None,
+    kind: str | None = None,
+    threshold_sigma: float = 2.0,
+    days: int = 30,
+    min_samples: int = 5,
+):
+    """Platform-admin-only. Computes >Nσ deviations (both spikes and
+    dips) for the latest observed day of each metric relative to the
+    prior `days` days. When `metric` is omitted, sweeps every
+    registered metric and returns a global feed of what needs
+    attention today."""
+    user = await _get_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Platform admin only")
+
+    db = _db()
+    threshold_sigma = max(0.5, min(float(threshold_sigma), 6.0))
+    days = max(3, min(int(days), 365))
+    min_samples = max(1, min(int(min_samples), days))
+
+    from services.anomaly_detector import (
+        detect_metric_anomalies,
+        detect_all_anomalies,
+    )
+
+    if metric:
+        return await detect_metric_anomalies(
+            db, metric,
+            kind=kind,
+            threshold_sigma=threshold_sigma,
+            window_days=days,
+            min_samples=min_samples,
+        )
+
+    return await detect_all_anomalies(
+        db,
+        threshold_sigma=threshold_sigma,
+        window_days=days,
+        min_samples=min_samples,
+    )
+
+

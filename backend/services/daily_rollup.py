@@ -306,6 +306,181 @@ async def _collect_draft_picks_made(db, day: str) -> dict:
     return buckets
 
 
+# ─── Iter 232N.57 — three additional built-in metrics ────────────────
+
+async def _league_name_cache(db):
+    """Small factory that returns a resolver + shared cache dict so a
+    collector's per-day scan doesn't hit `leagues` N times."""
+    from bson import ObjectId
+    cache: dict[str, str] = {}
+
+    async def _resolve(lid):
+        if not lid:
+            return None
+        if lid in cache:
+            return cache[lid]
+        try:
+            lg = await db.leagues.find_one({"_id": ObjectId(lid)}, {"name": 1})
+        except Exception:
+            lg = None
+        cache[lid] = (lg or {}).get("name") or "(unknown league)"
+        return cache[lid]
+
+    return _resolve
+
+
+async def _collect_chat_messages_per_league(db, day: str) -> dict:
+    """Chat volume per league per day. Excludes `is_system` messages so
+    an operational chat spam wave doesn't drown out real user activity.
+    """
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+    d = _dt.fromisoformat(day).replace(tzinfo=_tz.utc)
+    end = d + _td(days=1)
+    lname = await _league_name_cache(db)
+
+    buckets: dict[tuple[str, str], dict] = {}
+    # `chat_messages.created_at` is stored as native datetime.
+    async for msg in db.chat_messages.find({
+        "created_at": {"$gte": d, "$lt": end},
+        "is_system": {"$ne": True},
+        "league_id": {"$ne": None},
+    }):
+        lid = msg.get("league_id")
+        if not lid:
+            continue
+        k = ("league", lid)
+        b = buckets.setdefault(k, {
+            "name": await lname(lid), "count": 0,
+            "breakdown": {"user": 0, "with_metadata": 0},
+        })
+        b["count"] += 1
+        b["breakdown"]["user"] += 1
+        if msg.get("metadata"):
+            b["breakdown"]["with_metadata"] += 1
+
+    return buckets
+
+
+async def _collect_trades_executed(db, day: str) -> dict:
+    """Trades that reached `status=executed` on this day. Uses
+    `processed_at` as the authoritative execution timestamp
+    (ISO-string on-disk). Buckets by league AND by proposer team so
+    the Metric Explorer can rank both dimensions."""
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    from bson import ObjectId
+
+    d = _dt.fromisoformat(day).replace(tzinfo=_tz.utc)
+    start_iso = d.isoformat()
+    end_iso = (d + _td(days=1)).isoformat()
+    lname = await _league_name_cache(db)
+
+    buckets: dict[tuple[str, str], dict] = {}
+    team_cache: dict[str, str] = {}
+
+    async def _tname(tid):
+        if not tid:
+            return None
+        if tid in team_cache:
+            return team_cache[tid]
+        try:
+            t = await db.teams.find_one({"_id": ObjectId(tid)}, {"name": 1})
+        except Exception:
+            t = None
+        team_cache[tid] = (t or {}).get("name") or "(unknown team)"
+        return team_cache[tid]
+
+    async for tr in db.trades.find({
+        "processed_at": {"$gte": start_iso, "$lt": end_iso},
+        "status": "executed",
+    }):
+        lid = tr.get("league_id")
+        multi = bool(tr.get("is_multi_party"))
+        if lid:
+            k = ("league", lid)
+            b = buckets.setdefault(k, {
+                "name": await lname(lid), "count": 0,
+                "breakdown": {"two_party": 0, "multi_party": 0},
+            })
+            b["count"] += 1
+            b["breakdown"]["multi_party" if multi else "two_party"] += 1
+
+        tid = tr.get("proposer_team_id")
+        if tid:
+            k = ("team", tid)
+            b = buckets.setdefault(k, {
+                "name": tr.get("proposer_team_name") or await _tname(tid),
+                "count": 0,
+                "breakdown": {"two_party": 0, "multi_party": 0},
+            })
+            b["count"] += 1
+            b["breakdown"]["multi_party" if multi else "two_party"] += 1
+
+    return buckets
+
+
+async def _collect_waiver_claims(db, day: str) -> dict:
+    """Waiver claims filed on this day. `waiver_claims.processed_at` is
+    an ISO-string; falls back to `created_at` (native datetime) via a
+    unioned scan so drafts of the collection (some pre-processed) are
+    still counted."""
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    from bson import ObjectId
+
+    d = _dt.fromisoformat(day).replace(tzinfo=_tz.utc)
+    start_iso = d.isoformat()
+    end_iso = (d + _td(days=1)).isoformat()
+    end = d + _td(days=1)
+    lname = await _league_name_cache(db)
+
+    buckets: dict[tuple[str, str], dict] = {}
+    seen_ids: set = set()
+
+    def _bump(lid, status):
+        k = ("league", lid)
+        b = buckets.setdefault(k, {
+            "name": None, "count": 0,
+            "breakdown": {"won": 0, "lost": 0, "pending": 0, "other": 0},
+        })
+        b["count"] += 1
+        if status == "won":
+            b["breakdown"]["won"] += 1
+        elif status == "lost":
+            b["breakdown"]["lost"] += 1
+        elif status == "pending":
+            b["breakdown"]["pending"] += 1
+        else:
+            b["breakdown"]["other"] += 1
+
+    # Prefer `processed_at` (post-run) — matches "what happened today".
+    async for wc in db.waiver_claims.find({
+        "processed_at": {"$gte": start_iso, "$lt": end_iso},
+    }):
+        lid = wc.get("league_id")
+        if not lid:
+            continue
+        seen_ids.add(wc.get("_id"))
+        _bump(lid, wc.get("status") or "other")
+
+    # Pending claims not yet processed — fall back to `created_at`.
+    async for wc in db.waiver_claims.find({
+        "processed_at": {"$in": [None, ""]},
+        "created_at": {"$gte": d, "$lt": end},
+    }):
+        if wc.get("_id") in seen_ids:
+            continue
+        lid = wc.get("league_id")
+        if not lid:
+            continue
+        _bump(lid, wc.get("status") or "pending")
+
+    # Resolve league names once at the end.
+    for (kind, lid), b in buckets.items():
+        b["name"] = await lname(lid)
+
+    return buckets
+
+
 def _register_builtins():
     if "commissioner_activity" not in _REGISTRY:
         register_metric(MetricSpec(
@@ -318,4 +493,23 @@ def _register_builtins():
             key="draft_picks_made",
             collect=_collect_draft_picks_made,
             description="Draft picks executed per day (auto vs manual)",
+        ))
+    # Iter 232N.57 — three additional platform-health metrics.
+    if "chat_messages_per_league" not in _REGISTRY:
+        register_metric(MetricSpec(
+            key="chat_messages_per_league",
+            collect=_collect_chat_messages_per_league,
+            description="User chat messages per league per day (excludes system messages)",
+        ))
+    if "trades_executed" not in _REGISTRY:
+        register_metric(MetricSpec(
+            key="trades_executed",
+            collect=_collect_trades_executed,
+            description="Trades that reached executed status, bucketed by league and by proposer team",
+        ))
+    if "waiver_claims" not in _REGISTRY:
+        register_metric(MetricSpec(
+            key="waiver_claims",
+            collect=_collect_waiver_claims,
+            description="Waiver claims filed per league per day (won / lost / pending)",
         ))

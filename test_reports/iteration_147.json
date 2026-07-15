@@ -1,0 +1,18 @@
+{
+  "summary": "Iter 232N57 fully verified. All 23 pytest tests pass (9 new + 14 regression from N54/N55/N56). Backend endpoints /api/admin/daily-metrics/registered lists all 5 metrics with kinds+last_seen_day; daily-metrics returns leaderboard/trend/totals shape for chat_messages_per_league (league), trades_executed (league & team), waiver_claims (league); metric-anomalies returns correct shapes for both aggregate and single-metric variants; threshold_sigma & days clamped (0.1->0.5, 10->6.0, 1->3, 999->365) with no 500s; Stat Chasers Roto (69e46af167999bfb85c39629) trades_executed detected as 6.97σ spike (19 today vs 3.45 mean); non-admin rejected. Frontend: Overview compact card shows badge '1 flagged · 1↑ / 0↓' and summary line 'Top: Stat Chasers Roto · Trades Executed spike · 7.0σ'; Metric Explorer full panel renders with threshold/window/refresh pickers and one anomaly row with correct data-testid attention-row-trades_executed-69e46af167999bfb85c39629 displaying Today: 19 · 30d avg: 3.45 ± 2.23 · +15.55. Threshold changes trigger reload correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N57_metrics_and_anomalies.py",
+    "/app/test_reports/pytest/iter232N57_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "Used existing 45-day backfilled rollup data (Stat Chasers Roto trade spike on 2026-07-02).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Anomaly detector + Attention Feed panel (compact & full) working end-to-end. Threshold picker maxes at 3σ per UI (not 6σ), so Stat Chasers 7σ spike remains visible at all threshold options. Full 23/23 regression from N54-N57 passes."
+}
