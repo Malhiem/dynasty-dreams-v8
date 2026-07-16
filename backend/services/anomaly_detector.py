@@ -142,9 +142,17 @@ async def detect_all_anomalies(
     threshold_sigma: float = 2.0,
     window_days: int = 30,
     min_samples: int = 5,
+    persist: bool = True,
 ) -> dict:
     """Sweep every registered metric. Convenience wrapper for the
-    'what needs attention today?' admin feed."""
+    'what needs attention today?' admin feed.
+
+    When `persist` is True, every flagged row is upserted into
+    `metric_anomaly_history` for its own `today` value (metrics can
+    have different latest days if some are more up-to-date than others).
+    Each anomaly is then enriched with `any_streak` +
+    `directional_streak` fields (232N.58).
+    """
     _register_builtins()
     reports: list[dict] = []
     for spec in registered_metrics():
@@ -165,6 +173,22 @@ async def detect_all_anomalies(
         s = a.get("sigma")
         return (0 if s is not None else 1, -abs(s) if s is not None else 0)
     all_rows.sort(key=_rank_key)
+
+    if persist:
+        # Persist per-metric because each metric has its OWN `today`
+        # (latest observed day), and streaks must be keyed on that day.
+        from services.anomaly_history import persist_anomalies, enrich_with_streaks
+        for r in reports:
+            today = r.get("today")
+            if not today or not r.get("anomalies"):
+                continue
+            await persist_anomalies(db, r["anomalies"], today)
+            await enrich_with_streaks(db, r["anomalies"], today)
+        # Re-sync top_anomalies from the enriched per_metric rows.
+        all_rows = []
+        for r in reports:
+            all_rows.extend(r["anomalies"])
+        all_rows.sort(key=_rank_key)
 
     return {
         "checked_at": datetime.now(timezone.utc).isoformat(),

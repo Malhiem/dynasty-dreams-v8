@@ -162,6 +162,15 @@ async def daily_rollup_loop(
             f"daily_rollup startup: {len(_REGISTRY)} metrics × {startup_backfill_days} days = "
             f"{len(report['reports'])} rollups"
         )
+        # Iter 232N.58 — After each rollup pass, sweep the anomaly
+        # detector so `metric_anomaly_history` stays fresh even on days
+        # when no admin loads the panel. Persist=True is the default
+        # inside detect_all_anomalies.
+        try:
+            from services.anomaly_detector import detect_all_anomalies
+            await detect_all_anomalies(db)
+        except Exception as e:
+            logger.error(f"anomaly detection (startup) failed: {e}")
     except Exception as e:
         logger.error(f"daily_rollup startup failed: {e}")
 
@@ -173,6 +182,11 @@ async def daily_rollup_loop(
                 {"$set": {"_id": "latest", "startup": False, **report}},
                 upsert=True,
             )
+            try:
+                from services.anomaly_detector import detect_all_anomalies
+                await detect_all_anomalies(db)
+            except Exception as e:
+                logger.error(f"anomaly detection (tick) failed: {e}")
         except Exception as e:
             logger.error(f"daily_rollup tick failed: {e}")
         await asyncio.sleep(interval_seconds)

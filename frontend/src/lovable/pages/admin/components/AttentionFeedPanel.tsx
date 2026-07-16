@@ -34,6 +34,7 @@ import {
   RefreshCw,
   Sparkles,
   CheckCircle2,
+  Flame,
 } from "lucide-react";
 import api from "@/lib/api";
 
@@ -48,6 +49,21 @@ interface AnomalyRow {
   sigma: number | null;
   direction: "spike" | "dip";
   delta: number;
+  any_streak?: number;
+  directional_streak?: number;
+}
+
+interface StreakRow {
+  metric: string;
+  kind: string;
+  id: string;
+  name: string;
+  any_streak: number;
+  directional_streak: number;
+  latest_day: string;
+  latest_direction: "spike" | "dip";
+  latest_sigma: number | null;
+  latest_delta: number;
 }
 
 interface AnomalyResponse {
@@ -74,6 +90,7 @@ function AnomalyBadge({ row }: { row: AnomalyRow }) {
   const color = isSpike
     ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
     : "bg-amber-500/10 text-amber-300 border-amber-500/30";
+  const streak = row.any_streak ?? 0;
   return (
     <div
       className="flex items-start gap-2 rounded-md border border-border/60 bg-card/40 p-2.5"
@@ -94,6 +111,17 @@ function AnomalyBadge({ row }: { row: AnomalyRow }) {
             {isSpike ? "spike" : "dip"}
             {row.sigma !== null && ` · ${Math.abs(row.sigma).toFixed(1)}σ`}
           </Badge>
+          {streak >= 2 && (
+            <Badge
+              variant="outline"
+              className="text-[9px] bg-orange-500/10 text-orange-300 border-orange-500/30"
+              data-testid={`attention-streak-badge-${row.metric}-${row.id}`}
+              title={`Any streak: ${streak}d · Same-direction streak: ${row.directional_streak ?? streak}d`}
+            >
+              <Flame className="h-2.5 w-2.5 mr-0.5" />
+              {streak}d streak
+            </Badge>
+          )}
         </div>
         <div className="text-[10px] text-muted-foreground">
           Today: <span className="font-mono font-semibold text-foreground">{row.today_count}</span>
@@ -116,12 +144,66 @@ function AnomalyBadge({ row }: { row: AnomalyRow }) {
   );
 }
 
+function StreakBadge({ row }: { row: StreakRow }) {
+  const isSpike = row.latest_direction === "spike";
+  const streakColor =
+    row.any_streak >= 5
+      ? "bg-rose-500/15 text-rose-300 border-rose-500/40"
+      : row.any_streak >= 3
+      ? "bg-orange-500/15 text-orange-300 border-orange-500/40"
+      : "bg-amber-500/15 text-amber-300 border-amber-500/40";
+  return (
+    <div
+      className="flex items-start gap-2 rounded-md border border-border/60 bg-card/40 p-2.5"
+      data-testid={`streak-row-${row.metric}-${row.id}`}
+    >
+      <Flame
+        className={`h-4 w-4 mt-0.5 shrink-0 ${
+          row.any_streak >= 5
+            ? "text-rose-400"
+            : row.any_streak >= 3
+            ? "text-orange-400"
+            : "text-amber-400"
+        }`}
+      />
+      <div className="flex-1 min-w-0 space-y-0.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-xs font-semibold truncate">{row.name}</span>
+          <Badge variant="outline" className="text-[9px] bg-secondary/40">
+            {humanizeKey(row.metric)}
+          </Badge>
+          <Badge variant="outline" className={`text-[9px] ${streakColor}`}>
+            {row.any_streak}d streak
+          </Badge>
+          <Badge
+            variant="outline"
+            className={`text-[9px] ${
+              isSpike
+                ? "bg-rose-500/10 text-rose-300 border-rose-500/30"
+                : "bg-amber-500/10 text-amber-300 border-amber-500/30"
+            }`}
+          >
+            {isSpike ? "spike" : "dip"}
+            {row.latest_sigma !== null &&
+              ` · ${Math.abs(row.latest_sigma).toFixed(1)}σ`}
+          </Badge>
+        </div>
+        <div className="text-[10px] text-muted-foreground">
+          {row.directional_streak}d same-direction · latest{" "}
+          <span className="font-mono">{row.latest_day}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function AttentionFeedPanel({
   compact = false,
 }: {
   compact?: boolean;
 }) {
   const [data, setData] = useState<AnomalyResponse | null>(null);
+  const [streaks, setStreaks] = useState<StreakRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [threshold, setThreshold] = useState<number>(2.0);
@@ -131,15 +213,22 @@ export default function AttentionFeedPanel({
     setLoading(true);
     setError(null);
     try {
-      const { data } = await api.get("/admin/metric-anomalies", {
-        params: { threshold_sigma: threshold, days: windowDays },
-      });
-      setData(data);
+      const [anom, str] = await Promise.all([
+        api.get("/admin/metric-anomalies", {
+          params: { threshold_sigma: threshold, days: windowDays },
+        }),
+        api.get("/admin/anomaly-streaks", {
+          params: { min_streak: 2, limit: 10, max_lookback_days: 30 },
+        }),
+      ]);
+      setData(anom.data);
+      setStreaks(str.data?.streaks ?? []);
     } catch (e: any) {
       const detail =
         e?.response?.data?.detail || e?.message || "Failed to load anomalies";
       setError(detail);
       setData(null);
+      setStreaks([]);
     } finally {
       setLoading(false);
     }
@@ -185,6 +274,17 @@ export default function AttentionFeedPanel({
                       className="text-[10px] bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
                     >
                       All quiet
+                    </Badge>
+                  )}
+                  {streaks.length > 0 && (
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] bg-orange-500/10 text-orange-300 border-orange-500/30"
+                      data-testid="attention-streaks-count"
+                      title={`${streaks.length} ongoing anomaly streak${streaks.length === 1 ? "" : "s"}`}
+                    >
+                      <Flame className="h-2.5 w-2.5 mr-0.5" />
+                      {streaks.length} streak{streaks.length === 1 ? "" : "s"}
                     </Badge>
                   )}
                 </div>
@@ -338,6 +438,30 @@ export default function AttentionFeedPanel({
               {data && new Date(data.checked_at).toLocaleTimeString()}
             </div>
           </>
+        )}
+
+        {/* ── Top ongoing streaks (232N.58) ─────────────────────── */}
+        {streaks.length > 0 && (
+          <div
+            className="pt-3 border-t border-border/40 space-y-2"
+            data-testid="attention-streaks-section"
+          >
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+              <Flame className="h-3 w-3 text-orange-400" />
+              Top ongoing streaks
+              <Badge
+                variant="outline"
+                className="text-[9px] bg-orange-500/10 text-orange-300 border-orange-500/30"
+              >
+                {streaks.length}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {streaks.map((s) => (
+                <StreakBadge key={`${s.metric}-${s.kind}-${s.id}`} row={s} />
+              ))}
+            </div>
+          </div>
         )}
       </CardContent>
     </Card>

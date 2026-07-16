@@ -1,0 +1,21 @@
+{
+  "summary": "Iter 232N.58 anomaly-history: 9/9 target tests pass, 32/32 regression (N54..N58) pass. Live backend endpoints verified: /api/admin/anomaly-streaks returns the seeded 4-day Stat Chasers Roto trades_executed streak (any_streak=4, directional_streak=4, latest_day=2026-07-16); /api/admin/metric-anomalies (sweep + metric=trades_executed) enriches rows with any_streak/directional_streak fields. Non-admin returns 401 (unauth) as expected. Bounds clamping verified (min_streak 1..90, max_lookback_days 1..365, limit 1..100 — no 500s). Frontend admin dashboard: Overview compact card shows the orange 'attention-streaks-count' badge ('1 streak'); Metric Explorer tab shows 'attention-streaks-section' with TOP ONGOING STREAKS heading and streak-row-trades_executed-<id> displaying league name, metric badge, orange '4d streak' pill, 'spike · 7.0σ' badge, and secondary line '4d same-direction · latest 2026-07-16'. Pill color correctly ramps to orange for a 4-day streak (3-4 range).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N58_anomaly_history.py",
+    "/app/test_reports/pytest/iter232N58_results.xml",
+    "/app/test_reports/pytest/iter232N58_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "As noted in the review request, in-row attention-streak-badge is not shown on the anomaly row because trades_executed's latest_day (2026-07-02) predates the persisted streak (through 2026-07-16). Documented as expected behaviour, not a bug."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "None (used pre-seeded 4-day Stat Chasers Roto trades_executed streak).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Anomaly-history endpoints admin-only. Live metric-anomalies enrichment shows any_streak=1 for trades_executed because the metric's latest_day (2026-07-02) is earlier than the persisted streak's latest day (2026-07-16); this is expected. Use /api/admin/anomaly-streaks?min_streak=2&max_lookback_days=30 to see the persisted 4-day streak."
+}

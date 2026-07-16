@@ -1033,15 +1033,22 @@ async def read_metric_anomalies(
         detect_metric_anomalies,
         detect_all_anomalies,
     )
+    from services.anomaly_history import persist_anomalies, enrich_with_streaks
 
     if metric:
-        return await detect_metric_anomalies(
+        r = await detect_metric_anomalies(
             db, metric,
             kind=kind,
             threshold_sigma=threshold_sigma,
             window_days=days,
             min_samples=min_samples,
         )
+        # Persist + enrich (232N.58) — same shape as detect_all path.
+        today = r.get("today")
+        if today and r.get("anomalies"):
+            await persist_anomalies(db, r["anomalies"], today)
+            await enrich_with_streaks(db, r["anomalies"], today)
+        return r
 
     return await detect_all_anomalies(
         db,
@@ -1049,5 +1056,45 @@ async def read_metric_anomalies(
         window_days=days,
         min_samples=min_samples,
     )
+
+
+# ─── Iter 232N.58 — Ongoing streaks endpoint ────────────────────────────
+
+
+@router.get("/admin/anomaly-streaks")
+async def read_anomaly_streaks(
+    request: Request,
+    min_streak: int = 2,
+    limit: int = 20,
+    max_lookback_days: int = 30,
+):
+    """Platform-admin-only. Returns the top ongoing anomaly streaks —
+    (metric, kind, id) buckets that have been continuously flagged for
+    at least `min_streak` consecutive days ending within
+    `max_lookback_days`. Read-only against the `metric_anomaly_history`
+    collection populated by the detector.
+    """
+    user = await _get_user(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Platform admin only")
+
+    db = _db()
+    min_streak = max(1, min(int(min_streak), 90))
+    limit = max(1, min(int(limit), 100))
+    max_lookback_days = max(1, min(int(max_lookback_days), 365))
+
+    from services.anomaly_history import top_ongoing_streaks
+    streaks = await top_ongoing_streaks(
+        db, min_streak=min_streak, limit=limit,
+        max_lookback_days=max(30, max_lookback_days),
+        recent_end_window_days=max_lookback_days,
+    )
+    return {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "min_streak": min_streak,
+        "max_lookback_days": max_lookback_days,
+        "count": len(streaks),
+        "streaks": streaks,
+    }
 
 
