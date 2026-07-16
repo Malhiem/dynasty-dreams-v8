@@ -1,0 +1,35 @@
+{
+  "summary": "Iter 232N.59 Admin Test Sandbox — verified end-to-end. All 11 unit pytests pass; N54..N59 regression is 43/43 green. Wrote a new live-HTTP suite (10/10 pass) covering presets, create sandbox, list, add-user, list-users filter, impersonate-start guard (403 for non-test-account, 200 for test-account), and cascade delete. UI verified with Playwright: admin sidebar tab opens the sandbox panel, all 3 preset buttons, shared password chip + copy, create/max buttons, existing-league row testids (add-user/open/delete/impersonate-select) all present. Impersonate select launched impersonation, redirected to /dashboard, and the ImpersonationBanner rendered with correct text ('You are viewing as testuserN_XXXXXX@sandbox.local — read-only · expires in MM:SS · impersonator: admin@dynastydreams.com'). Delete cascade removed everything cleanly. No sandboxes left behind after test.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard while impersonating", "issues": ["A 'Platform admin access required' toast fires when the impersonated user's dashboard tries to load admin-only data (e.g. active-league admin endpoint returning 403). Not a functional bug — impersonation correctly downgrades role — but the errant toast could confuse admins. Consider suppressing platform-admin failures on the dashboard while impersonating, or gating that call on !isImpersonating."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N59_admin_test_sandbox.py",
+    "/app/backend/tests/test_iter232N59_live_http.py",
+    "/app/test_reports/pytest/n59.xml",
+    "/app/test_reports/pytest/n54_n59.xml"
+  ],
+  "action_items": [
+    "Optional polish: while impersonating, suppress the 'Platform admin access required' toast triggered by the dashboard's active-league admin fetch."
+  ],
+  "critical_code_review_comments": [
+    "admin_test_sandbox router is well isolated with a _deps injection pattern that makes unit testing clean.",
+    "Impersonation guard correctly checks is_test_account before minting the impersonation token — 403 returned with 'test-sandbox' in the detail message as specified.",
+    "Delete cascade correctly preserves users that own a team in another sandbox (verified in unit + live tests).",
+    "Frontend TestSandboxPanel exposes every required data-testid (verified in Playwright)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter232N59_live_http.py (new — live HTTP regression suite)"
+  ],
+  "success_rate": {"backend": "100% (11/11 unit + 10/10 live HTTP + 43/43 N54..N59 regression)", "frontend": "100% (all data-testids present, impersonation E2E works, banner renders)"},
+  "test_credentials": "admin@dynastydreams.com / Admin123! (from /app/memory/test_credentials.md). Sandbox users use shared password TestUser2026! but were reached via impersonation instead.",
+  "seed_data_creation": "One transient sandbox league was created via the UI during Playwright testing and afterwards deleted via the DELETE endpoint. No test data left in DB.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter 232N.59 fully verified. Two test files back this feature: unit-level in test_iter232N59_admin_test_sandbox.py, live HTTP in test_iter232N59_live_http.py. When re-running, ensure any leftover is_test_sandbox leagues are cleaned via DELETE /api/admin/test-sandbox/leagues/{id}. Impersonation guard rejects non-test accounts with 403 containing 'test-sandbox' string. If a design bug arises, check TestSandboxPanel.tsx for testids and ImpersonationBanner.jsx for banner logic."
+}

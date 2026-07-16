@@ -279,6 +279,17 @@ async def impersonate_start(request: Request, response: Response):
     if not target:
         raise HTTPException(status_code=404, detail="Target user not found")
 
+    # Iter 232N.59 — Impersonation is restricted to accounts explicitly
+    # flagged `is_test_account=true`. This is the safety floor: an admin
+    # can never accidentally act as a real user; every impersonation
+    # target must be a test-sandbox account seeded via
+    # `POST /admin/test-sandbox/leagues`.
+    if not target.get("is_test_account"):
+        raise HTTPException(
+            status_code=403,
+            detail="Impersonation restricted to test-sandbox accounts (is_test_account=true)",
+        )
+
     imp_token = create_impersonation_token(
         target_user_id=str(target["_id"]),
         target_email=target.get("email") or "",

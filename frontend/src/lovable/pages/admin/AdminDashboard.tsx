@@ -21,7 +21,7 @@ import {
   Users, ListChecks, TrendingUp, Activity, Shield, RotateCcw, Clock, Filter,
   ArrowLeftRight, AlertTriangle, UserX, Monitor, BarChart3, Heart, ScrollText,
   Headphones, ServerCog, DollarSign, Goal, Wrench, Flag, MessageSquare, Gavel,
-  User, Archive, Home, ShieldCheck, Sparkles,
+  User, Archive, Home, ShieldCheck, Sparkles, FlaskConical,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -72,6 +72,8 @@ import RecentCrashesPanel from "./components/RecentCrashesPanel";
 import MetricExplorerPanel from "./components/MetricExplorerPanel";
 // Iter 232N.57 — "What needs attention today?" anomaly feed
 import AttentionFeedPanel from "./components/AttentionFeedPanel";
+// Iter 232N.59 — Admin Test Sandbox (throwaway leagues + user impersonation)
+import TestSandboxPanel from "./components/TestSandboxPanel";
 export { ModNotesPanel } from "./components/ModNotesPanel";
 import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_shared";
 
@@ -193,6 +195,7 @@ export default function AdminDashboard() {
             <SidebarTab value="db-hygiene" icon={ShieldCheck} label="DB Hygiene" testid="admin-tab-db-hygiene" />
             <SidebarTab value="crashes" icon={AlertTriangle} label="Recent Crashes" testid="admin-tab-crashes" />
             <SidebarTab value="metric-explorer" icon={Sparkles} label="Metric Explorer" testid="admin-tab-metric-explorer" />
+            <SidebarTab value="test-sandbox" icon={FlaskConical} label="Test Sandbox" testid="admin-tab-test-sandbox" />
           </TabsList>
 
           {/* Right content pane */}
@@ -353,6 +356,11 @@ export default function AdminDashboard() {
                 sits above the explorer so anomalies drive drill-down. */}
             <AttentionFeedPanel />
             <MetricExplorerPanel />
+          </TabsContent>
+
+          {/* ─── Iter 232N.59 — Admin Test Sandbox ─── */}
+          <TabsContent value="test-sandbox" className="space-y-3 mt-0">
+            <TestSandboxPanel />
           </TabsContent>
           </div>
         </Tabs>
