@@ -89,7 +89,12 @@ export default function AdminDashboard() {
   // ── Auth gate
   useEffect(() => {
     if (!authLoading && user && user.role !== "admin") {
-      toast.error("Platform admin access required");
+      // Iter 232N.59 — Don't spam the "Platform admin access required"
+      // toast when the admin is impersonating a test user. The redirect
+      // to /dashboard is still correct behaviour; just skip the toast.
+      if (!user._impersonation_mode) {
+        toast.error("Platform admin access required");
+      }
       navigate("/dashboard", { replace: true });
     }
   }, [authLoading, user, navigate]);
