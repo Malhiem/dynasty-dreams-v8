@@ -216,6 +216,7 @@ async def create_test_league(input: CreateTestLeagueRequest, request: Request):
         team_doc = {
             "league_id": league_id,
             "owner_id": str(user["_id"]),
+            "owner_name": user["name"],
             "name": team_name,
             "roster": [],
             "lineup": {},
@@ -301,6 +302,7 @@ async def add_test_user(league_id: str, input: AddTestUserRequest, request: Requ
     r = await db.teams.insert_one({
         "league_id": league_id,
         "owner_id": str(user["_id"]),
+        "owner_name": user["name"],
         "name": team_name,
         "roster": [], "lineup": {},
         "is_test_team": True,

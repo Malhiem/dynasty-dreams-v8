@@ -671,7 +671,7 @@ async def get_standings(league_id: str):
             "team_name": team["name"],
             "team_abbr": team.get("logo_abbr"),
             "team_logo_url": team.get("logo_url"),
-            "owner_name": team["owner_name"],
+            "owner_name": team.get("owner_name"),
             "division": team.get("division"),
             "conference": team.get("conference"),
             "wins": team.get("wins", 0),

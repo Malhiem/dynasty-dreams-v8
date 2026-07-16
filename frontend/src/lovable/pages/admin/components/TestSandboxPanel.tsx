@@ -490,7 +490,7 @@ export default function TestSandboxPanel() {
                           variant="outline"
                           size="sm"
                           onClick={() =>
-                            (window.location.href = `/league/${lg.id}`)
+                            (window.location.href = `/leagues/${lg.id}`)
                           }
                           className="h-7"
                           data-testid={`sandbox-open-league-${lg.id}`}
