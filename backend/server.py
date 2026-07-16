@@ -106,19 +106,27 @@ def create_access_token(user_id: str, email: str, **extra) -> str:
 
 def create_impersonation_token(
     *, target_user_id: str, target_email: str, impersonator_id: str,
-    impersonator_email: str, minutes: int = 15,
+    impersonator_email: str, minutes: int = 15, mode: str = "read_only",
 ) -> str:
-    """Iter 215c — short-lived read-only impersonation token used by
-    admins doing 'view-as' support investigations. Encoded with
-    `type=impersonation` so `get_current_user` returns the target user
-    decorated with `_impersonator` metadata (audit visibility) and
-    `_impersonation_mode=read_only`."""
+    """Iter 215c — short-lived impersonation token used by admins doing
+    'view-as' support investigations.
+
+    Modes:
+      • ``read_only`` (default) — writes blocked in ``get_current_user``.
+        Used for genuine support/audit sessions on real user accounts.
+      • ``sandbox`` — writes ALLOWED. Used exclusively for test-sandbox
+        accounts (``is_test_account=true``) so admins can actually
+        exercise flows as a manager (232N.61).
+
+    Encoded with ``type=impersonation`` so ``get_current_user`` returns
+    the target user decorated with ``_impersonator*`` metadata and
+    ``_impersonation_mode`` for downstream policy checks."""
     payload = {
         "sub": target_user_id,
         "email": target_email,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes),
         "type": "impersonation",
-        "mode": "read_only",
+        "mode": mode,
         "impersonator_id": impersonator_id,
         "impersonator_email": impersonator_email,
     }

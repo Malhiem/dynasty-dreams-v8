@@ -144,7 +144,7 @@ class CreateTestLeagueRequest(BaseModel):
     num_teams: Optional[int] = Field(default=None, ge=4, le=32)
 
 
-async def _make_test_user(db, admin_id: str, league_hint: str, idx: int) -> dict:
+async def _make_test_user(db, admin_id: str, league_id_hint: str = "pending", idx: int = 1) -> dict:
     hash_password = _deps["hash_password"]
     suffix = secrets.token_hex(3)
     email = f"testuser{idx}_{suffix}@sandbox.local"
@@ -160,7 +160,7 @@ async def _make_test_user(db, admin_id: str, league_hint: str, idx: int) -> dict
         "role": "user",
         "is_test_account": True,
         "created_by_admin_id": admin_id,
-        "test_league_hint": league_hint,
+        "test_league_hint": league_id_hint,
         "created_at": datetime.now(timezone.utc),
     }
     r = await db.users.insert_one(doc)
@@ -182,6 +182,24 @@ async def create_test_league(input: CreateTestLeagueRequest, request: Request):
         )
     league_name = (input.name or "").strip() or f"{preset['label']} Sandbox"
 
+    # Iter 232N.61 — Test User 1 becomes the league commissioner
+    # (not the platform admin). The platform admin can't do
+    # commissioner-scoped actions while acting as a manager, so we
+    # promote a test user to the commissioner slot and prefix their
+    # name with "(Admin)" so admins can spot them in the switcher.
+    # We create Test User 1 first, then use them as commissioner_id.
+    admin_user = await _make_test_user(
+        db, str(admin["_id"]), league_id_hint="pending", idx=1,
+    )
+    # Rename to "(Admin) Test User 1" so the switcher makes the role
+    # obvious at a glance.
+    admin_display_name = f"(Admin) {admin_user['name']}"
+    await db.users.update_one(
+        {"_id": admin_user["_id"]},
+        {"$set": {"name": admin_display_name}},
+    )
+    admin_user["name"] = admin_display_name
+
     league_doc = {
         "name": league_name,
         "sport": preset["sport"],
@@ -189,8 +207,8 @@ async def create_test_league(input: CreateTestLeagueRequest, request: Request):
         "scoring_format": preset["scoring_format"],
         "max_teams": num_teams,
         "current_teams": num_teams,
-        "commissioner_id": str(admin["_id"]),
-        "commissioner_name": admin.get("name") or "Admin",
+        "commissioner_id": str(admin_user["_id"]),
+        "commissioner_name": admin_user["name"],
         "salary_cap_enabled": bool(preset.get("salary_cap_enabled")),
         "salary_cap": preset.get("salary_cap"),
         "draft_type": preset["draft_type"],
@@ -208,9 +226,34 @@ async def create_test_league(input: CreateTestLeagueRequest, request: Request):
     }
     lg = await db.leagues.insert_one(league_doc)
     league_id = str(lg.inserted_id)
+    # Backfill the correct league_hint on the freshly-minted admin user.
+    await db.users.update_one(
+        {"_id": admin_user["_id"]},
+        {"$set": {"test_league_hint": league_id}},
+    )
 
     teams: list[dict] = []
-    for i in range(1, num_teams + 1):
+    # Create the admin's team first
+    admin_team_name = f"{admin_user['name']}'s Team"
+    r0 = await db.teams.insert_one({
+        "league_id": league_id,
+        "owner_id": str(admin_user["_id"]),
+        "owner_name": admin_user["name"],
+        "name": admin_team_name,
+        "roster": [], "lineup": {},
+        "is_commissioner_team": True,
+        "is_test_team": True,
+        "created_at": datetime.now(timezone.utc),
+    })
+    teams.append({
+        "id": str(r0.inserted_id),
+        "name": admin_team_name,
+        "owner_user_id": str(admin_user["_id"]),
+        "owner_email": admin_user["email"],
+        "owner_name": admin_user["name"],
+    })
+    # Remaining N-1 test users get plain manager roles.
+    for i in range(2, num_teams + 1):
         user = await _make_test_user(db, str(admin["_id"]), league_id, i)
         team_name = f"Test User {i}'s Team"
         team_doc = {

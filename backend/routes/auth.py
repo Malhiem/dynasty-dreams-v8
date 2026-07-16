@@ -290,28 +290,37 @@ async def impersonate_start(request: Request, response: Response):
             detail="Impersonation restricted to test-sandbox accounts (is_test_account=true)",
         )
 
+    # Iter 232N.61 — Sandbox impersonation runs in `mode=sandbox` so
+    # writes ARE allowed (admins need to actually exercise flows —
+    # trade, waiver, chat, lineup — as the test manager). We also
+    # use a long 12-hour expiry since users specifically requested
+    # "no timer for expiry" in the sandbox.
+    IMP_MINUTES = 12 * 60  # 12 hours
+    imp_mode = "sandbox"
     imp_token = create_impersonation_token(
         target_user_id=str(target["_id"]),
         target_email=target.get("email") or "",
         impersonator_id=str(admin["_id"]),
         impersonator_email=admin.get("email") or "",
-        minutes=15,
+        minutes=IMP_MINUTES,
+        mode=imp_mode,
     )
-    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=IMP_MINUTES)).isoformat()
     original_token = request.cookies.get("access_token") or ""
+    # Backup cookie needs to outlive the impersonation session too.
     response.set_cookie(key="admin_token_backup", value=original_token, httponly=True,
-                        secure=cookie_secure, samesite=cookie_samesite, max_age=1800, path="/")
+                        secure=cookie_secure, samesite=cookie_samesite, max_age=IMP_MINUTES * 60, path="/")
     response.set_cookie(key="access_token", value=imp_token, httponly=True,
-                        secure=cookie_secure, samesite=cookie_samesite, max_age=900, path="/")
+                        secure=cookie_secure, samesite=cookie_samesite, max_age=IMP_MINUTES * 60, path="/")
 
     await db.impersonation_audit.insert_one({
         "admin_id": str(admin["_id"]), "admin_email": admin.get("email"),
         "target_user_id": str(target["_id"]), "target_email": target.get("email"),
         "reason": reason, "started_at": datetime.now(timezone.utc).isoformat(),
-        "expires_at": expires_at, "mode": "read_only",
+        "expires_at": expires_at, "mode": imp_mode,
         "cookie_swap": True,
     })
-    return {"ok": True, "expires_at": expires_at, "target_email": target.get("email")}
+    return {"ok": True, "expires_at": expires_at, "mode": imp_mode, "target_email": target.get("email")}
 
 
 @router.post("/auth/impersonate-stop")
