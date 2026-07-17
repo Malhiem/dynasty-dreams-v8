@@ -110,6 +110,9 @@ import UpcomingDraftsPicker from "@/lovable/pages/draftroom/UpcomingDraftsPicker
 import DraftRoomBottomGrid from "@/lovable/pages/draftroom/DraftRoomBottomGrid";
 // Iter 230c — Player preview panel extracted.
 import DraftPreviewPanel from "@/lovable/pages/draftroom/DraftPreviewPanel";
+// Iter 232N.62 — Draft-room cap view.
+import useDraftCapView from "@/hooks/use-draft-cap-view";
+import CapViewSideRail from "@/lovable/pages/draftroom/CapViewSideRail";
 // Iter 230j — PlayerCardModal now consumed via ExpandedPlayerModal wrapper.
 import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 // Iter 194c — floating "Pick Trade Pending" review pill.
@@ -334,6 +337,26 @@ export default function DraftRoom() {
   // Iter 203 — moved into `useDraftRoomSocket` hook (-45 lines).
   const lastSelfPickRef = useRef<string | null>(null);
   const draftRoomId = currentDraft?._id ? `draft_${currentDraft._id}` : null;
+  // Iter 232N.62 — Cap-view state. Fetches /cap-status once per draft
+  // and re-fetches when a pick lands (refresh called from the pick
+  // handler further down).
+  const {
+    capView,
+    setCapView,
+    capEnabled,
+    approaching: capApproaching,
+    myTeam: myTeamCap,
+    resolveCapHit,
+    refresh: refreshCap,
+    data: capStatus,
+  } = useDraftCapView(currentDraft?._id || null);
+  // Iter 232N.62 — Refresh cap after every pick lands so bars + player
+  // greying stay live. `current_pick` bumps monotonically as picks
+  // finalize, so it's the natural dependency for a light-weight
+  // refetch.
+  useEffect(() => {
+    if (currentDraft?._id) refreshCap();
+  }, [currentDraft?._id, currentDraft?.current_pick, refreshCap]);
   const { lastChatEvent, setLastChatEvent, onlineUserIds } = useDraftRoomSocket({
     roomId: draftRoomId,
     userId,
@@ -849,8 +872,34 @@ export default function DraftRoom() {
             setChatInput={setChatInput}
             handleSendChat={handleSendChat}
             user={user}
+            /* Iter 232N.62 — Cap view props */
+            capView={capView}
+            setCapView={setCapView}
+            capEnabled={capEnabled}
+            capApproaching={capApproaching}
+            resolveCapHit={resolveCapHit}
+            myTeamCap={myTeamCap}
+            capStatus={capStatus}
           />
         </div>
+
+        {/* Iter 232N.62 — Cap View side rail. Rendered as a floating
+            right sidebar when the user toggles Cap View on. Docks
+            below the DraftHeaderActions so it doesn't overlap the
+            top navigation. */}
+        {capView && capEnabled && capStatus && capStatus.teams.length > 0 && (
+          <div
+            className="fixed top-24 right-4 w-72 z-30 hidden xl:block"
+            data-testid="cap-view-rail-wrapper"
+          >
+            <CapViewSideRail
+              teams={capStatus.teams}
+              myTeamId={capStatus.my_team_id}
+              salaryCap={capStatus.salary_cap}
+              defaultRookieAav={capStatus.default_rookie_aav}
+            />
+          </div>
+        )}
 
         {/* Iter 153 — Expanded Player Card. Iter 230j — extracted. */}
         <ExpandedPlayerModal player={expandedPlayer} onClose={() => setExpandedPlayer(null)} />

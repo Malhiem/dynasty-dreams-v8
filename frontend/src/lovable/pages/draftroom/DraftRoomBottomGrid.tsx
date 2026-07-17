@@ -38,6 +38,9 @@ export default function DraftRoomBottomGrid({
   toggleMyTeamTradeBlock, tradeBuilder,
   // Draft Chat
   chatMessages, chatInput, setChatInput, handleSendChat, user,
+  // Iter 232N.62 — Cap view props (forwarded to PlayerSearchPanel)
+  capView, setCapView, capEnabled: capEnabledProp,
+  capApproaching, resolveCapHit, myTeamCap,
 }) {
   // Iter 230ak — Active mobile tab. Defaults to "players" since
   // making the next pick is the highest-frequency mobile action.
@@ -70,6 +73,12 @@ export default function DraftRoomBottomGrid({
       toggleQueue={toggleQueue}
       toggleShortlist={toggleShortlist}
       removeFromQueue={removeFromQueue}
+      capView={capView}
+      setCapView={setCapView}
+      capEnabled={capEnabledProp}
+      capApproaching={capApproaching}
+      resolveCapHit={resolveCapHit}
+      myTeamCap={myTeamCap}
     />
   );
 

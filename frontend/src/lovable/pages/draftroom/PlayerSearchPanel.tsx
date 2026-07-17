@@ -74,6 +74,13 @@ export default function PlayerSearchPanel({
   toggleQueue,
   toggleShortlist,
   removeFromQueue,
+  // Iter 232N.62 — Cap View integration
+  capView = false,
+  setCapView,
+  capEnabled = false,
+  capApproaching = false,
+  resolveCapHit,
+  myTeamCap,
 }) {
   return (
     <Tabs defaultValue="eligible" className="w-full">
@@ -208,6 +215,33 @@ export default function PlayerSearchPanel({
                 Undrafted only
               </button>
             )}
+            {/* Iter 232N.62 — Cap View toggle. Pulses when the current
+                user's team crosses 90% (approaching cap). Toggle-on
+                acknowledges the alert and stops the pulse. */}
+            {capEnabled && setCapView && (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={capView}
+                onClick={() => setCapView(!capView)}
+                className={cn(
+                  "relative px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-colors border",
+                  capView
+                    ? "bg-emerald-500/20 text-emerald-300 border-emerald-500/40"
+                    : "bg-secondary/40 text-muted-foreground border-transparent hover:text-foreground",
+                  capApproaching && !capView && "ring-2 ring-orange-400/70 animate-pulse",
+                )}
+                data-testid="draft-room-cap-view-toggle"
+                data-approaching={capApproaching ? "true" : undefined}
+                title={
+                  capApproaching
+                    ? "You're within 10% of your cap — toggle Cap View for details"
+                    : "Show per-team cap usage + cap hit on each player card"
+                }
+              >
+                Cap View
+              </button>
+            )}
           </div>
         </div>
 
@@ -217,6 +251,20 @@ export default function PlayerSearchPanel({
               const isOnBlock = tradeBlockPlayerIds.has(String(player.id));
               const isQueued = queue.includes(player.id);
               const isShortlisted = shortlist.includes(player.id);
+              // Iter 232N.62 — Cap-view derivations. Compute per-player
+              // AAV via the shared resolver so unpriced players fall back
+              // to the league's default_rookie_aav. When cap view is on
+              // AND the player would push MY team over the ceiling, we
+              // reduce opacity + show a red "over cap" chip (but keep
+              // the row clickable so admins can still inspect / warn).
+              const capHit =
+                capEnabled && resolveCapHit ? resolveCapHit(player) : 0;
+              const wouldExceedCap =
+                capView && myTeamCap && capHit > myTeamCap.remaining;
+              const pctOfCap =
+                capView && myTeamCap && myTeamCap.salary_cap > 0
+                  ? (capHit / myTeamCap.salary_cap) * 100
+                  : 0;
               return (
                 <div
                   key={player.id}
@@ -224,9 +272,11 @@ export default function PlayerSearchPanel({
                     "flex items-center gap-2 p-2 rounded-md hover:bg-secondary/40 transition-colors group cursor-pointer",
                     isOnBlock && "ring-1 ring-amber-400/40 bg-amber-500/5",
                     String(selectedPlayerId) === String(player.id) && "bg-primary/10 ring-1 ring-primary/40",
+                    wouldExceedCap && "opacity-50",
                   )}
                   onClick={() => setSelectedPlayerId(String(player.id))}
                   data-testid={isOnBlock ? `draft-room-eligible-block-${player.id}` : `draft-room-eligible-row-${player.id}`}
+                  data-over-cap={wouldExceedCap ? "true" : undefined}
                 >
                   <span className="text-[10px] font-mono text-muted-foreground w-5 text-right shrink-0">
                     {player.ranking}
@@ -294,6 +344,39 @@ export default function PlayerSearchPanel({
                     </p>
                     <p className="text-[10px] text-muted-foreground">
                       {player.league} · {player.age}y · {player.gp}GP {player.g}G {player.a}A {player.pts}P
+                      {capView && capEnabled && (
+                        <>
+                          {" · "}
+                          <span
+                            className={cn(
+                              "font-mono font-semibold",
+                              wouldExceedCap
+                                ? "text-rose-300"
+                                : pctOfCap >= 10
+                                ? "text-orange-300"
+                                : "text-emerald-300",
+                            )}
+                            data-testid={`draft-room-cap-hit-${player.id}`}
+                          >
+                            {capHit >= 1_000_000
+                              ? `$${(capHit / 1_000_000).toFixed(2)}M`
+                              : `$${(capHit / 1_000).toFixed(0)}k`}
+                          </span>
+                          {" "}
+                          <span className="text-muted-foreground">
+                            ({pctOfCap.toFixed(1)}% cap)
+                          </span>
+                          {wouldExceedCap && (
+                            <Badge
+                              variant="outline"
+                              className="ml-1 text-[9px] px-1 py-0 h-3.5 bg-rose-500/10 text-rose-300 border-rose-500/40"
+                              data-testid={`draft-room-over-cap-${player.id}`}
+                            >
+                              Over cap
+                            </Badge>
+                          )}
+                        </>
+                      )}
                     </p>
                   </div>
                   <Tooltip>

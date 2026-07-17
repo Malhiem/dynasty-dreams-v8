@@ -29,6 +29,14 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
   const [floorYr2, setFloorYr2] = useState<number>(league?.cap_floor_year_plus_2 || Math.round((league?.salary_cap_year_plus_2 || league?.salary_cap || 82500000) * 0.7));
   const [floorYr1Tentative, setFloorYr1Tentative] = useState(!!league?.cap_floor_year_plus_1_tentative);
   const [floorYr2Tentative, setFloorYr2Tentative] = useState(!!league?.cap_floor_year_plus_2_tentative);
+  // Iter 232N.62 — Draft cap view settings (default rookie AAV +
+  // treatment of minors against cap)
+  const [defaultRookieAav, setDefaultRookieAav] = useState<number>(
+    league?.default_rookie_aav || 950_000,
+  );
+  const [minorsCapTreatment, setMinorsCapTreatment] = useState<string>(
+    league?.minors_cap_treatment || "full",
+  );
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     setEnabled(!!league?.salary_cap_enabled);
@@ -43,7 +51,9 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
     setFloorYr2(league?.cap_floor_year_plus_2 || Math.round((league?.salary_cap_year_plus_2 || league?.salary_cap || 82500000) * 0.7));
     setFloorYr1Tentative(!!league?.cap_floor_year_plus_1_tentative);
     setFloorYr2Tentative(!!league?.cap_floor_year_plus_2_tentative);
-  }, [league?.id, league?.salary_cap_enabled, league?.salary_cap, league?.salary_cap_year_plus_1, league?.salary_cap_year_plus_2, league?.salary_cap_year_plus_1_tentative, league?.salary_cap_year_plus_2_tentative, league?.cap_floor_enabled, league?.cap_floor, league?.cap_floor_year_plus_1, league?.cap_floor_year_plus_2, league?.cap_floor_year_plus_1_tentative, league?.cap_floor_year_plus_2_tentative]);
+    setDefaultRookieAav(league?.default_rookie_aav || 950_000);
+    setMinorsCapTreatment(league?.minors_cap_treatment || "full");
+  }, [league?.id, league?.salary_cap_enabled, league?.salary_cap, league?.salary_cap_year_plus_1, league?.salary_cap_year_plus_2, league?.salary_cap_year_plus_1_tentative, league?.salary_cap_year_plus_2_tentative, league?.cap_floor_enabled, league?.cap_floor, league?.cap_floor_year_plus_1, league?.cap_floor_year_plus_2, league?.cap_floor_year_plus_1_tentative, league?.cap_floor_year_plus_2_tentative, league?.default_rookie_aav, league?.minors_cap_treatment]);
 
   const save = async () => {
     // Iter 120 — block floors above ceilings before round-tripping to the API
@@ -68,6 +78,9 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
         cap_floor_year_plus_2: enabled && floorEnabled ? floorYr2 : null,
         cap_floor_year_plus_1_tentative: floorYr1Tentative,
         cap_floor_year_plus_2_tentative: floorYr2Tentative,
+        // Iter 232N.62 — Draft cap view settings
+        default_rookie_aav: defaultRookieAav,
+        minors_cap_treatment: minorsCapTreatment,
       });
       toast.success(enabled ? `Salary cap set to $${fmtMoney(amount)}` : "Salary cap disabled");
       reloadLeague?.();
@@ -241,6 +254,55 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
                 </div>
               </div>
             )}
+          </div>
+        )}
+        {/* Iter 232N.62 — Draft-room cap view settings */}
+        {enabled && (
+          <div className="pt-3 border-t border-border/40 space-y-3">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+              Draft-room cap view
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-[11px]">
+                  Default rookie / unpriced AAV
+                </Label>
+                <p className="text-[10px] text-muted-foreground mb-1">
+                  Charged for undrafted rookies + free agents with no
+                  contract on file (used in cap view + greying).
+                </p>
+                <input
+                  type="number"
+                  min={0}
+                  step={50_000}
+                  value={defaultRookieAav}
+                  onChange={(e) =>
+                    setDefaultRookieAav(Number(e.target.value) || 0)
+                  }
+                  className="w-full h-9 px-2 rounded-md bg-secondary/40 border border-border/60 text-xs font-mono"
+                  data-testid="rules-cap-default-rookie-aav"
+                />
+              </div>
+              <div>
+                <Label className="text-[11px]">
+                  Count minor-league players against cap?
+                </Label>
+                <p className="text-[10px] text-muted-foreground mb-1">
+                  How minors contracts factor into cap calculations.
+                </p>
+                <select
+                  value={minorsCapTreatment}
+                  onChange={(e) => setMinorsCapTreatment(e.target.value)}
+                  className="w-full h-9 px-2 rounded-md bg-secondary/40 border border-border/60 text-xs"
+                  data-testid="rules-cap-minors-treatment"
+                >
+                  <option value="full">Yes — full value</option>
+                  <option value="default">Yes — default AAV</option>
+                  <option value="tiered">Yes — tiered value</option>
+                  <option value="none">No — minors are cap-exempt</option>
+                </select>
+              </div>
+            </div>
           </div>
         )}
         <div className="flex justify-end">

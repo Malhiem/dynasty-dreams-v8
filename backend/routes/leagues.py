@@ -179,6 +179,9 @@ class LeagueResponse(BaseModel):
     contract_buyouts_enabled: Optional[bool] = None
     # Iter 226 — per-week matchup-length overrides
     week_overrides: Optional[list[dict]] = None
+    # Iter 232N.62 — draft-cap-view league settings
+    default_rookie_aav: Optional[int] = None
+    minors_cap_treatment: Optional[str] = None
 
 
 # ─── League CRUD endpoints (extracted iter 109) ──────────────
@@ -374,6 +377,9 @@ def _league_to_response(league: dict) -> LeagueResponse:
         salary_cap_year_plus_2_tentative=league.get("salary_cap_year_plus_2_tentative"),
         contract_buyouts_enabled=league.get("contract_buyouts_enabled"),
         week_overrides=league.get("week_overrides"),
+        # Iter 232N.62 — draft-cap-view league settings
+        default_rookie_aav=league.get("default_rookie_aav"),
+        minors_cap_treatment=league.get("minors_cap_treatment"),
     )
 
 
@@ -1506,6 +1512,23 @@ class CapSettingsUpdate(BaseModel):
     cap_floor_year_plus_2: Optional[int] = None
     cap_floor_year_plus_1_tentative: Optional[bool] = None
     cap_floor_year_plus_2_tentative: Optional[bool] = None
+    # Iter 232N.62 — Draft-room cap view support.
+    # Default AAV applied to players in the draft pool that have no
+    # contract on file yet (undrafted rookies, ELC-eligible prospects,
+    # free-agents without contract history). Used for both the "Cap
+    # View" side rail and the greying-out of players that would push a
+    # team over its cap.
+    default_rookie_aav: Optional[int] = Field(None, ge=0)
+    # How should players stashed in the minor-league pool count against
+    # a team's cap? Options:
+    #   • full    — count each player at their real AAV (default legacy behaviour)
+    #   • default — count each player at `default_rookie_aav`
+    #   • tiered  — count 50% for prospects, 100% for veterans (approx.)
+    #   • none    — minor-league contracts are cap-exempt
+    minors_cap_treatment: Optional[str] = Field(
+        None,
+        pattern=r"^(full|default|tiered|none)$",
+    )
 
 
 def _premium_status(league: dict) -> dict:
@@ -1615,6 +1638,11 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
         updates["salary_cap_year_plus_2_tentative"] = bool(payload.salary_cap_year_plus_2_tentative)
     if payload.contract_buyouts_enabled is not None:
         updates["contract_buyouts_enabled"] = bool(payload.contract_buyouts_enabled)
+    # Iter 232N.62 — draft-cap-view rollup settings
+    if payload.default_rookie_aav is not None:
+        updates["default_rookie_aav"] = int(payload.default_rookie_aav)
+    if payload.minors_cap_treatment is not None:
+        updates["minors_cap_treatment"] = str(payload.minors_cap_treatment)
 
     # ── Iter 120 — Salary cap FLOOR (parallels the ceiling) ────────
     # Floor is only meaningful when the ceiling is enabled. When the

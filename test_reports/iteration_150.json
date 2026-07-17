@@ -1,0 +1,38 @@
+{
+  "summary": "Iter 232N.62 draft-room cap view — backend pytest 6/6 PASS, regression across N54..N62 63/63 PASS, live HTTP smoke PASSED after fixing serializer bug. Frontend commissioner Salary Cap card verified (both new inputs render with 950000 default). Draft Room cap-view toggle correctly gated to cap-enabled leagues; full E2E toggle-on flow could not be executed because the admin test user has no team in any cap-enabled league on this environment (would require Admin Test Sandbox provisioning per review notes).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/leagues/{id}", "issue": "FIXED — `_league_to_response` was missing `default_rookie_aav` and `minors_cap_treatment` mappings. PUT /admin/cap-settings persisted the fields to Mongo, but GET response omitted them, breaking the requirement 'Values persist and appear in GET /api/leagues/{id} response'. Added the two mappings in /app/backend/routes/leagues.py (near contract_buyouts_enabled)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter232N62_draft_cap_view.py",
+    "/app/backend/tests/test_iter232N62_live_http.py",
+    "/app/test_reports/pytest/iter232N62_regression.xml"
+  ],
+  "action_items": [
+    "Draft Room end-to-end (toggle-on -> side rail, cap chips, over-cap badge, pulsing ring, one-time toast) still needs to be exercised in an Admin Test Sandbox where the admin user is on a team in a cap-enabled league. Source-level testids all exist: draft-room-cap-view-toggle, cap-view-side-rail, cap-side-team-{team_id}, draft-room-cap-hit-{player_id}, draft-room-over-cap-{player_id}.",
+    "Consider using existing seeded users on TFHL (which is cap-enabled + has active drafts) via impersonation to exercise the full draft-room flow."
+  ],
+  "critical_code_review_comments": [
+    "`LeagueResponse` field mapping in leagues.py grew to ~100 fields with manual per-field .get() calls in _league_to_response. New fields silently drop unless the developer remembers to update both LeagueResponse and the hydrator (exactly the bug that occurred here for default_rookie_aav/minors_cap_treatment). Consider using LeagueResponse.model_validate(league) with alias mapping or a helper that iterates model_fields to eliminate this class of bug.",
+    "Two-source-of-truth risk: create_league (line 253) constructs LeagueResponse with a small subset of fields, defaulting all others to None even if the DB doc already has them. Prefer routing through _league_to_response after the initial insert."
+  ],
+  "updated_files": [
+    "/app/backend/routes/leagues.py (added default_rookie_aav + minors_cap_treatment to _league_to_response)",
+    "/app/backend/tests/test_iter232N62_live_http.py (new — live HTTP smoke)"
+  ],
+  "success_rate": {"backend": "100% (69/69 across pytest + live HTTP after fix)", "frontend": "partial — commissioner rules card verified; draft-room toggle gating verified; toggle-on flow deferred (needs sandbox with admin-owned cap-enabled team)"},
+  "test_credentials": "admin@dynastydreams.com / Admin123! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Reused existing 'Frozen Dynasty' cap-enabled league for commissioner UI verification.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend serializer bug for default_rookie_aav/minors_cap_treatment in GET /api/leagues/{id} was fixed by this run. If regressing, verify both fields appear in the JSON response (they were declared in LeagueResponse Pydantic model but not hydrated in _league_to_response). Draft-room E2E requires a cap-enabled league where the test user owns a team; on this env, admin@dynastydreams.com owns only 'Ice Breakers' (Stat Chasers Roto, cap disabled). TFHL (cap-enabled, has active drafts) belongs to other users — use impersonation or the Admin Test Sandbox to create a fresh NHL Dynasty 16 sandbox and impersonate Test User 1.",
+  "rca of the issue": "Bug: `PUT /api/leagues/{id}/admin/cap-settings` persisted new fields `default_rookie_aav` + `minors_cap_treatment` to Mongo, but `GET /api/leagues/{id}` never returned them. Root cause: `_league_to_response()` in /app/backend/routes/leagues.py (lines 279-380) manually maps each Mongo field to a `LeagueResponse` constructor arg. When the new fields were added to `LeagueResponse` (lines 183-184), the developer forgot to update the hydrator. Symptom: frontend `SalaryCapCard` would show default 950000 forever, and `useDraftCapView` hook couldn't read the persisted value from league response. Fix: appended `default_rookie_aav=league.get('default_rookie_aav')` and `minors_cap_treatment=league.get('minors_cap_treatment')` to the `_league_to_response` return. Verified via `tests/test_iter232N62_live_http.py::test_cap_settings_put_new_fields` (now passing)."
+}
