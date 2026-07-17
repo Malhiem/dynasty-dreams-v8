@@ -222,6 +222,9 @@ async def create_test_league(input: CreateTestLeagueRequest, request: Request):
         "is_test_sandbox": True,
         "sandbox_created_by": str(admin["_id"]),
         "sandbox_preset_key": preset["key"],
+        # 232N.62 — draft cap view defaults (2026 NHL CBA minimum)
+        "default_rookie_aav": 950_000,
+        "minors_cap_treatment": "full",
         "created_at": datetime.now(timezone.utc),
     }
     lg = await db.leagues.insert_one(league_doc)

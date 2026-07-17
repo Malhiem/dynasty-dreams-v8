@@ -1602,6 +1602,15 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
     if not (
         league.get("commissioner_id") == user["_id"]
         or user["_id"] in (league.get("co_commissioners") or [])
+        # Iter 232N.62 — platform admins may edit cap settings on
+        # sandbox leagues (the league commissioner is a test user, so
+        # requiring the real admin to impersonate them just to save
+        # cap settings adds friction).
+        or (
+            (user.get("role") == "admin"
+             or user.get("permission_tier") in ("admin", "senior_admin"))
+            and league.get("is_test_sandbox") is True
+        )
     ):
         raise HTTPException(status_code=403, detail="Commissioner only")
 
