@@ -60,16 +60,71 @@ async def get_team_cap_used(team_id: str, league_id: str) -> float:
          everywhere else (`_recompute_team_salary_used`, kept consistent
          with the roster page, compliance check, and
          `/roster/{id}/detail`).
+
+    Iter 232N.63 — When the contract-sum path is used, applies the
+    league's `minors_cap_treatment` to any contract whose player is
+    currently assigned to the team's minors section. The roster
+    fallback (`_recompute_team_salary_used`) applies the same policy
+    internally.
     """
+    from utils.cap_treatment import (
+        _player_is_in_minors, apply_minors_treatment,
+    )
     db = _deps["db"]
     _recompute = _deps["_recompute_team_salary_used"]
-    pipeline = [
-        {"$match": {"team_id": team_id, "league_id": league_id, "status": "active"}},
-        {"$group": {"_id": None, "total": {"$sum": "$aav"}}},
-    ]
-    result = await db.contracts.aggregate(pipeline).to_list(1)
-    if result and result[0]["total"]:
-        return result[0]["total"]
+
+    # Pull cap-treatment settings + team lineup once so we can apply
+    # the policy to each contract without extra round trips.
+    league = await db.leagues.find_one(
+        {"_id": ObjectId(league_id)},
+        {"minors_cap_treatment": 1, "default_rookie_aav": 1},
+    ) or {}
+    treatment = (league.get("minors_cap_treatment") or "full").lower()
+    default_rookie_aav = int(league.get("default_rookie_aav") or 950_000)
+
+    contracts = await db.contracts.find(
+        {"team_id": team_id, "league_id": league_id, "status": "active"},
+    ).to_list(400)
+
+    if contracts:
+        # Fast path when no minors treatment is needed.
+        if treatment == "full":
+            return float(sum(float(c.get("aav") or 0) for c in contracts))
+
+        team = await db.teams.find_one(
+            {"_id": ObjectId(team_id)},
+            {"lineup": 1},
+        ) or {}
+        lineup = team.get("lineup") or {}
+
+        # Batch-load player rows keyed by id for the tiered path.
+        player_ids = [c.get("player_id") for c in contracts if c.get("player_id")]
+        players_by_id: dict = {}
+        if player_ids:
+            try:
+                obj_ids = [ObjectId(p) for p in player_ids]
+                async for p in db.players.find(
+                    {"_id": {"$in": obj_ids}},
+                    {"age": 1, "is_prospect": 1},
+                ):
+                    players_by_id[str(p["_id"])] = p
+            except Exception:
+                pass
+
+        total = 0.0
+        for c in contracts:
+            aav = float(c.get("aav") or 0)
+            pid = str(c.get("player_id") or "")
+            player = players_by_id.get(pid) or {"_id": pid}
+            in_minors = _player_is_in_minors(player, lineup)
+            total += apply_minors_treatment(
+                player,
+                base_aav=aav,
+                is_in_minors=in_minors,
+                treatment=treatment,
+                default_rookie_aav=default_rookie_aav,
+            )
+        return total
     try:
         return await _recompute(team_id)
     except Exception:

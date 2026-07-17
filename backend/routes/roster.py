@@ -671,9 +671,10 @@ def _synthesize_player_salary(p: dict, config: Optional[dict] = None) -> float:
     Mirrors the tiered formula used in `/roster/{id}/detail` so the cap
     usage on the team page matches the per-row salary chip exactly.
     """
-    calculate_fantasy_points = _deps["calculate_fantasy_points"]
-
     # Honour any explicit salary stored on the player document first
+    # (232N.63 — moved BEFORE the calculate_fantasy_points dep read so
+    # tests / paths that seed inline `contract.aav` don't need the
+    # scoring service wired in).
     explicit = (
         (p.get("contract") or {}).get("aav")
         or (p.get("contract") or {}).get("salary")
@@ -682,6 +683,8 @@ def _synthesize_player_salary(p: dict, config: Optional[dict] = None) -> float:
     )
     if explicit:
         return float(explicit)
+
+    calculate_fantasy_points = _deps["calculate_fantasy_points"]
 
     is_g = p.get("player_type") == "goalie" or p.get("position") == "G"
     points = int(p.get("points") or 0)
@@ -713,7 +716,17 @@ async def _recompute_team_salary_used(team_id: str) -> float:
     roster + any salary_retentions the team is paying for other teams'
     players. Persists the result to `team.salary_used` so subsequent
     /compliance + /roster reads return the live number.
+
+    Iter 232N.63 — Applies the league's `minors_cap_treatment` policy
+    to any player whose lineup entry has ``section='minors'``:
+      • full    → 100% AAV (default, legacy)
+      • default → league.default_rookie_aav
+      • tiered  → 50% for prospects, 100% for veterans
+      • none    → 0
     """
+    from utils.cap_treatment import (
+        _player_is_in_minors, apply_minors_treatment,
+    )
     db = _deps["db"]
     team = await db.teams.find_one({"_id": ObjectId(team_id)})
     if not team:
@@ -735,11 +748,32 @@ async def _recompute_team_salary_used(team_id: str) -> float:
              "goals_against": 1, "shutouts": 1, "plus_minus": 1,
              "penalty_minutes": 1, "power_play_points": 1,
              "power_play_goals": 1, "short_handed_goals": 1,
-             "short_handed_points": 1, "game_winning_goals": 1},
+             "short_handed_points": 1, "game_winning_goals": 1,
+             # 232N.63 — need age + is_prospect for tiered treatment
+             "age": 1, "is_prospect": 1},
         ).to_list(200)
 
     config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
-    used = sum(_synthesize_player_salary(p, config) for p in rostered_players)
+    # 232N.63 — league cap-treatment settings
+    league = await db.leagues.find_one(
+        {"_id": ObjectId(team["league_id"])},
+        {"minors_cap_treatment": 1, "default_rookie_aav": 1},
+    ) or {}
+    treatment = league.get("minors_cap_treatment") or "full"
+    default_rookie_aav = int(league.get("default_rookie_aav") or 950_000)
+    lineup = team.get("lineup") or {}
+
+    used = 0.0
+    for p in rostered_players:
+        base = _synthesize_player_salary(p, config)
+        in_minors = _player_is_in_minors(p, lineup)
+        used += apply_minors_treatment(
+            p,
+            base_aav=base,
+            is_in_minors=in_minors,
+            treatment=treatment,
+            default_rookie_aav=default_rookie_aav,
+        )
     retentions = team.get("salary_retentions") or []
     used += sum(float(r.get("amount") or 0.0) for r in retentions)
     await db.teams.update_one(
