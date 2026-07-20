@@ -21,7 +21,7 @@ import {
   Users, ListChecks, TrendingUp, Activity, Shield, RotateCcw, Clock, Filter,
   ArrowLeftRight, AlertTriangle, UserX, Monitor, BarChart3, Heart, ScrollText,
   Headphones, ServerCog, DollarSign, Goal, Wrench, Flag, MessageSquare, Gavel,
-  User, Archive, Home, ShieldCheck, Sparkles, FlaskConical,
+  User, Archive, Home, ShieldCheck, Sparkles, FlaskConical, Database,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,6 +74,8 @@ import MetricExplorerPanel from "./components/MetricExplorerPanel";
 import AttentionFeedPanel from "./components/AttentionFeedPanel";
 // Iter 232N.59 — Admin Test Sandbox (throwaway leagues + user impersonation)
 import TestSandboxPanel from "./components/TestSandboxPanel";
+// Iter 232N.64 — Admin Player DB (full CRUD + audit + refresh)
+import PlayerDbPanel from "./components/PlayerDbPanel";
 export { ModNotesPanel } from "./components/ModNotesPanel";
 import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_shared";
 
@@ -201,6 +203,7 @@ export default function AdminDashboard() {
             <SidebarTab value="crashes" icon={AlertTriangle} label="Recent Crashes" testid="admin-tab-crashes" />
             <SidebarTab value="metric-explorer" icon={Sparkles} label="Metric Explorer" testid="admin-tab-metric-explorer" />
             <SidebarTab value="test-sandbox" icon={FlaskConical} label="Test Sandbox" testid="admin-tab-test-sandbox" />
+            <SidebarTab value="player-db" icon={Database} label="Player DB" testid="admin-tab-player-db" />
           </TabsList>
 
           {/* Right content pane */}
@@ -366,6 +369,11 @@ export default function AdminDashboard() {
           {/* ─── Iter 232N.59 — Admin Test Sandbox ─── */}
           <TabsContent value="test-sandbox" className="space-y-3 mt-0">
             <TestSandboxPanel />
+          </TabsContent>
+
+          {/* ─── Iter 232N.64 — Admin Player DB ─── */}
+          <TabsContent value="player-db" className="space-y-3 mt-0">
+            <PlayerDbPanel />
           </TabsContent>
           </div>
         </Tabs>
