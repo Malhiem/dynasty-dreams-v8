@@ -1,32 +1,41 @@
 /**
- * Iter 232N.64 — Admin Player DB panel.
+ * Iter 232N.65 — Admin Player DB panel (upgraded).
  *
- * Sits under the "Player DB" tab in the platform-admin dashboard. Gives
- * admins full CRUD over `db.players` + a recent-edits audit strip +
- * three refresh actions (reseed / NHL API / CSV upload).
+ * Adds four capabilities on top of 232N.64:
+ *   1) Full NHL API sync with a Dry-Run diff modal (selective apply).
+ *   2) CSV validation preview → commit modal.
+ *   3) Bulk actions (mark_prospect, unmark_prospect, delete) via
+ *      multi-select checkboxes on the table.
+ *   4) A "Sync" button distinct from the legacy Reseed action.
  *
- * Authoritative endpoints:
- *   • GET    /admin/players?q=&position=&is_prospect=&skip=&limit=
- *   • POST   /admin/players            (create)
- *   • PUT    /admin/players/{id}       (update — allow-listed fields)
- *   • DELETE /admin/players/{id}       (409 when on any roster)
- *   • GET    /admin/players/audit      (recent edits feed)
- *   • POST   /admin/players/refresh    ({source: reseed|nhl_api})
- *   • POST   /admin/players/refresh/csv (multipart CSV upload)
+ * Endpoints used:
+ *   • GET    /admin/players
+ *   • POST   /admin/players
+ *   • PUT    /admin/players/{id}
+ *   • DELETE /admin/players/{id}
+ *   • GET    /admin/players/audit
+ *   • POST   /admin/players/refresh       (reseed only)
+ *   • POST   /admin/players/sync          (dry_run diff)
+ *   • POST   /admin/players/sync/apply    (selective apply)
+ *   • POST   /admin/players/csv/preview   (multipart)
+ *   • POST   /admin/players/csv/commit
+ *   • POST   /admin/players/bulk
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type React from "react";
 import {
   Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import {
-  Database, RefreshCw, Plus, Trash2, Pencil, AlertTriangle,
-  ScrollText, Upload, CheckCircle2,
+  Database, RefreshCw, Plus, Trash2, Pencil, ScrollText, Upload,
+  CheckCircle2, X, GitPullRequest, AlertTriangle, Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -77,6 +86,13 @@ export default function PlayerDbPanel() {
 
   const [audit, setAudit] = useState<AuditRow[]>([]);
 
+  // Multi-select state for bulk actions
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  // Modals
+  const [syncModal, setSyncModal] = useState<any | null>(null);
+  const [csvModal, setCsvModal] = useState<any | null>(null);
+
   // ── Load list + audit ─────────────────────────────────────────
   const load = useCallback(async () => {
     setLoading(true);
@@ -100,59 +116,125 @@ export default function PlayerDbPanel() {
     }
   }, [skip, q, position, isProspect]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
-  // ── Refresh actions ───────────────────────────────────────────
-  const refreshSource = async (source: "reseed" | "nhl_api") => {
+  // ── Legacy reseed (kept for parity) ───────────────────────────
+  const reseed = async () => {
     setRefreshing(true);
     try {
-      const { data } = await api.post("/admin/players/refresh", { source });
+      const { data } = await api.post("/admin/players/refresh", { source: "reseed" });
       if (data?.ok) {
-        toast.success(
-          `${source === "reseed" ? "Reseed" : "NHL API"} refresh complete · ${data.upserted} rows touched · ${data.duration_ms}ms`,
-        );
+        toast.success(`Reseed complete · ${data.upserted} rows · ${data.duration_ms}ms`);
       } else {
-        toast.error(`Refresh error: ${data?.error || "unknown"}`);
+        toast.error(`Reseed error: ${data?.error || "unknown"}`);
       }
       await load();
     } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Refresh failed");
+      toast.error(e?.response?.data?.detail || "Reseed failed");
     } finally {
       setRefreshing(false);
     }
   };
 
-  const uploadCsv = async (file: File) => {
+  // ── NHL API dry-run ───────────────────────────────────────────
+  const startNhlDryRun = async () => {
+    setRefreshing(true);
+    toast.info("Fetching all 32 NHL rosters + prospect pools…");
+    try {
+      const { data } = await api.post("/admin/players/sync", { dry_run: true });
+      if (!data?.ok) {
+        toast.error("Sync failed");
+        return;
+      }
+      const c = data.diff.counts;
+      toast.success(
+        `Dry-run ready: ${c.new_players} new · ${c.age_changes} age · ${c.team_changes} team · ${c.removed} missing (${data.duration_ms}ms)`,
+      );
+      setSyncModal({
+        token: data.sync_token,
+        diff: data.diff,
+        errors: data.fetch_errors ?? [],
+        duration_ms: data.duration_ms,
+      });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "NHL sync failed");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // ── CSV preview ───────────────────────────────────────────────
+  const previewCsv = async (file: File) => {
     setRefreshing(true);
     try {
       const form = new FormData();
       form.append("file", file);
-      const { data } = await api.post("/admin/players/refresh/csv", form, {
+      const { data } = await api.post("/admin/players/csv/preview", form, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       toast.success(
-        `CSV import complete · ${data.upserted} rows${data.errors?.length ? ` · ${data.errors.length} errors` : ""}`,
+        `Preview ready · ${data.totals.valid} valid · ${data.totals.errors} errors`,
       );
-      await load();
+      setCsvModal({
+        token: data.preview_token,
+        totals: data.totals,
+        rows: data.rows,
+        truncated: data.truncated_preview,
+      });
     } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "CSV upload failed");
+      toast.error(e?.response?.data?.detail || "CSV preview failed");
     } finally {
       setRefreshing(false);
     }
   };
 
-  // ── Delete ─────────────────────────────────────────────────────
+  // ── Delete single ─────────────────────────────────────────────
   const deletePlayer = async (p: Player) => {
     if (!window.confirm(`Delete ${p.name}? This can't be undone.`)) return;
     try {
       await api.delete(`/admin/players/${p.id}`);
       toast.success(`Deleted ${p.name}`);
+      setSelected((s) => { const n = new Set(s); n.delete(p.id); return n; });
       await load();
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || "Delete failed");
     }
+  };
+
+  // ── Bulk actions ──────────────────────────────────────────────
+  const bulk = async (action: "mark_prospect" | "unmark_prospect" | "delete") => {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    if (action === "delete" && !window.confirm(
+      `Delete ${ids.length} player(s)? Roster-safe: players on active rosters will be skipped.`,
+    )) return;
+    try {
+      const { data } = await api.post("/admin/players/bulk", { action, player_ids: ids });
+      const skipped = data.skipped_on_roster ? ` · ${data.skipped_on_roster} skipped (on roster)` : "";
+      toast.success(`Bulk ${action} · ${data.affected} affected${skipped}`);
+      setSelected(new Set());
+      await load();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Bulk action failed");
+    }
+  };
+
+  // ── Selection helpers ─────────────────────────────────────────
+  const toggleRow = (id: string) => {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+  const allOnPageSelected = players.length > 0 && players.every((p) => selected.has(p.id));
+  const togglePage = () => {
+    setSelected((s) => {
+      const n = new Set(s);
+      if (allOnPageSelected) players.forEach((p) => n.delete(p.id));
+      else players.forEach((p) => n.add(p.id));
+      return n;
+    });
   };
 
   const rangeText = useMemo(() => {
@@ -176,20 +258,27 @@ export default function PlayerDbPanel() {
                 </Badge>
               </CardTitle>
               <CardDescription className="text-[11px]">
-                Full CRUD over the ~3,300-player DB. Edits are audited.
-                Refresh actions upsert by <code className="text-[10px]">nhl_id</code> so leagues stay intact.
+                Full CRUD over the player DB. NHL sync runs a dry-run diff first;
+                CSV uploads validate before commit. All writes are audited.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <Select onValueChange={(v: any) => refreshSource(v)} disabled={refreshing}>
-                <SelectTrigger className="h-8 text-xs w-[160px]" data-testid="player-db-refresh-select">
-                  <SelectValue placeholder={refreshing ? "Refreshing…" : "Refresh from…"} />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="reseed">Reseed script</SelectItem>
-                  <SelectItem value="nhl_api">NHL API (statsapi)</SelectItem>
-                </SelectContent>
-              </Select>
+              <Button
+                variant="outline" size="sm" onClick={startNhlDryRun}
+                disabled={refreshing} className="h-8"
+                data-testid="player-db-nhl-sync-btn"
+              >
+                <GitPullRequest className="h-3 w-3 mr-1" />
+                {refreshing ? "Syncing…" : "NHL sync (dry-run)"}
+              </Button>
+              <Button
+                variant="outline" size="sm" onClick={reseed}
+                disabled={refreshing} className="h-8"
+                data-testid="player-db-reseed-btn"
+              >
+                <Sparkles className="h-3 w-3 mr-1" />
+                Reseed
+              </Button>
               <label className="cursor-pointer">
                 <Button
                   variant="outline" size="sm"
@@ -197,7 +286,7 @@ export default function PlayerDbPanel() {
                   data-testid="player-db-csv-btn"
                   className="h-8" asChild
                 >
-                  <span><Upload className="h-3 w-3 mr-1" /> CSV</span>
+                  <span><Upload className="h-3 w-3 mr-1" /> CSV preview</span>
                 </Button>
                 <input
                   type="file"
@@ -205,7 +294,7 @@ export default function PlayerDbPanel() {
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f) uploadCsv(f);
+                    if (f) previewCsv(f);
                     e.currentTarget.value = "";
                   }}
                   data-testid="player-db-csv-input"
@@ -262,11 +351,52 @@ export default function PlayerDbPanel() {
             </Select>
           </div>
 
+          {/* Bulk action toolbar */}
+          {selected.size > 0 && (
+            <div
+              className="flex items-center gap-2 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-3 py-1.5 text-[11px]"
+              data-testid="player-db-bulk-bar"
+            >
+              <Badge variant="outline" className="text-[10px] bg-cyan-500/20 text-cyan-100 border-cyan-500/40">
+                {selected.size} selected
+              </Badge>
+              <span className="text-muted-foreground">Bulk actions:</span>
+              <Button size="sm" variant="outline" className="h-6 text-[10px]"
+                onClick={() => bulk("mark_prospect")}
+                data-testid="player-db-bulk-mark-prospect">
+                Mark prospect
+              </Button>
+              <Button size="sm" variant="outline" className="h-6 text-[10px]"
+                onClick={() => bulk("unmark_prospect")}
+                data-testid="player-db-bulk-unmark-prospect">
+                Unmark prospect
+              </Button>
+              <Button size="sm" variant="outline"
+                className="h-6 text-[10px] text-rose-300 border-rose-500/40"
+                onClick={() => bulk("delete")}
+                data-testid="player-db-bulk-delete">
+                <Trash2 className="h-3 w-3 mr-1" /> Delete
+              </Button>
+              <Button size="sm" variant="ghost" className="h-6 text-[10px] ml-auto"
+                onClick={() => setSelected(new Set())}
+                data-testid="player-db-bulk-clear">
+                Clear
+              </Button>
+            </div>
+          )}
+
           {/* Table */}
           <div className="overflow-x-auto rounded-md border border-border/60">
             <table className="w-full text-[11px]" data-testid="player-db-table">
               <thead>
                 <tr className="text-left text-muted-foreground bg-secondary/30">
+                  <th className="py-1.5 px-2 w-8">
+                    <Checkbox
+                      checked={allOnPageSelected}
+                      onCheckedChange={togglePage}
+                      data-testid="player-db-select-all"
+                    />
+                  </th>
                   <th className="py-1.5 px-2">Name</th>
                   <th className="py-1.5 px-2">Pos</th>
                   <th className="py-1.5 px-2">Team</th>
@@ -281,9 +411,18 @@ export default function PlayerDbPanel() {
                 {players.map((p) => (
                   <tr
                     key={p.id}
-                    className="border-t border-border/40 hover:bg-secondary/20"
+                    className={`border-t border-border/40 hover:bg-secondary/20 ${
+                      selected.has(p.id) ? "bg-cyan-500/5" : ""
+                    }`}
                     data-testid={`player-db-row-${p.id}`}
                   >
+                    <td className="py-1 px-2">
+                      <Checkbox
+                        checked={selected.has(p.id)}
+                        onCheckedChange={() => toggleRow(p.id)}
+                        data-testid={`player-db-select-${p.id}`}
+                      />
+                    </td>
                     <td className="py-1 px-2 font-medium truncate max-w-[220px]">{p.name}</td>
                     <td className="py-1 px-2">{p.position || "—"}</td>
                     <td className="py-1 px-2">{p.team || "—"}</td>
@@ -319,7 +458,7 @@ export default function PlayerDbPanel() {
                 ))}
                 {players.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={8} className="py-4 text-center text-muted-foreground italic">
+                    <td colSpan={9} className="py-4 text-center text-muted-foreground italic">
                       No players match those filters.
                     </td>
                   </tr>
@@ -367,6 +506,7 @@ export default function PlayerDbPanel() {
                 a.action === "create" ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30" :
                 a.action === "delete" ? "bg-rose-500/10 text-rose-300 border-rose-500/30" :
                 a.action === "refresh" ? "bg-cyan-500/10 text-cyan-300 border-cyan-500/30" :
+                a.action === "bulk" ? "bg-amber-500/10 text-amber-300 border-amber-500/30" :
                 "bg-secondary/40"
               }`}>
                 {a.action}
@@ -382,12 +522,25 @@ export default function PlayerDbPanel() {
         </CardContent>
       </Card>
 
-      {/* Edit / Create modal */}
       {(editing || creating) && (
         <PlayerEditModal
           player={editing}
           onClose={() => { setEditing(null); setCreating(false); }}
           onSaved={() => { setEditing(null); setCreating(false); load(); }}
+        />
+      )}
+      {syncModal && (
+        <NhlSyncModal
+          data={syncModal}
+          onClose={() => setSyncModal(null)}
+          onApplied={() => { setSyncModal(null); load(); }}
+        />
+      )}
+      {csvModal && (
+        <CsvPreviewModal
+          data={csvModal}
+          onClose={() => setCsvModal(null)}
+          onCommitted={() => { setCsvModal(null); load(); }}
         />
       )}
     </div>
@@ -535,6 +688,312 @@ function PlayerEditModal({
             </Button>
           </div>
         </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ────────────────────────── NHL Sync (dry-run) modal ─────────────────
+
+function NhlSyncModal({
+  data, onClose, onApplied,
+}: { data: any; onClose: () => void; onApplied: () => void; }) {
+  const diff = data.diff;
+  const [applyNew, setApplyNew] = useState<Set<string>>(new Set(diff.new_players.map((r: any) => r.nhl_id)));
+  const [applyAge, setApplyAge] = useState<Set<string>>(new Set(diff.age_changes.map((r: any) => r.nhl_id)));
+  const [applyTeam, setApplyTeam] = useState<Set<string>>(new Set(diff.team_changes.map((r: any) => r.nhl_id)));
+  const [applyPos, setApplyPos] = useState<Set<string>>(new Set(diff.position_changes.map((r: any) => r.nhl_id)));
+  const [applyProsp, setApplyProsp] = useState<Set<string>>(new Set(diff.prospect_changes.map((r: any) => r.nhl_id)));
+  const [applyRemoved, setApplyRemoved] = useState<Set<string>>(new Set());  // opt-in
+  const [committing, setCommitting] = useState(false);
+
+  const toggle = (setter: any, id: string) => {
+    setter((s: Set<string>) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  const commit = async () => {
+    setCommitting(true);
+    try {
+      const { data: res } = await api.post("/admin/players/sync/apply", {
+        sync_token: data.token,
+        apply_new: Array.from(applyNew),
+        apply_age: Array.from(applyAge),
+        apply_team: Array.from(applyTeam),
+        apply_position: Array.from(applyPos),
+        apply_prospect: Array.from(applyProsp),
+        apply_removed: Array.from(applyRemoved),
+      });
+      toast.success(
+        `Applied · +${res.inserted} new · ${res.updated_age} age · ${res.updated_team} team · ${res.deleted} removed`,
+      );
+      onApplied();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Apply failed");
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  const totalSelected = applyNew.size + applyAge.size + applyTeam.size +
+                        applyPos.size + applyProsp.size + applyRemoved.size;
+
+  const section = (title: string, rows: any[], sel: Set<string>, setter: any,
+                   renderCell: (r: any) => React.ReactNode, tone: string) => (
+    <div className="space-y-1" data-testid={`sync-section-${title.replace(/\s+/g, "-").toLowerCase()}`}>
+      <div className="flex items-center gap-2">
+        <Badge variant="outline" className={`text-[10px] ${tone}`}>{title}</Badge>
+        <span className="text-[10px] text-muted-foreground">{sel.size}/{rows.length} selected</span>
+        {rows.length > 0 && (
+          <>
+            <Button size="sm" variant="ghost" className="h-5 text-[9px] px-1"
+              onClick={() => setter(new Set(rows.map((r) => r.nhl_id)))}>All</Button>
+            <Button size="sm" variant="ghost" className="h-5 text-[9px] px-1"
+              onClick={() => setter(new Set())}>None</Button>
+          </>
+        )}
+      </div>
+      {rows.length === 0 ? (
+        <div className="text-[10px] text-muted-foreground italic pl-1">none</div>
+      ) : (
+        <div className="max-h-[140px] overflow-y-auto border border-border/40 rounded-md">
+          {rows.slice(0, 500).map((r: any) => (
+            <label key={r.nhl_id} className="flex items-center gap-2 text-[11px] px-2 py-0.5 hover:bg-secondary/30 cursor-pointer">
+              <Checkbox
+                checked={sel.has(r.nhl_id)}
+                onCheckedChange={() => toggle(setter, r.nhl_id)}
+                data-testid={`sync-row-${r.nhl_id}`}
+              />
+              <span className="font-medium truncate max-w-[160px]">{r.name}</span>
+              {renderCell(r)}
+              <span className="text-muted-foreground ml-auto font-mono text-[9px]">{r.nhl_id}</span>
+            </label>
+          ))}
+          {rows.length > 500 && (
+            <div className="text-[10px] text-center text-muted-foreground py-1">
+              (+ {rows.length - 500} more — apply &ldquo;All&rdquo; to include them)
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+      data-testid="nhl-sync-modal"
+    >
+      <Card
+        className="max-w-4xl w-full max-h-[90vh] flex flex-col bg-card border-border"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <GitPullRequest className="h-4 w-4 text-cyan-400" />
+                NHL API sync — Dry run
+              </CardTitle>
+              <CardDescription className="text-[11px]">
+                Feed vs DB comparison. Check the rows you want to apply.
+                Nothing is written until you press Commit.
+                {" "}Feed: <span className="font-mono">{diff.counts.feed_total}</span>{" "}
+                · DB: <span className="font-mono">{diff.counts.existing_total}</span>{" "}
+                · Fetched in {data.duration_ms}ms
+              </CardDescription>
+            </div>
+            <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3 overflow-y-auto flex-1">
+          {data.errors?.length > 0 && (
+            <div className="rounded-md bg-amber-500/10 border border-amber-500/30 p-2 text-[10px] text-amber-200 flex items-start gap-2">
+              <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-medium">{data.errors.length} team endpoint(s) failed:</div>
+                <div className="font-mono text-[9px] max-h-[40px] overflow-y-auto">
+                  {data.errors.slice(0, 5).join(" · ")}
+                </div>
+              </div>
+            </div>
+          )}
+          {section("New players", diff.new_players, applyNew, setApplyNew,
+            (r) => <span className="text-emerald-300 text-[10px]">{r.team} · {r.position ?? "?"} · age {r.age ?? "?"}</span>,
+            "bg-emerald-500/10 text-emerald-300 border-emerald-500/30")}
+          {section("Age changes", diff.age_changes, applyAge, setApplyAge,
+            (r) => <span className="text-cyan-300 text-[10px]">age {r.old_age ?? "?"} → {r.new_age}</span>,
+            "bg-cyan-500/10 text-cyan-300 border-cyan-500/30")}
+          {section("Team changes", diff.team_changes, applyTeam, setApplyTeam,
+            (r) => <span className="text-cyan-300 text-[10px]">{r.old_team ?? "—"} → {r.new_team}</span>,
+            "bg-cyan-500/10 text-cyan-300 border-cyan-500/30")}
+          {section("Position changes", diff.position_changes, applyPos, setApplyPos,
+            (r) => <span className="text-cyan-300 text-[10px]">{r.old_position ?? "—"} → {r.new_position}</span>,
+            "bg-cyan-500/10 text-cyan-300 border-cyan-500/30")}
+          {section("Prospect flag changes", diff.prospect_changes, applyProsp, setApplyProsp,
+            (r) => <span className="text-cyan-300 text-[10px]">prospect {String(r.old_is_prospect)} → {String(r.new_is_prospect)}</span>,
+            "bg-cyan-500/10 text-cyan-300 border-cyan-500/30")}
+          {section("Removed (not in feed)", diff.removed, applyRemoved, setApplyRemoved,
+            (r) => <span className="text-rose-300 text-[10px]">{r.team ?? "—"} · orphan</span>,
+            "bg-rose-500/10 text-rose-300 border-rose-500/30")}
+        </CardContent>
+        <div className="border-t border-border p-3 flex items-center justify-between gap-2">
+          <span className="text-[11px] text-muted-foreground">
+            <span className="font-mono">{totalSelected}</span> row(s) selected for apply
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={committing}>
+              Cancel
+            </Button>
+            <Button
+              variant="default" size="sm"
+              onClick={commit}
+              disabled={committing || totalSelected === 0}
+              data-testid="nhl-sync-commit-btn"
+            >
+              {committing ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
+              Commit {totalSelected} change{totalSelected === 1 ? "" : "s"}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ────────────────────────── CSV preview modal ────────────────────────
+
+function CsvPreviewModal({
+  data, onClose, onCommitted,
+}: { data: any; onClose: () => void; onCommitted: () => void; }) {
+  const [selectedIndices, setSelectedIndices] = useState<Set<number>>(
+    () => new Set(data.rows.filter((r: any) => r.valid).map((r: any) => r.index)),
+  );
+  const [committing, setCommitting] = useState(false);
+
+  const toggle = (i: number) => {
+    setSelectedIndices((s) => {
+      const n = new Set(s);
+      if (n.has(i)) n.delete(i); else n.add(i);
+      return n;
+    });
+  };
+
+  const commit = async () => {
+    setCommitting(true);
+    try {
+      const { data: res } = await api.post("/admin/players/csv/commit", {
+        preview_token: data.token,
+        apply_indices: Array.from(selectedIndices),
+      });
+      toast.success(`CSV committed · ${res.upserted} rows${res.skipped_invalid ? ` · ${res.skipped_invalid} skipped invalid` : ""}`);
+      onCommitted();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Commit failed");
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+      data-testid="csv-preview-modal"
+    >
+      <Card
+        className="max-w-4xl w-full max-h-[90vh] flex flex-col bg-card border-border"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Upload className="h-4 w-4 text-cyan-400" />
+                CSV validation preview
+              </CardTitle>
+              <CardDescription className="text-[11px]">
+                <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-300 border-emerald-500/30 mr-1">
+                  {data.totals.valid} valid
+                </Badge>
+                <Badge variant="outline" className="text-[10px] bg-rose-500/10 text-rose-300 border-rose-500/30 mr-1">
+                  {data.totals.errors} errors
+                </Badge>
+                <Badge variant="outline" className="text-[10px] mr-1">
+                  {data.totals.read} read
+                </Badge>
+                {data.truncated && <span className="text-amber-300">· preview truncated to first 500 rows (all rows still commit)</span>}
+              </CardDescription>
+            </div>
+            <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="overflow-y-auto flex-1 text-[11px]">
+          <table className="w-full" data-testid="csv-preview-table">
+            <thead className="sticky top-0 bg-card">
+              <tr className="text-left text-muted-foreground border-b border-border/40">
+                <th className="w-8 py-1"></th>
+                <th className="py-1 pr-2">#</th>
+                <th className="py-1 pr-2">Name</th>
+                <th className="py-1 pr-2">Team</th>
+                <th className="py-1 pr-2">Pos</th>
+                <th className="py-1 pr-2">Age</th>
+                <th className="py-1 pr-2">Errors</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((r: any) => (
+                <tr key={r.index}
+                    className={`border-t border-border/20 ${r.valid ? "" : "bg-rose-500/10"}`}
+                    data-testid={`csv-row-${r.index}`}>
+                  <td className="py-1">
+                    <Checkbox
+                      checked={selectedIndices.has(r.index)}
+                      onCheckedChange={() => toggle(r.index)}
+                      disabled={!r.valid}
+                      data-testid={`csv-select-${r.index}`}
+                    />
+                  </td>
+                  <td className="py-1 pr-2 font-mono text-muted-foreground">{r.index}</td>
+                  <td className="py-1 pr-2 truncate max-w-[180px]">{r.raw_name ?? "—"}</td>
+                  <td className="py-1 pr-2 font-mono">{r.raw_team ?? "—"}</td>
+                  <td className="py-1 pr-2">{r.raw_position ?? "—"}</td>
+                  <td className="py-1 pr-2 font-mono">{r.raw_age ?? "—"}</td>
+                  <td className="py-1 pr-2 text-rose-300 text-[10px]">
+                    {r.errors.length > 0 ? r.errors.join("; ") : ""}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
+        <div className="border-t border-border p-3 flex items-center justify-between gap-2">
+          <span className="text-[11px] text-muted-foreground">
+            <span className="font-mono">{selectedIndices.size}</span> valid row(s) will be upserted
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={committing}>
+              Cancel
+            </Button>
+            <Button
+              variant="default" size="sm"
+              onClick={commit}
+              disabled={committing || selectedIndices.size === 0}
+              data-testid="csv-commit-btn"
+            >
+              {committing ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
+              Commit {selectedIndices.size} row{selectedIndices.size === 1 ? "" : "s"}
+            </Button>
+          </div>
+        </div>
       </Card>
     </div>
   );
