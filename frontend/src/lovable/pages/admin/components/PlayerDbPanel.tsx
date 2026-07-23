@@ -35,7 +35,7 @@ import {
 } from "@/components/ui/select";
 import {
   Database, RefreshCw, Plus, Trash2, Pencil, ScrollText, Upload,
-  CheckCircle2, X, GitPullRequest, AlertTriangle, Sparkles,
+  CheckCircle2, X, GitPullRequest, AlertTriangle, Sparkles, Users2,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -92,6 +92,28 @@ export default function PlayerDbPanel() {
   // Modals
   const [syncModal, setSyncModal] = useState<any | null>(null);
   const [csvModal, setCsvModal] = useState<any | null>(null);
+  const [dupModal, setDupModal] = useState<any | null>(null);
+  const [dupLoading, setDupLoading] = useState(false);
+
+  const scanDuplicates = async () => {
+    setDupLoading(true);
+    toast.info("Scanning DB for name+birth_date duplicates…");
+    try {
+      const { data } = await api.get("/admin/players/duplicates", { params: { limit: 500 } });
+      toast.success(
+        `Found ${data.total_clusters} duplicate cluster(s) across ${data.total_rows_flagged} rows`,
+      );
+      setDupModal({
+        clusters: data.clusters,
+        total_clusters: data.total_clusters,
+        total_rows_flagged: data.total_rows_flagged,
+      });
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Scan failed");
+    } finally {
+      setDupLoading(false);
+    }
+  };
 
   // ── Load list + audit ─────────────────────────────────────────
   const load = useCallback(async () => {
@@ -270,6 +292,14 @@ export default function PlayerDbPanel() {
               >
                 <GitPullRequest className="h-3 w-3 mr-1" />
                 {refreshing ? "Syncing…" : "NHL sync (dry-run)"}
+              </Button>
+              <Button
+                variant="outline" size="sm" onClick={scanDuplicates}
+                disabled={dupLoading} className="h-8"
+                data-testid="player-db-dupes-btn"
+              >
+                <Users2 className="h-3 w-3 mr-1" />
+                {dupLoading ? "Scanning…" : "Scan duplicates"}
               </Button>
               <Button
                 variant="outline" size="sm" onClick={reseed}
@@ -543,6 +573,13 @@ export default function PlayerDbPanel() {
           onCommitted={() => { setCsvModal(null); load(); }}
         />
       )}
+      {dupModal && (
+        <DuplicatesModal
+          data={dupModal}
+          onClose={() => setDupModal(null)}
+          onMerged={() => { setDupModal(null); load(); }}
+        />
+      )}
     </div>
   );
 }
@@ -704,6 +741,9 @@ function NhlSyncModal({
   const [applyTeam, setApplyTeam] = useState<Set<string>>(new Set(diff.team_changes.map((r: any) => r.nhl_id)));
   const [applyPos, setApplyPos] = useState<Set<string>>(new Set(diff.position_changes.map((r: any) => r.nhl_id)));
   const [applyProsp, setApplyProsp] = useState<Set<string>>(new Set(diff.prospect_changes.map((r: any) => r.nhl_id)));
+  const [applyDup, setApplyDup] = useState<Set<string>>(
+    new Set((diff.duplicates ?? []).map((d: any) => d.stale_id)),
+  );
   const [applyRemoved, setApplyRemoved] = useState<Set<string>>(new Set());  // opt-in
   const [committing, setCommitting] = useState(false);
 
@@ -725,10 +765,12 @@ function NhlSyncModal({
         apply_team: Array.from(applyTeam),
         apply_position: Array.from(applyPos),
         apply_prospect: Array.from(applyProsp),
+        apply_duplicates: Array.from(applyDup),
         apply_removed: Array.from(applyRemoved),
       });
+      const dupNote = res.duplicates_merged ? ` · ${res.duplicates_merged} dupes merged` : "";
       toast.success(
-        `Applied · +${res.inserted} new · ${res.updated_age} age · ${res.updated_team} team · ${res.deleted} removed`,
+        `Applied · +${res.inserted} new · ${res.updated_age} age · ${res.updated_team} team${dupNote} · ${res.deleted} removed`,
       );
       onApplied();
     } catch (e: any) {
@@ -739,7 +781,7 @@ function NhlSyncModal({
   };
 
   const totalSelected = applyNew.size + applyAge.size + applyTeam.size +
-                        applyPos.size + applyProsp.size + applyRemoved.size;
+                        applyPos.size + applyProsp.size + applyDup.size + applyRemoved.size;
 
   const section = (title: string, rows: any[], sel: Set<string>, setter: any,
                    renderCell: (r: any) => React.ReactNode, tone: string) => (
@@ -839,6 +881,49 @@ function NhlSyncModal({
           {section("Prospect flag changes", diff.prospect_changes, applyProsp, setApplyProsp,
             (r) => <span className="text-cyan-300 text-[10px]">prospect {String(r.old_is_prospect)} → {String(r.new_is_prospect)}</span>,
             "bg-cyan-500/10 text-cyan-300 border-cyan-500/30")}
+          {/* Duplicates: stale rows with the same (name+birth_date) as a
+              fresh candidate but a different nhl_id. Merging drops the
+              stale row (roster-safe). */}
+          <div className="space-y-1" data-testid="sync-section-duplicates">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px] bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30">
+                Duplicates (merge stale row)
+              </Badge>
+              <span className="text-[10px] text-muted-foreground">
+                {applyDup.size}/{(diff.duplicates ?? []).length} selected
+              </span>
+              {(diff.duplicates ?? []).length > 0 && (
+                <>
+                  <Button size="sm" variant="ghost" className="h-5 text-[9px] px-1"
+                    onClick={() => setApplyDup(new Set((diff.duplicates ?? []).map((d: any) => d.stale_id)))}>All</Button>
+                  <Button size="sm" variant="ghost" className="h-5 text-[9px] px-1"
+                    onClick={() => setApplyDup(new Set())}>None</Button>
+                </>
+              )}
+            </div>
+            {((diff.duplicates ?? []).length === 0) ? (
+              <div className="text-[10px] text-muted-foreground italic pl-1">none</div>
+            ) : (
+              <div className="max-h-[160px] overflow-y-auto border border-border/40 rounded-md">
+                {(diff.duplicates ?? []).slice(0, 500).map((d: any) => (
+                  <label key={d.stale_id}
+                    className="flex items-center gap-2 text-[11px] px-2 py-0.5 hover:bg-secondary/30 cursor-pointer"
+                  >
+                    <Checkbox
+                      checked={applyDup.has(d.stale_id)}
+                      onCheckedChange={() => toggle(setApplyDup, d.stale_id)}
+                      data-testid={`sync-dup-${d.stale_id}`}
+                    />
+                    <span className="font-medium truncate max-w-[160px]">{d.name}</span>
+                    <span className="text-fuchsia-300 text-[10px]">
+                      drop {d.stale_team ?? "—"} (id {d.stale_nhl_id}) → keep {d.fresh_team ?? "—"} (id {d.fresh_nhl_id})
+                    </span>
+                    <span className="text-muted-foreground ml-auto font-mono text-[9px]">{d.birth_date}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
           {section("Removed (not in feed)", diff.removed, applyRemoved, setApplyRemoved,
             (r) => <span className="text-rose-300 text-[10px]">{r.team ?? "—"} · orphan</span>,
             "bg-rose-500/10 text-rose-300 border-rose-500/30")}
@@ -991,6 +1076,236 @@ function CsvPreviewModal({
             >
               {committing ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
               Commit {selectedIndices.size} row{selectedIndices.size === 1 ? "" : "s"}
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+
+
+// ────────────────────────── Duplicates scan modal ────────────────────
+
+interface DupRow {
+  id: string;
+  nhl_id: string;
+  name?: string;
+  team?: string;
+  league?: string;
+  age?: number;
+  birth_date?: string | null;
+  is_prospect?: boolean;
+}
+interface DupCluster {
+  name: string;
+  birth_date: string | null;
+  match_reason: string;
+  rows: DupRow[];
+}
+
+function DuplicatesModal({
+  data, onClose, onMerged,
+}: { data: any; onClose: () => void; onMerged: () => void; }) {
+  const clusters: DupCluster[] = data.clusters ?? [];
+  // Per-cluster state: keep id (defaults to first row = recommended
+  // survivor) and a set of drop ids (defaults to every other row).
+  const [selections, setSelections] = useState<Record<number, {
+    keepId: string; dropIds: Set<string>;
+  }>>(() => {
+    const initial: Record<number, { keepId: string; dropIds: Set<string> }> = {};
+    clusters.forEach((c, i) => {
+      initial[i] = {
+        keepId: c.rows[0]?.id ?? "",
+        dropIds: new Set(c.rows.slice(1).map((r) => r.id)),
+      };
+    });
+    return initial;
+  });
+  const [committing, setCommitting] = useState(false);
+
+  const setKeep = (ci: number, id: string) => {
+    setSelections((s) => {
+      const cluster = clusters[ci];
+      const dropIds = new Set(cluster.rows
+        .filter((r) => r.id !== id && s[ci]?.dropIds.has(r.id))
+        .map((r) => r.id));
+      // Make sure the new keep isn't in the drop set.
+      dropIds.delete(id);
+      return { ...s, [ci]: { keepId: id, dropIds } };
+    });
+  };
+  const toggleDrop = (ci: number, id: string) => {
+    setSelections((s) => {
+      const cur = s[ci];
+      if (!cur || cur.keepId === id) return s;
+      const dropIds = new Set(cur.dropIds);
+      if (dropIds.has(id)) dropIds.delete(id); else dropIds.add(id);
+      return { ...s, [ci]: { ...cur, dropIds } };
+    });
+  };
+
+  const totalMerges = Object.values(selections)
+    .reduce((acc, s) => acc + (s?.dropIds.size ?? 0), 0);
+
+  const commit = async () => {
+    const merges = Object.values(selections)
+      .filter((s) => s && s.keepId && s.dropIds.size > 0)
+      .map((s) => ({ keep_id: s.keepId, drop_ids: Array.from(s.dropIds) }));
+    if (merges.length === 0) return;
+    if (!window.confirm(
+      `Merge ${totalMerges} duplicate row(s) into ${merges.length} survivor(s)? Roster references will be repointed automatically.`,
+    )) return;
+    setCommitting(true);
+    try {
+      const { data: res } = await api.post("/admin/players/duplicates/merge", { merges });
+      toast.success(
+        `Merged ${res.merged} · ${res.roster_repointed} roster refs repointed${res.errors?.length ? ` · ${res.errors.length} errors` : ""}`,
+      );
+      onMerged();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Merge failed");
+    } finally {
+      setCommitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+      onClick={onClose}
+      data-testid="duplicates-modal"
+    >
+      <Card
+        className="max-w-5xl w-full max-h-[92vh] flex flex-col bg-card border-border"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <CardHeader className="pb-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Users2 className="h-4 w-4 text-fuchsia-400" />
+                Duplicate players — merge candidates
+              </CardTitle>
+              <CardDescription className="text-[11px]">
+                Rows grouped by (name + birth_date), or by name-only when
+                one sibling is missing a DOB. First row in each cluster is
+                the recommended survivor (real NHL id, real team code).
+                Pick a keep row, tick the rows to drop. Rosters + contracts
+                get repointed to the survivor automatically.
+                {" "}<Badge variant="outline" className="text-[10px] ml-1">
+                  {data.total_clusters} clusters · {data.total_rows_flagged} rows
+                </Badge>
+              </CardDescription>
+            </div>
+            <Button variant="ghost" size="sm" onClick={onClose} className="h-7 w-7 p-0">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="overflow-y-auto flex-1 text-[11px] space-y-2">
+          {clusters.length === 0 ? (
+            <div className="text-center text-muted-foreground italic py-8">
+              No duplicates found. Nice job!
+            </div>
+          ) : clusters.map((c, ci) => {
+            const sel = selections[ci];
+            return (
+              <div key={ci}
+                className="rounded-md border border-border/40 bg-secondary/10 p-2"
+                data-testid={`dup-cluster-${ci}`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <Badge variant="outline" className="text-[10px] bg-fuchsia-500/10 text-fuchsia-300 border-fuchsia-500/30">
+                    {c.name}
+                  </Badge>
+                  <span className="text-[10px] text-muted-foreground font-mono">
+                    {c.birth_date ?? "no DOB"}
+                  </span>
+                  <Badge variant="outline" className={`text-[9px] ${
+                    c.match_reason === "name+birth_date"
+                      ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/30"
+                      : "bg-amber-500/10 text-amber-300 border-amber-500/30"
+                  }`}>
+                    {c.match_reason}
+                  </Badge>
+                  <span className="text-[10px] text-muted-foreground ml-auto">
+                    {c.rows.length} rows · will drop {sel?.dropIds.size ?? 0}
+                  </span>
+                </div>
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-left text-muted-foreground text-[10px]">
+                      <th className="py-0.5 pr-2 w-16">Keep</th>
+                      <th className="py-0.5 pr-2 w-16">Drop</th>
+                      <th className="py-0.5 pr-2">Team</th>
+                      <th className="py-0.5 pr-2">League</th>
+                      <th className="py-0.5 pr-2">Age</th>
+                      <th className="py-0.5 pr-2">Birth</th>
+                      <th className="py-0.5 pr-2">Prospect</th>
+                      <th className="py-0.5 pr-2">nhl_id</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {c.rows.map((r) => {
+                      const isKeep = sel?.keepId === r.id;
+                      const isDrop = sel?.dropIds.has(r.id) ?? false;
+                      return (
+                        <tr key={r.id}
+                          className={`border-t border-border/20 ${
+                            isKeep ? "bg-emerald-500/10" : isDrop ? "bg-rose-500/10" : ""
+                          }`}
+                          data-testid={`dup-row-${ci}-${r.id}`}
+                        >
+                          <td className="py-0.5 pr-2">
+                            <input
+                              type="radio"
+                              name={`keep-${ci}`}
+                              checked={isKeep}
+                              onChange={() => setKeep(ci, r.id)}
+                              data-testid={`dup-keep-${ci}-${r.id}`}
+                            />
+                          </td>
+                          <td className="py-0.5 pr-2">
+                            <Checkbox
+                              checked={isDrop}
+                              disabled={isKeep}
+                              onCheckedChange={() => toggleDrop(ci, r.id)}
+                              data-testid={`dup-drop-${ci}-${r.id}`}
+                            />
+                          </td>
+                          <td className="py-0.5 pr-2 truncate max-w-[140px]">{r.team || "—"}</td>
+                          <td className="py-0.5 pr-2">{r.league || "—"}</td>
+                          <td className="py-0.5 pr-2 font-mono">{r.age ?? "—"}</td>
+                          <td className="py-0.5 pr-2 font-mono">{r.birth_date || "—"}</td>
+                          <td className="py-0.5 pr-2">{r.is_prospect ? "yes" : "—"}</td>
+                          <td className="py-0.5 pr-2 font-mono text-[9px]">{r.nhl_id}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
+        </CardContent>
+        <div className="border-t border-border p-3 flex items-center justify-between gap-2">
+          <span className="text-[11px] text-muted-foreground">
+            <span className="font-mono">{totalMerges}</span> row(s) will be dropped
+          </span>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onClose} disabled={committing}>
+              Cancel
+            </Button>
+            <Button
+              variant="default" size="sm"
+              onClick={commit}
+              disabled={committing || totalMerges === 0}
+              data-testid="dup-commit-btn"
+            >
+              {committing ? <RefreshCw className="h-3 w-3 animate-spin mr-1" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
+              Merge {totalMerges} duplicate{totalMerges === 1 ? "" : "s"}
             </Button>
           </div>
         </div>

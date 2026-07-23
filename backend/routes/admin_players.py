@@ -357,7 +357,8 @@ async def admin_sync_from_nhl(input: SyncRequest, request: Request):
 
     existing_cursor = db.players.find(
         {}, {"nhl_id": 1, "name": 1, "team": 1, "age": 1,
-             "position": 1, "is_prospect": 1},
+             "position": 1, "is_prospect": 1, "birth_date": 1,
+             "league": 1},
     )
     existing = await existing_cursor.to_list(length=None)
     diff = nhl_sync.build_diff(existing, candidates)
@@ -399,6 +400,7 @@ class SyncApplyRequest(BaseModel):
     apply_team: list[str] = Field(default_factory=list)
     apply_position: list[str] = Field(default_factory=list)
     apply_prospect: list[str] = Field(default_factory=list)
+    apply_duplicates: list[str] = Field(default_factory=list)   # stale ids to merge/drop
     apply_removed: list[str] = Field(default_factory=list)      # explicit opt-in
     note: Optional[str] = None
 
@@ -428,6 +430,7 @@ async def admin_sync_apply(input: SyncApplyRequest, request: Request):
     selected_team_ids = set(input.apply_team)
     selected_pos_ids = set(input.apply_position)
     selected_prosp_ids = set(input.apply_prospect)
+    selected_dup_stale_ids = set(input.apply_duplicates)
     selected_removed_ids = set(input.apply_removed)
 
     filt_diff = {
@@ -436,6 +439,7 @@ async def admin_sync_apply(input: SyncApplyRequest, request: Request):
         "team_changes":      [r for r in diff["team_changes"]     if r["nhl_id"] in selected_team_ids],
         "position_changes":  [r for r in diff["position_changes"] if r["nhl_id"] in selected_pos_ids],
         "prospect_changes":  [r for r in diff["prospect_changes"] if r["nhl_id"] in selected_prosp_ids],
+        "duplicates":        [d for d in diff.get("duplicates", []) if d["stale_id"] in selected_dup_stale_ids],
         "removed":           [r for r in diff["removed"]          if r["nhl_id"] in selected_removed_ids],
     }
 
@@ -503,6 +507,25 @@ async def _apply_diff(db, admin, diff, candidates_by_id,
             except Exception:
                 continue
 
+    # Duplicate merges: drop the stale row (roster-safe). The fresh row
+    # is already handled via the `new_players` bucket if the caller
+    # opted into that.
+    dup_merged = 0
+    dup_skipped_on_roster = 0
+    for d in diff.get("duplicates", []):
+        stale_id = d.get("stale_id")
+        if not stale_id:
+            continue
+        try:
+            on_roster = await db.teams.count_documents({"roster": stale_id})
+            if on_roster > 0:
+                dup_skipped_on_roster += 1
+                continue
+            await db.players.delete_one({"_id": ObjectId(stale_id)})
+            dup_merged += 1
+        except Exception:
+            continue
+
     duration_ms = int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000)
     entry = {
         "source": "nhl_api",
@@ -513,6 +536,8 @@ async def _apply_diff(db, admin, diff, candidates_by_id,
         "updated_team": updated_team,
         "updated_position": updated_position,
         "updated_prospect": updated_prospect,
+        "duplicates_merged": dup_merged,
+        "duplicates_skipped_on_roster": dup_skipped_on_roster,
         "deleted": deleted,
         "note": note,
     }
@@ -819,4 +844,131 @@ async def admin_bulk_action(input: BulkActionRequest, request: Request):
         "note": input.note,
     }
     await _audit(db, admin, "bulk", "*", None, entry, note=input.note)
+    return {"ok": True, **entry}
+
+
+
+# ─── Iter 232N.66: Standalone DB-side duplicate detection ──────────
+
+
+@router.get("/admin/players/duplicates")
+async def admin_scan_duplicates(request: Request, limit: int = 200):
+    """Scan the existing `db.players` collection for (name+birth_date)
+    duplicate clusters, independent of the NHL API sync. Catches
+    historical seeding artefacts like the Adam Fantilli-@-Michigan
+    ghost row that lingers with a stale nhl_id after the player was
+    drafted to the NHL.
+
+    Returns clusters sorted by size DESC so the messiest names surface
+    first. The recommended survivor (NHL row, non-admin_-stub,
+    non-prospect) is the first entry in each `rows` array.
+    """
+    await _require_admin(request)
+    db = _db()
+    # Fetch every row that has a name — matcher uses name-first
+    # bucketing and reasons about birth_date presence internally, so
+    # we can't skip birth_date-less rows here (that's exactly the
+    # Fantilli-@-Michigan case).
+    cursor = db.players.find(
+        {"name": {"$exists": True, "$ne": None, "$ne": ""}},
+        {"nhl_id": 1, "name": 1, "team": 1, "age": 1, "is_prospect": 1,
+         "birth_date": 1, "league": 1},
+    )
+    existing = await cursor.to_list(length=None)
+    clusters = nhl_sync.find_db_duplicates(existing)
+    limit = max(1, min(int(limit), 500))
+    return {
+        "ok": True,
+        "total_clusters": len(clusters),
+        "total_rows_flagged": sum(len(c["rows"]) for c in clusters),
+        "clusters": clusters[:limit],
+    }
+
+
+class DedupeMergeRequest(BaseModel):
+    # List of merges to apply. Each merge keeps `keep_id` and deletes
+    # every id in `drop_ids` (roster-safe). This shape mirrors what the
+    # admin sees in the duplicates UI: pick a survivor per cluster,
+    # tick the rows to drop.
+    merges: list[dict] = Field(..., min_length=1)
+    note: Optional[str] = None
+
+
+@router.post("/admin/players/duplicates/merge")
+async def admin_merge_duplicates(input: DedupeMergeRequest, request: Request):
+    admin = await _require_admin(request)
+    db = _db()
+    started_at = datetime.now(timezone.utc)
+    merged = 0
+    skipped_on_roster = 0
+    invalid = 0
+    errors: list[str] = []
+
+    for merge in input.merges:
+        keep_id = merge.get("keep_id")
+        drop_ids = merge.get("drop_ids") or []
+        if not keep_id or not drop_ids:
+            invalid += 1
+            continue
+        try:
+            keep_obj = await db.players.find_one({"_id": ObjectId(keep_id)})
+        except Exception:
+            invalid += 1
+            continue
+        if not keep_obj:
+            errors.append(f"keep_id {keep_id} not found")
+            continue
+
+        for drop_id in drop_ids:
+            if drop_id == keep_id:
+                continue
+            try:
+                on_roster_teams = await db.teams.find(
+                    {"roster": drop_id}, {"_id": 1},
+                ).to_list(length=None)
+            except Exception:
+                errors.append(f"roster lookup failed for {drop_id}")
+                continue
+            if on_roster_teams:
+                # Move the roster reference to the survivor before the
+                # delete so we don't strand a team without their guy.
+                try:
+                    for t in on_roster_teams:
+                        await db.teams.update_one(
+                            {"_id": t["_id"]},
+                            {"$pull": {"roster": drop_id}},
+                        )
+                        await db.teams.update_one(
+                            {"_id": t["_id"], "roster": {"$ne": keep_id}},
+                            {"$addToSet": {"roster": keep_id}},
+                        )
+                    # Rewire any contracts stamped with the stale id to
+                    # point at the survivor. Best-effort; missing
+                    # collection is fine.
+                    try:
+                        await db.contracts.update_many(
+                            {"player_id": drop_id},
+                            {"$set": {"player_id": keep_id}},
+                        )
+                    except Exception:
+                        pass
+                    skipped_on_roster += 1  # counted as roster-repointed
+                except Exception as e:
+                    errors.append(f"roster repoint failed for {drop_id}: {str(e)[-80:]}")
+                    continue
+            try:
+                await db.players.delete_one({"_id": ObjectId(drop_id)})
+                merged += 1
+            except Exception as e:
+                errors.append(f"delete failed for {drop_id}: {str(e)[-80:]}")
+
+    entry = {
+        "started_at": started_at.isoformat(),
+        "merged": merged,
+        "roster_repointed": skipped_on_roster,
+        "invalid_merges": invalid,
+        "errors": errors[:20],
+        "note": input.note,
+    }
+    await _audit(db, admin, "bulk", "*", None, entry, note=input.note or "duplicate merge")
     return {"ok": True, **entry}

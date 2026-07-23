@@ -175,6 +175,13 @@ async def fetch_all_players(
 _DIFF_FIELDS = ("team", "position", "age", "is_prospect")
 
 
+def _norm_name(name: str | None) -> str:
+    """Case-insensitive, whitespace-collapsed name key for dedup."""
+    if not name:
+        return ""
+    return " ".join(name.strip().lower().split())
+
+
 def build_diff(existing: list[dict], candidates: list[dict]) -> dict:
     """Compare candidates against the current `db.players` rows and
     bucket the differences.
@@ -186,14 +193,30 @@ def build_diff(existing: list[dict], candidates: list[dict]) -> dict:
         "team_changes":   [{old, new, ...}],
         "position_changes":[{old, new, ...}],
         "prospect_changes":[{old, new, ...}],
+        "duplicates":     [{stale, fresh}],    # same (name+birth_date), diff nhl_id
         "removed":        [existing,...],      # in DB but not in feed
       }
+
+    Duplicate detection: when a candidate would land in `new_players`
+    but the DB already has a row with the same normalized name AND the
+    same `birth_date` (under a different, stale `nhl_id`), we lift that
+    pair into `duplicates` instead. The stale row is then excluded from
+    the `removed` bucket to avoid double-counting. This is what catches
+    the Adam Fantilli-@-Michigan / Adam Fantilli-@-CBJ pattern where an
+    outdated NCAA-era seed lingered under an old id after the player
+    was drafted to the NHL.
     """
     by_id: dict[str, dict] = {}
+    # Fingerprint index for stale-vs-fresh cross-reference.
+    by_name_dob: dict[tuple[str, str], list[dict]] = {}
     for e in existing:
         nid = str(e.get("nhl_id") or "")
         if nid:
             by_id[nid] = e
+        dob = (e.get("birth_date") or "")[:10]
+        nm = _norm_name(e.get("name"))
+        if nm and dob:
+            by_name_dob.setdefault((nm, dob), []).append(e)
 
     seen: set[str] = set()
     new_players: list[dict] = []
@@ -201,12 +224,40 @@ def build_diff(existing: list[dict], candidates: list[dict]) -> dict:
     team_changes: list[dict] = []
     pos_changes: list[dict] = []
     prospect_changes: list[dict] = []
+    duplicates: list[dict] = []
+    dup_stale_nhl_ids: set[str] = set()
 
     for c in candidates:
         nid = c["nhl_id"]
         seen.add(nid)
         cur = by_id.get(nid)
         if not cur:
+            # Candidate is "new" by nhl_id — check for stale (name+dob)
+            # match before adding to new_players.
+            key = (_norm_name(c.get("name")), (c.get("birth_date") or "")[:10])
+            if key[0] and key[1] and key in by_name_dob:
+                for stale in by_name_dob[key]:
+                    stale_nid = str(stale.get("nhl_id") or "")
+                    # Only flag if the stale row is a DIFFERENT nhl_id
+                    # (protects against matching against itself when a
+                    # candidate happens to already be present).
+                    if stale_nid == nid:
+                        continue
+                    duplicates.append({
+                        "name": c["name"],
+                        "birth_date": key[1],
+                        "stale_id": str(stale.get("_id") or stale.get("id") or ""),
+                        "stale_nhl_id": stale_nid,
+                        "stale_team": stale.get("team"),
+                        "stale_league": stale.get("league"),
+                        "fresh_nhl_id": nid,
+                        "fresh_team": c.get("team"),
+                        "fresh_league": c.get("league"),
+                    })
+                    dup_stale_nhl_ids.add(stale_nid)
+                # Still insert the fresh candidate as new_players so it
+                # gets seeded on apply — the duplicate merge just drops
+                # the stale row separately.
             new_players.append(c)
             continue
         if c.get("age") is not None and c["age"] != cur.get("age"):
@@ -237,12 +288,15 @@ def build_diff(existing: list[dict], candidates: list[dict]) -> dict:
 
     # A player is "removed" only if we had an nhl_id-tracked NHL row and
     # the current feed no longer contains it. Admin-added ("admin_*")
-    # rows are always kept.
+    # rows are always kept. Rows already flagged as duplicates get
+    # merged there instead of being double-listed under `removed`.
     removed: list[dict] = []
     for nid, e in by_id.items():
         if nid in seen:
             continue
         if nid.startswith("admin_"):
+            continue
+        if nid in dup_stale_nhl_ids:
             continue
         removed.append({
             "nhl_id": nid,
@@ -257,6 +311,7 @@ def build_diff(existing: list[dict], candidates: list[dict]) -> dict:
         "team_changes": team_changes,
         "position_changes": pos_changes,
         "prospect_changes": prospect_changes,
+        "duplicates": duplicates,
         "removed": removed,
         "counts": {
             "new_players": len(new_players),
@@ -264,8 +319,131 @@ def build_diff(existing: list[dict], candidates: list[dict]) -> dict:
             "team_changes": len(team_changes),
             "position_changes": len(pos_changes),
             "prospect_changes": len(prospect_changes),
+            "duplicates": len(duplicates),
             "removed": len(removed),
             "existing_total": len(by_id),
             "feed_total": len(candidates),
         },
+    }
+
+
+# ─── Standalone DB-side duplicate scan (no NHL fetch) ──────────────
+
+def find_db_duplicates(existing: list[dict]) -> list[dict]:
+    """Group `existing` rows by normalized name and return every
+    cluster with more than one row that likely represents the same
+    person. Used by the standalone duplicate-scanner UI to clean up
+    historical seeding artefacts even when nothing has changed on the
+    NHL feed side.
+
+    Matching strategy (two-phase, both by normalized name):
+      1. Strong: name + birth_date match — highest confidence.
+      2. Weak: same name where at least one sibling has a birth_date
+         and no sibling has a conflicting birth_date (e.g. Adam
+         Fantilli-@-Michigan has no birth_date but Adam Fantilli-@-CBJ
+         does — safe to link).
+
+    Returned rows shape:
+      {
+        "name", "birth_date" (or None), "match_reason",
+        "rows": [{id, nhl_id, team, league, age, is_prospect, birth_date}]
+      }
+    The list is sorted by cluster size DESC. Within each cluster the
+    "keep candidate" (currently NHL, not admin_-prefixed, non-prospect,
+    has birth_date) is bubbled to the top so the admin's default merge
+    picks the right survivor.
+    """
+    by_name: dict[str, list[dict]] = {}
+    for e in existing:
+        nm = _norm_name(e.get("name"))
+        if not nm:
+            continue
+        by_name.setdefault(nm, []).append(e)
+
+    def _keep_priority(row: dict) -> tuple:
+        # Lower tuple = better keep candidate.
+        nid = str(row.get("nhl_id") or "")
+        is_admin_stub = nid.startswith("admin_")
+        # A real NHL id is a 7-digit positive integer starting with
+        # "8" (e.g. 8485391 for Frondell). Synthetic seed ids are
+        # negative (-4025003) or long random hashes (953683265) —
+        # both are much less trustworthy.
+        looks_like_real_nhl_id = (
+            len(nid) == 7 and nid.startswith("8") and nid.isdigit()
+        )
+        league = row.get("league") or ""
+        is_nhl = league == "NHL"
+        team = (row.get("team") or "").strip()
+        # 3-letter uppercase team codes are NHL abbreviations (TOR, CBJ,
+        # NYI). Longer names are junior/college teams (Djurgarden,
+        # Sault Ste. Marie).
+        looks_like_nhl_team = 2 <= len(team) <= 3 and team.upper() == team
+        has_dob = bool((row.get("birth_date") or "").strip())
+        return (
+            0 if looks_like_real_nhl_id else 1,
+            0 if is_nhl else 1,
+            0 if looks_like_nhl_team else 1,
+            1 if is_admin_stub else 0,
+            0 if not row.get("is_prospect") else 1,
+            0 if has_dob else 1,
+            nid,
+        )
+
+    out: list[dict] = []
+    for nm, rows in by_name.items():
+        if len(rows) < 2:
+            continue
+        # Split by DOB presence. Any distinct DOB in the group that
+        # doesn't match at least one other DOB row disqualifies weak
+        # matching (they're probably different people who happen to
+        # share a name — e.g. Sebastian Aho C vs Sebastian Aho D).
+        dobs = {(r.get("birth_date") or "")[:10] for r in rows if r.get("birth_date")}
+        if len(dobs) > 1:
+            # Only surface the strong (same-DOB) sub-clusters — skip
+            # rows with a different DOB.
+            by_dob: dict[str, list[dict]] = {}
+            for r in rows:
+                d = (r.get("birth_date") or "")[:10]
+                if d:
+                    by_dob.setdefault(d, []).append(r)
+            # Rows without DOB are ambiguous when 2+ real DOBs exist —
+            # skip them.
+            for d, sub in by_dob.items():
+                if len(sub) < 2:
+                    continue
+                rows_sorted = sorted(sub, key=_keep_priority)
+                out.append({
+                    "name": rows_sorted[0].get("name") or nm,
+                    "birth_date": d,
+                    "match_reason": "name+birth_date",
+                    "rows": [_dup_row(r) for r in rows_sorted],
+                })
+            continue
+
+        rows_sorted = sorted(rows, key=_keep_priority)
+        canonical_dob = next(iter(dobs), None)
+        reason = "name+birth_date" if canonical_dob and all(
+            (r.get("birth_date") or "")[:10] in ("", canonical_dob) for r in rows
+        ) else "name_only"
+        out.append({
+            "name": rows_sorted[0].get("name") or nm,
+            "birth_date": canonical_dob,
+            "match_reason": reason,
+            "rows": [_dup_row(r) for r in rows_sorted],
+        })
+
+    out.sort(key=lambda x: (-len(x["rows"]), x["name"]))
+    return out
+
+
+def _dup_row(r: dict) -> dict:
+    return {
+        "id": str(r.get("_id") or r.get("id") or ""),
+        "nhl_id": str(r.get("nhl_id") or ""),
+        "name": r.get("name"),
+        "team": r.get("team"),
+        "league": r.get("league"),
+        "age": r.get("age"),
+        "birth_date": (r.get("birth_date") or "")[:10] or None,
+        "is_prospect": bool(r.get("is_prospect")),
     }
