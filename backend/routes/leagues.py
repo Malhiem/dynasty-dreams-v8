@@ -517,6 +517,11 @@ class DivisionAssignment(BaseModel):
 
 class DivisionsUpdate(BaseModel):
     assignments: List[DivisionAssignment]
+    # Iter 232N.67 — When `lock=true`, we compute the resulting
+    # (division → conference) map from the proposed state and persist
+    # it on the league. All future saves are validated against this
+    # map until the commissioner explicitly unlocks.
+    lock: Optional[bool] = None
 
 
 class ScheduleConfig(BaseModel):
@@ -729,12 +734,20 @@ async def get_divisions(league_id: str):
             "name": t.get("name"),
             "abbr": t.get("logo_abbr"),
         })
+
+    league_doc = await db.leagues.find_one(
+        {"_id": ObjectId(league_id)},
+        {"structure_locked": 1, "division_conference_map": 1},
+    )
     return {
         "divisions": list(divisions.values()),
         "unassigned": [
             {"id": str(t["_id"]), "name": t.get("name")}
             for t in teams if not t.get("division")
         ],
+        # Iter 232N.67 — expose lock state so the client can gate UI.
+        "structure_locked": bool((league_doc or {}).get("structure_locked")),
+        "division_conference_map": (league_doc or {}).get("division_conference_map") or {},
     }
 
 
@@ -784,6 +797,89 @@ async def update_divisions(league_id: str, input: DivisionsUpdate, request: Requ
             },
         )
 
+    # ─── Iter 232N.67 — Lock enforcement + optional lock activation ──
+    # We compute the (division → conference) map implied by the
+    # post-save state and cross-check it against any currently-stored
+    # lock. If a division is being remapped to a different conference,
+    # we refuse the save with a structured 409 the UI can render as
+    # per-team highlights. If `lock=true` in this request, we ALSO
+    # persist the computed map + `structure_locked=true` on the
+    # league so subsequent saves enforce it too.
+    #
+    # Note: `same_division_different_conference` (multiple teams in
+    # the same division mapped to different conferences within a
+    # single save) is only enforced when the lock is actively involved
+    # (either already locked, or `lock=true` this request). Unlocked
+    # saves are allowed to be inconsistent so commissioners can shift
+    # teams around mid-edit without hitting spurious 409s.
+    enforce_consistency = bool(league.get("structure_locked")) or bool(input.lock)
+    computed_map: dict[str, str] = {}
+    conflicts: list[dict] = []
+    for t in all_teams:
+        tid = str(t["_id"])
+        if tid in proposed:
+            div = proposed[tid].division or None
+            conf = proposed[tid].conference or None
+        else:
+            div = t.get("division") or None
+            conf = t.get("conference") or None
+        if not div or not conf:
+            continue  # already caught by `missing` above
+        pinned = computed_map.get(div)
+        if pinned is not None and pinned != conf:
+            if enforce_consistency:
+                conflicts.append({
+                    "team_id": tid, "team_name": t.get("name"),
+                    "division": div, "attempted_conference": conf,
+                    "expected_conference": pinned,
+                    "reason": "same_division_different_conference",
+                })
+            # In unlocked mode we still don't overwrite `computed_map`
+            # so we can't accidentally promote an inconsistent state
+            # into a lock later.
+        else:
+            computed_map[div] = conf
+
+    stored_map = league.get("division_conference_map") or {}
+    was_locked = bool(league.get("structure_locked"))
+    if was_locked and stored_map:
+        for div, conf in computed_map.items():
+            expected = stored_map.get(div)
+            if expected is not None and expected != conf:
+                # Find every team that violates this pin so the UI can
+                # highlight all of them, not just the first.
+                for t in all_teams:
+                    tid = str(t["_id"])
+                    proposed_conf = (proposed[tid].conference if tid in proposed
+                                     else t.get("conference"))
+                    proposed_div = (proposed[tid].division if tid in proposed
+                                    else t.get("division"))
+                    if proposed_div == div and proposed_conf == conf:
+                        conflicts.append({
+                            "team_id": tid, "team_name": t.get("name"),
+                            "division": div, "attempted_conference": conf,
+                            "expected_conference": expected,
+                            "reason": "locked_mapping_violation",
+                        })
+
+    if conflicts:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "division_conference_mapping_conflict",
+                "message": (
+                    "This save would remap a division to a different "
+                    "conference than the locked structure allows. Unlock the "
+                    "structure or align the conferences before saving."
+                    if was_locked else
+                    "Two teams in the same division are assigned to different conferences. Please align them before saving."
+                ),
+                "structure_locked": was_locked,
+                "conflicts": conflicts,
+                "locked_map": stored_map if was_locked else None,
+            },
+        )
+
     for a in input.assignments:
         try:
             oid = ObjectId(a.team_id)
@@ -798,17 +894,65 @@ async def update_divisions(league_id: str, input: DivisionsUpdate, request: Requ
         )
         updated += res.modified_count
 
-    # Audit log
+    # Audit log + optional lock activation (Iter 232N.67)
+    league_updates: dict = {}
+    if input.lock:
+        league_updates["structure_locked"] = True
+        league_updates["division_conference_map"] = computed_map
+        league_updates["structure_locked_at"] = datetime.now(timezone.utc).isoformat()
+        league_updates["structure_locked_by"] = user.get("email")
+
+    audit_entry = {
+        "action": "divisions_updated",
+        "by": user.get("email"),
+        "count": updated,
+        "assignments": [a.model_dump() for a in input.assignments],
+        "lock_activated": bool(input.lock),
+    }
+    update_ops: dict = {"$push": {"audit_log": audit_entry}}
+    if league_updates:
+        update_ops["$set"] = league_updates
+    await db.leagues.update_one({"_id": ObjectId(league_id)}, update_ops)
+    return {
+        "updated": updated,
+        "structure_locked": bool(input.lock) or was_locked,
+        "division_conference_map": (
+            computed_map if input.lock else (stored_map or computed_map)
+        ),
+    }
+
+
+@router.post("/leagues/{league_id}/divisions/unlock")
+async def unlock_divisions(league_id: str, request: Request):
+    """Iter 232N.67 — Commissioner-only. Clears the (division → conference)
+    lock so re-mapping is allowed again. The mapping is preserved in
+    audit_log so it can be reviewed after the fact."""
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commish = (
+        league.get("commissioner_id") == user["_id"]
+        or user["_id"] in (league.get("co_commissioners") or [])
+    )
+    if not is_commish:
+        raise HTTPException(status_code=403, detail="Commissioner only")
+
+    prev_map = league.get("division_conference_map") or {}
     await db.leagues.update_one(
         {"_id": ObjectId(league_id)},
-        {"$push": {"audit_log": {
-            "action": "divisions_updated",
-            "by": user.get("email"),
-            "count": updated,
-            "assignments": [a.model_dump() for a in input.assignments],
-        }}},
+        {
+            "$set": {"structure_locked": False},
+            "$push": {"audit_log": {
+                "action": "divisions_unlocked",
+                "by": user.get("email"),
+                "previous_map": prev_map,
+            }},
+        },
     )
-    return {"updated": updated}
+    return {"ok": True, "structure_locked": False, "previous_map": prev_map}
 
 
 @router.get("/leagues/{league_id}/schedule-config")

@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
-import { Network, Plus, Trash2, Save } from "lucide-react";
+import { Network, Plus, Trash2, Save, Lock, Unlock } from "lucide-react";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import InfoHint from "@/components/ui/info-hint";
 import {
@@ -28,6 +28,16 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
 
   // Map<teamId, { division, conference }>
   const [assignments, setAssignments] = useState<Record<string, { division: string; conference: string }>>({});
+
+  // Iter 232N.67 — Structure lock. When active, the (division→conference)
+  // map on the league doc becomes a hard rule: any save that would
+  // remap a division to a different conference is rejected by the API
+  // with a 409 + per-team conflict list.
+  const [structureLocked, setStructureLocked] = useState(false);
+  const [lockedMap, setLockedMap] = useState<Record<string, string>>({});
+  const [lockOnSave, setLockOnSave] = useState(false);
+  // Per-team conflict IDs highlighted after a failed save.
+  const [conflictTeamIds, setConflictTeamIds] = useState<Set<string>>(new Set());
 
   // Division/Conference name inputs (batch-create)
   const [newDivName, setNewDivName] = useState("");
@@ -65,6 +75,9 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
         });
       });
       setAssignments(initMap);
+      // Iter 232N.67 — hydrate lock state from the same divisions call.
+      setStructureLocked(!!divRes.data?.structure_locked);
+      setLockedMap((divRes.data?.division_conference_map as Record<string, string>) || {});
       if (cfgRes?.data) setScheduleCfg(cfgRes.data);
     }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -77,32 +90,39 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
         [teamId]: { ...(prev[teamId] || { division: "", conference: "" }), [field]: value },
       };
 
-      // When the division is set, auto-fill the conference by looking
-      // at what conference other teams in the same division are already
-      // using. This is the "divisions are mapped to a conference"
-      // rule — the mapping isn't stored explicitly, it's inferred from
-      // every other team's current assignment.
+      // Auto-fill conference when division changes.
       //
-      // We only auto-fill when:
-      //   • the division is non-empty
-      //   • exactly one non-empty conference is already in use for
-      //     that division (avoids silently picking a side when the
-      //     commissioner has an inconsistency in flight)
-      //   • the team doesn't already have that conference set
+      // If the league structure is LOCKED, the locked map is the
+      // source of truth (deterministic). If not locked, we infer the
+      // conference from other teams already assigned to that division
+      // (heuristic — only fills when exactly one non-empty sibling
+      // conference exists).
       if (field === "division" && value) {
-        const conferencesForDiv = new Set(
-          Object.entries(next)
-            .filter(([tid, a]) => tid !== teamId && a.division === value && a.conference)
-            .map(([, a]) => a.conference),
-        );
-        if (conferencesForDiv.size === 1) {
-          const inferred = Array.from(conferencesForDiv)[0];
-          if (next[teamId].conference !== inferred) {
-            next[teamId] = { ...next[teamId], conference: inferred };
-            toast.info(`Conference auto-set to "${inferred}" (matches other teams in "${value}")`);
+        let inferred: string | undefined;
+        if (structureLocked && lockedMap[value]) {
+          inferred = lockedMap[value];
+        } else {
+          const conferencesForDiv = new Set(
+            Object.entries(next)
+              .filter(([tid, a]) => tid !== teamId && a.division === value && a.conference)
+              .map(([, a]) => a.conference),
+          );
+          if (conferencesForDiv.size === 1) {
+            inferred = Array.from(conferencesForDiv)[0];
           }
         }
+        if (inferred && next[teamId].conference !== inferred) {
+          next[teamId] = { ...next[teamId], conference: inferred };
+          toast.info(
+            structureLocked
+              ? `Conference auto-set to "${inferred}" (locked map for "${value}")`
+              : `Conference auto-set to "${inferred}" (matches other teams in "${value}")`,
+          );
+        }
       }
+
+      // Clear stale conflict highlights when the user starts editing.
+      if (conflictTeamIds.size > 0) setConflictTeamIds(new Set());
 
       return next;
     });
@@ -130,19 +150,56 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
   const save = async () => {
     if (!leagueId) return;
     setSaving(true);
+    setConflictTeamIds(new Set());
     try {
       const payload = teams.map(t => ({
         team_id: t.id,
         division: assignments[t.id]?.division || null,
         conference: assignments[t.id]?.conference || null,
       }));
-      const res = await api.put(`/leagues/${leagueId}/divisions`, { assignments: payload });
-      toast.success(`Saved · ${res.data.updated} teams updated`);
+      const res = await api.put(`/leagues/${leagueId}/divisions`, {
+        assignments: payload,
+        lock: lockOnSave || undefined,
+      });
+      const wasLocked = structureLocked;
+      setStructureLocked(!!res.data.structure_locked);
+      setLockedMap(res.data.division_conference_map || {});
+      if (lockOnSave && !wasLocked) {
+        toast.success(`Saved · ${res.data.updated} teams · Structure LOCKED 🔒`);
+        setLockOnSave(false);
+      } else {
+        toast.success(`Saved · ${res.data.updated} teams updated`);
+      }
     } catch (e: any) {
-      const msg = e?.response?.data?.detail || "Failed to save divisions";
-      toast.error(msg);
+      const detail = e?.response?.data?.detail;
+      // Iter 232N.67 — structured 409 with per-team conflicts
+      if (detail && typeof detail === "object" && detail.code === "division_conference_mapping_conflict") {
+        const conflictIds = new Set<string>((detail.conflicts || []).map((c: any) => c.team_id));
+        setConflictTeamIds(conflictIds);
+        const first = (detail.conflicts || [])[0];
+        toast.error(
+          detail.structure_locked
+            ? `Locked structure violation: "${first?.division}" is mapped to "${first?.expected_conference}", not "${first?.attempted_conference}". Unlock to remap.`
+            : `Conflict: "${first?.division}" has teams in ${first?.expected_conference} AND ${first?.attempted_conference}. Align before saving.`,
+        );
+      } else {
+        toast.error(typeof detail === "string" ? detail : (detail?.message || "Failed to save divisions"));
+      }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const unlockStructure = async () => {
+    if (!leagueId) return;
+    if (!window.confirm("Unlock the (division → conference) structure? Future saves will allow remapping.")) return;
+    try {
+      await api.post(`/leagues/${leagueId}/divisions/unlock`);
+      setStructureLocked(false);
+      setLockedMap({});
+      toast.success("Structure unlocked — remaps allowed");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Unlock failed");
     }
   };
 
@@ -214,13 +271,44 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
               <Trash2 className="h-4 w-4 mr-1" /> Clear all
             </Button>
             <div className="flex-1" />
+            {/* Iter 232N.67 — Lock state + toggle */}
+            {structureLocked ? (
+              <div className="flex items-center gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-[11px] text-emerald-200"
+                   data-testid="divisions-lock-status">
+                <Lock className="h-3 w-3" />
+                Locked ·{" "}
+                <span className="font-mono">
+                  {Object.keys(lockedMap).length} division{Object.keys(lockedMap).length === 1 ? "" : "s"} mapped
+                </span>
+                <Button
+                  size="sm" variant="ghost"
+                  onClick={unlockStructure}
+                  className="h-5 px-1 text-[10px] text-emerald-100 hover:text-emerald-50"
+                  data-testid="divisions-unlock-btn"
+                >
+                  <Unlock className="h-3 w-3 mr-0.5" /> Unlock
+                </Button>
+              </div>
+            ) : (
+              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer"
+                     data-testid="divisions-lock-toggle-label">
+                <input
+                  type="checkbox"
+                  checked={lockOnSave}
+                  onChange={e => setLockOnSave(e.target.checked)}
+                  data-testid="divisions-lock-toggle"
+                />
+                <Lock className="h-3 w-3" /> Save &amp; lock structure
+              </label>
+            )}
             <Button
               size="sm"
               onClick={save}
               disabled={saving || !leagueId}
               data-testid="divisions-save-btn"
             >
-              <Save className="h-4 w-4 mr-1" /> {saving ? "Saving..." : "Save"}
+              <Save className="h-4 w-4 mr-1" />{" "}
+              {saving ? "Saving..." : (lockOnSave && !structureLocked ? "Save & Lock" : "Save")}
             </Button>
           </div>
 
@@ -261,9 +349,22 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
-                {teams.map(t => (
-                  <tr key={t.id} data-testid={`divisions-row-${t.id}`}>
-                    <td className="py-2 pl-3 font-medium">{t.name}</td>
+                {teams.map(t => {
+                  const isConflict = conflictTeamIds.has(t.id);
+                  const teamDiv = assignments[t.id]?.division || "";
+                  const conferenceLockedForTeam = structureLocked && !!lockedMap[teamDiv];
+                  return (
+                  <tr key={t.id} data-testid={`divisions-row-${t.id}`}
+                      className={isConflict ? "bg-rose-500/10" : ""}>
+                    <td className="py-2 pl-3 font-medium">
+                      {t.name}
+                      {isConflict && (
+                        <span className="ml-2 text-[10px] rounded-sm border border-rose-500/40 bg-rose-500/10 text-rose-300 px-1"
+                              data-testid={`divisions-row-conflict-${t.id}`}>
+                          conflict
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2 pr-2">
                       <Select
                         value={assignments[t.id]?.division || "__none__"}
@@ -281,23 +382,33 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
                       </Select>
                     </td>
                     <td className="py-2 pr-3">
-                      <Select
-                        value={assignments[t.id]?.conference || "__none__"}
-                        onValueChange={v => updateTeam(t.id, "conference", v === "__none__" ? "" : v)}
-                      >
-                        <SelectTrigger className="h-8 text-xs w-[160px]" data-testid={`divisions-select-conf-${t.id}`}>
-                          <SelectValue placeholder="—" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__none__">—</SelectItem>
-                          {Array.from(new Set([...confNames, newConfName].filter(Boolean))).map(c => (
-                            <SelectItem key={c} value={c}>{c}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <div className="flex items-center gap-1">
+                        <Select
+                          value={assignments[t.id]?.conference || "__none__"}
+                          onValueChange={v => updateTeam(t.id, "conference", v === "__none__" ? "" : v)}
+                          disabled={conferenceLockedForTeam}
+                        >
+                          <SelectTrigger
+                            className={`h-8 text-xs w-[160px] ${conferenceLockedForTeam ? "opacity-70" : ""}`}
+                            data-testid={`divisions-select-conf-${t.id}`}
+                          >
+                            <SelectValue placeholder="—" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">—</SelectItem>
+                            {Array.from(new Set([...confNames, newConfName].filter(Boolean))).map(c => (
+                              <SelectItem key={c} value={c}>{c}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {conferenceLockedForTeam && (
+                          <Lock className="h-3 w-3 text-emerald-400 shrink-0"
+                                aria-label="Conference pinned by locked structure" />
+                        )}
+                      </div>
                     </td>
                   </tr>
-                ))}
+                );})}
                 {teams.length === 0 && (
                   <tr>
                     <td colSpan={3} className="py-6 text-center text-muted-foreground text-sm">No teams yet.</td>
