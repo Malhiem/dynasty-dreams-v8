@@ -71,10 +71,41 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
   }, [leagueId]);
 
   const updateTeam = (teamId: string, field: "division" | "conference", value: string) => {
-    setAssignments(prev => ({
-      ...prev,
-      [teamId]: { ...(prev[teamId] || { division: "", conference: "" }), [field]: value },
-    }));
+    setAssignments(prev => {
+      const next = {
+        ...prev,
+        [teamId]: { ...(prev[teamId] || { division: "", conference: "" }), [field]: value },
+      };
+
+      // When the division is set, auto-fill the conference by looking
+      // at what conference other teams in the same division are already
+      // using. This is the "divisions are mapped to a conference"
+      // rule — the mapping isn't stored explicitly, it's inferred from
+      // every other team's current assignment.
+      //
+      // We only auto-fill when:
+      //   • the division is non-empty
+      //   • exactly one non-empty conference is already in use for
+      //     that division (avoids silently picking a side when the
+      //     commissioner has an inconsistency in flight)
+      //   • the team doesn't already have that conference set
+      if (field === "division" && value) {
+        const conferencesForDiv = new Set(
+          Object.entries(next)
+            .filter(([tid, a]) => tid !== teamId && a.division === value && a.conference)
+            .map(([, a]) => a.conference),
+        );
+        if (conferencesForDiv.size === 1) {
+          const inferred = Array.from(conferencesForDiv)[0];
+          if (next[teamId].conference !== inferred) {
+            next[teamId] = { ...next[teamId], conference: inferred };
+            toast.info(`Conference auto-set to "${inferred}" (matches other teams in "${value}")`);
+          }
+        }
+      }
+
+      return next;
+    });
   };
 
   const clearAll = () => {
