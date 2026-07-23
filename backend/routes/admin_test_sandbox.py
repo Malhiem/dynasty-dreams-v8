@@ -310,6 +310,7 @@ async def list_test_leagues(request: Request):
             "current_teams": team_count,
             "status": lg.get("status"),
             "sandbox_created_by": lg.get("sandbox_created_by"),
+            "sandbox_last_sim_week": lg.get("sandbox_last_sim_week") or 0,
             "created_at": (
                 lg.get("created_at").isoformat()
                 if isinstance(lg.get("created_at"), datetime)
@@ -502,3 +503,229 @@ async def list_test_users(request: Request, league_id: Optional[str] = None):
 
     out.sort(key=lambda x: (x.get("league_name") or "", x.get("name") or ""))
     return {"users": out}
+
+
+
+# ─── Iter 232N.69 — Simulate week of matchups (sandbox only) ──────
+
+
+class SimulateWeekRequest(BaseModel):
+    # Optional — if omitted we pick "current week + 1", so successive
+    # clicks build up a season rather than replaying the same week.
+    week: Optional[int] = Field(None, ge=1, le=30)
+
+
+@router.post("/admin/test-sandbox/leagues/{league_id}/simulate-week")
+async def sandbox_simulate_week(
+    league_id: str,
+    input: SimulateWeekRequest,
+    request: Request,
+):
+    """Generate a deterministic slate of fake matchup scores for a
+    sandbox league so admins can see live-populated standings,
+    dashboards, trophies, and streak widgets without waiting for real
+    games to be played.
+
+    Rules:
+      • Only works on leagues flagged `is_test_sandbox=true` — refuses
+        with 400 on real leagues (never mutate production data).
+      • Deterministic: same (league_id, week) → same scores. Re-running
+        the same week is idempotent (updates existing matchup docs
+        rather than double-crediting team records).
+      • Round-robin pairing per week based on team insertion order.
+        Odd-team-count leagues get a "BYE" for the leftover team.
+      • Team W/L/T + points_for + points_against advance by one game.
+
+    Response includes the fresh W-L-T for every team so the UI can
+    optimistically refresh without a second /standings round-trip.
+    """
+    admin = await _require_admin(request)
+    db = _db()
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=400,
+            detail="simulate-week is only available on sandbox test leagues",
+        )
+
+    teams = await db.teams.find(
+        {"league_id": league_id},
+        sort=[("created_at", 1), ("_id", 1)],
+    ).to_list(200)
+    if len(teams) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Need at least 2 teams to simulate a matchup",
+        )
+
+    # Pick the next week to simulate if the caller didn't specify.
+    if input.week is not None:
+        week = input.week
+    else:
+        cur = league.get("sandbox_last_sim_week") or 0
+        week = int(cur) + 1
+
+    # If this week has already been simulated, we're re-running for
+    # idempotency. Roll back the previous credits from team docs
+    # before writing new ones so counts stay consistent.
+    prior_matchups = await db.matchups.find({
+        "league_id": league_id, "week": week, "sandbox_sim": True,
+    }).to_list(None)
+    if prior_matchups:
+        for m in prior_matchups:
+            for side in ("home", "away"):
+                tid = m.get(f"{side}_team_id")
+                if not tid:
+                    continue
+                pf = m.get(f"{side}_score", 0) or 0
+                pa_side = "away" if side == "home" else "home"
+                pa = m.get(f"{pa_side}_score", 0) or 0
+                outcome = m.get(f"{side}_outcome")
+                inc: dict = {"points_for": -pf, "points_against": -pa}
+                if outcome == "W":
+                    inc["wins"] = -1
+                elif outcome == "L":
+                    inc["losses"] = -1
+                elif outcome == "T":
+                    inc["ties"] = -1
+                try:
+                    await db.teams.update_one({"_id": ObjectId(tid)}, {"$inc": inc})
+                except Exception:
+                    continue
+        await db.matchups.delete_many({
+            "league_id": league_id, "week": week, "sandbox_sim": True,
+        })
+
+    # Deterministic RNG seeded on (league_id, week) so re-running
+    # produces the same slate — key for tests + reproducing bug reports.
+    import random
+    rng = random.Random(f"{league_id}:{week}")
+    rotated = teams[:]
+    # Rotate so week N has a different pairing than week 1.
+    if len(rotated) > 2:
+        rot = (week - 1) % (len(rotated) - 1)
+        # Standard round-robin: fix team 0, rotate the rest.
+        rotated = [rotated[0]] + rotated[1:][rot:] + rotated[1:][:rot]
+
+    matchups_out: list[dict] = []
+    now = datetime.now(timezone.utc)
+    for i in range(0, len(rotated) - 1, 2):
+        home_t = rotated[i]
+        away_t = rotated[i + 1]
+        home_score = rng.randint(75, 145)
+        away_score = rng.randint(75, 145)
+        if home_score > away_score:
+            home_out, away_out = "W", "L"
+        elif home_score < away_score:
+            home_out, away_out = "L", "W"
+        else:
+            home_out = away_out = "T"
+
+        matchup_doc = {
+            "league_id": league_id,
+            "week": week,
+            "home_team_id": str(home_t["_id"]),
+            "away_team_id": str(away_t["_id"]),
+            "home_team_name": home_t.get("name"),
+            "away_team_name": away_t.get("name"),
+            "home_score": home_score,
+            "away_score": away_score,
+            "home_outcome": home_out,
+            "away_outcome": away_out,
+            "status": "final",
+            "sandbox_sim": True,
+            "simulated_by": admin.get("email"),
+            "simulated_at": now,
+        }
+        await db.matchups.insert_one(matchup_doc)
+
+        # Update team standings counters.
+        for tid, pf, pa, out in [
+            (home_t["_id"], home_score, away_score, home_out),
+            (away_t["_id"], away_score, home_score, away_out),
+        ]:
+            inc = {"points_for": pf, "points_against": pa}
+            if out == "W":
+                inc["wins"] = 1
+            elif out == "L":
+                inc["losses"] = 1
+            else:
+                inc["ties"] = 1
+            await db.teams.update_one({"_id": tid}, {"$inc": inc})
+
+        matchups_out.append({
+            "home": home_t.get("name"), "away": away_t.get("name"),
+            "home_score": home_score, "away_score": away_score,
+            "home_outcome": home_out, "away_outcome": away_out,
+        })
+
+    # Handle odd team count — one team gets a BYE for this week.
+    bye_team = rotated[-1] if len(rotated) % 2 == 1 else None
+    if bye_team:
+        matchups_out.append({
+            "home": bye_team.get("name"), "away": "BYE",
+            "home_score": 0, "away_score": 0,
+            "home_outcome": None, "away_outcome": None,
+        })
+
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {"sandbox_last_sim_week": week}},
+    )
+
+    fresh_teams = await db.teams.find(
+        {"league_id": league_id},
+        {"_id": 1, "name": 1, "wins": 1, "losses": 1, "ties": 1,
+         "points_for": 1, "points_against": 1},
+    ).to_list(200)
+    return {
+        "ok": True,
+        "week": week,
+        "matchups": matchups_out,
+        "teams": [
+            {
+                "id": str(t["_id"]),
+                "name": t.get("name"),
+                "wins": t.get("wins", 0),
+                "losses": t.get("losses", 0),
+                "ties": t.get("ties", 0),
+                "points_for": t.get("points_for", 0),
+                "points_against": t.get("points_against", 0),
+            } for t in fresh_teams
+        ],
+        "replayed": bool(prior_matchups),
+    }
+
+
+@router.post("/admin/test-sandbox/leagues/{league_id}/reset-simulation")
+async def sandbox_reset_simulation(league_id: str, request: Request):
+    """Wipe every simulated matchup + zero out every team's counters,
+    returning the sandbox league to a pristine "no games played" state.
+    Useful for testing the empty-standings UI (Iter 232N.68) after
+    someone has already simulated a week."""
+    await _require_admin(request)
+    db = _db()
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=400,
+            detail="reset-simulation is only available on sandbox test leagues",
+        )
+    deleted = await db.matchups.delete_many({
+        "league_id": league_id, "sandbox_sim": True,
+    })
+    await db.teams.update_many(
+        {"league_id": league_id},
+        {"$set": {"wins": 0, "losses": 0, "ties": 0,
+                  "points_for": 0, "points_against": 0}},
+    )
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$unset": {"sandbox_last_sim_week": ""}},
+    )
+    return {"ok": True, "matchups_deleted": deleted.deleted_count}

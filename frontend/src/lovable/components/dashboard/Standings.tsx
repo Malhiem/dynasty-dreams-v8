@@ -157,7 +157,7 @@ const Standings = () => {
   useEffect(() => {
     let cancelled = false;
     if (!leagueId) { setRows([]); setLoaded(true); return; }
-    (async () => {
+    const fetchStandings = async () => {
       try {
         const { data } = await api.get(`/leagues/${leagueId}/standings`);
         if (!cancelled) setRows(data?.standings ?? []);
@@ -166,8 +166,16 @@ const Standings = () => {
       } finally {
         if (!cancelled) setLoaded(true);
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    fetchStandings();
+    // Iter 232N.69 — refetch when the sandbox top-bar simulates or
+    // resets a week (fires a custom `sandbox:sim-week` event).
+    const onSim = () => fetchStandings();
+    window.addEventListener('sandbox:sim-week', onSim);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('sandbox:sim-week', onSim);
+    };
   }, [leagueId]);
 
   // Map API rows to the row shape the rest of this widget already
