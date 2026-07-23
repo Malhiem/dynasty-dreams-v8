@@ -731,7 +731,12 @@ const StandingsPage = () => {
 
   // Build real-data teams list shaped like the Lovable mock so the UI below works as-is.
   const liveTeams: StandingsTeam[] = useMemo(() => {
-    if (!leagueTeams || leagueTeams.length === 0) return mockTeams;
+    // Iter 232N.68 — Previously returned `mockTeams` (Ice Dragons,
+    // Team Frostbite…) whenever leagueTeams was empty. That flashed
+    // fake standings during initial load AND made empty sandbox
+    // leagues look like they had data. Return `[]` so the UI shows
+    // its natural empty state instead.
+    if (!leagueTeams || leagueTeams.length === 0) return [];
     const ranked = [...leagueTeams]
       .map(t => ({ ...t, _total: (t.points_for || 0) + (t.live_points || 0) }))
       .sort((a, b) => b._total - a._total);
