@@ -729,3 +729,63 @@ async def sandbox_reset_simulation(league_id: str, request: Request):
         {"$unset": {"sandbox_last_sim_week": ""}},
     )
     return {"ok": True, "matchups_deleted": deleted.deleted_count}
+
+
+
+# ─── Iter 232N.70 — Orphan draft cleanup ──────────────────────────
+
+
+@router.post("/admin/drafts/cleanup-orphans")
+async def cleanup_orphan_drafts(request: Request, league_id: Optional[str] = None):
+    """Scan `db.drafts` for orphan / stub docs that lack any real
+    scheduling or ordering signal and delete them. Orphans are typically
+    leftover from cancelled setup flows or manual DB pokes and cause
+    the "why is there a draft running?" false positive on the FA
+    pickup lock (see `utils/draft_lock.py::_looks_like_real_draft`).
+
+    Scoped to a single league when `league_id` is provided, otherwise
+    scans platform-wide (admin discretion — every deletion is audited).
+    """
+    admin = await _require_admin(request)
+    db = _db()
+    from utils.draft_lock import _looks_like_real_draft
+
+    query: dict = {}
+    if league_id:
+        query["league_id"] = league_id
+    cursor = db.drafts.find(query)
+    deleted_ids: list[str] = []
+    kept = 0
+    async for d in cursor:
+        if _looks_like_real_draft(d):
+            kept += 1
+            continue
+        did = d["_id"]
+        # Also nuke any dangling draft_picks that referenced the orphan
+        # so the DB stays consistent.
+        try:
+            await db.draft_picks.delete_many({"draft_id": str(did)})
+        except Exception:
+            pass
+        await db.drafts.delete_one({"_id": did})
+        deleted_ids.append(str(did))
+
+    if deleted_ids:
+        try:
+            await db.audit_log.insert_one({
+                "action": "draft_orphan_cleanup",
+                "actor_email": admin.get("email"),
+                "actor_id": str(admin.get("_id")),
+                "deleted_draft_ids": deleted_ids,
+                "league_id": league_id,
+                "at": datetime.now(timezone.utc),
+            })
+        except Exception:
+            pass
+
+    return {
+        "ok": True,
+        "deleted": len(deleted_ids),
+        "kept": kept,
+        "deleted_draft_ids": deleted_ids,
+    }

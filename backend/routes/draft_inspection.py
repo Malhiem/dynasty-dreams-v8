@@ -41,6 +41,7 @@ def _db(): return _deps["db"]
 async def get_drafts(
     league_id: Optional[str] = None,
     include_archived: bool = False,
+    include_orphans: bool = False,
     request: Request = None,
 ):
     query: dict = {}
@@ -50,6 +51,13 @@ async def get_drafts(
     if not include_archived:
         query["status"] = {"$ne": "archived"}
     drafts = await _db().drafts.find(query, {"team_map": 0}).sort("created_at", -1).to_list(100)
+    # Iter 232N.70 — Filter out orphan / stub draft docs (no scheduling
+    # or pick-order signal) so free-agent widgets and dashboards don't
+    # falsely display "draft is running" for a league whose
+    # commissioner never actually set a draft up.
+    if not include_orphans:
+        from utils.draft_lock import _looks_like_real_draft
+        drafts = [d for d in drafts if _looks_like_real_draft(d)]
     for d in drafts:
         d["_id"] = str(d["_id"])
     return drafts

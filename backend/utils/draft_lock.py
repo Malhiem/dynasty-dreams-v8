@@ -15,25 +15,69 @@ from bson import ObjectId
 
 _LOCKING_STATUSES = ("active", "scheduled", "in_progress", "paused")
 
+# Iter 232N.70 — Signals that a draft doc represents a real, correctly
+# configured draft (not an orphan / stub / leftover from an earlier
+# test run). We require at least ONE of these before we let the doc
+# lock the free-agent pool. This defends against the "why is there a
+# draft running if no draft has been set?" bug in sandbox leagues
+# where an old draft doc lingers with only `status=in_progress` and
+# no timing or ordering signal.
+_REAL_DRAFT_SIGNALS = (
+    "scheduled_at", "scheduled_time", "clock_starts_at", "started_at",
+    "on_the_clock_team_id", "current_team_id",
+    "pick_order", "draft_order", "total_rounds",
+)
+
+
+def _looks_like_real_draft(draft: dict) -> bool:
+    """True when the draft doc has at least one non-empty signal that
+    a real draft has been configured. Rejects stub / orphan docs that
+    were created outside the standard commissioner setup flow."""
+    if not draft:
+        return False
+    for key in _REAL_DRAFT_SIGNALS:
+        val = draft.get(key)
+        if val is None:
+            continue
+        if isinstance(val, (list, dict, str)) and len(val) == 0:
+            continue
+        return True
+    return False
+
 
 async def get_locking_draft(db, league_id: str) -> Optional[dict]:
     """Returns the draft doc that's currently locking the FA pool for
     `league_id`, or ``None`` if pickups are open. Prefers `active` /
     `in_progress` drafts over merely `scheduled` ones so the message
     the caller renders matches the phase the league is actually in.
+
+    Iter 232N.70 — Orphan draft docs (status=in_progress but no
+    scheduling / pick_order / on_the_clock signal) are ignored so
+    they don't spuriously block free-agent pickups in sandbox and
+    otherwise-cleanly-configured leagues.
     """
     if not league_id:
         return None
-    draft = await db.drafts.find_one({
+    # Iter 232N.70 — Prefer active/in_progress/paused, then scheduled.
+    # For each status band, iterate all matches and return the first
+    # that looks like a real draft. Using `find_one` isn't enough: if
+    # an orphan happens to sort first, we'd return None even when a
+    # real draft exists in the same status band.
+    active = await db.drafts.find({
         "league_id": league_id,
         "status": {"$in": ["active", "in_progress", "paused"]},
-    })
-    if draft:
-        return draft
-    return await db.drafts.find_one({
+    }).to_list(50)
+    for d in active:
+        if _looks_like_real_draft(d):
+            return d
+    scheduled = await db.drafts.find({
         "league_id": league_id,
         "status": "scheduled",
-    })
+    }).to_list(50)
+    for d in scheduled:
+        if _looks_like_real_draft(d):
+            return d
+    return None
 
 
 def format_draft_lock_message(draft: dict) -> str:
