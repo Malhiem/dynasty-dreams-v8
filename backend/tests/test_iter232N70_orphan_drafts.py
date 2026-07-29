@@ -197,6 +197,38 @@ async def test_cleanup_orphan_drafts_deletes_stubs_only():
 # ── /drafts list endpoint filters orphans by default ────────────
 
 @pytest.mark.asyncio
+async def test_upcoming_drafts_endpoint_filters_orphans():
+    from routes import draft_inspection
+    db = _db()
+    draft_inspection._deps["db"] = db  # type: ignore
+
+    league_id = str(ObjectId())
+    stub = await db.drafts.insert_one({
+        "league_id": league_id,
+        "status": "scheduled",
+        "current_pick": 1, "team_abbrs": ["t1"],
+        # No scheduled_time, no total_rounds, no pick_order — pure orphan
+    })
+    real_scheduled = await db.drafts.insert_one({
+        "league_id": league_id,
+        "status": "scheduled",
+        "scheduled_time": "2026-09-01T15:00:00Z",
+        "total_rounds": 20,
+    })
+
+    res = await draft_inspection.get_upcoming_drafts(league_id=league_id, days=90)
+    ids = {d["_id"] for d in res["drafts"]}
+    assert str(real_scheduled.inserted_id) in ids
+    assert str(stub.inserted_id) not in ids
+    assert res["count"] == 1
+
+    await db.drafts.delete_one({"_id": stub.inserted_id})
+    await db.drafts.delete_one({"_id": real_scheduled.inserted_id})
+
+
+# ── /drafts list endpoint filters orphans by default ────────────
+
+@pytest.mark.asyncio
 async def test_drafts_list_hides_orphans_by_default_shows_with_flag():
     from routes import draft_inspection
     db = _db()

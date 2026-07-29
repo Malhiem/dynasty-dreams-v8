@@ -688,9 +688,63 @@ export default function DraftRoom() {
   // Iter 229L — Extracted to `useDraftAudioAlerts` hook.
   const draftSounds = useDraftAudioAlerts(draftConfig.draftStarted, picksUntilMyTurn);
 
+  // Iter 232N.71 — Honest empty state when the league has no
+  // scheduled/active draft. Guards against ghost UI on sandbox
+  // leagues (no draft ever set up) and on real leagues whose draft
+  // was completed + archived. `noDraftScheduled` is true only after
+  // the upcoming-drafts fetch has settled, so we don't flash the
+  // empty state on initial load.
+  const upcomingLoaded = Array.isArray(upcomingDrafts);
+  const noDraftScheduled =
+    upcomingLoaded &&
+    upcomingDrafts.length === 0 &&
+    !currentDraft;
+
   return (
     <AppLayout>
       <TooltipProvider>
+        {noDraftScheduled && (
+          <div className="max-w-3xl mx-auto py-16 px-4" data-testid="draft-room-empty-state">
+            <div className="rounded-lg border border-border/60 bg-card p-10 text-center space-y-4">
+              <div className="mx-auto w-14 h-14 rounded-full bg-muted flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                     className="w-7 h-7 text-muted-foreground">
+                  <rect width="18" height="18" x="3" y="4" rx="2" />
+                  <path d="M16 2v4M8 2v4M3 10h18" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-semibold" data-testid="draft-room-empty-title">
+                No upcoming draft scheduled
+              </h2>
+              <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                Your commissioner hasn&rsquo;t created a draft for this league yet.
+                Head to <span className="font-medium text-foreground">League Administration &rarr; Draft</span>{" "}
+                to schedule one — the room here will unlock automatically the moment it&rsquo;s saved.
+              </p>
+              <div className="flex items-center justify-center gap-2 pt-2">
+                {isLeagueManager && (
+                  <a
+                    href="/league-administration#draft"
+                    className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90"
+                    data-testid="draft-room-empty-schedule-btn"
+                  >
+                    Schedule a draft
+                  </a>
+                )}
+                <a
+                  href="/leagues"
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary"
+                  data-testid="draft-room-empty-back-btn"
+                >
+                  Back to leagues
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
+        {!noDraftScheduled && (
+        <>
         {/* Iter 228f — Defer-to-User missed-pick dialog */}
         <DeferPickDialog
           open={deferDialogOpen}
@@ -910,6 +964,8 @@ export default function DraftRoom() {
             lastChatEvent={lastChatEvent}
             currentUserId={userId}
           />
+        )}
+        </>
         )}
       </TooltipProvider>
     </AppLayout>

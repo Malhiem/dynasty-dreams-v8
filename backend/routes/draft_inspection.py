@@ -145,6 +145,10 @@ async def get_upcoming_drafts(
     }
     cursor = _db().drafts.find(query, {"team_map": 0}).sort("scheduled_time", 1)
     raw = await cursor.to_list(50)
+    # Iter 232N.71 — Filter out orphan / stub drafts so the picker
+    # doesn't offer a phantom draft the commissioner never scheduled.
+    from utils.draft_lock import _looks_like_real_draft
+    raw = [d for d in raw if _looks_like_real_draft(d)]
 
     upcoming = []
     for d in raw:
