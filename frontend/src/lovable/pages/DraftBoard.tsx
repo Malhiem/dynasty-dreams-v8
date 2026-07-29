@@ -112,8 +112,13 @@ export default function DraftBoardPage() {
 
   // Auto-select the first draft (active → nearest scheduled → completed)
   // whenever the list arrives or the year filter changes.
+  // Iter 232N.74 — Also tracks a `loaded` flag so we can show a proper
+  // "no draft scheduled" empty state (and NOT fall back to mock pick
+  // ownership rows) once the panel has told us it has zero drafts.
+  const [scheduledDraftsLoaded, setScheduledDraftsLoaded] = useState(false);
   const handleDraftsLoaded = (list: any[]) => {
     setScheduledDrafts(list);
+    setScheduledDraftsLoaded(true);
     if (!list.length) {
       setSelectedDraftId(null);
       return;
@@ -240,8 +245,15 @@ export default function DraftBoardPage() {
 
   // Legacy mock path expects abbr keys — normalise to team-key form so
   // both branches feed the same rendering logic.
+  // Iter 232N.74 — When the ScheduledDraftsPanel has loaded and there
+  // are zero drafts for this league, DON'T fall back to `allPickData`
+  // (a mock 5-round × 12-abbr grid). Return an empty object so the
+  // pick-ownership grid renders nothing and the empty state below
+  // takes over.
+  const noDraftsScheduled = scheduledDraftsLoaded && scheduledDrafts.length === 0;
   const yearData = useMemo(() => {
     if (liveYearData) return liveYearData;
+    if (noDraftsScheduled) return {} as Record<string, Record<number, any>>;
     const raw = allPickData[selectedYear] || {};
     const out: Record<string, Record<number, any>> = {};
     Object.entries(raw).forEach(([abbr, byRound]) => {
@@ -256,7 +268,7 @@ export default function DraftBoardPage() {
       });
     });
     return out;
-  }, [liveYearData, selectedYear, abbrToKey]);
+  }, [liveYearData, selectedYear, abbrToKey, noDraftsScheduled]);
 
   // Count how many picks each team owns in the SELECTED draft.
   // Keys are team ids (via keyOf) so identical placeholder abbrs
@@ -402,7 +414,10 @@ export default function DraftBoardPage() {
             onDraftsLoaded={handleDraftsLoaded}
           />
 
-          {/* Summary badges — scoped to the SELECTED draft (Iter 232N.39). */}
+          {/* Summary badges — scoped to the SELECTED draft (Iter 232N.39).
+              Iter 232N.74 — Hide entirely when no draft exists so we don't
+              show a row of "TEAM: 0 picks" chips on a fresh sandbox. */}
+          {!noDraftsScheduled && (
           <div className="flex flex-wrap gap-2" data-testid="draft-board-pick-summary">
             {teams.map((team) => {
               const key = keyOf(team);
@@ -434,8 +449,40 @@ export default function DraftBoardPage() {
               );
             })}
           </div>
+          )}
 
           {/* Draft Board Table */}
+          {noDraftsScheduled ? (
+            <Card className="border-border gradient-card" data-testid="draft-board-empty-state">
+              <CardContent className="py-16 text-center space-y-3">
+                <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                       className="w-6 h-6 text-muted-foreground">
+                    <rect width="18" height="18" x="3" y="4" rx="2" />
+                    <path d="M16 2v4M8 2v4M3 10h18" />
+                  </svg>
+                </div>
+                <div className="text-base font-semibold" data-testid="draft-board-empty-title">
+                  No draft scheduled — no picks to show
+                </div>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  Picks are generated when a draft is created. Head to{" "}
+                  <span className="font-medium text-foreground">League Administration → Draft</span>{" "}
+                  to schedule one — this board will populate automatically as soon as it&rsquo;s saved.
+                </p>
+                <div className="pt-2">
+                  <a
+                    href="/league-administration#draft"
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-secondary"
+                    data-testid="draft-board-empty-schedule-btn"
+                  >
+                    Schedule a draft
+                  </a>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
           <Card className="border-border gradient-card">
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -638,8 +685,10 @@ export default function DraftBoardPage() {
               </ScrollArea>
             </CardContent>
           </Card>
+          )}
 
           {/* Legend */}
+          {!noDraftsScheduled && (
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
             <div className="flex items-center gap-1.5">
               <div className="w-3 h-3 rounded bg-secondary border border-border" />
@@ -654,6 +703,7 @@ export default function DraftBoardPage() {
               <span>Available on trade block</span>
             </div>
           </div>
+          )}
             </TabsContent>
 
             {/* Iter 138/139 — Draft Order Results tab (READ-ONLY; config in League Admin) */}
