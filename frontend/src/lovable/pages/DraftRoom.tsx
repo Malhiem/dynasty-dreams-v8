@@ -688,19 +688,20 @@ export default function DraftRoom() {
   // Iter 229L — Extracted to `useDraftAudioAlerts` hook.
   const draftSounds = useDraftAudioAlerts(draftConfig.draftStarted, picksUntilMyTurn);
 
-  // Iter 232N.71/72/73 — Honest empty state when the league has no
+  // Iter 232N.71/72/73/75 — Honest empty state when the league has no
   // scheduled/active draft. Guards against ghost UI on sandbox
   // leagues (no draft ever set up) and on real leagues whose draft
   // was completed + archived.
   //
-  // The backend's `POST /drafts/auto-init/{league_id}` endpoint
-  // returns a synthetic PREVIEW doc (`status='preview'`, `_id=null`,
-  // `picks=[]`) even when nothing has been persisted. That preview
-  // populated `currentDraft` and made the naive `!currentDraft`
-  // guard flip back to "false" after the initial flash, showing an
-  // empty-grid Draft Board that looked like it had unassigned picks.
-  // We now also treat a preview draft as "no draft scheduled" — a
-  // real draft has a Mongo `_id` and a non-preview status.
+  // Three states now:
+  //   1. `upcomingLoading` — first fetch hasn't resolved. Render a
+  //      neutral loading placeholder so we DON'T flash the full
+  //      Draft Room and then flip to the empty state.
+  //   2. `noDraftScheduled` — fetch resolved, no drafts exist (or
+  //      the only "draft" is the synthetic auto-init preview).
+  //      Render the empty state.
+  //   3. Otherwise — real draft, render the full room.
+  const upcomingLoading = !upcomingLoaded;
   const isPreviewOnly =
     !!currentDraft
     && (currentDraft as any).status === "preview"
@@ -713,7 +714,20 @@ export default function DraftRoom() {
   return (
     <AppLayout>
       <TooltipProvider>
-        {noDraftScheduled && (
+        {upcomingLoading && (
+          <div
+            className="max-w-3xl mx-auto py-24 flex items-center justify-center gap-3 text-muted-foreground"
+            data-testid="draft-room-loading"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                 className="w-5 h-5 animate-spin">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+            <span className="text-sm">Loading draft…</span>
+          </div>
+        )}
+        {!upcomingLoading && noDraftScheduled && (
           <div className="max-w-3xl mx-auto py-16 px-4" data-testid="draft-room-empty-state">
             <div className="rounded-lg border border-border/60 bg-card p-10 text-center space-y-4">
               <div className="mx-auto w-14 h-14 rounded-full bg-muted flex items-center justify-center">
@@ -753,7 +767,7 @@ export default function DraftRoom() {
             </div>
           </div>
         )}
-        {!noDraftScheduled && (
+        {!upcomingLoading && !noDraftScheduled && (
         <>
         {/* Iter 228f — Defer-to-User missed-pick dialog */}
         <DeferPickDialog

@@ -251,6 +251,9 @@ export default function DraftBoardPage() {
   // pick-ownership grid renders nothing and the empty state below
   // takes over.
   const noDraftsScheduled = scheduledDraftsLoaded && scheduledDrafts.length === 0;
+  // Iter 232N.75 — Suppress the whole board until we've confirmed
+  // one way or another so we don't flash the mock grid on first render.
+  const draftBoardLoading = !scheduledDraftsLoaded;
   const yearData = useMemo(() => {
     if (liveYearData) return liveYearData;
     if (noDraftsScheduled) return {} as Record<string, Record<number, any>>;
@@ -415,9 +418,10 @@ export default function DraftBoardPage() {
           />
 
           {/* Summary badges — scoped to the SELECTED draft (Iter 232N.39).
-              Iter 232N.74 — Hide entirely when no draft exists so we don't
-              show a row of "TEAM: 0 picks" chips on a fresh sandbox. */}
-          {!noDraftsScheduled && (
+              Iter 232N.74/75 — Hide during initial hydration AND when
+              no draft exists so we don't flash "TEAM: 0 picks" chips
+              on a fresh sandbox before the empty state resolves. */}
+          {scheduledDraftsLoaded && !noDraftsScheduled && (
           <div className="flex flex-wrap gap-2" data-testid="draft-board-pick-summary">
             {teams.map((team) => {
               const key = keyOf(team);
@@ -452,7 +456,18 @@ export default function DraftBoardPage() {
           )}
 
           {/* Draft Board Table */}
-          {noDraftsScheduled ? (
+          {draftBoardLoading ? (
+            <Card className="border-border gradient-card" data-testid="draft-board-loading">
+              <CardContent className="py-16 flex items-center justify-center gap-3 text-muted-foreground">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                     className="w-5 h-5 animate-spin">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+                <span className="text-sm">Loading draft board…</span>
+              </CardContent>
+            </Card>
+          ) : noDraftsScheduled ? (
             <Card className="border-border gradient-card" data-testid="draft-board-empty-state">
               <CardContent className="py-16 text-center space-y-3">
                 <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center">
