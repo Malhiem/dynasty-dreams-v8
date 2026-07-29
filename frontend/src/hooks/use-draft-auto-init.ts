@@ -82,6 +82,24 @@ export default function useDraftAutoInit({
         if (cancelled) return;
         const d = data?.draft;
         if (!d) return;
+        // Iter 232N.73 — Don't hydrate a placeholder preview into
+        // `currentDraft`. The backend returns a synthetic preview
+        // doc (`status='preview'`, `_id=null`) whenever no real draft
+        // exists so a commissioner can see what their draft WOULD
+        // look like. Setting it as `currentDraft` here caused a
+        // flash-then-render bug on sandbox leagues: the "no draft
+        // scheduled" empty state appeared briefly, then the preview
+        // populated `currentDraft` and the Draft Room rendered a
+        // fake pick grid. Leaving `currentDraft` as `null` when a
+        // preview comes back lets the DraftRoom.tsx empty-state
+        // guard stay in charge until a commissioner actually
+        // materialises a draft (auto-init with `commit=true`).
+        const isPreview = data?.preview === true
+          || (d.status === "preview" && !d._id);
+        if (isPreview) {
+          setCurrentDraft(null);
+          return;
+        }
         setCurrentDraft(d);
         if (Array.isArray(d.picks) && d.picks.length > 0) {
           setPicks(_hydratePicks(d.picks));

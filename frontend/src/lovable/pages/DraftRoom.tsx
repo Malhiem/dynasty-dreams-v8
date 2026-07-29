@@ -275,7 +275,7 @@ export default function DraftRoom() {
   // managers can switch (e.g. mid-season trade deadline draft vs.
   // off-season rookie draft). Defaults to the soonest.
   // Iter 229d — extracted into a dedicated hook.
-  const { upcomingDrafts, selectedDraftId, setSelectedDraftId } =
+  const { upcomingDrafts, selectedDraftId, setSelectedDraftId, loaded: upcomingLoaded } =
     useUpcomingDrafts(activeLeagueCtx?.id);
 
   // Iter 230i — Auto-init + state refresh extracted. The 79-line
@@ -688,17 +688,27 @@ export default function DraftRoom() {
   // Iter 229L — Extracted to `useDraftAudioAlerts` hook.
   const draftSounds = useDraftAudioAlerts(draftConfig.draftStarted, picksUntilMyTurn);
 
-  // Iter 232N.71 — Honest empty state when the league has no
+  // Iter 232N.71/72/73 — Honest empty state when the league has no
   // scheduled/active draft. Guards against ghost UI on sandbox
   // leagues (no draft ever set up) and on real leagues whose draft
-  // was completed + archived. `noDraftScheduled` is true only after
-  // the upcoming-drafts fetch has settled, so we don't flash the
-  // empty state on initial load.
-  const upcomingLoaded = Array.isArray(upcomingDrafts);
+  // was completed + archived.
+  //
+  // The backend's `POST /drafts/auto-init/{league_id}` endpoint
+  // returns a synthetic PREVIEW doc (`status='preview'`, `_id=null`,
+  // `picks=[]`) even when nothing has been persisted. That preview
+  // populated `currentDraft` and made the naive `!currentDraft`
+  // guard flip back to "false" after the initial flash, showing an
+  // empty-grid Draft Board that looked like it had unassigned picks.
+  // We now also treat a preview draft as "no draft scheduled" — a
+  // real draft has a Mongo `_id` and a non-preview status.
+  const isPreviewOnly =
+    !!currentDraft
+    && (currentDraft as any).status === "preview"
+    && !((currentDraft as any)._id);
   const noDraftScheduled =
     upcomingLoaded &&
     upcomingDrafts.length === 0 &&
-    !currentDraft;
+    (!currentDraft || isPreviewOnly);
 
   return (
     <AppLayout>

@@ -21,12 +21,20 @@ export interface UpcomingDraft {
 export function useUpcomingDrafts(leagueId: string | null | undefined) {
   const [upcomingDrafts, setUpcomingDrafts] = useState<UpcomingDraft[]>([]);
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
+  // Iter 232N.72 — Explicit loaded flag so the Draft Room can
+  // distinguish "hydrating" from "there are literally zero drafts".
+  // Without this, the empty state flashed on every render then
+  // flipped back to the fake Draft Room once mock data hydrated
+  // `currentDraft` elsewhere.
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!leagueId) {
       setUpcomingDrafts([]);
+      setLoaded(true);
       return;
     }
+    setLoaded(false);
     let cancelled = false;
     (async () => {
       try {
@@ -34,12 +42,6 @@ export function useUpcomingDrafts(leagueId: string | null | undefined) {
         if (cancelled) return;
         const list: UpcomingDraft[] = Array.isArray(data?.drafts) ? data.drafts : [];
         setUpcomingDrafts(list);
-        // Iter 230w — Prefer the ACTIVE draft (live / in-progress) as
-        // the default selection so the manager lands on the draft
-        // they're attending right now instead of a future scheduled
-        // one (e.g. TFHL had Inaugural=active + Winter=scheduled and
-        // the picker was auto-loading Winter). Falls back to the
-        // soonest scheduled draft when no active one exists.
         if (list.length > 0 && !selectedDraftId) {
           const liveDraft = list.find((d) => d.status === "active");
           const defaultDraft = liveDraft || list[0];
@@ -47,13 +49,15 @@ export function useUpcomingDrafts(leagueId: string | null | undefined) {
         }
       } catch {
         // Non-fatal — fall back to auto-init in the parent.
+      } finally {
+        if (!cancelled) setLoaded(true);
       }
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leagueId]);
 
-  return { upcomingDrafts, selectedDraftId, setSelectedDraftId };
+  return { upcomingDrafts, selectedDraftId, setSelectedDraftId, loaded };
 }
 
 export default useUpcomingDrafts;
