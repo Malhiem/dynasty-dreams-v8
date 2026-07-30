@@ -513,6 +513,11 @@ class SimulateWeekRequest(BaseModel):
     # Optional — if omitted we pick "current week + 1", so successive
     # clicks build up a season rather than replaying the same week.
     week: Optional[int] = Field(None, ge=1, le=30)
+    # Iter 232N.76 — Sim to any week. When set, we loop from
+    # `last_sim_week + 1` through `target_week` (inclusive), so
+    # commissioners can jump straight to e.g. Week 10 without clicking
+    # nine times. Ignored when `week` is also provided.
+    target_week: Optional[int] = Field(None, ge=1, le=30)
 
 
 @router.post("/admin/test-sandbox/leagues/{league_id}/simulate-week")
@@ -697,6 +702,75 @@ async def sandbox_simulate_week(
             } for t in fresh_teams
         ],
         "replayed": bool(prior_matchups),
+    }
+
+
+@router.post("/admin/test-sandbox/leagues/{league_id}/simulate-to-week")
+async def sandbox_simulate_to_week(
+    league_id: str,
+    input: SimulateWeekRequest,
+    request: Request,
+):
+    """Iter 232N.76 — Simulate every week from `last_sim_week + 1`
+    through `input.target_week` (inclusive) in a single call. Reuses
+    `sandbox_simulate_week` per iteration so scoring, rollback, and
+    audit stay perfectly consistent with the one-off Simulate button.
+    Refuses to move backwards (`target_week <= last_sim_week`) so the
+    caller has to hit /reset-simulation first if that's the intent.
+    """
+    await _require_admin(request)
+    db = _db()
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=400,
+            detail="simulate-to-week is only available on sandbox test leagues",
+        )
+    target = input.target_week
+    if target is None:
+        raise HTTPException(status_code=400, detail="target_week is required")
+
+    start = int(league.get("sandbox_last_sim_week") or 0) + 1
+    if target < start:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"target_week ({target}) is not ahead of the current "
+                f"last simulated week ({start - 1}). Use /reset-simulation "
+                "first to replay from Week 1."
+            ),
+        )
+
+    weeks_run: list[int] = []
+    for wk in range(start, target + 1):
+        await sandbox_simulate_week(
+            league_id, SimulateWeekRequest(week=wk), request,
+        )
+        weeks_run.append(wk)
+
+    fresh_teams = await db.teams.find(
+        {"league_id": league_id},
+        {"_id": 1, "name": 1, "wins": 1, "losses": 1, "ties": 1,
+         "points_for": 1, "points_against": 1},
+    ).to_list(200)
+    return {
+        "ok": True,
+        "target_week": target,
+        "weeks_run": weeks_run,
+        "teams": [
+            {
+                "id": str(t["_id"]),
+                "name": t.get("name"),
+                "wins": t.get("wins", 0),
+                "losses": t.get("losses", 0),
+                "ties": t.get("ties", 0),
+                "points_for": t.get("points_for", 0),
+                "points_against": t.get("points_against", 0),
+            } for t in fresh_teams
+        ],
     }
 
 

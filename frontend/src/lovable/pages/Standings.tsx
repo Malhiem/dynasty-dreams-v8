@@ -861,6 +861,18 @@ const StandingsPage = () => {
         .map((t, i) => ({ ...t, displayRank: i + 1 })),
     }));
 
+  // Iter 232N.76 — Compute "no games played" once so we can hide the
+  // real standings tables when the empty state banner is shown.
+  const noGamesYet = (() => {
+    const rows = Object.values(backendStandings) as any[];
+    const totalGames = rows.reduce(
+      (acc, r) => acc + (r.wins || 0) + (r.losses || 0) + (r.ties || 0),
+      0,
+    );
+    const totalPF = rows.reduce((acc, r) => acc + (r.points_for || 0), 0);
+    return liveTeams.length > 0 && totalGames === 0 && totalPF === 0;
+  })();
+
   return (
     <AppLayout>
       <PullToRefreshIndicator distance={ptr.distance} refreshing={ptr.refreshing} engaged={ptr.engaged} />
@@ -935,37 +947,69 @@ const StandingsPage = () => {
             {/* Clinch Legend */}
             <ClinchLegend />
 
-            {/* League view */}
-
-            {view === "league" && <StandingsTable teams={getFilteredTeams()} columns={columns} streaks={streaks} />}
-
-            {/* Division views */}
-            {view === "division" && divisionFilter === "all" ? (
-              <div className="space-y-6">
-                {getDivisionGroups().map(group => (
-                  <div key={group.name}>
-                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">{group.name} Division</h3>
-                    <StandingsTable teams={group.teams} columns={columns} streaks={streaks} />
-                  </div>
-                ))}
+            {/* Iter 232N.76 — Full-page "No games played yet" empty
+                state. Replaces every standings table with a single
+                friendly card when the league has literally zero
+                results across every team + PF. */}
+            {noGamesYet ? (
+              <div
+                className="rounded-lg border border-border/60 bg-card p-10 text-center space-y-3"
+                data-testid="standings-page-empty-state"
+              >
+                <div className="mx-auto w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                       className="w-6 h-6 text-muted-foreground">
+                    <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+                    <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+                    <path d="M4 22h16" />
+                    <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22" />
+                    <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22" />
+                    <path d="M18 2H6v7a6 6 0 0 0 12 0V2Z" />
+                  </svg>
+                </div>
+                <div className="text-base font-semibold" data-testid="standings-page-empty-title">
+                  No games played yet
+                </div>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
+                  Standings will populate once the first matchups are scored.
+                  All {liveTeams.length} team{liveTeams.length === 1 ? '' : 's'} start at 0-0-0.
+                </p>
               </div>
-            ) : view === "division" ? (
-              <StandingsTable teams={getFilteredTeams()} columns={columns} streaks={streaks} />
-            ) : null}
+            ) : (
+              <>
+                {/* League view */}
+                {view === "league" && <StandingsTable teams={getFilteredTeams()} columns={columns} streaks={streaks} />}
 
-            {/* Conference views */}
-            {view === "conference" && conferenceFilter === "all" ? (
-              <div className="space-y-6">
-                {getConferenceGroups().map(group => (
-                  <div key={group.name}>
-                    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">{group.name} Conference</h3>
-                    <StandingsTable teams={group.teams} columns={columns} streaks={streaks} />
+                {/* Division views */}
+                {view === "division" && divisionFilter === "all" ? (
+                  <div className="space-y-6">
+                    {getDivisionGroups().map(group => (
+                      <div key={group.name}>
+                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">{group.name} Division</h3>
+                        <StandingsTable teams={group.teams} columns={columns} streaks={streaks} />
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            ) : view === "conference" ? (
-              <StandingsTable teams={getFilteredTeams()} columns={columns} streaks={streaks} />
-            ) : null}
+                ) : view === "division" ? (
+                  <StandingsTable teams={getFilteredTeams()} columns={columns} streaks={streaks} />
+                ) : null}
+
+                {/* Conference views */}
+                {view === "conference" && conferenceFilter === "all" ? (
+                  <div className="space-y-6">
+                    {getConferenceGroups().map(group => (
+                      <div key={group.name}>
+                        <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-2">{group.name} Conference</h3>
+                        <StandingsTable teams={group.teams} columns={columns} streaks={streaks} />
+                      </div>
+                    ))}
+                  </div>
+                ) : view === "conference" ? (
+                  <StandingsTable teams={getFilteredTeams()} columns={columns} streaks={streaks} />
+                ) : null}
+              </>
+            )}
           </TabsContent>
 
           {/* ── Race Chart Tab ── */}

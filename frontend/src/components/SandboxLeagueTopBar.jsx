@@ -40,6 +40,8 @@ export default function SandboxLeagueTopBar({ leagueId }) {
   // Iter 232N.69 — Simulate-week state
   const [lastSimWeek, setLastSimWeek] = useState(0);
   const [simulating, setSimulating] = useState(false);
+  // Iter 232N.76 — Target-week picker state
+  const [targetWeek, setTargetWeek] = useState('');
 
   const isAdmin =
     user?.role === 'admin' ||
@@ -125,6 +127,33 @@ export default function SandboxLeagueTopBar({ leagueId }) {
     }
   };
 
+  // Iter 232N.76 — Simulate straight to a target week (batch).
+  const simulateToWeek = async () => {
+    const target = parseInt(targetWeek, 10);
+    if (!target || target <= lastSimWeek) {
+      toast.error(`Pick a week later than the last simulated week (${lastSimWeek}).`);
+      return;
+    }
+    setSimulating(true);
+    try {
+      const { data } = await api.post(
+        `/admin/test-sandbox/leagues/${leagueId}/simulate-to-week`,
+        { target_week: target },
+      );
+      const runCount = (data.weeks_run || []).length;
+      toast.success(
+        `Simulated ${runCount} week${runCount === 1 ? '' : 's'} · now through Week ${data.target_week}`,
+      );
+      setLastSimWeek(data.target_week);
+      setTargetWeek('');
+      window.dispatchEvent(new CustomEvent('sandbox:sim-week', { detail: data }));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Simulate-to-week failed');
+    } finally {
+      setSimulating(false);
+    }
+  };
+
   const resetSimulation = async () => {
     if (!window.confirm(
       `Reset all simulated results for "${leagueName}"? Every team's W-L-T + points return to zero.`,
@@ -189,6 +218,32 @@ export default function SandboxLeagueTopBar({ leagueId }) {
             ) : null}
             Simulate Week&nbsp;{lastSimWeek + 1}
           </Button>
+          {/* Iter 232N.76 — Sim to any week */}
+          <div className="flex items-center gap-1"
+               data-testid="sandbox-topbar-sim-to-week-group">
+            <span className="text-[10px] text-fuchsia-200/80">to</span>
+            <input
+              type="number"
+              min={Math.max(1, lastSimWeek + 1)}
+              max={30}
+              value={targetWeek}
+              onChange={(e) => setTargetWeek(e.target.value)}
+              placeholder="Wk"
+              className="h-8 w-14 rounded-md border border-fuchsia-500/40 bg-fuchsia-950/50 text-fuchsia-50 text-[11px] px-2 focus:outline-none focus:ring-1 focus:ring-fuchsia-400"
+              data-testid="sandbox-topbar-target-week"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-[11px] bg-fuchsia-500/10 border-fuchsia-500/40 text-fuchsia-50 hover:bg-fuchsia-500/30"
+              onClick={simulateToWeek}
+              disabled={simulating || !targetWeek}
+              data-testid="sandbox-topbar-simulate-to-week-btn"
+              title={`Simulate every week from ${lastSimWeek + 1} through the target in one shot`}
+            >
+              Go
+            </Button>
+          </div>
           {lastSimWeek > 0 && (
             <Button
               size="sm"
