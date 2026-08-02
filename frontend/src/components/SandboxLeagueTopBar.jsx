@@ -273,6 +273,35 @@ export default function SandboxLeagueTopBar({ leagueId }) {
               Go
             </Button>
           </div>
+          {/* Iter 232N.78 — Seed & Sim Playoffs (Week 17+ only, hides once seeded) */}
+          {lastSimWeek >= 17 && !champion && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-[11px] bg-amber-500/20 border-amber-400/50 text-amber-50 hover:bg-amber-500/30"
+              onClick={seedPlayoffs}
+              disabled={seedingPlayoffs}
+              data-testid="sandbox-topbar-seed-playoffs-btn"
+              title="Auto-seed and simulate the entire single-elimination playoff bracket"
+            >
+              {seedingPlayoffs ? (
+                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <Trophy className="h-3 w-3 mr-1" />
+              )}
+              Seed &amp; Sim Playoffs
+            </Button>
+          )}
+          {champion && (
+            <Badge
+              variant="outline"
+              className="h-8 text-[11px] bg-amber-500/15 border-amber-400/50 text-amber-100 flex items-center gap-1 px-2"
+              data-testid="sandbox-topbar-champion-badge"
+              title="Playoff bracket already seeded for this sandbox league"
+            >
+              <Trophy className="h-3 w-3" /> Champion crowned
+            </Badge>
+          )}
           {lastSimWeek > 0 && (
             <Button
               size="sm"
