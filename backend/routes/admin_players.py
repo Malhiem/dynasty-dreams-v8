@@ -31,6 +31,7 @@ from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from services import nhl_sync
@@ -550,7 +551,18 @@ async def _apply_diff(db, admin, diff, candidates_by_id,
 
 def _validate_csv_row(idx: int, row: dict) -> tuple[dict, list[str]]:
     """Return (cleaned_row, errors_for_this_row). We tolerate empty
-    cells and skip them; missing identity fields are an error."""
+    cells and skip them; missing identity fields are an error.
+
+    Iter 232N.77 — Comment rows starting with `#` (the template's
+    inline validation hint) are treated as skippable and produce no
+    errors so downloading the template + saving unmodified doesn't
+    trip validation."""
+    # Detect a comment row: the CSV parser gives us a `{first_col: "# ..."}`
+    # style dict; we sniff any non-empty value starting with "#" to be safe.
+    for v in row.values():
+        if isinstance(v, str) and v.strip().startswith("#"):
+            return {}, ["__comment_row__"]
+
     errors: list[str] = []
     clean = _sanitize({k: v for k, v in row.items() if v not in ("", None)})
 
@@ -583,6 +595,86 @@ def _validate_csv_row(idx: int, row: dict) -> tuple[dict, list[str]]:
     return clean, errors
 
 
+@router.get("/admin/players/csv/template")
+async def admin_csv_template(request: Request):
+    """Iter 232N.77 — Downloadable CSV template for bulk cap imports.
+
+    Returns a UTF-8 CSV file with:
+      • The exact column headers the /csv/preview endpoint accepts
+        (subset of `_EDITABLE_FIELDS` focused on cap + identity).
+      • A commented `# Row must have either an nhl_id OR (name + team).`
+        line explaining validation.
+      • Three example rows (one full veteran, one prospect, one
+        admin-added minor leaguer) so the shape is obvious.
+
+    The CSV can be filled in Excel / Google Sheets and re-uploaded via
+    the Player DB panel's CSV preview button — the same two-step
+    preview → commit flow validates every row before it hits Mongo.
+    """
+    await _require_admin(request)
+    # Column order below is intentional: identity keys first, then
+    # position/team, then cap/contract, then optional stats. Admins
+    # typically fill the first block for prospects and the whole row
+    # for veterans.
+    headers = [
+        "nhl_id", "name", "position", "team", "team_name", "league",
+        "age", "birth_date", "birth_country", "shoots",
+        "is_prospect",
+        "cap_hit", "salary",
+        "games_played", "goals", "assists", "points",
+        "shooting_pct", "toi_per_game", "season",
+    ]
+    rows = [
+        headers,
+        # Comment row — the CSV parser skips rows whose first cell
+        # starts with "#", so this survives the round-trip and gives
+        # the admin an inline reminder of the identity rule.
+        [
+            "# Row must have either an nhl_id OR (name + team). "
+            "position ∈ {C,LW,RW,D,G}. age ∈ [15,60]. "
+            "is_prospect ∈ {true,false}. cap_hit + salary are integer dollars.",
+        ],
+        # Example 1 — full veteran row (Auston Matthews).
+        [
+            "8479318", "Auston Matthews", "C", "TOR", "Toronto Maple Leafs",
+            "NHL", "27", "1997-09-17", "USA", "L",
+            "false",
+            "13250000", "13250000",
+            "82", "60", "45", "105",
+            "18.5", "20.3", "2025-26",
+        ],
+        # Example 2 — prospect row (junior leaguer, cap TBD).
+        [
+            "8484144", "Connor Bedard", "C", "CHI", "Chicago Blackhawks",
+            "NHL", "20", "2005-07-17", "CAN", "R",
+            "false",
+            "950000", "950000",
+            "68", "22", "39", "61",
+            "10.2", "20.1", "2025-26",
+        ],
+        # Example 3 — admin-added minor leaguer without an nhl_id.
+        # `nhl_id` blank → the importer stamps `admin_<oid>` on insert.
+        [
+            "", "Placeholder Prospect", "LW", "TOR", "Toronto Marlies",
+            "AHL", "22", "2003-04-11", "CAN", "L",
+            "true",
+            "", "",
+            "", "", "", "",
+            "", "", "2025-26",
+        ],
+    ]
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerows(rows)
+    return Response(
+        content=buf.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": 'attachment; filename="player_db_cap_import_template.csv"',
+        },
+    )
+
+
 @router.post("/admin/players/csv/preview")
 async def admin_csv_preview(
     request: Request,
@@ -609,6 +701,10 @@ async def admin_csv_preview(
         if i >= 5000:
             break
         clean, errors = _validate_csv_row(i, row)
+        # Iter 232N.77 — Skip inline "# ..." template comment rows.
+        if errors == ["__comment_row__"]:
+            total_read -= 1
+            continue
         valid = not errors
         if valid:
             total_valid += 1
@@ -735,6 +831,9 @@ async def admin_refresh_players_csv(
             errors.append("Row cap 5000 reached — split large imports.")
             break
         clean, row_errors = _validate_csv_row(i, row)
+        # Iter 232N.77 — Skip inline "# ..." template comment rows.
+        if row_errors == ["__comment_row__"]:
+            continue
         if row_errors:
             errors.append(f"Row {i}: {row_errors[0]}")
             continue

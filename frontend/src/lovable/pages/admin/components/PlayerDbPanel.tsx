@@ -36,6 +36,7 @@ import {
 import {
   Database, RefreshCw, Plus, Trash2, Pencil, ScrollText, Upload,
   CheckCircle2, X, GitPullRequest, AlertTriangle, Sparkles, Users2,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/api";
@@ -95,8 +96,28 @@ export default function PlayerDbPanel() {
   const [dupModal, setDupModal] = useState<any | null>(null);
   const [dupLoading, setDupLoading] = useState(false);
 
+  // Iter 232N.77 — Download the CSV template so admins get the exact
+  // headers the /csv/preview endpoint accepts. Uses the axios blob
+  // path so we inherit the same auth cookie as every other admin
+  // call.
+  const downloadCsvTemplate = async () => {
+    try {
+      const res = await api.get("/admin/players/csv/template", { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([res.data], { type: "text/csv" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "player_db_cap_import_template.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Template downloaded");
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Template download failed");
+    }
+  };
+
   const scanDuplicates = async () => {
-    setDupLoading(true);
     toast.info("Scanning DB for name+birth_date duplicates…");
     try {
       const { data } = await api.get("/admin/players/duplicates", { params: { limit: 500 } });
@@ -308,6 +329,15 @@ export default function PlayerDbPanel() {
               >
                 <Sparkles className="h-3 w-3 mr-1" />
                 Reseed
+              </Button>
+              <Button
+                variant="outline" size="sm" onClick={downloadCsvTemplate}
+                className="h-8"
+                data-testid="player-db-csv-template-btn"
+                title="Download the exact CSV headers for bulk cap imports"
+              >
+                <Download className="h-3 w-3 mr-1" />
+                CSV template
               </Button>
               <label className="cursor-pointer">
                 <Button
