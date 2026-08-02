@@ -311,6 +311,8 @@ async def list_test_leagues(request: Request):
             "status": lg.get("status"),
             "sandbox_created_by": lg.get("sandbox_created_by"),
             "sandbox_last_sim_week": lg.get("sandbox_last_sim_week") or 0,
+            "sandbox_playoff_champion_team_id": lg.get("sandbox_playoff_champion_team_id"),
+            "sandbox_playoffs_seeded_at": lg.get("sandbox_playoffs_seeded_at"),
             "created_at": (
                 lg.get("created_at").isoformat()
                 if isinstance(lg.get("created_at"), datetime)
@@ -774,6 +776,179 @@ async def sandbox_simulate_to_week(
     }
 
 
+# ─── Iter 232N.78 — Auto-seed playoff bracket ─────────────────────
+
+
+class SeedPlayoffsRequest(BaseModel):
+    # Optional: how many teams make the playoffs. Defaults to 8 (or the
+    # league.playoff_teams config if set) with a floor of 4.
+    num_playoff_teams: Optional[int] = Field(None, ge=2, le=32)
+    # Optional min completed regular-season week gate. Default 17 —
+    # matches typical fantasy hockey regular-season length.
+    min_week: int = Field(17, ge=1, le=30)
+
+
+@router.post("/admin/test-sandbox/leagues/{league_id}/seed-playoffs")
+async def sandbox_seed_playoffs(
+    league_id: str,
+    input: SeedPlayoffsRequest,
+    request: Request,
+):
+    """Seed + simulate a single-elimination playoff bracket for a
+    sandbox league that has finished its regular season.
+
+    Rules:
+      • League must be `is_test_sandbox=true` (400 otherwise).
+      • `sandbox_last_sim_week` must be >= `min_week` (default 17).
+      • Top `num_playoff_teams` teams by (wins DESC, points_for DESC)
+        get in; 1v8 / 2v7 / 3v6 / 4v5 seed → winners meet in the
+        semifinals → final. Round scores use the same deterministic
+        RNG as `simulate-week` (seeded on `league_id:playoffs:round`)
+        so replays are idempotent.
+      • Playoff matchups persist to `db.matchups` with
+        `sandbox_playoff=true` (distinct from `sandbox_sim=true` so
+        `/reset-simulation` still wipes them without collateral damage
+        to regular-season matchups when we upgrade that flag later).
+      • Team standings counters (`wins/losses/points_for/against`) are
+        NOT updated by playoff results — playoffs live in the
+        bracket, not the standings.
+    """
+    admin = await _require_admin(request)
+    db = _db()
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=400,
+            detail="seed-playoffs is only available on sandbox test leagues",
+        )
+    last_sim = int(league.get("sandbox_last_sim_week") or 0)
+    if last_sim < input.min_week:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Regular season must be simulated through at least "
+                f"Week {input.min_week} first — currently at Week {last_sim}. "
+                f"Use simulate-to-week to advance."
+            ),
+        )
+
+    # Rank teams for seeding.
+    teams = await db.teams.find(
+        {"league_id": league_id},
+        {"_id": 1, "name": 1, "wins": 1, "losses": 1, "ties": 1,
+         "points_for": 1, "points_against": 1},
+    ).to_list(200)
+    if len(teams) < 4:
+        raise HTTPException(status_code=400,
+                            detail="Need at least 4 teams to seed a playoff bracket")
+
+    n_playoff = input.num_playoff_teams or league.get("playoff_teams") or 8
+    n_playoff = max(2, min(int(n_playoff), len(teams)))
+    # Round DOWN to nearest power of two for a clean single-elim bracket.
+    import math
+    n_playoff = 2 ** int(math.log2(n_playoff))
+    n_playoff = max(2, n_playoff)
+
+    teams.sort(key=lambda t: (
+        -(t.get("wins") or 0),
+        -(t.get("points_for") or 0),
+        (t.get("points_against") or 0),
+    ))
+    seeds = teams[:n_playoff]
+
+    # Nuke any prior playoff bracket for this league (idempotent replay).
+    await db.matchups.delete_many({
+        "league_id": league_id, "sandbox_playoff": True,
+    })
+
+    # Round-by-round simulation. Round 0 = QF (or R1), then SF, then F.
+    import random
+    now = datetime.now(timezone.utc)
+    bracket: list[dict] = []
+    active = seeds[:]
+    round_num = 0
+    while len(active) > 1:
+        round_num += 1
+        rng = random.Random(f"{league_id}:playoffs:round:{round_num}")
+        # 1 vs last, 2 vs second-last, etc.
+        pairs = []
+        top, bot = 0, len(active) - 1
+        while top < bot:
+            pairs.append((active[top], active[bot]))
+            top += 1
+            bot -= 1
+        winners = []
+        for home_t, away_t in pairs:
+            home_score = rng.randint(80, 150)
+            away_score = rng.randint(80, 150)
+            if home_score == away_score:      # No ties in playoffs.
+                if rng.random() < 0.5:
+                    home_score += 1
+                else:
+                    away_score += 1
+            winner = home_t if home_score > away_score else away_t
+            loser = away_t if winner is home_t else home_t
+            matchup_doc = {
+                "league_id": league_id,
+                "playoff_round": round_num,
+                "home_team_id": str(home_t["_id"]),
+                "away_team_id": str(away_t["_id"]),
+                "home_team_name": home_t.get("name"),
+                "away_team_name": away_t.get("name"),
+                "home_score": home_score,
+                "away_score": away_score,
+                "winner_team_id": str(winner["_id"]),
+                "status": "final",
+                "is_playoff": True,
+                "sandbox_playoff": True,
+                "simulated_by": admin.get("email"),
+                "simulated_at": now,
+            }
+            await db.matchups.insert_one(matchup_doc)
+            bracket.append({
+                "round": round_num,
+                "home": home_t.get("name"), "away": away_t.get("name"),
+                "home_score": home_score, "away_score": away_score,
+                "winner": winner.get("name"),
+                "loser": loser.get("name"),
+            })
+            winners.append(winner)
+        active = winners
+
+    champion = active[0] if active else None
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {
+            "sandbox_playoffs_seeded_at": now.isoformat(),
+            "sandbox_playoff_champion_team_id": (
+                str(champion["_id"]) if champion else None
+            ),
+        }},
+    )
+
+    return {
+        "ok": True,
+        "num_playoff_teams": n_playoff,
+        "rounds_played": round_num,
+        "champion": champion.get("name") if champion else None,
+        "champion_team_id": str(champion["_id"]) if champion else None,
+        "seeds": [
+            {
+                "seed": i + 1,
+                "team_id": str(t["_id"]),
+                "name": t.get("name"),
+                "wins": t.get("wins", 0),
+                "losses": t.get("losses", 0),
+                "points_for": t.get("points_for", 0),
+            } for i, t in enumerate(seeds)
+        ],
+        "bracket": bracket,
+    }
+
+
 @router.post("/admin/test-sandbox/leagues/{league_id}/reset-simulation")
 async def sandbox_reset_simulation(league_id: str, request: Request):
     """Wipe every simulated matchup + zero out every team's counters,
@@ -791,7 +966,8 @@ async def sandbox_reset_simulation(league_id: str, request: Request):
             detail="reset-simulation is only available on sandbox test leagues",
         )
     deleted = await db.matchups.delete_many({
-        "league_id": league_id, "sandbox_sim": True,
+        "league_id": league_id,
+        "$or": [{"sandbox_sim": True}, {"sandbox_playoff": True}],
     })
     await db.teams.update_many(
         {"league_id": league_id},
@@ -800,7 +976,11 @@ async def sandbox_reset_simulation(league_id: str, request: Request):
     )
     await db.leagues.update_one(
         {"_id": ObjectId(league_id)},
-        {"$unset": {"sandbox_last_sim_week": ""}},
+        {"$unset": {
+            "sandbox_last_sim_week": "",
+            "sandbox_playoffs_seeded_at": "",
+            "sandbox_playoff_champion_team_id": "",
+        }},
     )
     return {"ok": True, "matchups_deleted": deleted.deleted_count}
 

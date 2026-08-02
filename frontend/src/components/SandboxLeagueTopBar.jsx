@@ -18,7 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { FlaskConical, UserCircle2, Rewind, RefreshCw } from 'lucide-react';
+import { FlaskConical, UserCircle2, Rewind, RefreshCw, Trophy } from 'lucide-react';
 import api from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { Badge } from '@/components/ui/badge';
@@ -42,6 +42,9 @@ export default function SandboxLeagueTopBar({ leagueId }) {
   const [simulating, setSimulating] = useState(false);
   // Iter 232N.76 — Target-week picker state
   const [targetWeek, setTargetWeek] = useState('');
+  // Iter 232N.78 — Playoff bracket state
+  const [champion, setChampion] = useState(null);
+  const [seedingPlayoffs, setSeedingPlayoffs] = useState(false);
 
   const isAdmin =
     user?.role === 'admin' ||
@@ -65,6 +68,11 @@ export default function SandboxLeagueTopBar({ leagueId }) {
       setIsSandbox(true);
       setLeagueName(match.name);
       setLastSimWeek(match.sandbox_last_sim_week || 0);
+      // Iter 232N.78 — Track champion for banner + button hiding
+      setChampion(match.sandbox_playoff_champion_team_id
+        ? { team_id: match.sandbox_playoff_champion_team_id,
+            seeded_at: match.sandbox_playoffs_seeded_at }
+        : null);
       const { data: uData } = await api.get('/admin/test-sandbox/test-users', {
         params: { league_id: leagueId },
       });
@@ -151,6 +159,27 @@ export default function SandboxLeagueTopBar({ leagueId }) {
       toast.error(e?.response?.data?.detail || 'Simulate-to-week failed');
     } finally {
       setSimulating(false);
+    }
+  };
+
+  // Iter 232N.78 — Auto-seed + simulate playoff bracket.
+  const seedPlayoffs = async () => {
+    setSeedingPlayoffs(true);
+    try {
+      const { data } = await api.post(
+        `/admin/test-sandbox/leagues/${leagueId}/seed-playoffs`,
+        {},
+      );
+      toast.success(
+        `Playoffs seeded · ${data.num_playoff_teams} teams · ${data.rounds_played} rounds · Champion: ${data.champion}`,
+        { duration: 6000 },
+      );
+      setChampion({ team_id: data.champion_team_id, name: data.champion });
+      window.dispatchEvent(new CustomEvent('sandbox:playoffs-seeded', { detail: data }));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Seed playoffs failed');
+    } finally {
+      setSeedingPlayoffs(false);
     }
   };
 
