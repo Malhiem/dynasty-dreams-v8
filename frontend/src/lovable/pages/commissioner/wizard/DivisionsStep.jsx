@@ -5,11 +5,19 @@
  * Receives the full ctx bundle (state + setters + helpers) from the
  * parent wizard so all behaviour stays unchanged.
  */
-import { Plus, X } from "lucide-react";
+import { Plus, X, Wand2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import HelpTooltip from "@/components/ui/help-tooltip";
 
 export default function DivisionsStep({ ctx }) {
@@ -24,8 +32,30 @@ export default function DivisionsStep({ ctx }) {
     addDivision, removeDivision,
     addConference, removeConference,
     autoAssignNHL,
+    autoAssignStructure,
     divSet,
   } = ctx;
+
+  // Iter 232N.80 — Preset options driven by team count. The "smart"
+  // recommendation is bolded so admins can one-click a sensible layout.
+  const teamCount = teams.length;
+  const smartLabel = (
+    teamCount < 6 ? "1 division · no conferences"
+      : teamCount < 12 ? "2 divisions · no conferences"
+        : teamCount < 24 ? "4 divisions · 2 conferences (NHL-style)"
+          : "6 divisions · 3 conferences"
+  );
+  const presetOptions = [
+    { mode: "smart", label: `✨ Smart — ${smartLabel}`, hint: "Recommended based on your team count" },
+    { mode: "1x0",   label: "1 division · no conferences" },
+    { mode: "2x0",   label: "2 divisions · no conferences" },
+    { mode: "3x0",   label: "3 divisions · no conferences" },
+    { mode: "4x2",   label: "4 divisions · 2 conferences" },
+    { mode: "nhl",   label: "NHL layout (Atlantic / Metro / Central / Pacific)" },
+    { mode: "6x2",   label: "6 divisions · 2 conferences" },
+    { mode: "6x3",   label: "6 divisions · 3 conferences" },
+    { mode: "8x2",   label: "8 divisions · 2 conferences" },
+  ];
 
   return (
     <div className="space-y-3" data-testid="wizard-body-divisions">
@@ -34,8 +64,47 @@ export default function DivisionsStep({ ctx }) {
           League Structure
           <HelpTooltip text={HELP.divisions} testId="help-divisions" />
         </h3>
-        <Button size="sm" variant="outline" onClick={autoAssignNHL} data-testid="wizard-auto-assign-nhl">
-          Auto-assign NHL style
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="wizard-auto-assign-menu"
+              className="gap-1.5"
+            >
+              <Wand2 className="h-3.5 w-3.5" /> Auto-assign…
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="min-w-[320px]">
+            <DropdownMenuLabel className="text-[11px]">
+              Pick a layout for {teamCount} team{teamCount === 1 ? "" : "s"}
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {presetOptions.map((opt) => (
+              <DropdownMenuItem
+                key={opt.mode}
+                onSelect={() => (opt.mode === "nhl" ? autoAssignNHL() : autoAssignStructure(opt.mode))}
+                data-testid={`wizard-auto-assign-option-${opt.mode}`}
+                className="flex flex-col items-start gap-0.5 py-2"
+              >
+                <span className="text-xs font-medium">{opt.label}</span>
+                {opt.hint && (
+                  <span className="text-[10px] text-muted-foreground">{opt.hint}</span>
+                )}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        {/* Kept for backwards-compat with existing selenium tests */}
+        <Button
+          size="sm"
+          variant="ghost"
+          className="text-[11px]"
+          onClick={autoAssignNHL}
+          data-testid="wizard-auto-assign-nhl"
+          title="Shortcut: apply the classic Atlantic/Metropolitan/Central/Pacific layout"
+        >
+          NHL preset
         </Button>
       </div>
 

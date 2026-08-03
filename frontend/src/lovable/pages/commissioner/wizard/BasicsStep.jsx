@@ -1,11 +1,14 @@
 // @ts-nocheck
 /**
  * Iter 228c — Basics step extracted from SetupWizard.jsx
+ * Iter 232N.80 — Sandbox admins can bulk-add test teams in this step.
  */
-import { Trophy } from "lucide-react";
+import { useState } from "react";
+import { Trophy, FlaskConical, Plus, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 import HelpTooltip from "@/components/ui/help-tooltip";
 
 const FORMAT_LABELS = { dynasty: "Dynasty", keeper: "Keeper", redraft: "Redraft" };
@@ -24,7 +27,15 @@ export default function BasicsStep({ ctx }) {
     benchSpots, setBenchSpots,
     minorsSpots, setMinorsSpots,
     minorsEnabled, setMinorsEnabled,
+    addSandboxTeams,
+    addingSandboxTeams,
   } = ctx;
+
+  const isSandbox = Boolean(league?.is_test_sandbox);
+  const openSlots = Math.max(0, maxTeams - teams.length);
+  // Default the "how many to add" input to whatever gets the league to
+  // the target maxTeams (or 4 when we're already at capacity).
+  const [addN, setAddN] = useState(() => Math.max(1, openSlots || 4));
 
   return (
     <div className="space-y-3" data-testid="wizard-body-basics">
@@ -93,6 +104,82 @@ export default function BasicsStep({ ctx }) {
           <div className="font-bold uppercase mt-1">{league?.sport || "nhl"}</div>
         </div>
       </div>
+
+      {/* Iter 232N.80 — Sandbox-only bulk-team-add panel. Lets platform
+          admins seed the sandbox up to the target team count in one
+          click before running the Divisions + Schedule steps. */}
+      {isSandbox && (
+        <div
+          className="border border-fuchsia-500/40 bg-fuchsia-500/5 rounded p-3 space-y-2"
+          data-testid="wizard-basics-sandbox-teams-panel"
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <FlaskConical className="h-3.5 w-3.5 text-fuchsia-300 shrink-0" />
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-fuchsia-200">
+              Sandbox test teams
+            </h4>
+            <span
+              className="text-[11px] text-fuchsia-100/80"
+              data-testid="wizard-sandbox-teams-count"
+            >
+              Currently: {teams.length} team{teams.length === 1 ? "" : "s"} · {openSlots} open slot{openSlots === 1 ? "" : "s"}
+            </span>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Each added team gets a fake owner (auto-generated username +
+            password), an empty roster, and joins the league instantly —
+            perfect for prepping a sandbox before running Divisions or
+            simulating a draft.
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Label
+              htmlFor="wizard-sandbox-add-count"
+              className="text-[11px] text-fuchsia-100"
+            >
+              Add
+            </Label>
+            <Input
+              id="wizard-sandbox-add-count"
+              type="number"
+              min={1}
+              max={32}
+              value={addN}
+              onChange={(e) => setAddN(Math.max(1, Math.min(32, parseInt(e.target.value || "0", 10))))}
+              className="h-8 text-xs w-16"
+              data-testid="wizard-sandbox-add-count"
+            />
+            <span className="text-[11px] text-fuchsia-100">team(s)</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-[11px] bg-fuchsia-500/20 border-fuchsia-500/40 text-fuchsia-50 hover:bg-fuchsia-500/30"
+              onClick={() => addSandboxTeams(addN)}
+              disabled={addingSandboxTeams}
+              data-testid="wizard-sandbox-add-teams-btn"
+            >
+              {addingSandboxTeams ? (
+                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <Plus className="h-3 w-3 mr-1" />
+              )}
+              Add sandbox teams
+            </Button>
+            {openSlots > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-8 text-[10px] text-fuchsia-200 hover:text-fuchsia-50"
+                onClick={() => addSandboxTeams(openSlots)}
+                disabled={addingSandboxTeams}
+                data-testid="wizard-sandbox-fill-btn"
+                title={`Fill every open slot to reach ${maxTeams} teams`}
+              >
+                Fill to {maxTeams}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="space-y-3 border-t border-border pt-3">
         <h3 className="text-sm font-semibold text-white">Roster Shape</h3>

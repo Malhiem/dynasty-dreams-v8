@@ -330,6 +330,100 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     toast.info("Auto-assigned 4 divisions / 2 conferences");
   };
 
+  // Iter 232N.80 — Generic auto-assign for arbitrary league sizes.
+  // Given a preset (numDivisions × numConferences) or "smart" (auto),
+  // creates the divisions/conferences and round-robins every team
+  // evenly into them so the wizard's Divisions step is one-click ready.
+  const autoAssignStructure = (mode) => {
+    const teamCount = teams.length;
+    let numDivs, numConfs;
+    if (mode === "smart") {
+      // Choose the tidiest layout based on team count:
+      //   2-5   → 1 div, 0 conf
+      //   6-11  → 2 divs, 0 conf
+      //   12-15 → 4 divs, 2 confs (NHL-style)
+      //   16-23 → 4 divs, 2 confs
+      //   24+   → 6 divs, 3 confs
+      if (teamCount < 6) { numDivs = 1; numConfs = 0; }
+      else if (teamCount < 12) { numDivs = 2; numConfs = 0; }
+      else if (teamCount < 24) { numDivs = 4; numConfs = 2; }
+      else { numDivs = 6; numConfs = 3; }
+    } else if (mode === "nhl") {
+      // Explicit NHL layout — delegate to the existing helper which
+      // uses the real Atlantic/Metropolitan/Central/Pacific names.
+      autoAssignNHL();
+      return;
+    } else {
+      const parts = String(mode).split("x");
+      numDivs = Math.max(1, parseInt(parts[0] || "2", 10));
+      numConfs = Math.max(0, parseInt(parts[1] || "0", 10));
+    }
+    const divNames = Array.from(
+      { length: numDivs },
+      (_, i) => `Division ${String.fromCharCode(65 + i)}`,   // A, B, C, …
+    );
+    const confNames = numConfs > 0
+      ? Array.from({ length: numConfs }, (_, i) => `Conference ${i + 1}`)
+      : [];
+    // Distribute divisions evenly across conferences.
+    const divToConf = {};
+    if (numConfs > 0) {
+      divNames.forEach((d, i) => {
+        divToConf[d] = confNames[i % numConfs];
+      });
+    }
+    setDivisionList(divNames);
+    setConferenceList(confNames);
+    setDivisionToConference(divToConf);
+    // Round-robin team → division so every division ends up balanced.
+    const next = {};
+    teams.forEach((t, idx) => {
+      const div = divNames[idx % numDivs];
+      next[t.id] = {
+        division: div,
+        conference: divToConf[div] || "",
+      };
+    });
+    setDivisionAssignments(next);
+    const label = numConfs > 0
+      ? `${numDivs} divisions / ${numConfs} conferences`
+      : `${numDivs} division${numDivs === 1 ? "" : "s"}, no conferences`;
+    toast.info(`Auto-assigned ${label} across ${teamCount} team${teamCount === 1 ? "" : "s"}`);
+  };
+
+  // Iter 232N.80 — Bulk-add sandbox test teams. Only meaningful when
+  // the league is flagged `is_test_sandbox=true`; the caller (Basics
+  // step) hides the control otherwise.
+  const [addingSandboxTeams, setAddingSandboxTeams] = useState(false);
+  const refreshTeams = async () => {
+    try {
+      const { data } = await api.get(`/teams?league_id=${leagueId}`);
+      setTeams(data || []);
+    } catch (_e) { /* best-effort */ }
+  };
+  const addSandboxTeams = async (count) => {
+    const n = Math.max(1, Math.min(32, parseInt(count, 10) || 0));
+    if (!n) return;
+    setAddingSandboxTeams(true);
+    try {
+      const { data } = await api.post(
+        `/admin/test-sandbox/leagues/${leagueId}/add-test-users`,
+        { count: n },
+      );
+      toast.success(
+        `Added ${data.added} sandbox team${data.added === 1 ? "" : "s"} · league now has ${data.new_team_count}`,
+      );
+      await refreshTeams();
+      // Also nudge maxTeams upward so downstream validators don't
+      // complain about a schedule that's too small for the roster.
+      setMaxTeams((prev) => Math.max(prev, data.new_team_count));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to add sandbox teams");
+    } finally {
+      setAddingSandboxTeams(false);
+    }
+  };
+
   // ─── Save helpers ─────────────────────────────────────────────
   // Iter 199 — Stamp the league's setup_progress[<key>] = true after a
   // wizard step's save succeeds. Sections start at 0 for new leagues so
@@ -631,6 +725,9 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     addDivision, removeDivision,
     addConference, removeConference,
     autoAssignNHL,
+    autoAssignStructure,
+    addSandboxTeams,
+    addingSandboxTeams,
     divSet,
     seasonStart, setSeasonStart,
     seasonEnd, setSeasonEnd,

@@ -92,6 +92,9 @@ class LeagueResponse(BaseModel):
     invite_code: Optional[str] = None
     created_at: datetime
     setup_wizard_complete: bool = False
+    # Iter 232N.80 — expose the sandbox flag so the setup wizard can
+    # conditionally render sandbox-only controls (bulk-add test teams).
+    is_test_sandbox: Optional[bool] = None
     # Extended wizard / commissioner-settable fields (single source of truth)
     bench_spots: Optional[int] = None
     minors_spots: Optional[int] = None
@@ -300,6 +303,7 @@ def _league_to_response(league: dict) -> LeagueResponse:
         invite_code=league.get("invite_code"),
         created_at=league["created_at"],
         setup_wizard_complete=bool(league.get("setup_wizard_complete", False)),
+        is_test_sandbox=bool(league.get("is_test_sandbox")) if league.get("is_test_sandbox") is not None else None,
         bench_spots=league.get("bench_spots"),
         minors_spots=league.get("minors_spots"),
         minors_split_enabled=league.get("minors_split_enabled"),

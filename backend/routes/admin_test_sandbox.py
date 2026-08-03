@@ -370,6 +370,72 @@ async def add_test_user(league_id: str, input: AddTestUserRequest, request: Requ
     }
 
 
+# ─── Bulk-add N test users to an existing sandbox league (Iter 232N.80) ─
+
+
+class BulkAddTestUsersRequest(BaseModel):
+    count: int = Field(1, ge=1, le=32)
+
+
+@router.post("/admin/test-sandbox/leagues/{league_id}/add-test-users")
+async def bulk_add_test_users(
+    league_id: str,
+    input: BulkAddTestUsersRequest,
+    request: Request,
+):
+    """Bulk-create N test users + teams for a sandbox league.
+
+    Called from the Setup Wizard so admins can size up an empty sandbox
+    to the target team count in one click before running the rest of
+    the wizard (Divisions, Schedule, etc.).
+    """
+    admin = await _require_admin(request)
+    db = _db()
+    try:
+        lg = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    except Exception:
+        lg = None
+    if not lg or not lg.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=404, detail="Test sandbox league not found",
+        )
+
+    existing = await db.teams.count_documents({"league_id": league_id})
+    created: list[dict] = []
+    for offset in range(input.count):
+        idx = existing + offset + 1
+        user = await _make_test_user(db, str(admin["_id"]), league_id, idx)
+        team_name = f"{user['name']}'s Team"
+        r = await db.teams.insert_one({
+            "league_id": league_id,
+            "owner_id": str(user["_id"]),
+            "owner_name": user["name"],
+            "name": team_name,
+            "roster": [], "lineup": {},
+            "is_test_team": True,
+            "created_at": datetime.now(timezone.utc),
+        })
+        created.append({
+            "team_id": str(r.inserted_id),
+            "team_name": team_name,
+            "user_id": str(user["_id"]),
+            "email": user["email"],
+            "name": user["name"],
+        })
+    new_count = existing + input.count
+    await db.leagues.update_one(
+        {"_id": lg["_id"]},
+        {"$set": {"current_teams": new_count},
+         "$max": {"max_teams": new_count}},
+    )
+    return {
+        "ok": True,
+        "added": len(created),
+        "new_team_count": new_count,
+        "teams": created,
+    }
+
+
 # ─── Delete a sandbox league (cascade) ───────────────────────────────
 
 
