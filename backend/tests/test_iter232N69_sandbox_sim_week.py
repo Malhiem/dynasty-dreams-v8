@@ -62,7 +62,7 @@ def _wire(user_id):
     m._deps["get_current_user"] = _fake_user
 
 
-async def _seed_sandbox(db, num_teams=4, is_sandbox=True):
+async def _seed_sandbox(db, num_teams=4, is_sandbox=True, with_draft=True):
     league_id = ObjectId()
     await db.leagues.insert_one({
         "_id": league_id, "name": "N69 Sandbox League",
@@ -77,6 +77,17 @@ async def _seed_sandbox(db, num_teams=4, is_sandbox=True):
             "created_at": datetime.now(timezone.utc),
         })
         team_ids.append(str(tid))
+    # Iter 232N.79 — simulate-week now requires a completed draft.
+    # Seed a synthetic completed one so these tests still exercise the
+    # matchup-sim path without needing the full draft flow.
+    if with_draft and is_sandbox:
+        await db.drafts.insert_one({
+            "league_id": str(league_id),
+            "status": "completed",
+            "total_rounds": 20,
+            "current_pick": 999,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        })
     return str(league_id), team_ids
 
 
@@ -84,6 +95,7 @@ async def _cleanup(db, league_id, admin_id):
     await db.leagues.delete_one({"_id": ObjectId(league_id)})
     await db.teams.delete_many({"league_id": league_id})
     await db.matchups.delete_many({"league_id": league_id})
+    await db.drafts.delete_many({"league_id": league_id})
     await db.users.delete_one({"_id": ObjectId(admin_id)})
 
 
@@ -95,7 +107,7 @@ async def test_simulate_week_refuses_non_sandbox_league():
     db = _db()
     admin_id = await _seed_admin(db)
     _wire(admin_id)
-    league_id, _ = await _seed_sandbox(db, num_teams=4, is_sandbox=False)
+    league_id, _ = await _seed_sandbox(db, num_teams=4, is_sandbox=False, with_draft=False)
     with pytest.raises(HTTPException) as exc:
         await m.sandbox_simulate_week(
             league_id, m.SimulateWeekRequest(week=1), _StubReq(),

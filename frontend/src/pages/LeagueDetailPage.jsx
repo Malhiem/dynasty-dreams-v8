@@ -23,8 +23,6 @@ import LastUpdatedBadge from '@/components/LastUpdatedBadge';
 import { PlayerStatusFeed } from '@/components/player/PlayerStatusFeed';
 // Iter 232N.7 — Cross-league mover leaderboard widget.
 import { LeagueMoversWidget } from '@/components/player/LeagueMoversWidget';
-// Iter 232N.60 — Sandbox top bar (admin-only, shows on sandbox leagues)
-import SandboxLeagueTopBar from '@/components/SandboxLeagueTopBar';
 
 export default function LeagueDetailPage() {
   const { id } = useParams();
@@ -364,7 +362,6 @@ export default function LeagueDetailPage() {
 
   return (
     <AppLayout onSettingsClick={() => setSettingsOpen(true)}>
-    <SandboxLeagueTopBar leagueId={id} />
     <PullToRefreshIndicator distance={ptr.distance} refreshing={ptr.refreshing} engaged={ptr.engaged} />
     <div data-testid="league-detail-page">
       <div className="max-w-7xl mx-auto">

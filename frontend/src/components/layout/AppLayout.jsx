@@ -15,6 +15,9 @@ import ProtectionListRibbon from "@/lovable/components/ProtectionListRibbon";
 import BannedUserBanner from "@/components/BannedUserBanner";
 // Iter 232c — Mobile bottom-tab nav with live presence bubble on Chat.
 import MobileBottomNav from "@/components/MobileBottomNav";
+// Iter 232N.79 — Persistent Sandbox top-bar (visible on every page
+// inside a sandbox league for admins; self-hides otherwise).
+import SandboxLeagueTopBar from "@/components/SandboxLeagueTopBar";
 
 export function AppLayout({ children, onSettingsClick }) {
   const { user } = useAuth();
@@ -105,6 +108,9 @@ export function AppLayout({ children, onSettingsClick }) {
           </header>
           {/* Iter 207 — Banned/suspended account banner with appeal form */}
           <BannedUserBanner />
+          {/* Iter 232N.79 — Persistent Sandbox top-bar (admins only,
+              self-hides for non-sandbox leagues + impersonated users). */}
+          <SandboxLeagueTopBar />
           {/* Iter 129 — Trade Deadline Countdown Ribbon (auto-hides when unset) */}
           <TradeDeadlineRibbon />
           <ProtectionListRibbon />

@@ -508,6 +508,228 @@ async def list_test_users(request: Request, league_id: Optional[str] = None):
 
 
 
+# ─── Iter 232N.79 — Sandbox progression status ────────────────────
+
+
+async def _draft_status_for_league(db, league_id: str) -> str:
+    """Return the highest-priority draft state for this league:
+      • "completed" if any real draft has finished (rosters exist)
+      • "active" / "in_progress" if a draft is running
+      • "scheduled" if one exists but hasn't started
+      • "none" otherwise (no real draft doc, or only orphan stubs)
+    """
+    priority = ["completed", "active", "in_progress", "paused", "scheduled"]
+    async for d in db.drafts.find({"league_id": league_id}):
+        s = (d.get("status") or "").lower()
+        if s == "completed":
+            return "completed"
+    async for d in db.drafts.find({"league_id": league_id}):
+        s = (d.get("status") or "").lower()
+        if s in priority and s != "completed":
+            return s
+    return "none"
+
+
+async def _sandbox_status(db, league_id: str) -> dict:
+    """4-step progression state used by the top bar rail."""
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(status_code=400, detail="Not a sandbox league")
+
+    roster_spots = int(league.get("roster_spots") or 0)
+    matchups_per_week = int(league.get("matchups_per_week") or 0)
+    team_count = await db.teams.count_documents({"league_id": league_id})
+    has_settings = bool(
+        roster_spots > 0 and matchups_per_week > 0 and team_count >= 2
+    )
+
+    draft_status = await _draft_status_for_league(db, league_id)
+    draft_done = draft_status == "completed"
+    last_sim_week = int(league.get("sandbox_last_sim_week") or 0)
+    playoffs_seeded = bool(league.get("sandbox_playoff_champion_team_id"))
+
+    # Which step is the "active" one? (first not-yet-complete)
+    if not has_settings:
+        active_step = 1
+    elif not draft_done:
+        active_step = 2
+    elif not playoffs_seeded and last_sim_week < 17:
+        active_step = 3
+    elif not playoffs_seeded:
+        active_step = 3  # still regular season UI, but ready to advance
+    else:
+        active_step = 4
+
+    return {
+        "league_id": league_id,
+        "league_name": league.get("name"),
+        "has_settings": has_settings,
+        "team_count": team_count,
+        "roster_spots": roster_spots,
+        "matchups_per_week": matchups_per_week,
+        "draft_status": draft_status,
+        "draft_done": draft_done,
+        "last_sim_week": last_sim_week,
+        "playoffs_seeded": playoffs_seeded,
+        "champion_team_id": league.get("sandbox_playoff_champion_team_id"),
+        "active_step": active_step,
+    }
+
+
+@router.get("/admin/test-sandbox/leagues/{league_id}/status")
+async def sandbox_status(league_id: str, request: Request):
+    await _require_admin(request)
+    return await _sandbox_status(_db(), league_id)
+
+
+# ─── Iter 232N.79 — One-click "simulate draft" ────────────────────
+
+
+class SimulateDraftRequest(BaseModel):
+    # How many players per team to fill. Defaults to league.roster_spots.
+    picks_per_team: Optional[int] = Field(None, ge=1, le=50)
+
+
+@router.post("/admin/test-sandbox/leagues/{league_id}/simulate-draft")
+async def sandbox_simulate_draft(
+    league_id: str,
+    input: SimulateDraftRequest,
+    request: Request,
+):
+    """Auto-draft every roster in the sandbox via a deterministic snake
+    order using the top N players from the DB (non-prospects first,
+    ranked by season points DESC then age ASC).
+
+    On success:
+      • Every team's `roster` is populated with `picks_per_team` player_ids
+      • A `drafts` doc is inserted with `status="completed"` so the
+        real-draft guard (`_looks_like_real_draft`) accepts it and the
+        `draft_done` gate on simulate-week flips true
+      • Idempotent: replaying wipes any prior sandbox-simulated draft
+        + resets rosters + re-runs the pick order
+    """
+    admin = await _require_admin(request)
+    db = _db()
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=400,
+            detail="simulate-draft is only available on sandbox test leagues",
+        )
+
+    teams = await db.teams.find(
+        {"league_id": league_id},
+        sort=[("created_at", 1), ("_id", 1)],
+    ).to_list(200)
+    if len(teams) < 2:
+        raise HTTPException(
+            status_code=400, detail="Need at least 2 teams to draft",
+        )
+
+    picks_per_team = int(input.picks_per_team or league.get("roster_spots") or 20)
+    total_picks = picks_per_team * len(teams)
+
+    # Rank players — non-prospects first, then by season points DESC,
+    # then by age ASC. Only pull enough for the draft.
+    players = await db.players.find(
+        {},
+        {"_id": 1, "name": 1, "position": 1, "is_prospect": 1,
+         "age": 1, "season_stats": 1},
+    ).to_list(max(total_picks * 2, 500))
+
+    def _rank(p):
+        pts = float((p.get("season_stats") or {}).get("points", 0) or 0)
+        age = int(p.get("age") or 99)
+        prospect_penalty = 1 if p.get("is_prospect") else 0
+        return (prospect_penalty, -pts, age)
+
+    players.sort(key=_rank)
+    pool = players[:total_picks]
+    if len(pool) < total_picks:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Not enough players in DB to fill {total_picks} picks "
+                f"(need {total_picks}, have {len(pool)}). "
+                "Run an NHL sync first."
+            ),
+        )
+
+    # Wipe any prior simulated draft for this league so replays are clean.
+    await db.drafts.delete_many({
+        "league_id": league_id, "sandbox_sim_draft": True,
+    })
+
+    # Snake-order pick allocation.
+    picks: list[dict] = []
+    now = datetime.now(timezone.utc)
+    # Reset every team's roster first.
+    for t in teams:
+        await db.teams.update_one(
+            {"_id": t["_id"]},
+            {"$set": {"roster": [], "lineup": {}}},
+        )
+
+    idx = 0
+    for rnd in range(1, picks_per_team + 1):
+        order = teams if rnd % 2 == 1 else list(reversed(teams))
+        for team in order:
+            if idx >= len(pool):
+                break
+            p = pool[idx]
+            pid = str(p["_id"])
+            await db.teams.update_one(
+                {"_id": team["_id"]},
+                {"$addToSet": {"roster": pid}},
+            )
+            picks.append({
+                "round": rnd,
+                "overall_pick": idx + 1,
+                "team_id": str(team["_id"]),
+                "team_name": team.get("name"),
+                "player_id": pid,
+                "player_name": p.get("name"),
+                "position": p.get("position"),
+            })
+            idx += 1
+
+    # Persist a completed draft doc so /leagues/{id}/upcoming-drafts
+    # + get_locking_draft see a real, finished draft.
+    draft_doc = {
+        "league_id": league_id,
+        "league_name": league.get("name"),
+        "name": f"{league.get('name')} Auto-Draft",
+        "draft_type": "snake",
+        "total_rounds": picks_per_team,
+        "current_pick": total_picks + 1,
+        "status": "completed",
+        "draft_started": True,
+        "picks": picks,
+        "pick_order": [str(t["_id"]) for t in teams],
+        "started_at": now.isoformat(),
+        "completed_at": now.isoformat(),
+        "sandbox_sim_draft": True,
+        "simulated_by": admin.get("email"),
+        "created_at": now,
+    }
+    r = await db.drafts.insert_one(draft_doc)
+    draft_id = str(r.inserted_id)
+
+    return {
+        "ok": True,
+        "draft_id": draft_id,
+        "total_picks": len(picks),
+        "picks_per_team": picks_per_team,
+        "teams_drafted": len(teams),
+        "picks_preview": picks[: min(len(picks), 8)],
+    }
+
+
 # ─── Iter 232N.69 — Simulate week of matchups (sandbox only) ──────
 
 
@@ -556,6 +778,19 @@ async def sandbox_simulate_week(
         raise HTTPException(
             status_code=400,
             detail="simulate-week is only available on sandbox test leagues",
+        )
+
+    # Iter 232N.79 — Gate on draft completion. Fake matchup scores for
+    # teams with empty rosters is misleading; force the admin through
+    # the Setup → Draft → Sim progression.
+    draft_state = await _draft_status_for_league(db, league_id)
+    if draft_state != "completed":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Draft not complete — schedule + run a real draft or use "
+                "'Simulate draft' before simulating matchups."
+            ),
         )
 
     teams = await db.teams.find(
@@ -919,6 +1154,57 @@ async def sandbox_seed_playoffs(
         active = winners
 
     champion = active[0] if active else None
+    # Iter 232N.79 — Stamp the trophy so it surfaces in the existing
+    # `/leagues/{id}/trophy-room` + `/teams/{id}/trophy-room` UIs.
+    season_year = int(
+        league.get("current_season_year")
+        or (str(league.get("season") or "").split("-")[0] or "2026")
+        if str(league.get("season") or "2026").split("-")[0].isdigit()
+        else 2026
+    )
+    if champion:
+        # Team-level award marker (used by TrophyRoom banners).
+        await db.teams.update_one(
+            {"_id": champion["_id"]},
+            {"$set": {"championship_won_at": now.isoformat()}},
+        )
+        # league_seasons snapshot — minimal shape that the trophy-room
+        # endpoint expects (season_year + teams[].awards).
+        teams_snap: list[dict] = []
+        for t in teams:
+            teams_snap.append({
+                "team_id": str(t["_id"]),
+                "team_name": t.get("name"),
+                "wins": t.get("wins", 0),
+                "losses": t.get("losses", 0),
+                "ties": t.get("ties", 0),
+                "points_for": float(t.get("points_for", 0.0) or 0.0),
+                "points_against": float(t.get("points_against", 0.0) or 0.0),
+                "roster": list(t.get("roster") or []),
+                "awards": {
+                    "championship_won_at": (
+                        now.isoformat()
+                        if str(t["_id"]) == str(champion["_id"])
+                        else None
+                    ),
+                },
+            })
+        await db.league_seasons.update_one(
+            {"league_id": league_id, "season_year": season_year,
+             "sandbox_sim": True},
+            {"$set": {
+                "league_id": league_id,
+                "season_year": season_year,
+                "status": "complete",
+                "snapshot_at": now,
+                "champion_team_name": champion.get("name"),
+                "champion_team_id": str(champion["_id"]),
+                "teams": teams_snap,
+                "sandbox_sim": True,
+                "completed_by": admin.get("email"),
+            }},
+            upsert=True,
+        )
     await db.leagues.update_one(
         {"_id": ObjectId(league_id)},
         {"$set": {
@@ -926,6 +1212,7 @@ async def sandbox_seed_playoffs(
             "sandbox_playoff_champion_team_id": (
                 str(champion["_id"]) if champion else None
             ),
+            "sandbox_playoff_season_year": season_year,
         }},
     )
 
@@ -969,10 +1256,20 @@ async def sandbox_reset_simulation(league_id: str, request: Request):
         "league_id": league_id,
         "$or": [{"sandbox_sim": True}, {"sandbox_playoff": True}],
     })
+    # Iter 232N.79 — Also wipe the auto-drafted rosters + draft doc and
+    # champion award stamps so the sandbox truly returns to "day 1".
+    await db.drafts.delete_many({
+        "league_id": league_id, "sandbox_sim_draft": True,
+    })
+    await db.league_seasons.delete_many({
+        "league_id": league_id, "sandbox_sim": True,
+    })
     await db.teams.update_many(
         {"league_id": league_id},
         {"$set": {"wins": 0, "losses": 0, "ties": 0,
-                  "points_for": 0, "points_against": 0}},
+                  "points_for": 0, "points_against": 0,
+                  "roster": [], "lineup": {}},
+         "$unset": {"championship_won_at": ""}},
     )
     await db.leagues.update_one(
         {"_id": ObjectId(league_id)},
@@ -980,6 +1277,7 @@ async def sandbox_reset_simulation(league_id: str, request: Request):
             "sandbox_last_sim_week": "",
             "sandbox_playoffs_seeded_at": "",
             "sandbox_playoff_champion_team_id": "",
+            "sandbox_playoff_season_year": "",
         }},
     )
     return {"ok": True, "matchups_deleted": deleted.deleted_count}

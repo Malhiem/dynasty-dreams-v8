@@ -56,7 +56,7 @@ def _wire(user_id):
     m._deps["get_current_user"] = _fake_user
 
 
-async def _seed_sandbox(db, num_teams=8, is_sandbox=True):
+async def _seed_sandbox(db, num_teams=8, is_sandbox=True, with_draft=True):
     league_id = ObjectId()
     await db.leagues.insert_one({
         "_id": league_id, "name": "N78 Sandbox Playoffs League",
@@ -71,6 +71,14 @@ async def _seed_sandbox(db, num_teams=8, is_sandbox=True):
             "created_at": datetime.now(timezone.utc),
         })
         team_ids.append(str(tid))
+    if with_draft and is_sandbox:
+        await db.drafts.insert_one({
+            "league_id": str(league_id),
+            "status": "completed",
+            "total_rounds": 20,
+            "current_pick": 999,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        })
     return str(league_id), team_ids
 
 
@@ -78,6 +86,8 @@ async def _cleanup(db, league_id, admin_id):
     await db.leagues.delete_one({"_id": ObjectId(league_id)})
     await db.teams.delete_many({"league_id": league_id})
     await db.matchups.delete_many({"league_id": league_id})
+    await db.drafts.delete_many({"league_id": league_id})
+    await db.league_seasons.delete_many({"league_id": league_id})
     await db.users.delete_one({"_id": ObjectId(admin_id)})
 
 
@@ -119,7 +129,7 @@ async def test_seed_playoffs_refuses_non_sandbox_league():
     db = _db()
     admin_id = await _seed_admin(db)
     _wire(admin_id)
-    league_id, _ = await _seed_sandbox(db, num_teams=8, is_sandbox=False)
+    league_id, _ = await _seed_sandbox(db, num_teams=8, is_sandbox=False, with_draft=False)
     with pytest.raises(HTTPException) as exc:
         await m.sandbox_seed_playoffs(
             league_id, m.SeedPlayoffsRequest(min_week=1), _StubReq(),
