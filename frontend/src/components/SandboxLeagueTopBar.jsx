@@ -34,6 +34,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+// Iter 232N.81 — Bracket visualizer modal.
+import SandboxPlayoffBracketModal from './SandboxPlayoffBracketModal';
 
 function _readActiveLeagueId() {
   try {
@@ -89,6 +91,10 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
   const [drafting, setDrafting] = useState(false);
   const [targetWeek, setTargetWeek] = useState('');
   const [seedingPlayoffs, setSeedingPlayoffs] = useState(false);
+  // Iter 232N.81 — Bracket modal state. Auto-opens after seed-playoffs
+  // succeeds; reopenable via the champion badge.
+  const [bracketOpen, setBracketOpen] = useState(false);
+  const [bracketSeed, setBracketSeed] = useState(null);
 
   const isAdmin =
     user?.role === 'admin' ||
@@ -244,6 +250,10 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
         `Playoffs seeded · ${data.num_playoff_teams} teams · ${data.rounds_played} rounds · Champion: ${data.champion}`,
         { duration: 6000 },
       );
+      // Iter 232N.81 — Auto-open the bracket modal with the seed
+      // response so admins immediately see QF → SF → Final matchups.
+      setBracketSeed(data);
+      setBracketOpen(true);
       await load();
       window.dispatchEvent(new CustomEvent('sandbox:playoffs-seeded', { detail: data }));
     } catch (e) {
@@ -443,14 +453,20 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
             </Button>
           )}
           {playoffsSeeded && (
-            <Badge
-              variant="outline"
-              className="h-8 text-[11px] bg-amber-500/15 border-amber-400/50 text-amber-100 flex items-center gap-1 px-2"
+            <button
+              type="button"
+              onClick={() => { setBracketSeed(null); setBracketOpen(true); }}
               data-testid="sandbox-topbar-champion-badge"
-              title="Playoff bracket already seeded for this sandbox league"
+              title="View the playoff bracket for this sandbox league"
+              className="cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-400/50 rounded-full"
             >
-              <Trophy className="h-3 w-3" /> Champion crowned
-            </Badge>
+              <Badge
+                variant="outline"
+                className="h-8 text-[11px] bg-amber-500/15 border-amber-400/50 text-amber-100 hover:bg-amber-500/25 flex items-center gap-1 px-2 transition-colors"
+              >
+                <Trophy className="h-3 w-3" /> View bracket
+              </Badge>
+            </button>
           )}
 
           {/* Status tagline */}
@@ -484,6 +500,13 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
           )}
         </div>
       </div>
+      {/* Iter 232N.81 — Bracket visualizer modal */}
+      <SandboxPlayoffBracketModal
+        open={bracketOpen}
+        onClose={() => setBracketOpen(false)}
+        leagueId={leagueId}
+        initialData={bracketSeed}
+      />
     </div>
   );
 }

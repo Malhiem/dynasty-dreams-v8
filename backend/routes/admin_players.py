@@ -969,7 +969,7 @@ async def admin_scan_duplicates(request: Request, limit: int = 200):
     # we can't skip birth_date-less rows here (that's exactly the
     # Fantilli-@-Michigan case).
     cursor = db.players.find(
-        {"name": {"$exists": True, "$ne": None, "$ne": ""}},
+        {"name": {"$exists": True, "$nin": [None, ""]}},
         {"nhl_id": 1, "name": 1, "team": 1, "age": 1, "is_prospect": 1,
          "birth_date": 1, "league": 1},
     )

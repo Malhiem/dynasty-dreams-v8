@@ -800,7 +800,7 @@ def _safe_object_id(value: str, label: str = "id") -> ObjectId:
 
 # ─── Stripe payments → moved to routes/payments.py (iter 98)
 from routes import payments as payments_routes  # noqa: E402
-PaymentCreate = payments_routes.PaymentCreate
+PaymentCreate = payments_routes.PaymentCreate  # noqa: F811
 PAYMENT_PACKAGES = payments_routes.PAYMENT_PACKAGES
 LEAGUE_PREMIUM_FEATURES = payments_routes.LEAGUE_PREMIUM_FEATURES
 
@@ -838,7 +838,6 @@ _router_deps = {
     "get_team_week_summary": None,  # set after endpoint defined below (late-bind via module lookup)
     "calculate_fantasy_points": calculate_fantasy_points,
     "broadcast_to_room": broadcast_to_room,
-    "sio": sio,
     "log_activity": log_activity,
     "send_sendgrid_email": send_sendgrid_email,
     "create_notification": create_notification,

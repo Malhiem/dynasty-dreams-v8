@@ -1302,6 +1302,65 @@ async def sandbox_seed_playoffs(
     }
 
 
+@router.get("/admin/test-sandbox/leagues/{league_id}/playoff-bracket")
+async def sandbox_playoff_bracket(league_id: str, request: Request):
+    """Iter 232N.81 — Return the persisted playoff bracket for a sandbox
+    league so the Bracket Visualizer modal can re-open after a reload.
+
+    Reads back from `db.matchups` where `sandbox_playoff=true` and
+    reconstructs the round-by-round shape the modal expects.
+    Returns `bracket=[]` when nothing has been seeded yet.
+    """
+    await _require_admin(request)
+    db = _db()
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(status_code=400, detail="Not a sandbox league")
+
+    rows = await db.matchups.find(
+        {"league_id": league_id, "sandbox_playoff": True},
+        sort=[("playoff_round", 1), ("_id", 1)],
+    ).to_list(200)
+    bracket = [{
+        "round": int(r.get("playoff_round") or 1),
+        "home": r.get("home_team_name"),
+        "away": r.get("away_team_name"),
+        "home_team_id": r.get("home_team_id"),
+        "away_team_id": r.get("away_team_id"),
+        "home_score": r.get("home_score"),
+        "away_score": r.get("away_score"),
+        "winner": (
+            r.get("home_team_name")
+            if str(r.get("winner_team_id")) == str(r.get("home_team_id"))
+            else r.get("away_team_name")
+        ),
+        "loser": (
+            r.get("away_team_name")
+            if str(r.get("winner_team_id")) == str(r.get("home_team_id"))
+            else r.get("home_team_name")
+        ),
+    } for r in rows]
+
+    champion_id = league.get("sandbox_playoff_champion_team_id")
+    champion_name = None
+    if champion_id:
+        ct = await db.teams.find_one({"_id": ObjectId(champion_id)})
+        champion_name = ct.get("name") if ct else None
+    return {
+        "league_id": league_id,
+        "seeded": bool(bracket),
+        "champion": champion_name,
+        "champion_team_id": champion_id,
+        "seeded_at": league.get("sandbox_playoffs_seeded_at"),
+        "rounds_played": (
+            max((b["round"] for b in bracket), default=0) if bracket else 0
+        ),
+        "bracket": bracket,
+    }
+
+
 @router.post("/admin/test-sandbox/leagues/{league_id}/reset-simulation")
 async def sandbox_reset_simulation(league_id: str, request: Request):
     """Wipe every simulated matchup + zero out every team's counters,
