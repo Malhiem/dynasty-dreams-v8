@@ -148,17 +148,16 @@ const CommissionerSettings = () => {
     }
   };
 
-  // ─── Setup Wizard (first-time) ─────────────────────────────────
+  // ─── Setup Wizard (manual trigger only) ─────────────────────────
+  // Iter 232N.82 — Previously auto-opened when `setup_wizard_complete=false`,
+  // which meant its full-screen Dialog overlay would block interaction
+  // with every other tab (Divisions "Save Schedule Mix", Rosters, etc.)
+  // on first visit. That broke e2e tests targeting those Save buttons
+  // and also frustrated commissioners who wanted to configure one thing
+  // without walking through the whole wizard. The header always shows
+  // a prominent "Complete Setup" / "Re-run Setup Wizard" button so
+  // there's no discovery cost — we just don't auto-open anymore.
   const [wizardOpen, setWizardOpen] = useState(false);
-  useEffect(() => {
-    // Auto-open wizard once per session per league when setup isn't complete yet.
-    if (activeLeague?.id && activeLeague.setup_wizard_complete === false) {
-      const dismissedKey = `dd-setup-wizard-dismissed-${activeLeague.id}`;
-      if (!sessionStorage.getItem(dismissedKey)) {
-        setWizardOpen(true);
-      }
-    }
-  }, [activeLeague?.id, activeLeague?.setup_wizard_complete]);
   const handleWizardClose = () => {
     setWizardOpen(false);
     if (activeLeague?.id) {
@@ -530,10 +529,11 @@ const CommissionerSettings = () => {
           </div>
           <Button
             size="sm"
-            variant="outline"
+            variant={activeLeague?.setup_wizard_complete ? "outline" : "default"}
             onClick={reopenWizard}
             data-testid="reopen-setup-wizard-btn"
             disabled={!activeLeague?.id}
+            className={activeLeague?.setup_wizard_complete ? "" : "bg-amber-500/90 text-amber-950 hover:bg-amber-400 font-semibold"}
           >
             <Trophy className="h-4 w-4 mr-1.5" />
             {activeLeague?.setup_wizard_complete ? "Re-run Setup Wizard" : "Complete Setup"}
