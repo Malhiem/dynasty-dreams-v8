@@ -1,0 +1,345 @@
+"""Iter 232N.86 — Rotisserie (Roto) scoring engine + endpoints.
+
+Design goals
+------------
+Roto leagues rank teams within each stat category over a scoring
+period, award points based on that rank (12-team league → 1st = 12,
+last = 1), and sum the points across periods to produce season
+standings. This module powers:
+
+  GET  /api/leagues/{id}/roto/categories/catalog    — every trackable stat
+  GET  /api/leagues/{id}/roto/standings             — season totals
+  GET  /api/leagues/{id}/roto/matchup?period=N      — current period stats
+  POST /api/leagues/{id}/roto/recompute             — manual recompute
+
+The engine is pure-python (no external deps). It reads player stats
+from `db.players.season_stats` and roster memberships from
+`db.teams.roster`, computes per-team category totals for the target
+period (or full season), ranks each category, awards points using
+the league's tie-break rule, and persists the result to
+`db.roto_period_results`.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Optional
+
+from bson import ObjectId
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+
+
+router = APIRouter()
+_deps: dict = {}
+
+
+def register_dependencies(**kwargs):
+    _deps.update(kwargs)
+
+
+# ─── Stat catalog ────────────────────────────────────────────────
+
+SKATER_CATEGORIES = [
+    {"key": "goals",              "label": "Goals (G)",              "type": "skater", "higher_is_better": True},
+    {"key": "assists",            "label": "Assists (A)",            "type": "skater", "higher_is_better": True},
+    {"key": "points",             "label": "Points (P)",             "type": "skater", "higher_is_better": True},
+    {"key": "plus_minus",         "label": "Plus/Minus (+/-)",       "type": "skater", "higher_is_better": True},
+    {"key": "penalty_minutes",    "label": "Penalty Minutes (PIM)",  "type": "skater", "higher_is_better": False},
+    {"key": "power_play_goals",   "label": "Power Play Goals (PPG)", "type": "skater", "higher_is_better": True},
+    {"key": "power_play_points",  "label": "Power Play Points (PPP)","type": "skater", "higher_is_better": True},
+    {"key": "short_handed_goals", "label": "Short-handed Goals (SHG)","type": "skater","higher_is_better": True},
+    {"key": "short_handed_points","label": "Short-handed Points (SHP)","type": "skater","higher_is_better": True},
+    {"key": "game_winning_goals", "label": "Game-Winning Goals (GWG)","type": "skater","higher_is_better": True},
+    {"key": "shots",              "label": "Shots on Goal (SOG)",    "type": "skater", "higher_is_better": True},
+    {"key": "hits",               "label": "Hits (HIT)",             "type": "skater", "higher_is_better": True},
+    {"key": "blocks",             "label": "Blocked Shots (BLK)",    "type": "skater", "higher_is_better": True},
+    {"key": "faceoff_wins",       "label": "Faceoff Wins (FOW)",     "type": "skater", "higher_is_better": True},
+]
+GOALIE_CATEGORIES = [
+    {"key": "wins",             "label": "Wins (W)",           "type": "goalie", "higher_is_better": True},
+    {"key": "losses",           "label": "Losses (L)",         "type": "goalie", "higher_is_better": False},
+    {"key": "saves",            "label": "Saves (SV)",         "type": "goalie", "higher_is_better": True},
+    {"key": "save_percentage",  "label": "Save % (SV%)",       "type": "goalie", "higher_is_better": True},
+    {"key": "goals_against_avg","label": "GAA",                "type": "goalie", "higher_is_better": False},
+    {"key": "shutouts",         "label": "Shutouts (SO)",      "type": "goalie", "higher_is_better": True},
+    {"key": "overtime_losses",  "label": "Overtime Losses (OTL)","type": "goalie","higher_is_better": False},
+]
+ALL_CATEGORIES = SKATER_CATEGORIES + GOALIE_CATEGORIES
+CATEGORY_BY_KEY = {c["key"]: c for c in ALL_CATEGORIES}
+DEFAULT_ROTO_CATEGORIES = [
+    "goals", "assists", "points", "power_play_points",
+    "shots", "hits", "blocks", "plus_minus",
+    "wins", "saves", "save_percentage", "shutouts",
+]
+
+
+# ─── Engine ──────────────────────────────────────────────────────
+
+async def _team_stat_totals(db, league_id: str, period: Optional[int]):
+    """For each team in the league, sum every rostered player's stats
+    for the target period (None → full season).
+
+    Returns: {team_id: {"team_name": str, "stats": {stat: float}}}
+    """
+    teams = await db.teams.find({"league_id": league_id}).to_list(200)
+    out = {}
+    for t in teams:
+        agg: dict = {}
+        for pid in (t.get("roster") or []):
+            try:
+                p = await db.players.find_one({"_id": ObjectId(pid)})
+            except Exception:
+                continue
+            if not p:
+                continue
+            # Choose the right stat bucket: `period_stats.{period}` when
+            # a period is supplied, else `season_stats`. Falling back to
+            # season_stats when the period slice is missing keeps early
+            # weeks usable before the first stat sync lands.
+            src = None
+            if period is not None:
+                src = (p.get("period_stats") or {}).get(str(period))
+            if src is None:
+                src = p.get("season_stats") or {}
+            for cat in ALL_CATEGORIES:
+                k = cat["key"]
+                agg[k] = round(float(agg.get(k, 0.0)) + float(src.get(k, 0) or 0), 3)
+        out[str(t["_id"])] = {"team_name": t.get("name"), "stats": agg}
+    return out
+
+
+def _rank_category(
+    team_stats: list[tuple[str, float]],
+    higher_is_better: bool,
+    tiebreak: str,
+    num_teams: int,
+) -> dict:
+    """Rank a single category. Returns team_id → points.
+
+    tiebreak "split":  Tied teams share the sum of their ranks' points
+                       (rank 3+4 tie → both get (10+11)/2 = 10.5).
+    tiebreak "high":   All tied teams get the HIGHER rank's points
+                       (rank 3+4 tie → both get 11).
+    """
+    # Sort by value (descending if higher is better, else ascending).
+    sorted_teams = sorted(
+        team_stats,
+        key=lambda x: (-x[1] if higher_is_better else x[1], x[0]),
+    )
+    points: dict[str, float] = {}
+    i = 0
+    while i < len(sorted_teams):
+        j = i
+        # Group ties.
+        while (
+            j + 1 < len(sorted_teams)
+            and sorted_teams[j + 1][1] == sorted_teams[i][1]
+        ):
+            j += 1
+        tied = sorted_teams[i:j + 1]
+        # Ranks for the tie window (0-indexed → position from top).
+        ranks_points = [num_teams - (i + k) for k in range(len(tied))]
+        if tiebreak == "split" and len(tied) > 1:
+            share = sum(ranks_points) / len(tied)
+            for tid, _ in tied:
+                points[tid] = round(share, 3)
+        elif tiebreak == "high" and len(tied) > 1:
+            top = max(ranks_points)
+            for tid, _ in tied:
+                points[tid] = float(top)
+        else:
+            for (tid, _), rp in zip(tied, ranks_points):
+                points[tid] = float(rp)
+        i = j + 1
+    return points
+
+
+async def compute_period(
+    db, league_id: str, period: Optional[int] = None,
+) -> dict:
+    """Compute per-team stats + category points for the given period.
+
+    Returns:
+      {
+        "period": Optional[int],
+        "categories": [{"key", "label", "team_stats", "points"}],
+        "totals": {team_id: {"team_name", "total_points"}},
+      }
+    """
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    cats = league.get("roto_categories") or DEFAULT_ROTO_CATEGORIES
+    tiebreak = league.get("roto_tiebreak") or "split"
+    team_totals = await _team_stat_totals(db, league_id, period)
+    team_ids = list(team_totals.keys())
+    num_teams = len(team_ids)
+    if num_teams == 0:
+        return {"period": period, "categories": [], "totals": {}, "num_teams": 0}
+    out_cats = []
+    running: dict[str, float] = {tid: 0.0 for tid in team_ids}
+    for c_key in cats:
+        cat = CATEGORY_BY_KEY.get(c_key)
+        if not cat:
+            continue
+        pairs = [(tid, team_totals[tid]["stats"].get(c_key, 0.0)) for tid in team_ids]
+        points_by_tid = _rank_category(
+            pairs, cat["higher_is_better"], tiebreak, num_teams,
+        )
+        out_cats.append({
+            "key": c_key,
+            "label": cat["label"],
+            "higher_is_better": cat["higher_is_better"],
+            "team_stats": {tid: v for (tid, v) in pairs},
+            "points": points_by_tid,
+        })
+        for tid, pts in points_by_tid.items():
+            running[tid] = round(running.get(tid, 0.0) + pts, 3)
+    totals = {tid: {
+        "team_name": team_totals[tid]["team_name"],
+        "total_points": running[tid],
+    } for tid in team_ids}
+    return {
+        "period": period,
+        "categories": out_cats,
+        "totals": totals,
+        "num_teams": num_teams,
+        "tiebreak": tiebreak,
+    }
+
+
+async def compute_season(db, league_id: str) -> dict:
+    """Sum per-period points across every persisted period. Falls back
+    to the full-season snapshot when no periods exist yet."""
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    periods = await db.roto_period_results.find(
+        {"league_id": league_id, "closed": True},
+        sort=[("period", 1)],
+    ).to_list(200)
+    if not periods:
+        # No closed periods → return live full-season snapshot.
+        return await compute_period(db, league_id, period=None)
+    # Aggregate points across every closed period. Structure the same
+    # as compute_period so the frontend renders identically.
+    running: dict[str, float] = {}
+    team_names: dict[str, str] = {}
+    per_category: dict[str, dict[str, float]] = {}
+    for p in periods:
+        for tid, t in (p.get("totals") or {}).items():
+            running[tid] = round(running.get(tid, 0.0) + float(t.get("total_points", 0)), 3)
+            team_names[tid] = t.get("team_name", team_names.get(tid))
+        for cat in (p.get("categories") or []):
+            key = cat["key"]
+            for tid, pts in (cat.get("points") or {}).items():
+                per_category.setdefault(key, {}).setdefault(tid, 0.0)
+                per_category[key][tid] = round(per_category[key][tid] + float(pts), 3)
+    return {
+        "period": None,
+        "aggregated": True,
+        "periods_closed": len(periods),
+        "totals": {tid: {"team_name": team_names.get(tid), "total_points": pts}
+                   for tid, pts in running.items()},
+        "categories": [{
+            "key": k,
+            "label": CATEGORY_BY_KEY.get(k, {}).get("label", k),
+            "points": pts_map,
+        } for k, pts_map in per_category.items()],
+        "num_teams": len(running),
+    }
+
+
+# ─── Endpoints ───────────────────────────────────────────────────
+
+
+async def _require_user(request: Request):
+    return await _deps["get_current_user"](request)
+
+
+@router.get("/leagues/{league_id}/roto/categories/catalog")
+async def roto_catalog(league_id: str, request: Request):
+    """Full catalog of stat categories a commissioner can pick from,
+    plus the current league's selection so the settings UI can
+    pre-check the right rows."""
+    await _require_user(request)
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    return {
+        "categories": ALL_CATEGORIES,
+        "defaults": DEFAULT_ROTO_CATEGORIES,
+        "selected": league.get("roto_categories") or DEFAULT_ROTO_CATEGORIES,
+        "tiebreak": league.get("roto_tiebreak") or "split",
+        "period_length_weeks": league.get("roto_period_length_weeks", 1),
+        "playoffs_enabled": bool(league.get("roto_playoffs_enabled")),
+        "auto_recompute": bool(league.get("roto_auto_recompute", True)),
+    }
+
+
+@router.get("/leagues/{league_id}/roto/standings")
+async def roto_standings(league_id: str, request: Request):
+    """Season-level standings: total_points DESC + per-category rank."""
+    await _require_user(request)
+    return await compute_season(_deps["db"], league_id)
+
+
+@router.get("/leagues/{league_id}/roto/matchup")
+async def roto_matchup(
+    league_id: str, request: Request,
+    period: Optional[int] = Query(None, ge=0, le=52),
+):
+    """Live per-team category stats for the requested scoring period."""
+    await _require_user(request)
+    return await compute_period(_deps["db"], league_id, period=period)
+
+
+class RecomputeRequest(BaseModel):
+    period: Optional[int] = Field(None, ge=0, le=52)
+    close: bool = False
+
+
+@router.post("/leagues/{league_id}/roto/recompute")
+async def roto_recompute(
+    league_id: str, input: RecomputeRequest, request: Request,
+):
+    """Commissioner-triggered recompute. Persists to
+    `db.roto_period_results` so `compute_season` can accumulate."""
+    user = await _require_user(request)
+    db = _deps["db"]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    is_commissioner = str(league.get("commissioner_id")) == str(user.get("_id"))
+    is_admin = user.get("role") in ("admin", "senior_admin")
+    if not is_commissioner and not is_admin:
+        raise HTTPException(status_code=403, detail="Commissioner only")
+    result = await compute_period(db, league_id, period=input.period)
+    await db.roto_period_results.update_one(
+        {"league_id": league_id, "period": input.period},
+        {"$set": {
+            "league_id": league_id,
+            "period": input.period,
+            "totals": result["totals"],
+            "categories": result["categories"],
+            "num_teams": result["num_teams"],
+            "closed": bool(input.close),
+            "recomputed_at": datetime.now(timezone.utc).isoformat(),
+            "recomputed_by": user.get("email"),
+        }},
+        upsert=True,
+    )
+    return {
+        "ok": True,
+        "period": input.period,
+        "closed": bool(input.close),
+        "num_teams": result["num_teams"],
+        "leader": next(
+            iter(sorted(
+                result["totals"].items(),
+                key=lambda x: -x[1]["total_points"],
+            )),
+            (None, {"team_name": None, "total_points": 0}),
+        )[1],
+    }

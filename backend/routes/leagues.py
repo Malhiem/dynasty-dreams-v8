@@ -61,6 +61,15 @@ class LeagueCreate(BaseModel):
     # rosters within this league (breaks the classic mutually-exclusive
     # draft pool). Unlocks max_teams beyond 32.
     allow_duplicate_players: bool = False
+    # Iter 232N.86 — Rotisserie scoring configuration (only meaningful
+    # when scoring_format=roto). Categories default to a broad 12-cat
+    # slate; period_length_weeks=0 means "single full-season period"
+    # while any positive int is a per-N-weeks scoring cadence.
+    roto_categories: Optional[list[str]] = None
+    roto_period_length_weeks: int = 1
+    roto_tiebreak: str = "split"   # "split" | "high"
+    roto_playoffs_enabled: bool = False
+    roto_auto_recompute: bool = True
     salary_cap_enabled: bool = False
     salary_cap: Optional[float] = None
     draft_type: DraftType = DraftType.SNAKE
@@ -1936,6 +1945,13 @@ class LeagueUpdate(BaseModel):
     max_teams: Optional[int] = Field(default=None, ge=2, le=100)   # Iter 232N.83
     # Iter 232N.83 — Duplicate-player mode unlocks max_teams > 32.
     allow_duplicate_players: Optional[bool] = None
+    # Iter 232N.86 — Rotisserie fields (Optional so PATCH-style updates
+    # don't accidentally clobber unrelated settings).
+    roto_categories: Optional[list[str]] = None
+    roto_period_length_weeks: Optional[int] = Field(default=None, ge=0, le=52)
+    roto_tiebreak: Optional[str] = None
+    roto_playoffs_enabled: Optional[bool] = None
+    roto_auto_recompute: Optional[bool] = None
     keepers_allowed: Optional[int] = Field(default=None, ge=0, le=30)
     entry_fee: Optional[float] = Field(default=None, ge=0)
     # Trade settings
@@ -2059,6 +2075,9 @@ _LEAGUE_UPDATE_ALLOWED = {
     "scoring_format", "max_teams", "keepers_allowed", "entry_fee",
     # Iter 232N.83 — Duplicate-player mode toggle.
     "allow_duplicate_players",
+    # Iter 232N.86 — Rotisserie configuration.
+    "roto_categories", "roto_period_length_weeks", "roto_tiebreak",
+    "roto_playoffs_enabled", "roto_auto_recompute",
     "trade_review_period_hours", "trade_veto_threshold_pct", "trade_deadline_week",
     "trade_deadline_at",
     "waiver_faab_budget", "waiver_period_days",

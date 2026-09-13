@@ -10,6 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import HelpTooltip from "@/components/ui/help-tooltip";
+// Iter 232N.86 — Rotisserie settings panel (conditional on scoring_format).
+import RotoSettingsPanel from "@/components/RotoSettingsPanel";
 
 const FORMAT_LABELS = { dynasty: "Dynasty", keeper: "Keeper", redraft: "Redraft" };
 const SCORING_LABELS = { head_to_head: "Head to Head", roto: "Roto", points: "Points" };
@@ -148,6 +150,14 @@ export default function BasicsStep({ ctx }) {
           data-testid="wizard-duplicate-players-toggle"
         />
       </div>
+
+      {/* Iter 232N.86 — Rotisserie configuration (categories + period
+          + tiebreak) surfaces here when the admin picks Roto scoring. */}
+      {scoringFormat === "roto" && league?.id && (
+        <div className="border-t border-border pt-3">
+          <RotoSettingsPanel leagueId={league.id} embedded />
+        </div>
+      )}
 
       {/* Iter 232N.80 — Sandbox-only bulk-team-add panel. Lets platform
           admins seed the sandbox up to the target team count in one

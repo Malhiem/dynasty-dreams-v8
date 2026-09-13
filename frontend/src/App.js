@@ -26,6 +26,8 @@ import DashboardPage from "@/pages/DashboardPage";
 import LeaguesPage from "@/pages/LeaguesPage";
 import CreateLeaguePage from "@/pages/CreateLeaguePage";
 import LeagueDetailPage from "@/pages/LeagueDetailPage";
+// Iter 232N.86 — Roto standings page
+import RotoStandingsPage from "@/pages/RotoStandingsPage";
 import PlayersPage from "@/pages/PlayersPage";
 import DraftsPage from "@/pages/DraftsPage";
 import DraftRoomPage from "@/pages/DraftRoomPage";
@@ -116,6 +118,8 @@ function App() {
           <Route path="/league-search" element={<ProtectedRoute><LovableLeagueSearch /></ProtectedRoute>} />
           <Route path="/leagues/create" element={<ProtectedRoute><CreateLeaguePage /></ProtectedRoute>} />
           <Route path="/leagues/:id" element={<ProtectedRoute><LeagueDetailPage /></ProtectedRoute>} />
+          {/* Iter 232N.86 — Rotisserie standings + live matchup view */}
+          <Route path="/leagues/:id/roto" element={<ProtectedRoute><RotoStandingsPage /></ProtectedRoute>} />
           <Route path="/players" element={<ProtectedRoute><PlayersPage /></ProtectedRoute>} />
           <Route path="/players/:id" element={<ProtectedRoute><PlayerDetailPage /></ProtectedRoute>} />
           <Route path="/compare" element={<ProtectedRoute><ComparePage /></ProtectedRoute>} />
