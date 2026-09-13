@@ -210,6 +210,9 @@ export function TrophyRoomView({
   const [data, setData] = useState<TrophyData | null>(null);
   const [teamData, setTeamData] = useState<any>(null);
   const [filter, setFilter] = useState<"all" | "recent">("all");
+  // Iter 232N.84 — Multi-season filter. `null` = every year, otherwise
+  // clamp banners + trophies to just the picked season year.
+  const [yearFilter, setYearFilter] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Pull league trophy room
@@ -244,19 +247,33 @@ export function TrophyRoomView({
     if (!data) return [];
     return data.team_banners
       .flatMap(tb => tb.banners.map(b => ({ ...b, team_name: tb.team_name, team_id: tb.team_id })))
+      .filter(b => yearFilter == null ? true : Number(b.year) === yearFilter)
       .filter(b => filter === "all" ? true : (b.year >= (new Date().getFullYear() - 3)));
-  }, [data, filter]);
+  }, [data, filter, yearFilter]);
+
+  // Iter 232N.84 — Every year that has a banner OR a season snapshot,
+  // sorted descending so the newest rolled sandbox year is first.
+  const availableYears = useMemo(() => {
+    if (!data) return [];
+    const yrs = new Set<number>();
+    data.team_banners.forEach(tb => tb.banners.forEach(b => yrs.add(Number(b.year))));
+    (data.seasons || []).forEach((s: any) => {
+      if (s?.season_year != null) yrs.add(Number(s.season_year));
+    });
+    return [...yrs].filter(y => !Number.isNaN(y)).sort((a, b) => b - a);
+  }, [data]);
 
   const trophies = useMemo(() => {
     if (!data) return [];
     const out: any[] = [];
     for (const s of data.seasons) {
+      if (yearFilter != null && Number(s.season_year) !== yearFilter) continue;
       if (s.season_mvp) out.push({ ...s.season_mvp, _year: s.season_year });
       if (s.best_goalie) out.push({ ...s.best_goalie, _year: s.season_year });
       if (s.best_defenseman) out.push({ ...s.best_defenseman, _year: s.season_year });
     }
     return filter === "all" ? out : out.slice(0, 9);
-  }, [data, filter]);
+  }, [data, filter, yearFilter]);
 
   return (
     <>
@@ -269,6 +286,23 @@ export function TrophyRoomView({
           <div className="season-selector" data-testid="trophy-room-filter">
             <button onClick={() => setFilter("all")} className={`s-btn ${filter === "all" ? "active" : ""}`} data-testid="filter-all">All Time</button>
             <button onClick={() => setFilter("recent")} className={`s-btn ${filter === "recent" ? "active" : ""}`} data-testid="filter-recent">Last 3 Seasons</button>
+            {/* Iter 232N.84 — Season year picker (visible when we've
+                actually got multi-year history to switch between). */}
+            {availableYears.length > 1 && (
+              <select
+                value={yearFilter == null ? "all" : String(yearFilter)}
+                onChange={(e) => setYearFilter(e.target.value === "all" ? null : Number(e.target.value))}
+                className="s-btn"
+                style={{ appearance: "auto" }}
+                data-testid="trophy-room-year-filter"
+                aria-label="Filter by season year"
+              >
+                <option value="all">All years</option>
+                {availableYears.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            )}
             {teamData && !embedded && (
               <button
                 className="s-btn"

@@ -269,6 +269,116 @@ export default function DivisionsStep({ ctx }) {
         </div>
       )}
 
+      {/* Iter 232N.84 — Drag-and-drop team → division board. Renders
+          only when divisions exist. Unassigned teams sit in the "Pool"
+          bucket; drag any chip into a division bucket to assign it
+          (and auto-inherit the division's conference). */}
+      {divisionList.length > 0 && (
+        <div
+          className="border border-cyan-500/40 bg-cyan-500/5 rounded p-3 space-y-2"
+          data-testid="wizard-divisions-dnd-board"
+        >
+          <div className="flex items-center gap-2 flex-wrap">
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-cyan-200">
+              Drag teams into divisions
+            </h4>
+            <span className="text-[11px] text-muted-foreground">
+              Drop a team chip onto a division bucket to assign it — the conference is inherited automatically.
+            </span>
+          </div>
+          <div
+            className="grid gap-2"
+            style={{
+              gridTemplateColumns: `repeat(${divisionList.length + 1}, minmax(140px, 1fr))`,
+            }}
+          >
+            {/* Unassigned pool */}
+            {(() => {
+              const buckets = new Map();
+              buckets.set("__pool__", []);
+              divisionList.forEach((d) => buckets.set(d, []));
+              teams.forEach((t) => {
+                const d = divisionAssignments[t.id]?.division || "";
+                if (d && buckets.has(d)) buckets.get(d).push(t);
+                else buckets.get("__pool__").push(t);
+              });
+              const handleDrop = (targetDiv) => (e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove("ring-2", "ring-cyan-400");
+                const teamId = e.dataTransfer.getData("text/plain");
+                if (!teamId) return;
+                setDivisionAssignments((prev) => {
+                  if (targetDiv === "__pool__") {
+                    return {
+                      ...prev,
+                      [teamId]: { division: "", conference: "" },
+                    };
+                  }
+                  const conf = divisionToConference[targetDiv] || prev[teamId]?.conference || "";
+                  return {
+                    ...prev,
+                    [teamId]: { division: targetDiv, conference: conf },
+                  };
+                });
+              };
+              const bucketLabel = (key) => key === "__pool__" ? "Unassigned" : key;
+              const bucketDescription = (key) => {
+                if (key === "__pool__") return "Not yet placed";
+                const conf = divisionToConference[key];
+                return conf ? `→ ${conf}` : "Not mapped to a conference yet";
+              };
+              return [...buckets.entries()].map(([key, ts]) => (
+                <div
+                  key={key}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.currentTarget.classList.add("ring-2", "ring-cyan-400");
+                  }}
+                  onDragLeave={(e) => e.currentTarget.classList.remove("ring-2", "ring-cyan-400")}
+                  onDrop={handleDrop(key)}
+                  className={`rounded border p-2 min-h-[72px] transition-shadow ${
+                    key === "__pool__"
+                      ? "border-rose-500/40 bg-rose-500/5"
+                      : "border-border bg-background/40"
+                  }`}
+                  data-testid={`wizard-dnd-bucket-${key}`}
+                >
+                  <div className="text-[11px] font-semibold flex items-center justify-between mb-1">
+                    <span className="truncate">{bucketLabel(key)}</span>
+                    <span className="text-muted-foreground tabular-nums">{ts.length}</span>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mb-1.5 truncate">
+                    {bucketDescription(key)}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {ts.map((t) => (
+                      <span
+                        key={t.id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData("text/plain", t.id);
+                          e.dataTransfer.effectAllowed = "move";
+                        }}
+                        className="inline-block rounded-full border border-cyan-500/40 bg-cyan-500/10 hover:bg-cyan-500/20 text-[10px] px-2 py-0.5 cursor-grab active:cursor-grabbing select-none"
+                        title="Drag me onto a division bucket"
+                        data-testid={`wizard-dnd-team-chip-${t.id}`}
+                      >
+                        {t.name}
+                      </span>
+                    ))}
+                    {ts.length === 0 && (
+                      <span className="text-[10px] italic text-muted-foreground">
+                        Drop teams here
+                      </span>
+                    )}
+                  </div>
+                </div>
+              ));
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* Step B: Assign each team via dropdown */}
       <div className="border border-border rounded max-h-[280px] overflow-y-auto">
         <table className="w-full text-sm">

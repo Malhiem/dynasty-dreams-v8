@@ -1416,11 +1416,11 @@ async def sandbox_roll_to_next_season(
 
     # Age up players who have a birthday within the rolled year.
     aged = 0
+    rostered_ids: set = set()
     if input.age_players_by_birthday:
         roll_date = now.replace(year=new_year)
         # Only touch players that appear on ANY roster in this league —
         # global player aging is out of scope.
-        rostered_ids: set = set()
         async for t in db.teams.find({"league_id": league_id},
                                      {"roster": 1}):
             for pid in (t.get("roster") or []):
@@ -1440,6 +1440,59 @@ async def sandbox_roll_to_next_season(
                 )
                 aged += 1
 
+    # Iter 232N.84 — Salary Cap rollover: sync each rostered player's
+    # cap_hit to their active contract's AAV for the new season. If
+    # the contract has expired, mark it "expired" and zero out cap_hit
+    # (player becomes a free agent — cap_hit updates on the next
+    # signing, not on the roll).
+    contracts_expired = 0
+    contracts_synced = 0
+    # Re-scan rostered players since the age-up branch may have been skipped.
+    if not rostered_ids:
+        async for t in db.teams.find({"league_id": league_id},
+                                     {"roster": 1}):
+            for pid in (t.get("roster") or []):
+                rostered_ids.add(pid)
+    for pid in rostered_ids:
+        # Grab the most recent (highest start_year) ACTIVE contract for
+        # this player + league so we always sync to the latest deal.
+        contracts = await db.contracts.find(
+            {"league_id": league_id, "player_id": pid,
+             "status": "active"},
+            sort=[("start_year", -1)],
+        ).to_list(20)
+        if not contracts:
+            continue
+        active = contracts[0]
+        end_year = int(active.get("end_year") or new_year)
+        if end_year < new_year:
+            # Contract expired during the rolled year.
+            await db.contracts.update_one(
+                {"_id": active["_id"]},
+                {"$set": {"status": "expired",
+                          "expired_at": now.isoformat()}},
+            )
+            try:
+                await db.players.update_one(
+                    {"_id": ObjectId(pid)},
+                    {"$set": {"cap_hit": 0, "salary": 0}},
+                )
+            except Exception:
+                pass
+            contracts_expired += 1
+        else:
+            # Contract still active — sync player.cap_hit to the
+            # contract's AAV for the new season year.
+            aav = int(active.get("aav") or 0)
+            try:
+                await db.players.update_one(
+                    {"_id": ObjectId(pid)},
+                    {"$set": {"cap_hit": aav}},
+                )
+            except Exception:
+                pass
+            contracts_synced += 1
+
     return {
         "ok": True,
         "old_season_year": old_year,
@@ -1447,7 +1500,9 @@ async def sandbox_roll_to_next_season(
         "matchups_deleted": matchups_deleted.deleted_count,
         "drafts_deleted": drafts_deleted.deleted_count,
         "players_aged": aged,
-        "rostered_players": len(rostered_ids) if input.age_players_by_birthday else 0,
+        "rostered_players": len(rostered_ids),
+        "contracts_synced": contracts_synced,
+        "contracts_expired": contracts_expired,
     }
 
 
