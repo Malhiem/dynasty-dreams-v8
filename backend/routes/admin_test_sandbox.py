@@ -1302,6 +1302,148 @@ async def sandbox_seed_playoffs(
     }
 
 
+# ─── Iter 232N.85 — One-click bulk contract signings ─────────────
+
+
+class BulkSignContractsRequest(BaseModel):
+    years: int = Field(3, ge=1, le=8)
+    # When False, players who already have an active contract are
+    # skipped so the admin can top up empty rosters without wiping
+    # existing deals.
+    overwrite_existing: bool = False
+    # AAV floor/ceiling in dollars — the generated contract lands
+    # somewhere inside this band based on the player's fantasy score.
+    min_aav: int = Field(775_000, ge=100_000)   # NHL minimum-ish
+    max_aav: int = Field(13_500_000, ge=1_000_000)
+
+
+def _estimated_aav(player: dict, min_aav: int, max_aav: int) -> int:
+    """Cheap, deterministic AAV estimate:
+      • Anchor on season_stats.points (fantasy proxy) capped at 120.
+      • Blend in age discount past 33 so older vets earn less.
+      • Round to the nearest $100k so the number reads like a real deal.
+    """
+    pts = float((player.get("season_stats") or {}).get("points", 0) or 0)
+    age = int(player.get("age") or 26)
+    perf_ratio = min(1.0, max(0.0, pts / 120.0))
+    aav = min_aav + int((max_aav - min_aav) * perf_ratio)
+    if age >= 34:
+        aav = int(aav * 0.72)
+    elif age >= 32:
+        aav = int(aav * 0.85)
+    aav = max(min_aav, min(max_aav, aav))
+    # Round to nearest $100k.
+    return int(round(aav / 100_000)) * 100_000
+
+
+@router.post("/admin/test-sandbox/leagues/{league_id}/bulk-sign-contracts")
+async def sandbox_bulk_sign_contracts(
+    league_id: str,
+    input: BulkSignContractsRequest,
+    request: Request,
+):
+    """Sign every rostered player to a fresh contract in one click.
+
+    Perfect for testing cap-crunch scenarios without hand-signing dozens
+    of deals. Skips players who already have an active contract unless
+    `overwrite_existing=True` (in which case prior contracts get marked
+    superseded before the new deal is inserted).
+    """
+    admin = await _require_admin(request)
+    db = _db()
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=400,
+            detail="bulk-sign-contracts is only available on sandbox test leagues",
+        )
+    start_year = int(
+        league.get("current_season_year")
+        or datetime.now(timezone.utc).year
+    )
+    end_year = start_year + input.years - 1
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    contracts_created = 0
+    contracts_skipped = 0
+    contracts_superseded = 0
+    teams_touched: set = set()
+    total_cap = 0
+
+    async for t in db.teams.find({"league_id": league_id}):
+        roster = list(t.get("roster") or [])
+        if not roster:
+            continue
+        for pid in roster:
+            try:
+                p = await db.players.find_one({"_id": ObjectId(pid)})
+            except Exception:
+                continue
+            if not p:
+                continue
+            existing = await db.contracts.find_one({
+                "league_id": league_id,
+                "player_id": pid,
+                "status": "active",
+            })
+            if existing and not input.overwrite_existing:
+                contracts_skipped += 1
+                continue
+            if existing and input.overwrite_existing:
+                await db.contracts.update_one(
+                    {"_id": existing["_id"]},
+                    {"$set": {"status": "superseded",
+                              "superseded_at": now_iso}},
+                )
+                contracts_superseded += 1
+            aav = _estimated_aav(p, input.min_aav, input.max_aav)
+            total_value = aav * input.years
+            await db.contracts.insert_one({
+                "league_id": league_id,
+                "team_id": str(t["_id"]),
+                "team_name": t.get("name"),
+                "player_id": pid,
+                "player_name": p.get("name"),
+                "player_position": p.get("position"),
+                "player_nhl_team": p.get("team", ""),
+                "aav": aav,
+                "total_value": total_value,
+                "signing_bonus": 0,
+                "years": input.years,
+                "start_year": start_year,
+                "end_year": end_year,
+                "free_agency_year": end_year + 1,
+                "no_trade_clause": False,
+                "no_move_clause": False,
+                "player_status": "signed",
+                "status": "active",
+                "created_at": now_iso,
+                "bulk_signed": True,
+                "signed_by": admin.get("email"),
+            })
+            await db.players.update_one(
+                {"_id": ObjectId(pid)},
+                {"$set": {"cap_hit": aav, "salary": aav}},
+            )
+            contracts_created += 1
+            total_cap += aav
+            teams_touched.add(str(t["_id"]))
+
+    return {
+        "ok": True,
+        "years": input.years,
+        "start_year": start_year,
+        "end_year": end_year,
+        "contracts_created": contracts_created,
+        "contracts_skipped": contracts_skipped,
+        "contracts_superseded": contracts_superseded,
+        "teams_touched": len(teams_touched),
+        "total_cap_committed": total_cap,
+    }
+
+
 # ─── Iter 232N.83 — Roll to Next Season ───────────────────────────
 
 

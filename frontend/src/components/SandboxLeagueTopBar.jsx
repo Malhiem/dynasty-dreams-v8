@@ -22,7 +22,7 @@ import { toast } from 'sonner';
 import {
   FlaskConical, UserCircle2, Rewind, RefreshCw, Trophy,
   Check, Circle, Users, ClipboardList, CalendarClock, Zap,
-  FileDown, CalendarPlus,
+  FileDown, CalendarPlus, DollarSign,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -99,6 +99,7 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
   // Iter 232N.83 — Roll to next season + PDF download state.
   const [rolling, setRolling] = useState(false);
   const [downloadingRecap, setDownloadingRecap] = useState(false);
+  const [signing, setSigning] = useState(false);
 
   const isAdmin =
     user?.role === 'admin' ||
@@ -324,6 +325,42 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
   };
 
 
+  // Iter 232N.85 — Bulk-sign every rostered player to a fresh
+  // contract in one click. Great for stress-testing cap-crunch
+  // scenarios without hand-signing dozens of deals.
+  const bulkSignContracts = async () => {
+    const yearsRaw = window.prompt(
+      'Sign every rostered player to a new deal — how many years?\n(1-8, default 3)',
+      '3',
+    );
+    if (yearsRaw == null) return;
+    const years = Math.max(1, Math.min(8, parseInt(yearsRaw, 10) || 3));
+    const overwrite = window.confirm(
+      `Overwrite existing active contracts?\n\n` +
+      `OK  = supersede any current deal + sign a new ${years}-year contract\n` +
+      `Cancel = skip anyone who already has an active contract`,
+    );
+    setSigning(true);
+    try {
+      const { data } = await api.post(
+        `/admin/test-sandbox/leagues/${leagueId}/bulk-sign-contracts`,
+        { years, overwrite_existing: overwrite },
+      );
+      const capM = (data.total_cap_committed / 1_000_000).toFixed(1);
+      toast.success(
+        `Signed ${data.contracts_created} contract${data.contracts_created === 1 ? '' : 's'} ` +
+        `(${data.years}yr) across ${data.teams_touched} team${data.teams_touched === 1 ? '' : 's'} ` +
+        `· skipped ${data.contracts_skipped} · $${capM}M committed`,
+        { duration: 7000 },
+      );
+      window.dispatchEvent(new CustomEvent('sandbox:bulk-signed', { detail: data }));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Bulk sign failed');
+    } finally {
+      setSigning(false);
+    }
+  };
+
   const resetSimulation = async () => {
     if (!window.confirm(
       `Reset "${leagueName}"? This wipes rosters, matchups, and the champion — every step returns to Day 1.`,
@@ -460,8 +497,7 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
                 onClick={simulateWeek}
                 disabled={simulating}
                 data-testid="sandbox-topbar-simulate-btn"
-              >
-                {simulating ? (
+              >                {simulating ? (
                   <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
                 ) : null}
                 Simulate Week&nbsp;{lastSimWeek + 1}
@@ -492,6 +528,27 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
                 </Button>
               </div>
             </>
+          )}
+
+          {/* Iter 232N.85 — Bulk-sign contracts (visible whenever
+              draft is complete, so there are rosters to sign). */}
+          {draftDone && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-[11px] bg-indigo-500/15 border-indigo-500/40 text-indigo-50 hover:bg-indigo-500/25"
+              onClick={bulkSignContracts}
+              disabled={signing}
+              data-testid="sandbox-topbar-bulk-sign-btn"
+              title="Sign every rostered player to a new contract (test cap-crunch scenarios)"
+            >
+              {signing ? (
+                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <DollarSign className="h-3 w-3 mr-1" />
+              )}
+              Bulk sign
+            </Button>
           )}
 
           {/* Step 4 — Playoffs */}
