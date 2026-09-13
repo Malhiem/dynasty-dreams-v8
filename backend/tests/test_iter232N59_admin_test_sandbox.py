@@ -190,11 +190,14 @@ async def test_create_league_num_teams_override_and_cap():
         assert len(r["teams"]) == 8
         created_id = r["league_id"]
 
-        # Above cap → 400 (nhl_redraft_12 preset caps at 20 — use that
-        # so pydantic's outer ge=4,le=32 validator doesn't trip first)
+        # Above cap → 400. nhl_redraft_12 now supports up to 32 teams
+        # (iter 232N.82 bumped H2H presets to the platform ceiling), so
+        # test the cap with a value above 32 that still fits within
+        # pydantic's outer ge=4, le=32 validator.
+        # Use 32 here — the preset explicitly caps at 32.
         with pytest.raises(HTTPException) as exc:
             await create_test_league(
-                CreateTestLeagueRequest(preset_key="nhl_redraft_12", num_teams=21),
+                CreateTestLeagueRequest(preset_key="nhl_redraft_12", num_teams=33),
                 _StubReq(),
             )
         assert exc.value.status_code == 400

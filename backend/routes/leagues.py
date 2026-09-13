@@ -56,7 +56,11 @@ class LeagueCreate(BaseModel):
     sport: str = "nhl"
     format: LeagueFormat
     scoring_format: ScoringFormat
-    max_teams: int = Field(default=12, ge=4, le=32)
+    max_teams: int = Field(default=12, ge=4, le=100)   # Iter 232N.83
+    # Iter 232N.83 — When enabled, the same player can appear on multiple
+    # rosters within this league (breaks the classic mutually-exclusive
+    # draft pool). Unlocks max_teams beyond 32.
+    allow_duplicate_players: bool = False
     salary_cap_enabled: bool = False
     salary_cap: Optional[float] = None
     draft_type: DraftType = DraftType.SNAKE
@@ -95,6 +99,8 @@ class LeagueResponse(BaseModel):
     # Iter 232N.80 — expose the sandbox flag so the setup wizard can
     # conditionally render sandbox-only controls (bulk-add test teams).
     is_test_sandbox: Optional[bool] = None
+    # Iter 232N.83 — Duplicate-player mode flag (unlocks max_teams > 32).
+    allow_duplicate_players: Optional[bool] = None
     # Extended wizard / commissioner-settable fields (single source of truth)
     bench_spots: Optional[int] = None
     minors_spots: Optional[int] = None
@@ -194,6 +200,19 @@ async def create_league(input: LeagueCreate, request: Request):
     get_current_user = _deps["get_current_user"]
     user = await get_current_user(request)
 
+    # Iter 232N.83 — Duplicate-player mode gate. max_teams > 32 is only
+    # allowed when the same player can appear on multiple rosters,
+    # because the mutually-exclusive draft pool would otherwise
+    # bottleneck (there aren't enough starters to service 33+ teams).
+    if input.max_teams > 32 and not input.allow_duplicate_players:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "max_teams > 32 requires allow_duplicate_players=true "
+                "(large leagues rely on players being draftable across teams)."
+            ),
+        )
+
     # Iter 219 — validate matchups_per_week for H2H formats
     scoring_value = input.scoring_format.value
     matchups_per_week = int(input.matchups_per_week or 1)
@@ -226,6 +245,7 @@ async def create_league(input: LeagueCreate, request: Request):
         "is_private": input.is_private,
         "invite_code": secrets.token_urlsafe(8),
         "matchups_per_week": matchups_per_week,
+        "allow_duplicate_players": bool(input.allow_duplicate_players),
         "status": "setup",
         "created_at": datetime.now(timezone.utc),
     }
@@ -304,6 +324,7 @@ def _league_to_response(league: dict) -> LeagueResponse:
         created_at=league["created_at"],
         setup_wizard_complete=bool(league.get("setup_wizard_complete", False)),
         is_test_sandbox=bool(league.get("is_test_sandbox")) if league.get("is_test_sandbox") is not None else None,
+        allow_duplicate_players=bool(league.get("allow_duplicate_players")) if league.get("allow_duplicate_players") is not None else None,
         bench_spots=league.get("bench_spots"),
         minors_spots=league.get("minors_spots"),
         minors_split_enabled=league.get("minors_split_enabled"),
@@ -1912,7 +1933,9 @@ class LeagueUpdate(BaseModel):
     # Iter 226 — `format` (dynasty/keeper/redraft) is editable from the
     # wizard's Basics step, so it needs to be in the sparse update model.
     format: Optional[str] = None
-    max_teams: Optional[int] = Field(default=None, ge=2, le=32)
+    max_teams: Optional[int] = Field(default=None, ge=2, le=100)   # Iter 232N.83
+    # Iter 232N.83 — Duplicate-player mode unlocks max_teams > 32.
+    allow_duplicate_players: Optional[bool] = None
     keepers_allowed: Optional[int] = Field(default=None, ge=0, le=30)
     entry_fee: Optional[float] = Field(default=None, ge=0)
     # Trade settings
@@ -2034,6 +2057,8 @@ _LEAGUE_UPDATE_ALLOWED = {
     # Iter 228m — Split Minors pool into skater + goalie sub-pools.
     "minors_split_enabled", "minors_skater_spots", "minors_goalie_spots",
     "scoring_format", "max_teams", "keepers_allowed", "entry_fee",
+    # Iter 232N.83 — Duplicate-player mode toggle.
+    "allow_duplicate_players",
     "trade_review_period_hours", "trade_veto_threshold_pct", "trade_deadline_week",
     "trade_deadline_at",
     "waiver_faab_budget", "waiver_period_days",
@@ -2114,6 +2139,22 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
         if new_val != old_val:
             update[field] = new_val
             diff[field] = {"from": old_val, "to": new_val}
+
+    # Iter 232N.83 — Enforce the max_teams > 32 → duplicate-mode gate on
+    # both create + update paths so admins can't sneak a 100-team league
+    # in via a follow-up PUT.
+    effective_dupes = update.get(
+        "allow_duplicate_players", league.get("allow_duplicate_players", False),
+    )
+    effective_max = update.get("max_teams", league.get("max_teams", 12))
+    if int(effective_max or 0) > 32 and not effective_dupes:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "max_teams > 32 requires allow_duplicate_players=true "
+                "(large leagues rely on players being draftable across teams)."
+            ),
+        )
 
     # ── Iter 176: derive `roster_spots` from `position_breakdown.active`
     # whenever the commissioner has set per-position caps for the

@@ -16,7 +16,7 @@
  * reopened from the top-bar champion badge.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { Trophy, X, RefreshCw } from 'lucide-react';
+import { Trophy, X, RefreshCw, ChevronLeft } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -45,11 +45,13 @@ function roundLabel(round, totalRounds) {
   return `Round ${round}`;
 }
 
-function MatchupCard({ m, isFinal }) {
+function MatchupCard({ m, isFinal, onOpen }) {
   const homeWon = m.winner === m.home;
   return (
-    <div
-      className={`rounded border ${isFinal ? 'border-amber-400/60 bg-amber-500/10' : 'border-border bg-background/60'} p-2 text-xs space-y-1 shadow-sm`}
+    <button
+      type="button"
+      onClick={() => onOpen?.(m)}
+      className={`w-full text-left rounded border ${isFinal ? 'border-amber-400/60 bg-amber-500/10' : 'border-border bg-background/60'} p-2 text-xs space-y-1 shadow-sm hover:border-accent/70 hover:bg-accent/5 transition-colors`}
       data-testid={`bracket-matchup-r${m.round}`}
     >
       <div
@@ -64,6 +66,104 @@ function MatchupCard({ m, isFinal }) {
         <span className="truncate">{m.away}</span>
         <span className="tabular-nums">{m.away_score}</span>
       </div>
+    </button>
+  );
+}
+
+// Iter 232N.83 — Simple box-score panel shown when the admin clicks
+// a matchup card in the bracket. Fetches both team rosters lazily so
+// the bracket modal stays snappy.
+function BoxScorePanel({ m, onBack }) {
+  const [homeRoster, setHomeRoster] = useState([]);
+  const [awayRoster, setAwayRoster] = useState([]);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      try {
+        const [h, a] = await Promise.all([
+          api.get(`/teams/${m.home_team_id}/roster-truncated`).catch(() => null),
+          api.get(`/teams/${m.away_team_id}/roster-truncated`).catch(() => null),
+        ]);
+        if (cancelled) return;
+        const _players = (t) => (t?.data?.players || []).slice(0, 8);
+        setHomeRoster(_players(h));
+        setAwayRoster(_players(a));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [m.home_team_id, m.away_team_id]);
+
+  const homeWon = m.winner === m.home;
+  const row = (p) => {
+    if (!p) return null;
+    const name = typeof p === 'string' ? p : (p.name || p.player_name || 'Player');
+    const pos = typeof p === 'string' ? '' : (p.position || '');
+    return (
+      <li className="text-[11px] flex justify-between gap-2 py-0.5 border-b border-border/40 last:border-0">
+        <span className="truncate">{name}</span>
+        {pos && <span className="text-muted-foreground">{pos}</span>}
+      </li>
+    );
+  };
+  return (
+    <div data-testid="bracket-boxscore-panel" className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onBack}
+          data-testid="bracket-boxscore-back-btn"
+        >
+          <ChevronLeft className="h-3.5 w-3.5 mr-1" /> Back to bracket
+        </Button>
+        <Badge variant="outline" className="text-[10px]">
+          Round {m.round}
+        </Badge>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div
+          className={`rounded border p-3 ${homeWon ? 'border-emerald-400/60 bg-emerald-500/10' : 'border-border bg-background/60'}`}
+          data-testid="bracket-boxscore-home"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold">{m.home}</span>
+            <span className="text-lg font-bold tabular-nums">{m.home_score}</span>
+          </div>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Roster (top 8)</p>
+          <ul>{homeRoster.length ? homeRoster.map((p, i) => (
+            <li key={i}>{row(p)}</li>
+          )) : (
+            <li className="text-[11px] text-muted-foreground italic">
+              {loading ? 'Loading…' : 'No roster on file'}
+            </li>
+          )}</ul>
+        </div>
+        <div
+          className={`rounded border p-3 ${!homeWon ? 'border-emerald-400/60 bg-emerald-500/10' : 'border-border bg-background/60'}`}
+          data-testid="bracket-boxscore-away"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold">{m.away}</span>
+            <span className="text-lg font-bold tabular-nums">{m.away_score}</span>
+          </div>
+          <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Roster (top 8)</p>
+          <ul>{awayRoster.length ? awayRoster.map((p, i) => (
+            <li key={i}>{row(p)}</li>
+          )) : (
+            <li className="text-[11px] text-muted-foreground italic">
+              {loading ? 'Loading…' : 'No roster on file'}
+            </li>
+          )}</ul>
+        </div>
+      </div>
+      <p className="text-[10px] text-muted-foreground">
+        Winner:&nbsp;<strong className="text-emerald-300">{m.winner}</strong>
+        &nbsp;· Loser:&nbsp;<span className="text-muted-foreground">{m.loser}</span>
+      </p>
     </div>
   );
 }
@@ -74,6 +174,12 @@ export default function SandboxPlayoffBracketModal({
   const [data, setData] = useState(initialData || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  // Iter 232N.83 — Selected matchup for the "click a card → box score"
+  // drill-in flow. null → grid view, object → box-score panel.
+  const [openMatchup, setOpenMatchup] = useState(null);
+
+  // Reset the drill-in view whenever the modal reopens.
+  useEffect(() => { if (!open) setOpenMatchup(null); }, [open]);
 
   // Fetch on open unless the caller pre-supplied the seed response.
   useEffect(() => {
@@ -165,7 +271,7 @@ export default function SandboxPlayoffBracketModal({
           </div>
         )}
 
-        {!loading && !error && totalRounds > 0 && (
+        {!loading && !error && totalRounds > 0 && !openMatchup && (
           <div
             className="grid gap-4 overflow-auto pb-2 max-h-[65vh]"
             style={{ gridTemplateColumns: `repeat(${totalRounds}, minmax(180px, 1fr))` }}
@@ -196,6 +302,7 @@ export default function SandboxPlayoffBracketModal({
                         key={`${m.round}-${idx}-${m.home}-${m.away}`}
                         m={m}
                         isFinal={isFinal}
+                        onOpen={setOpenMatchup}
                       />
                     ))}
                   </div>
@@ -203,6 +310,13 @@ export default function SandboxPlayoffBracketModal({
               );
             })}
           </div>
+        )}
+
+        {openMatchup && (
+          <BoxScorePanel
+            m={openMatchup}
+            onBack={() => setOpenMatchup(null)}
+          />
         )}
 
         <div className="flex justify-end pt-2">

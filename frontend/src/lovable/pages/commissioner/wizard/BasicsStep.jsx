@@ -27,11 +27,16 @@ export default function BasicsStep({ ctx }) {
     benchSpots, setBenchSpots,
     minorsSpots, setMinorsSpots,
     minorsEnabled, setMinorsEnabled,
+    allowDuplicatePlayers, setAllowDuplicatePlayers,
     addSandboxTeams,
     addingSandboxTeams,
   } = ctx;
 
   const isSandbox = Boolean(league?.is_test_sandbox);
+  // Iter 232N.83 — Duplicate-player mode unlocks max_teams > 32
+  // (up to 100). Without it, the wizard clamps to the classic
+  // mutually-exclusive draft-pool ceiling.
+  const teamCapMax = allowDuplicatePlayers ? 100 : 32;
   const openSlots = Math.max(0, maxTeams - teams.length);
   // Default the "how many to add" input to whatever gets the league to
   // the target maxTeams (or 4 when we're already at capacity).
@@ -60,14 +65,19 @@ export default function BasicsStep({ ctx }) {
           <Label className="text-muted-foreground text-xs" htmlFor="wiz-stat-teams">Teams</Label>
           <Input
             id="wiz-stat-teams"
-            type="number" min={2} max={32} value={maxTeams}
-            onChange={(e) => setMaxTeams(Math.max(2, Math.min(32, parseInt(e.target.value || "0", 10))))}
+            type="number" min={2} max={teamCapMax} value={maxTeams}
+            onChange={(e) => setMaxTeams(Math.max(2, Math.min(teamCapMax, parseInt(e.target.value || "0", 10))))}
             className="font-bold h-8 mt-1"
             data-testid="wizard-max-teams"
           />
           {teams.length < maxTeams && (
             <p className="text-[10px] text-muted-foreground mt-1" data-testid="wizard-placeholder-hint">
               {teams.length}/{maxTeams} filled · {maxTeams - teams.length} open slot{maxTeams - teams.length === 1 ? "" : "s"}
+            </p>
+          )}
+          {maxTeams > 32 && !allowDuplicatePlayers && (
+            <p className="text-[10px] text-rose-300 mt-1" data-testid="wizard-teams-over-cap-warning">
+              &gt; 32 teams requires duplicate-player mode below.
             </p>
           )}
         </div>
@@ -103,6 +113,40 @@ export default function BasicsStep({ ctx }) {
           <span className="text-muted-foreground text-xs">Sport</span>
           <div className="font-bold uppercase mt-1">{league?.sport || "nhl"}</div>
         </div>
+      </div>
+
+      {/* Iter 232N.83 — Duplicate-players toggle. Required to unlock
+          max_teams > 32 (see server-side gate in routes/leagues.py). */}
+      <div
+        className="rounded-md border border-border p-3 flex items-start justify-between gap-3"
+        data-testid="wizard-duplicate-players-row"
+      >
+        <div>
+          <Label
+            className="text-xs font-semibold text-white flex items-center gap-1"
+            htmlFor="wizard-duplicate-players-toggle"
+          >
+            Duplicate players for selection
+          </Label>
+          <p className="text-[11px] text-muted-foreground mt-0.5">
+            Let the same player be drafted onto multiple teams. Required
+            for leagues with more than 32 teams (large leagues would
+            otherwise run out of starters). Team cap:&nbsp;
+            <strong className="text-white">{teamCapMax}</strong>.
+          </p>
+        </div>
+        <Switch
+          id="wizard-duplicate-players-toggle"
+          checked={Boolean(allowDuplicatePlayers)}
+          onCheckedChange={(v) => {
+            setAllowDuplicatePlayers(Boolean(v));
+            if (!v && maxTeams > 32) {
+              // Coming back OFF — clamp maxTeams back to 32.
+              setMaxTeams(32);
+            }
+          }}
+          data-testid="wizard-duplicate-players-toggle"
+        />
       </div>
 
       {/* Iter 232N.80 — Sandbox-only bulk-team-add panel. Lets platform

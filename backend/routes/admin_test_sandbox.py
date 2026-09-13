@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -141,7 +141,7 @@ def _find_preset(key: str) -> dict:
 class CreateTestLeagueRequest(BaseModel):
     preset_key: str
     name: Optional[str] = None
-    num_teams: Optional[int] = Field(default=None, ge=4, le=32)
+    num_teams: Optional[int] = Field(default=None, ge=4, le=100)
 
 
 async def _make_test_user(db, admin_id: str, league_id_hint: str = "pending", idx: int = 1) -> dict:
@@ -1300,6 +1300,311 @@ async def sandbox_seed_playoffs(
         ],
         "bracket": bracket,
     }
+
+
+# ─── Iter 232N.83 — Roll to Next Season ───────────────────────────
+
+
+class RollNextSeasonRequest(BaseModel):
+    # When True, players whose birthday falls between the old
+    # season_end date and the new season_start date get age +1.
+    age_players_by_birthday: bool = True
+
+
+def _age_up_if_birthday_passed(player: dict, roll_date: datetime) -> tuple[bool, int]:
+    """Return (should_age, new_age) if the player's birthday has passed
+    within the past 365 days of `roll_date`.
+
+    Rules:
+      • If the player has `birth_date` (ISO YYYY-MM-DD): age up when
+        the birthday falls between (roll_date - 365d) and roll_date.
+      • Fallback: no birth_date on record → age up every roll (dynasty
+        leagues normally roll once/year, so this is safe).
+    """
+    current_age = int(player.get("age") or 0)
+    bd = player.get("birth_date")
+    if not bd:
+        return True, current_age + 1
+    try:
+        birth = datetime.fromisoformat(str(bd).split("T")[0])
+    except Exception:
+        return True, current_age + 1
+    # Where would this year's birthday fall?
+    this_years_bday = birth.replace(year=roll_date.year)
+    # If birthday has already occurred this calendar year, age up.
+    passed = this_years_bday <= roll_date.replace(tzinfo=None)
+    return passed, (current_age + 1 if passed else current_age)
+
+
+@router.post("/admin/test-sandbox/leagues/{league_id}/roll-to-next-season")
+async def sandbox_roll_to_next_season(
+    league_id: str,
+    input: RollNextSeasonRequest,
+    request: Request,
+):
+    """Archive the current sandbox season and reset simulation state
+    for the next dynasty year.
+
+    Preserves: teams, rosters, division/conference structure, users.
+    Wipes: all matchups (regular + playoff), champion pointer,
+    `sandbox_last_sim_week`, `championship_won_at` stamps.
+    Increments: `current_season_year` by 1.
+    Ages: every rostered player whose birthday has already passed in
+    the new calendar year (if `age_players_by_birthday=True`).
+    Requires: playoffs must have been seeded (i.e. a champion crowned)
+    so we know the season is actually complete.
+    """
+    admin = await _require_admin(request)
+    db = _db()
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=400,
+            detail="roll-to-next-season is only available on sandbox test leagues",
+        )
+    if not league.get("sandbox_playoff_champion_team_id"):
+        raise HTTPException(
+            status_code=400,
+            detail="Seed playoffs (crown a champion) before rolling to the next season.",
+        )
+
+    now = datetime.now(timezone.utc)
+    old_year = int(
+        league.get("current_season_year")
+        or league.get("sandbox_playoff_season_year")
+        or now.year
+    )
+    new_year = old_year + 1
+
+    # Wipe all sim data (regular + playoffs).
+    matchups_deleted = await db.matchups.delete_many({
+        "league_id": league_id,
+        "$or": [{"sandbox_sim": True}, {"sandbox_playoff": True}],
+    })
+    # Reset team standings but PRESERVE rosters + lineups (dynasty).
+    await db.teams.update_many(
+        {"league_id": league_id},
+        {"$set": {"wins": 0, "losses": 0, "ties": 0,
+                  "points_for": 0, "points_against": 0},
+         "$unset": {"championship_won_at": ""}},
+    )
+    # Wipe the sandbox-simulated draft doc so the "Setup → Draft" step
+    # locks again — dynasty rollover should push admins through a
+    # keeper/inflation phase before a fresh draft.
+    drafts_deleted = await db.drafts.delete_many({
+        "league_id": league_id, "sandbox_sim_draft": True,
+    })
+
+    # Advance the calendar + clear champion pointer.
+    await db.leagues.update_one(
+        {"_id": ObjectId(league_id)},
+        {"$set": {
+            "current_season_year": new_year,
+            "sandbox_rolled_at": now.isoformat(),
+            "sandbox_last_rolled_from_year": old_year,
+        },
+         "$unset": {
+             "sandbox_last_sim_week": "",
+             "sandbox_playoffs_seeded_at": "",
+             "sandbox_playoff_champion_team_id": "",
+             "sandbox_playoff_season_year": "",
+         }},
+    )
+
+    # Age up players who have a birthday within the rolled year.
+    aged = 0
+    if input.age_players_by_birthday:
+        roll_date = now.replace(year=new_year)
+        # Only touch players that appear on ANY roster in this league —
+        # global player aging is out of scope.
+        rostered_ids: set = set()
+        async for t in db.teams.find({"league_id": league_id},
+                                     {"roster": 1}):
+            for pid in (t.get("roster") or []):
+                rostered_ids.add(pid)
+        for pid in rostered_ids:
+            try:
+                p = await db.players.find_one({"_id": ObjectId(pid)})
+            except Exception:
+                continue
+            if not p:
+                continue
+            should_age, new_age = _age_up_if_birthday_passed(p, roll_date)
+            if should_age and new_age != int(p.get("age") or 0):
+                await db.players.update_one(
+                    {"_id": p["_id"]},
+                    {"$set": {"age": new_age}},
+                )
+                aged += 1
+
+    return {
+        "ok": True,
+        "old_season_year": old_year,
+        "new_season_year": new_year,
+        "matchups_deleted": matchups_deleted.deleted_count,
+        "drafts_deleted": drafts_deleted.deleted_count,
+        "players_aged": aged,
+        "rostered_players": len(rostered_ids) if input.age_players_by_birthday else 0,
+    }
+
+
+# ─── Iter 232N.83 — Season recap PDF export ───────────────────────
+
+
+@router.get(
+    "/admin/test-sandbox/leagues/{league_id}/season-recap.pdf",
+    response_class=Response,
+)
+async def sandbox_season_recap_pdf(league_id: str, request: Request):
+    """Emit a one-page PDF recap of a completed sandbox season."""
+    from io import BytesIO
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+    )
+
+    await _require_admin(request)
+    db = _db()
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=400, detail="Not a sandbox league",
+        )
+
+    teams = await db.teams.find(
+        {"league_id": league_id},
+        sort=[("wins", -1), ("points_for", -1)],
+    ).to_list(200)
+    playoff_rows = await db.matchups.find(
+        {"league_id": league_id, "sandbox_playoff": True},
+        sort=[("playoff_round", 1), ("_id", 1)],
+    ).to_list(200)
+    champion_id = league.get("sandbox_playoff_champion_team_id")
+
+    # Build the PDF.
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=LETTER,
+        leftMargin=36, rightMargin=36, topMargin=36, bottomMargin=36,
+    )
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle(
+        "H1", parent=styles["Heading1"],
+        fontSize=18, textColor=colors.HexColor("#0f172a"),
+        spaceAfter=2,
+    )
+    small = ParagraphStyle(
+        "small", parent=styles["BodyText"],
+        fontSize=8, textColor=colors.HexColor("#475569"),
+        spaceAfter=8,
+    )
+    section = ParagraphStyle(
+        "sec", parent=styles["Heading3"],
+        fontSize=11, textColor=colors.HexColor("#7c3aed"),
+        spaceBefore=6, spaceAfter=4,
+    )
+
+    elements = [
+        Paragraph(
+            f"{league.get('name')} — Season Recap",
+            h1,
+        ),
+        Paragraph(
+            f"Season year: {league.get('sandbox_playoff_season_year') or league.get('current_season_year') or '—'} "
+            f"· Sandbox · Generated {datetime.now(timezone.utc).strftime('%b %d, %Y')}",
+            small,
+        ),
+    ]
+
+    # Standings.
+    elements.append(Paragraph("Final Standings", section))
+    standings_data = [["Rank", "Team", "W", "L", "T", "PF", "PA", ""]]
+    for rank, t in enumerate(teams, start=1):
+        is_champ = str(t["_id"]) == str(champion_id)
+        standings_data.append([
+            str(rank),
+            t.get("name", ""),
+            str(int(t.get("wins", 0) or 0)),
+            str(int(t.get("losses", 0) or 0)),
+            str(int(t.get("ties", 0) or 0)),
+            f"{float(t.get('points_for', 0) or 0):.1f}",
+            f"{float(t.get('points_against', 0) or 0):.1f}",
+            "CHAMPION" if is_champ else "",
+        ])
+    tbl = Table(standings_data, hAlign="LEFT",
+                colWidths=[38, 170, 32, 32, 32, 55, 55, 70])
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (2, 0), (-1, -1), "CENTER"),
+        ("ALIGN", (1, 0), (1, -1), "LEFT"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+        ("TEXTCOLOR", (-1, 1), (-1, -1), colors.HexColor("#b45309")),
+        ("FONTNAME", (-1, 1), (-1, -1), "Helvetica-Bold"),
+    ]))
+    elements.append(tbl)
+
+    # Playoff bracket.
+    if playoff_rows:
+        elements.append(Spacer(1, 8))
+        elements.append(Paragraph("Playoff Bracket", section))
+        bracket_data = [["Round", "Home", "Score", "Away", "Score", "Winner"]]
+        for r in playoff_rows:
+            winner_name = (
+                r.get("home_team_name")
+                if str(r.get("winner_team_id")) == str(r.get("home_team_id"))
+                else r.get("away_team_name")
+            )
+            bracket_data.append([
+                f"R{r.get('playoff_round')}",
+                r.get("home_team_name", ""),
+                f"{r.get('home_score', '')}",
+                r.get("away_team_name", ""),
+                f"{r.get('away_score', '')}",
+                winner_name or "",
+            ])
+        btbl = Table(bracket_data, hAlign="LEFT",
+                     colWidths=[45, 130, 45, 130, 45, 130])
+        btbl.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
+            ("TEXTCOLOR", (-1, 1), (-1, -1), colors.HexColor("#065f46")),
+            ("FONTNAME", (-1, 1), (-1, -1), "Helvetica-Bold"),
+        ]))
+        elements.append(btbl)
+
+    if champion_id:
+        elements.append(Spacer(1, 6))
+        champ_team = next((t for t in teams if str(t["_id"]) == str(champion_id)), None)
+        elements.append(Paragraph(
+            f"<b>Champion:</b> {champ_team.get('name') if champ_team else '(unknown)'} "
+            f"· <b>Regular-season leader:</b> {teams[0].get('name') if teams else '—'}",
+            small,
+        ))
+
+    doc.build(elements)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+
+    filename = f"{league.get('name','sandbox').lower().replace(' ','_')}_recap.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
 
 
 @router.get("/admin/test-sandbox/leagues/{league_id}/playoff-bracket")

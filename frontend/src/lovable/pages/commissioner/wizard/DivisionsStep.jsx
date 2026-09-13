@@ -1,11 +1,12 @@
 // @ts-nocheck
 /**
  * Iter 228 — Divisions / League Structure step extracted from SetupWizard.jsx
- *
- * Receives the full ctx bundle (state + setters + helpers) from the
- * parent wizard so all behaviour stays unchanged.
+ * Iter 232N.83 — Inline preset-name editor (click a placeholder chip
+ * to rename "Division A" / "Conference 1" without going through the
+ * dropdown again).
  */
-import { Plus, X, Wand2 } from "lucide-react";
+import { useState } from "react";
+import { Plus, X, Wand2, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +21,56 @@ import {
 } from "@/components/ui/dropdown-menu";
 import HelpTooltip from "@/components/ui/help-tooltip";
 
+// Iter 232N.83 — Inline-editable name chip. Click text → input.
+// Enter commits, Escape cancels, blur commits (drop-in for Badge chips).
+function RenamableChip({ label, onRename, onRemove, testId }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(label);
+  if (editing) {
+    return (
+      <span className="inline-flex items-center gap-1 rounded-md border border-accent/50 bg-accent/10 pl-1.5 pr-1 py-0.5 text-xs">
+        <Input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { onRename(draft); setEditing(false); }
+            else if (e.key === "Escape") { setDraft(label); setEditing(false); }
+          }}
+          onBlur={() => {
+            if (draft !== label) onRename(draft);
+            setEditing(false);
+          }}
+          className="h-6 text-xs px-1.5 py-0 min-w-[90px] w-auto"
+          data-testid={`${testId}-input`}
+        />
+      </span>
+    );
+  }
+  return (
+    <Badge variant="secondary" className="gap-1 pl-2 pr-1" data-testid={testId}>
+      <button
+        type="button"
+        onClick={() => { setDraft(label); setEditing(true); }}
+        className="inline-flex items-center gap-1 hover:text-accent group focus:outline-none"
+        title="Click to rename"
+        data-testid={`${testId}-rename-btn`}
+      >
+        {label}
+        <Pencil className="h-2.5 w-2.5 opacity-0 group-hover:opacity-70 transition-opacity" />
+      </button>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="hover:text-destructive"
+        aria-label={`Remove ${label}`}
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </Badge>
+  );
+}
+
 export default function DivisionsStep({ ctx }) {
   const {
     HELP,
@@ -31,6 +82,7 @@ export default function DivisionsStep({ ctx }) {
     divisionToConference, setDivisionToConference,
     addDivision, removeDivision,
     addConference, removeConference,
+    renameDivision, renameConference,
     autoAssignNHL,
     autoAssignStructure,
     divSet,
@@ -127,12 +179,13 @@ export default function DivisionsStep({ ctx }) {
           </div>
           <div className="flex flex-wrap gap-1.5 min-h-[28px]">
             {divisionList.map((d) => (
-              <Badge key={d} variant="secondary" className="gap-1 pl-2 pr-1" data-testid={`wizard-division-chip-${d}`}>
-                {d}
-                <button onClick={() => removeDivision(d)} className="hover:text-destructive" aria-label={`Remove ${d}`}>
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
+              <RenamableChip
+                key={d}
+                label={d}
+                onRename={(next) => renameDivision(d, next)}
+                onRemove={() => removeDivision(d)}
+                testId={`wizard-division-chip-${d}`}
+              />
             ))}
             {divisionList.length === 0 && <span className="text-xs text-muted-foreground italic">No divisions yet</span>}
           </div>
@@ -155,12 +208,13 @@ export default function DivisionsStep({ ctx }) {
           </div>
           <div className="flex flex-wrap gap-1.5 min-h-[28px]">
             {conferenceList.map((c) => (
-              <Badge key={c} variant="secondary" className="gap-1 pl-2 pr-1" data-testid={`wizard-conference-chip-${c}`}>
-                {c}
-                <button onClick={() => removeConference(c)} className="hover:text-destructive" aria-label={`Remove ${c}`}>
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
+              <RenamableChip
+                key={c}
+                label={c}
+                onRename={(next) => renameConference(c, next)}
+                onRemove={() => removeConference(c)}
+                testId={`wizard-conference-chip-${c}`}
+              />
             ))}
             {conferenceList.length === 0 && <span className="text-xs text-muted-foreground italic">No conferences yet</span>}
           </div>

@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import {
   FlaskConical, UserCircle2, Rewind, RefreshCw, Trophy,
   Check, Circle, Users, ClipboardList, CalendarClock, Zap,
+  FileDown, CalendarPlus,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -95,6 +96,9 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
   // succeeds; reopenable via the champion badge.
   const [bracketOpen, setBracketOpen] = useState(false);
   const [bracketSeed, setBracketSeed] = useState(null);
+  // Iter 232N.83 — Roll to next season + PDF download state.
+  const [rolling, setRolling] = useState(false);
+  const [downloadingRecap, setDownloadingRecap] = useState(false);
 
   const isAdmin =
     user?.role === 'admin' ||
@@ -262,6 +266,63 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
       setSeedingPlayoffs(false);
     }
   };
+
+  // Iter 232N.83 — Download the one-page season recap PDF. Uses a
+  // blob roundtrip so we can name the file and trigger a native
+  // browser download without leaving the page.
+  const downloadRecap = async () => {
+    setDownloadingRecap(true);
+    try {
+      const res = await api.get(
+        `/admin/test-sandbox/leagues/${leagueId}/season-recap.pdf`,
+        { responseType: 'blob' },
+      );
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(leagueName || 'sandbox').toLowerCase().replace(/\s+/g, '_')}_recap.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Season recap downloaded');
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Failed to download recap');
+    } finally {
+      setDownloadingRecap(false);
+    }
+  };
+
+  // Iter 232N.83 — Roll the sandbox to the next season. Preserves
+  // rosters + structure; wipes matchups, champion, sim state;
+  // increments current_season_year; ages players whose birthday has
+  // passed since the previous roll.
+  const rollToNextSeason = async () => {
+    if (!window.confirm(
+      `Roll "${leagueName}" to the next season?\n\n` +
+      `• Rosters + structure preserved\n` +
+      `• Matchups + champion cleared\n` +
+      `• Players age up if their birthday has passed`,
+    )) return;
+    setRolling(true);
+    try {
+      const { data } = await api.post(
+        `/admin/test-sandbox/leagues/${leagueId}/roll-to-next-season`,
+        { age_players_by_birthday: true },
+      );
+      toast.success(
+        `Season rolled: ${data.old_season_year} → ${data.new_season_year} · ${data.players_aged} player${data.players_aged === 1 ? '' : 's'} aged up`,
+        { duration: 6000 },
+      );
+      await load();
+      window.dispatchEvent(new CustomEvent('sandbox:rolled-season', { detail: data }));
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Roll failed');
+    } finally {
+      setRolling(false);
+    }
+  };
+
 
   const resetSimulation = async () => {
     if (!window.confirm(
@@ -453,20 +514,54 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
             </Button>
           )}
           {playoffsSeeded && (
-            <button
-              type="button"
-              onClick={() => { setBracketSeed(null); setBracketOpen(true); }}
-              data-testid="sandbox-topbar-champion-badge"
-              title="View the playoff bracket for this sandbox league"
-              className="cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-400/50 rounded-full"
-            >
-              <Badge
-                variant="outline"
-                className="h-8 text-[11px] bg-amber-500/15 border-amber-400/50 text-amber-100 hover:bg-amber-500/25 flex items-center gap-1 px-2 transition-colors"
+            <>
+              <button
+                type="button"
+                onClick={() => { setBracketSeed(null); setBracketOpen(true); }}
+                data-testid="sandbox-topbar-champion-badge"
+                title="View the playoff bracket for this sandbox league"
+                className="cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-400/50 rounded-full"
               >
-                <Trophy className="h-3 w-3" /> View bracket
-              </Badge>
-            </button>
+                <Badge
+                  variant="outline"
+                  className="h-8 text-[11px] bg-amber-500/15 border-amber-400/50 text-amber-100 hover:bg-amber-500/25 flex items-center gap-1 px-2 transition-colors"
+                >
+                  <Trophy className="h-3 w-3" /> View bracket
+                </Badge>
+              </button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-[11px] bg-cyan-500/15 border-cyan-500/40 text-cyan-50 hover:bg-cyan-500/25"
+                onClick={downloadRecap}
+                disabled={downloadingRecap}
+                data-testid="sandbox-topbar-recap-btn"
+                title="Download a one-page PDF recap of this season"
+              >
+                {downloadingRecap ? (
+                  <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                ) : (
+                  <FileDown className="h-3 w-3 mr-1" />
+                )}
+                Recap PDF
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-[11px] bg-emerald-500/15 border-emerald-500/40 text-emerald-50 hover:bg-emerald-500/25"
+                onClick={rollToNextSeason}
+                disabled={rolling}
+                data-testid="sandbox-topbar-roll-season-btn"
+                title="Archive the current season, keep rosters, age players by birthdate, and reset sim state"
+              >
+                {rolling ? (
+                  <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+                ) : (
+                  <CalendarPlus className="h-3 w-3 mr-1" />
+                )}
+                Roll to next season
+              </Button>
+            </>
           )}
 
           {/* Status tagline */}

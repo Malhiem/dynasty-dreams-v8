@@ -106,6 +106,8 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   // Iter 225 — Editable team slots so the commissioner can size the league
   // before invitees join. Pads the generated schedule with placeholder slots.
   const [maxTeams, setMaxTeams] = useState(12);
+  // Iter 232N.83 — Duplicate-players mode unlocks max_teams > 32.
+  const [allowDuplicatePlayers, setAllowDuplicatePlayers] = useState(false);
   // Iter 226 — Editable Basics fields. The Teams stat becomes an editable
   // max_teams input, format & scoring become inline selects.
   const [leagueFormat, setLeagueFormat] = useState("dynasty");
@@ -193,6 +195,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         setBenchSpots(lgR.data?.bench_spots ?? 5);
         setMinorsSpots(lgR.data?.minors_spots ?? 5);
         setMaxTeams(lgR.data?.max_teams ?? 12);
+        setAllowDuplicatePlayers(Boolean(lgR.data?.allow_duplicate_players));
         setLeagueFormat(lgR.data?.format || "dynasty");
         setScoringFormat(lgR.data?.scoring_format || "head_to_head");
         setTeams(teamsR.data || []);
@@ -299,11 +302,67 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         if (next[tid]?.conference === name) next[tid] = { ...next[tid], conference: "" };
       });
       return next;
+    });    setDivisionToConference((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((d) => {
+        if (next[d] === name) delete next[d];
+      });
+      return next;
+    });
+  };
+
+  // Iter 232N.83 — Inline rename helpers for wizard-generated
+  // placeholders ("Division A", "Conference 1"). Rippling updates
+  // through divisionAssignments + divisionToConference so no state
+  // slice ends up referencing a stale name.
+  const renameDivision = (oldName, rawNext) => {
+    const nextName = String(rawNext || "").trim();
+    if (!nextName || nextName === oldName) return;
+    if (divisionList.includes(nextName)) {
+      toast.error(`Division "${nextName}" already exists`);
+      return;
+    }
+    setDivisionList(divisionList.map((d) => (d === oldName ? nextName : d)));
+    setDivisionAssignments((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((tid) => {
+        if (next[tid]?.division === oldName) {
+          next[tid] = { ...next[tid], division: nextName };
+        }
+      });
+      return next;
+    });
+    setDivisionToConference((prev) => {
+      const next = { ...prev };
+      if (Object.prototype.hasOwnProperty.call(next, oldName)) {
+        next[nextName] = next[oldName];
+        delete next[oldName];
+      }
+      return next;
+    });
+  };
+
+  const renameConference = (oldName, rawNext) => {
+    const nextName = String(rawNext || "").trim();
+    if (!nextName || nextName === oldName) return;
+    if (conferenceList.includes(nextName)) {
+      toast.error(`Conference "${nextName}" already exists`);
+      return;
+    }
+    setConferenceList(conferenceList.map((c) => (c === oldName ? nextName : c)));
+    setDivisionAssignments((prev) => {
+      const next = { ...prev };
+      Object.keys(next).forEach((tid) => {
+        if (next[tid]?.conference === oldName) {
+          next[tid] = { ...next[tid], conference: nextName };
+        }
+      });
+      return next;
     });
     setDivisionToConference((prev) => {
       const next = { ...prev };
       Object.keys(next).forEach((d) => {
-        if (next[d] === name) delete next[d];
+        if (next[d] === oldName) next[d] = nextName;
       });
       return next;
     });
@@ -473,6 +532,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         bench_spots: benchSpots,
         minors_spots: minorsEnabled ? minorsSpots : 0,
         max_teams: maxTeams,
+        allow_duplicate_players: allowDuplicatePlayers,
         format: leagueFormat,
         scoring_format: scoringFormat,
         salary_retention_enabled: retentionEnabled,
@@ -706,6 +766,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     previousSeasonSuggestion,
     teams,
     maxTeams, setMaxTeams,
+    allowDuplicatePlayers, setAllowDuplicatePlayers,
     leagueFormat, setLeagueFormat,
     scoringFormat, setScoringFormat,
     rosterSpots, setRosterSpots,
@@ -724,6 +785,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     divisionToConference, setDivisionToConference,
     addDivision, removeDivision,
     addConference, removeConference,
+    renameDivision, renameConference,
     autoAssignNHL,
     autoAssignStructure,
     addSandboxTeams,
