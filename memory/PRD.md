@@ -903,3 +903,17 @@ iter108-114 regression (28/28 PASS) — total 33/33 recent-iter green.
 ├── mobile/                    # React Native + Expo (app.json, jsEngine=jsc for bundling)
 └── memory/                    # PRD, test_credentials
 ```
+
+## Iter 232N.87 (Feb 14, 2026) — Roto compile hotfix
+Fixed a Failed-to-compile blocking the frontend after the Roto Standings
+page landed:
+
+- `/app/frontend/src/pages/RotoStandingsPage.jsx` was importing
+  `AppLayout` as a default export, but `@/components/layout/AppLayout`
+  only exports it as a named export. Switched to
+  `import { AppLayout } from "@/components/layout/AppLayout"`.
+
+Verified webpack now `Compiled successfully!` and the landing page
+renders. No functional changes to the Roto matchup/settings — both
+Matchup view (period-based stat accumulation) and Playoffs toggle
+(defaults off) are already wired in from iter 232N.86.

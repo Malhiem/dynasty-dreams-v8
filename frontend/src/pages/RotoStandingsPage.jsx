@@ -7,7 +7,7 @@ import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { RefreshCw, Trophy, Calculator } from "lucide-react";
 import api from "@/lib/api";
-import AppLayout from "@/components/layout/AppLayout";
+import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
