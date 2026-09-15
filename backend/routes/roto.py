@@ -113,8 +113,11 @@ def _rank_category(
     higher_is_better: bool,
     tiebreak: str,
     num_teams: int,
-) -> dict:
-    """Rank a single category. Returns team_id → points.
+) -> tuple[dict, dict]:
+    """Rank a single category. Returns (team_id → points, team_id → rank).
+
+    Ranks use standard competition ranking (1-indexed; ties share the
+    same rank and the next rank skips, e.g. 1,1,3).
 
     tiebreak "split":  Tied teams share the sum of their ranks' points
                        (rank 3+4 tie → both get (10+11)/2 = 10.5).
@@ -127,6 +130,7 @@ def _rank_category(
         key=lambda x: (-x[1] if higher_is_better else x[1], x[0]),
     )
     points: dict[str, float] = {}
+    ranks: dict[str, int] = {}
     i = 0
     while i < len(sorted_teams):
         j = i
@@ -137,21 +141,25 @@ def _rank_category(
         ):
             j += 1
         tied = sorted_teams[i:j + 1]
+        rank = i + 1  # Standard competition rank (1-indexed)
         # Ranks for the tie window (0-indexed → position from top).
         ranks_points = [num_teams - (i + k) for k in range(len(tied))]
         if tiebreak == "split" and len(tied) > 1:
             share = sum(ranks_points) / len(tied)
             for tid, _ in tied:
                 points[tid] = round(share, 3)
+                ranks[tid] = rank
         elif tiebreak == "high" and len(tied) > 1:
             top = max(ranks_points)
             for tid, _ in tied:
                 points[tid] = float(top)
+                ranks[tid] = rank
         else:
             for (tid, _), rp in zip(tied, ranks_points):
                 points[tid] = float(rp)
+                ranks[tid] = rank
         i = j + 1
-    return points
+    return points, ranks
 
 
 async def compute_period(
@@ -183,7 +191,7 @@ async def compute_period(
         if not cat:
             continue
         pairs = [(tid, team_totals[tid]["stats"].get(c_key, 0.0)) for tid in team_ids]
-        points_by_tid = _rank_category(
+        points_by_tid, ranks_by_tid = _rank_category(
             pairs, cat["higher_is_better"], tiebreak, num_teams,
         )
         out_cats.append({
@@ -192,6 +200,7 @@ async def compute_period(
             "higher_is_better": cat["higher_is_better"],
             "team_stats": {tid: v for (tid, v) in pairs},
             "points": points_by_tid,
+            "ranks": ranks_by_tid,
         })
         for tid, pts in points_by_tid.items():
             running[tid] = round(running.get(tid, 0.0) + pts, 3)
@@ -226,6 +235,7 @@ async def compute_season(db, league_id: str) -> dict:
     running: dict[str, float] = {}
     team_names: dict[str, str] = {}
     per_category: dict[str, dict[str, float]] = {}
+    per_category_stats: dict[str, dict[str, float]] = {}
     for p in periods:
         for tid, t in (p.get("totals") or {}).items():
             running[tid] = round(running.get(tid, 0.0) + float(t.get("total_points", 0)), 3)
@@ -235,18 +245,38 @@ async def compute_season(db, league_id: str) -> dict:
             for tid, pts in (cat.get("points") or {}).items():
                 per_category.setdefault(key, {}).setdefault(tid, 0.0)
                 per_category[key][tid] = round(per_category[key][tid] + float(pts), 3)
+            for tid, val in (cat.get("team_stats") or {}).items():
+                per_category_stats.setdefault(key, {}).setdefault(tid, 0.0)
+                per_category_stats[key][tid] = round(
+                    per_category_stats[key][tid] + float(val), 3,
+                )
+    # Compute ranks from aggregated season points per category.
+    cats_out = []
+    num_teams = len(running)
+    tiebreak = league.get("roto_tiebreak") or "split"
+    for k, pts_map in per_category.items():
+        cat_meta = CATEGORY_BY_KEY.get(k, {})
+        stats_map = per_category_stats.get(k, {})
+        # Rank by aggregated points (higher is better for accumulated roto pts).
+        pairs = [(tid, pts) for tid, pts in pts_map.items()]
+        _, ranks_by_tid = _rank_category(pairs, True, tiebreak, num_teams)
+        cats_out.append({
+            "key": k,
+            "label": cat_meta.get("label", k),
+            "higher_is_better": cat_meta.get("higher_is_better", True),
+            "points": pts_map,
+            "ranks": ranks_by_tid,
+            "team_stats": stats_map,
+        })
     return {
         "period": None,
         "aggregated": True,
         "periods_closed": len(periods),
         "totals": {tid: {"team_name": team_names.get(tid), "total_points": pts}
                    for tid, pts in running.items()},
-        "categories": [{
-            "key": k,
-            "label": CATEGORY_BY_KEY.get(k, {}).get("label", k),
-            "points": pts_map,
-        } for k, pts_map in per_category.items()],
-        "num_teams": len(running),
+        "categories": cats_out,
+        "num_teams": num_teams,
+        "tiebreak": tiebreak,
     }
 
 
