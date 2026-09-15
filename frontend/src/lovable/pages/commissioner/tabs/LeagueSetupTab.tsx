@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Image as ImageIcon, Upload, Sliders } from "lucide-react";
+import { Image as ImageIcon, Upload, Sliders, Loader2, Check, AlertCircle } from "lucide-react";
 import { useState } from "react";
 
 interface LeagueSetupTabProps {
@@ -32,6 +32,8 @@ interface LeagueSetupTabProps {
   // Scoring format
   scoringFormat: string;
   setScoringFormat: (v: string) => void;
+  savingScoringFormat?: boolean;
+  scoringFormatError?: boolean;
   // League logo
   leagueLogo: string | null;
   leagueLogoName: string | null;
@@ -116,7 +118,7 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
       </Card>
 
       {/* Scoring System */}
-      <Card className="bg-card border-border">
+      <Card className="bg-card border-border" data-testid="scoring-system-card">
         <CardHeader>
           <CardTitle>Scoring System</CardTitle>
           <CardDescription>Choose how teams earn points and compete</CardDescription>
@@ -124,31 +126,54 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
         <CardContent className="space-y-6">
           <div className="space-y-3">
             <Label>Scoring Format</Label>
+            {p.scoringFormatError && (
+              <div className="flex items-center gap-2 text-destructive text-xs" data-testid="scoring-format-error">
+                <AlertCircle className="h-3.5 w-3.5" />
+                Save failed — your selection is not yet saved. Click again to retry.
+              </div>
+            )}
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              {SCORING_FORMATS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => p.setScoringFormat(option.value)}
-                  className={`relative flex flex-col gap-1.5 rounded-lg border p-4 text-left transition-all hover:border-primary/50 ${
-                    p.scoringFormat === option.value
-                      ? "border-primary bg-primary/10 ring-1 ring-primary/30"
-                      : "border-border bg-secondary/50 hover:bg-secondary"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className={`h-3 w-3 rounded-full border-2 flex items-center justify-center ${
-                      p.scoringFormat === option.value ? "border-primary" : "border-muted-foreground/40"
-                    }`}>
-                      {p.scoringFormat === option.value && (
-                        <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+              {SCORING_FORMATS.map((option) => {
+                const isSelected = p.scoringFormat === option.value;
+                const isSaving = isSelected && p.savingScoringFormat;
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => p.setScoringFormat(option.value)}
+                    disabled={p.savingScoringFormat}
+                    data-testid={`scoring-format-${option.value}`}
+                    className={`relative flex flex-col gap-1.5 rounded-lg border p-4 text-left transition-all hover:border-primary/50 disabled:opacity-60 disabled:cursor-wait ${
+                      isSelected
+                        ? p.scoringFormatError
+                          ? "border-destructive bg-destructive/10 ring-1 ring-destructive/30"
+                          : "border-primary bg-primary/10 ring-1 ring-primary/30"
+                        : "border-border bg-secondary/50 hover:bg-secondary"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`h-3 w-3 rounded-full border-2 flex items-center justify-center ${
+                        isSelected
+                          ? p.scoringFormatError ? "border-destructive" : "border-primary"
+                          : "border-muted-foreground/40"
+                      }`}>
+                        {isSelected && !isSaving && (
+                          <div className={`h-1.5 w-1.5 rounded-full ${p.scoringFormatError ? "bg-destructive" : "bg-primary"}`} />
+                        )}
+                      </div>
+                      <span className="font-medium text-sm">{option.label}</span>
+                      {isSaving && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary ml-auto" />}
+                      {isSelected && !isSaving && !p.scoringFormatError && (
+                        <Check className="h-3.5 w-3.5 text-primary ml-auto" />
+                      )}
+                      {isSelected && !isSaving && p.scoringFormatError && (
+                        <AlertCircle className="h-3.5 w-3.5 text-destructive ml-auto" />
                       )}
                     </div>
-                    <span className="font-medium text-sm">{option.label}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground leading-relaxed pl-5">{option.desc}</p>
-                </button>
-              ))}
+                    <p className="text-xs text-muted-foreground leading-relaxed pl-5">{option.desc}</p>
+                  </button>
+                );
+              })}
             </div>
           </div>
           <Separator />

@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Settings, Users, Trophy, Shield, Target, LayoutGrid, AlertTriangle, ClipboardCheck, ScrollText, UserCog, Sliders, DollarSign } from "lucide-react";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useActiveLeague } from "@/hooks/use-active-league";
@@ -27,6 +27,11 @@ import RostersTab from "@/lovable/pages/commissioner/RostersTab";
 import SetupWizard from "@/lovable/pages/commissioner/SetupWizard";
 import AuditLogTab from "@/lovable/pages/commissioner/tabs/AuditLogTab";
 import LeagueSetupTab from "@/lovable/pages/commissioner/tabs/LeagueSetupTab";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader,
+  AlertDialogTitle, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 import DraftTab from "@/lovable/pages/commissioner/tabs/DraftTab";
 import PlayerPoolTab from "@/lovable/pages/commissioner/tabs/PlayerPoolTab";
 import ScoringTab from "@/lovable/pages/commissioner/tabs/ScoringTab";
@@ -106,8 +111,24 @@ const CommissionerSettings = () => {
     // URL updates below (which would create a redundant loop).
   }, [activeTab]);
 
+  // ─── Scoring format — auto-save on selection ────────────────────
+  // Maps legacy backend enum values to the granular UI format keys.
+  const mapBackendToUi = useCallback((v: string | undefined): string => {
+    const map: Record<string, string> = {
+      head_to_head: "h2h-points",
+      total_points: "points",
+      rotisserie: "rotisserie",
+      guillotine: "h2h-points",
+      all_play: "h2h-points",
+    };
+    return map[v || ""] || v || "h2h-points";
+  }, []);
+
   const [selectedTeams, setSelectedTeams] = useState<string[]>([]);
-  const [scoringFormat, setScoringFormat] = useState("h2h-points");
+  const [scoringFormat, setScoringFormatLocal] = useState("h2h-points");
+  const [savedScoringFormat, setSavedScoringFormat] = useState("h2h-points");
+  const [savingScoringFormat, setSavingScoringFormat] = useState(false);
+  const [scoringFormatError, setScoringFormatError] = useState(false);
   const isH2H = scoringFormat.startsWith("h2h");
   // Iter 141 — controlled draft type so we can conditionally render the Keeper settings card
   const [draftType, setDraftType] = useState<string>("startup");
@@ -197,6 +218,118 @@ const CommissionerSettings = () => {
   useEffect(() => {
     setIsPrivate(!!activeLeague?.is_private);
   }, [activeLeague?.id, activeLeague?.is_private]);
+
+  // ─── Hydrate scoring format from league data ───────────────────
+  useEffect(() => {
+    if (activeLeague?.scoring_format) {
+      const mapped = mapBackendToUi(activeLeague.scoring_format);
+      setScoringFormatLocal(mapped);
+      setSavedScoringFormat(mapped);
+      setScoringFormatError(false);
+    }
+  }, [activeLeague?.id, activeLeague?.scoring_format, mapBackendToUi]);
+
+  // ─── Scoring format auto-save handler ──────────────────────────
+  const SCORING_FORMAT_LABELS: Record<string, string> = {
+    rotisserie: "Rotisserie",
+    points: "Points-Based",
+    "h2h-points": "Head-to-Head Points",
+    "h2h-categories": "Head-to-Head Most Categories",
+    "h2h-each": "Head-to-Head Each Category",
+  };
+
+  const handleScoringFormatChange = async (newFormat: string) => {
+    if (!activeLeague?.id || newFormat === scoringFormat) return;
+    setScoringFormatLocal(newFormat);
+    setScoringFormatError(false);
+    setSavingScoringFormat(true);
+    try {
+      await api.put(`/leagues/${activeLeague.id}`, { scoring_format: newFormat });
+      setSavedScoringFormat(newFormat);
+      reloadLeague();
+      toast.success("Scoring format saved", {
+        description: SCORING_FORMAT_LABELS[newFormat] || newFormat,
+      });
+    } catch (e: any) {
+      setScoringFormatError(true);
+      toast.error("Failed to save scoring format", {
+        description: e?.response?.data?.detail || e?.message,
+      });
+    } finally {
+      setSavingScoringFormat(false);
+    }
+  };
+
+  // ─── Unsaved changes guard ─────────────────────────────────────
+  const isDirty = scoringFormat !== savedScoringFormat;
+  const [showUnsavedDialog, setShowUnsavedDialog] = useState(false);
+  const [pendingNavAction, setPendingNavAction] = useState<(() => void) | null>(null);
+
+  // Browser close / refresh guard
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => { e.preventDefault(); };
+    if (isDirty) window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
+
+  // Browser back/forward guard
+  useEffect(() => {
+    if (!isDirty) return;
+    window.history.pushState(null, "", window.location.href);
+    const handler = () => {
+      window.history.pushState(null, "", window.location.href);
+      setShowUnsavedDialog(true);
+      setPendingNavAction(() => () => window.history.back());
+    };
+    window.addEventListener("popstate", handler);
+    return () => window.removeEventListener("popstate", handler);
+  }, [isDirty]);
+
+  // Tab-change interceptor — wraps setActiveTab to show the dialog when dirty
+  const handleTabChange = (newTab: string) => {
+    if (isDirty) {
+      setShowUnsavedDialog(true);
+      setPendingNavAction(() => () => setActiveTab(newTab));
+      return;
+    }
+    setActiveTab(newTab);
+  };
+
+  const handleDialogSave = async () => {
+    if (!activeLeague?.id) { handleDialogDiscard(); return; }
+    setSavingScoringFormat(true);
+    try {
+      await api.put(`/leagues/${activeLeague.id}`, { scoring_format: scoringFormat });
+      setSavedScoringFormat(scoringFormat);
+      setScoringFormatError(false);
+      reloadLeague();
+      toast.success("Scoring format saved");
+      setShowUnsavedDialog(false);
+      pendingNavAction?.();
+      setPendingNavAction(null);
+    } catch (e: any) {
+      toast.error("Save failed — staying on page", {
+        description: e?.response?.data?.detail || e?.message,
+      });
+      setShowUnsavedDialog(false);
+      setPendingNavAction(null);
+    } finally {
+      setSavingScoringFormat(false);
+    }
+  };
+
+  const handleDialogDiscard = () => {
+    setScoringFormatLocal(savedScoringFormat);
+    setScoringFormatError(false);
+    setShowUnsavedDialog(false);
+    pendingNavAction?.();
+    setPendingNavAction(null);
+  };
+
+  const handleDialogCancel = () => {
+    setShowUnsavedDialog(false);
+    setPendingNavAction(null);
+  };
 
   // ─── Salary Retention Slots (per-team cap, default 3) ───────────
   // Controls how many retained-salary trades each team may stack. Stored
@@ -567,12 +700,12 @@ const CommissionerSettings = () => {
             drive the same active tab as the desktop TabsList. Without
             controlled state the Select would be a parallel UI that
             never reflects clicks on the (hidden) desktop tabs. */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
           {/* Mobile-only tab selector. Below md the 13-item tab strip
               required heavy horizontal scrolling; a native-feeling
               dropdown gives one-tap access to every section. */}
           <div className="md:hidden">
-            <Select value={activeTab} onValueChange={setActiveTab}>
+            <Select value={activeTab} onValueChange={handleTabChange}>
               <SelectTrigger
                 className="w-full bg-secondary border border-border h-11"
                 data-testid="commissioner-settings-mobile-tab-select"
@@ -659,7 +792,9 @@ const CommissionerSettings = () => {
               recalcStats={recalcStats}
               recalcing={recalcing}
               scoringFormat={scoringFormat}
-              setScoringFormat={setScoringFormat}
+              setScoringFormat={handleScoringFormatChange}
+              savingScoringFormat={savingScoringFormat}
+              scoringFormatError={scoringFormatError}
               leagueLogo={leagueLogo}
               leagueLogoName={leagueLogoName}
               logoInputRef={logoInputRef}
@@ -771,6 +906,40 @@ const CommissionerSettings = () => {
             />
           </TabsContent>
         </Tabs>
+
+        {/* Unsaved scoring format — navigation guard dialog */}
+        <AlertDialog open={showUnsavedDialog} onOpenChange={(open) => { if (!open) handleDialogCancel(); }}>
+          <AlertDialogContent data-testid="unsaved-changes-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
+              <AlertDialogDescription>
+                Your scoring format change hasn't been saved yet. Would you like to save before leaving?
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="gap-2 sm:gap-0">
+              <AlertDialogCancel
+                onClick={handleDialogCancel}
+                data-testid="unsaved-changes-cancel-btn"
+              >
+                Stay
+              </AlertDialogCancel>
+              <Button
+                variant="outline"
+                onClick={handleDialogDiscard}
+                data-testid="unsaved-changes-discard-btn"
+              >
+                Discard & Leave
+              </Button>
+              <AlertDialogAction
+                onClick={handleDialogSave}
+                disabled={savingScoringFormat}
+                data-testid="unsaved-changes-save-btn"
+              >
+                {savingScoringFormat ? "Saving…" : "Save & Leave"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </AppLayout>
   );
