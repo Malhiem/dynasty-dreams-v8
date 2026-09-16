@@ -22,7 +22,7 @@ import { toast } from 'sonner';
 import {
   FlaskConical, UserCircle2, Rewind, RefreshCw, Trophy,
   Check, Circle, Users, ClipboardList, CalendarClock, Zap,
-  FileDown, CalendarPlus, DollarSign,
+  FileDown, CalendarPlus, DollarSign, BarChart3,
 } from 'lucide-react';
 import api from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -100,6 +100,7 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
   const [rolling, setRolling] = useState(false);
   const [downloadingRecap, setDownloadingRecap] = useState(false);
   const [signing, setSigning] = useState(false);
+  const [seedingStats, setSeedingStats] = useState(false);
 
   const isAdmin =
     user?.role === 'admin' ||
@@ -383,6 +384,26 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
 
   if (!isAdmin || isImpersonating || !isSandbox) return null;
 
+  const seedStats = async () => {
+    if (!window.confirm(
+      `Seed random season stats for every rostered player in "${leagueName}"? This overwrites existing stats.`,
+    )) return;
+    setSeedingStats(true);
+    try {
+      const { data } = await api.post(
+        `/admin/test-sandbox/leagues/${leagueId}/seed-stats`, {},
+      );
+      toast.success(
+        `Seeded stats for ${data.players_updated} players`,
+        { description: `${data.skaters_seeded} skaters · ${data.goalies_seeded} goalies` },
+      );
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Seed stats failed');
+    } finally {
+      setSeedingStats(false);
+    }
+  };
+
   const s = status || {};
   const activeStep = s.active_step || 1;
   const stepState = (idx) => {
@@ -548,6 +569,26 @@ export default function SandboxLeagueTopBar({ leagueId: leagueIdProp }) {
                 <DollarSign className="h-3 w-3 mr-1" />
               )}
               Bulk sign
+            </Button>
+          )}
+
+          {/* Iter 232N.88 — Seed random season stats for roto standings. */}
+          {draftDone && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-[11px] bg-teal-500/15 border-teal-500/40 text-teal-50 hover:bg-teal-500/25"
+              onClick={seedStats}
+              disabled={seedingStats}
+              data-testid="sandbox-topbar-seed-stats-btn"
+              title="Seed every rostered player with random season stats for varied Roto standings"
+            >
+              {seedingStats ? (
+                <RefreshCw className="h-3 w-3 mr-1 animate-spin" />
+              ) : (
+                <BarChart3 className="h-3 w-3 mr-1" />
+              )}
+              Seed stats
             </Button>
           )}
 

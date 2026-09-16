@@ -1444,6 +1444,121 @@ async def sandbox_bulk_sign_contracts(
     }
 
 
+# ─── Iter 232N.88 — Seed Random Season Stats ──────────────────────
+
+import random as _random
+
+# Realistic NHL season stat ranges per stat key.
+# (min, max) — used with random.randint / uniform to give plausible values.
+_SKATER_STAT_RANGES: dict[str, tuple] = {
+    "goals":              (0, 55),
+    "assists":            (0, 75),
+    "plus_minus":         (-30, 40),
+    "penalty_minutes":    (0, 120),
+    "power_play_goals":   (0, 20),
+    "power_play_points":  (0, 40),
+    "short_handed_goals": (0, 4),
+    "short_handed_points":(0, 6),
+    "game_winning_goals": (0, 12),
+    "shots":              (20, 350),
+    "hits":               (10, 280),
+    "blocks":             (10, 200),
+    "faceoff_wins":       (0, 600),
+}
+_GOALIE_STAT_RANGES: dict[str, tuple] = {
+    "wins":              (5, 40),
+    "losses":            (3, 25),
+    "saves":             (400, 1800),
+    "shutouts":          (0, 10),
+    "overtime_losses":   (0, 10),
+}
+# Floats computed after the integers.
+_GOALIE_FLOAT_KEYS = {"save_percentage", "goals_against_avg"}
+
+
+def _seed_skater_stats(rng: _random.Random) -> dict:
+    stats: dict = {}
+    for key, (lo, hi) in _SKATER_STAT_RANGES.items():
+        stats[key] = rng.randint(lo, hi)
+    stats["points"] = stats["goals"] + stats["assists"]
+    return stats
+
+
+def _seed_goalie_stats(rng: _random.Random) -> dict:
+    stats: dict = {}
+    for key, (lo, hi) in _GOALIE_STAT_RANGES.items():
+        stats[key] = rng.randint(lo, hi)
+    # Derived floats
+    total_sa = stats["saves"] + rng.randint(80, 300)  # shots against
+    stats["save_percentage"] = round(stats["saves"] / max(total_sa, 1), 3)
+    gp = stats["wins"] + stats["losses"] + stats.get("overtime_losses", 0)
+    ga = total_sa - stats["saves"]
+    stats["goals_against_avg"] = round(ga / max(gp, 1), 2)
+    return stats
+
+
+@router.post("/admin/test-sandbox/leagues/{league_id}/seed-stats")
+async def sandbox_seed_stats(league_id: str, request: Request):
+    """Seed every rostered player in a sandbox league with random but
+    plausible season_stats so Roto standings / dashboards show varied
+    ranks instead of all-zero ties.
+
+    Skaters get random goals, assists, hits, etc.; goalies get wins,
+    saves, SV%, GAA.  Deterministic when re-run (seeded from league_id)
+    so repeated calls produce the same results (idempotent-ish).
+    """
+    admin = await _require_admin(request)
+    db = _db()
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    if not league.get("is_test_sandbox"):
+        raise HTTPException(
+            status_code=400,
+            detail="seed-stats is only available on sandbox test leagues",
+        )
+
+    teams = await db.teams.find({"league_id": league_id}).to_list(200)
+    rng = _random.Random(f"seed-stats-{league_id}")
+
+    players_updated = 0
+    skaters_seeded = 0
+    goalies_seeded = 0
+
+    for team in teams:
+        for pid in (team.get("roster") or []):
+            try:
+                player = await db.players.find_one({"_id": ObjectId(pid)})
+            except Exception:
+                continue
+            if not player:
+                continue
+
+            pos = (player.get("position") or "").upper()
+            if pos == "G":
+                stats = _seed_goalie_stats(rng)
+                goalies_seeded += 1
+            else:
+                stats = _seed_skater_stats(rng)
+                skaters_seeded += 1
+
+            await db.players.update_one(
+                {"_id": player["_id"]},
+                {"$set": {"season_stats": stats}},
+            )
+            players_updated += 1
+
+    return {
+        "ok": True,
+        "players_updated": players_updated,
+        "skaters_seeded": skaters_seeded,
+        "goalies_seeded": goalies_seeded,
+        "teams": len(teams),
+        "seeded_by": admin.get("email"),
+    }
+
+
 # ─── Iter 232N.83 — Roll to Next Season ───────────────────────────
 
 
