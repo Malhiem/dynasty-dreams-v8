@@ -1,0 +1,78 @@
+{
+  "summary": "Playoffs Enabled Toggle (Iter 232N.89) fully tested - Backend: 7/7 tests PASS, Frontend: All UI elements verified across LeagueSetupTab and SetupWizard ScheduleStep. Toggle saves via PUT API, persists across refresh, and correctly controls visibility of playoff-related UI elements.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_playoffs_enabled.py",
+    "/app/test_reports/pytest/iter232N89_playoffs_enabled.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Backend: playoffs_enabled field properly added to LeagueUpdate model (line 1972) and _LEAGUE_UPDATE_ALLOWED set (line 2088)",
+    "Backend: LeagueResponse builder correctly defaults playoffs_enabled to True for backward compatibility (line 350)",
+    "Backend: Playoff validation block (line 2297-2298) properly gated by 'if _playoffs_on is not False' - skips validation when playoffs disabled",
+    "Frontend LeagueSetupTab: Toggle has correct data-testid='playoffs-enabled-toggle', description changes based on state, Playoff Teams dropdown properly disabled when !playoffsEnabled",
+    "Frontend SetupWizard ScheduleStep: Toggle controls visibility of playoff start/end inputs and consolation section, budget calculator correctly shows 0 playoff weeks when disabled",
+    "Frontend GenerateStep: Shows 'Playoffs: Disabled' when off, 'Playoffs: Wk X-Y' when enabled"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_playoffs_enabled.py"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7 tests)",
+    "frontend": "100% (all UI elements verified)"
+  },
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "Used existing leagues: 'Stat Chasers Roto' (69e46af167999bfb85c39629), 'Frozen Dynasty' (69e46af167999bfb85c3962a)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Playoffs enabled toggle feature complete. The toggle auto-saves via PUT /api/leagues/{id} with playoffs_enabled field. When disabled, playoff validation is skipped (invalid playoff config accepted), playoff-related UI elements are hidden/disabled, and season budget calculator excludes playoff weeks. State persists across page refresh.",
+  "verified_features": {
+    "backend_api": {
+      "PUT /api/leagues/{id} with playoffs_enabled=false": "Saves value, returns in response, persists to DB",
+      "PUT /api/leagues/{id} with playoffs_enabled=true": "Restores playoffs, returns in response",
+      "GET /api/leagues/{id}": "Returns playoffs_enabled field (defaults to true for legacy leagues)",
+      "Playoff validation when disabled": "Skipped - invalid playoff config (end < start) accepted without error",
+      "Playoff validation when enabled": "Enforced - invalid playoff config returns 400 error"
+    },
+    "frontend_ui": {
+      "LeagueSetupTab": {
+        "playoffs_toggle": {
+          "data_testid": "playoffs-enabled-toggle",
+          "location": "League Structure card",
+          "description_when_off": "Season standings determine the winner",
+          "description_when_on": "Top teams compete in a postseason bracket",
+          "auto_save": "Yes - PUT API called on toggle, success toast shown"
+        },
+        "playoff_teams_dropdown": {
+          "data_testid": "league-structure-playoff-teams",
+          "disabled_when_playoffs_off": true,
+          "enabled_when_playoffs_on": true
+        }
+      },
+      "SetupWizard_ScheduleStep": {
+        "playoffs_toggle": {
+          "data_testid": "wizard-playoffs-enabled",
+          "controls_visibility": ["wizard-playoff-start", "wizard-playoff-end", "wizard-consolation-card"]
+        },
+        "season_budget_calculator": {
+          "data_testid": "wizard-season-budget-card",
+          "shows_playoff_weeks_when_enabled": true,
+          "shows_0_playoff_weeks_when_disabled": true
+        }
+      },
+      "SetupWizard_GenerateStep": {
+        "playoffs_display": "Shows 'Playoffs: Disabled' when off, 'Playoffs: Wk X-Y' when enabled"
+      },
+      "persistence": "Toggle state persists across page refresh"
+    }
+  },
+  "test_data_notes": "Tests used existing leagues. Original state restored after each test to avoid side effects."
+}

@@ -130,6 +130,9 @@ const CommissionerSettings = () => {
   const [savingScoringFormat, setSavingScoringFormat] = useState(false);
   const [scoringFormatError, setScoringFormatError] = useState(false);
   const isH2H = scoringFormat.startsWith("h2h");
+  // Playoffs enabled toggle (auto-save like scoring format)
+  const [playoffsEnabled, setPlayoffsEnabledLocal] = useState(true);
+  const [savingPlayoffsEnabled, setSavingPlayoffsEnabled] = useState(false);
   // Iter 141 — controlled draft type so we can conditionally render the Keeper settings card
   const [draftType, setDraftType] = useState<string>("startup");
   // Iter 143 — first-time draft gating + persistence (effects defined below `activeLeague`)
@@ -228,6 +231,33 @@ const CommissionerSettings = () => {
       setScoringFormatError(false);
     }
   }, [activeLeague?.id, activeLeague?.scoring_format, mapBackendToUi]);
+
+  // ─── Hydrate playoffs enabled from league data ─────────────────
+  useEffect(() => {
+    if (activeLeague?.id != null) {
+      setPlayoffsEnabledLocal(activeLeague.playoffs_enabled !== false);
+    }
+  }, [activeLeague?.id, activeLeague?.playoffs_enabled]);
+
+  // ─── Playoffs enabled auto-save handler ────────────────────────
+  const handlePlayoffsEnabledChange = async (enabled: boolean) => {
+    if (!activeLeague?.id) return;
+    const prev = playoffsEnabled;
+    setPlayoffsEnabledLocal(enabled);
+    setSavingPlayoffsEnabled(true);
+    try {
+      await api.put(`/leagues/${activeLeague.id}`, { playoffs_enabled: enabled });
+      reloadLeague();
+      toast.success(enabled ? "Playoffs enabled" : "Playoffs disabled — season standings determine the winner");
+    } catch (e: any) {
+      setPlayoffsEnabledLocal(prev);
+      toast.error("Failed to update playoff setting", {
+        description: e?.response?.data?.detail || e?.message,
+      });
+    } finally {
+      setSavingPlayoffsEnabled(false);
+    }
+  };
 
   // ─── Scoring format auto-save handler ──────────────────────────
   const SCORING_FORMAT_LABELS: Record<string, string> = {
@@ -795,6 +825,9 @@ const CommissionerSettings = () => {
               setScoringFormat={handleScoringFormatChange}
               savingScoringFormat={savingScoringFormat}
               scoringFormatError={scoringFormatError}
+              playoffsEnabled={playoffsEnabled}
+              savingPlayoffsEnabled={savingPlayoffsEnabled}
+              onPlayoffsEnabledChange={handlePlayoffsEnabledChange}
               leagueLogo={leagueLogo}
               leagueLogoName={leagueLogoName}
               logoInputRef={logoInputRef}

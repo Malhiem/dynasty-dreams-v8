@@ -34,6 +34,10 @@ interface LeagueSetupTabProps {
   setScoringFormat: (v: string) => void;
   savingScoringFormat?: boolean;
   scoringFormatError?: boolean;
+  // Playoffs toggle
+  playoffsEnabled: boolean;
+  savingPlayoffsEnabled?: boolean;
+  onPlayoffsEnabledChange: (v: boolean) => void;
   // League logo
   leagueLogo: string | null;
   leagueLogoName: string | null;
@@ -232,7 +236,7 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
       </Card>
 
       {/* League Structure */}
-      <Card className="bg-card border-border">
+      <Card className="bg-card border-border" data-testid="league-structure-card">
         <CardHeader>
           <CardTitle>League Structure</CardTitle>
           <CardDescription>Configure divisions, conferences, and playoffs</CardDescription>
@@ -262,9 +266,19 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
               </Select>
             </div>
             <div className="space-y-2">
-              <Label>Playoff Teams</Label>
-              <Select defaultValue="6">
-                <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
+              <Label className={!p.playoffsEnabled ? "text-muted-foreground" : ""}>
+                Playoff Teams
+              </Label>
+              <Select
+                defaultValue="6"
+                disabled={!p.playoffsEnabled}
+              >
+                <SelectTrigger
+                  className={`bg-secondary border-border ${!p.playoffsEnabled ? "opacity-50 cursor-not-allowed" : ""}`}
+                  data-testid="league-structure-playoff-teams"
+                >
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
                   {[4, 6, 8, 10, 12].map((n) => (
                     <SelectItem key={n} value={n.toString()}>{n} Teams</SelectItem>
@@ -272,6 +286,27 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          <Separator />
+
+          {/* Playoffs toggle */}
+          <div className="flex items-center justify-between">
+            <div>
+              <Label htmlFor="playoffs-enabled-toggle">Enable Playoffs</Label>
+              <p className="text-sm text-muted-foreground">
+                {p.playoffsEnabled
+                  ? "Top teams compete in a postseason bracket"
+                  : "Season standings determine the winner"}
+              </p>
+            </div>
+            <Switch
+              id="playoffs-enabled-toggle"
+              checked={p.playoffsEnabled}
+              onCheckedChange={p.onPlayoffsEnabledChange}
+              disabled={p.savingPlayoffsEnabled}
+              data-testid="playoffs-enabled-toggle"
+            />
           </div>
         </CardContent>
       </Card>

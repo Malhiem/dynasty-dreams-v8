@@ -149,6 +149,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
   const [opponentsPerPeriod, setOpponentsPerPeriod] = useState(1);
   const [playoffStartWeek, setPlayoffStartWeek] = useState(19);
   const [playoffEndWeek, setPlayoffEndWeek] = useState(21);
+  const [playoffsEnabled, setPlayoffsEnabled] = useState(true);
   const [numWeeks, setNumWeeks] = useState(18);
   const [consolationEnabled, setConsolationEnabled] = useState(false);
   const [consolationAlongPlayoffs, setConsolationAlongPlayoffs] = useState(true);
@@ -223,6 +224,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         setOpponentsPerPeriod(lgR.data?.opponents_per_matchup_period ?? 1);
         setPlayoffStartWeek(lgR.data?.playoff_start_week ?? 19);
         setPlayoffEndWeek(lgR.data?.playoff_end_week ?? 21);
+        setPlayoffsEnabled(lgR.data?.playoffs_enabled !== false);
         setNumWeeks(lgR.data?.regular_season_weeks ?? 18);
         setConsolationEnabled(!!lgR.data?.consolation_enabled);
         setConsolationAlongPlayoffs(lgR.data?.consolation_uses_playoff_schedule ?? true);
@@ -606,14 +608,15 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
           .filter((w) => w.week_num > 0 && w.length_days > 0),
         opponents_per_matchup_period: opponentsPerPeriod,
         regular_season_weeks: numWeeks,
-        playoff_start_week: playoffStartWeek,
-        playoff_end_week: playoffEndWeek,
-        consolation_enabled: consolationEnabled,
+        playoffs_enabled: playoffsEnabled,
+        playoff_start_week: playoffsEnabled ? playoffStartWeek : null,
+        playoff_end_week: playoffsEnabled ? playoffEndWeek : null,
+        consolation_enabled: playoffsEnabled ? consolationEnabled : false,
         consolation_uses_playoff_schedule: consolationAlongPlayoffs,
-        consolation_start_week: consolationEnabled
+        consolation_start_week: (playoffsEnabled && consolationEnabled)
           ? (consolationAlongPlayoffs ? playoffStartWeek : consolationStartWeek)
           : null,
-        consolation_end_week: consolationEnabled
+        consolation_end_week: (playoffsEnabled && consolationEnabled)
           ? (consolationAlongPlayoffs ? playoffEndWeek : consolationEndWeek)
           : null,
       });
@@ -798,6 +801,7 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     numWeeks, setNumWeeks,
     weekOverrides, setWeekOverrides,
     schedule, setSchedule,
+    playoffsEnabled, setPlayoffsEnabled,
     playoffStartWeek, setPlayoffStartWeek,
     playoffEndWeek, setPlayoffEndWeek,
     consolationEnabled, setConsolationEnabled,

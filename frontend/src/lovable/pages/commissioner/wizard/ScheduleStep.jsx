@@ -23,6 +23,7 @@ export default function ScheduleStep({ ctx }) {
     numWeeks, setNumWeeks,
     weekOverrides, setWeekOverrides,
     schedule, setSchedule,
+    playoffsEnabled, setPlayoffsEnabled,
     playoffStartWeek, setPlayoffStartWeek,
     playoffEndWeek, setPlayoffEndWeek,
     consolationEnabled, setConsolationEnabled,
@@ -34,9 +35,11 @@ export default function ScheduleStep({ ctx }) {
   // Iter 232N.81 — Live season-budget calculator. Shows total-week
   // consumption (regular + playoff + optional consolation) so admins
   // can size the calendar without manually adding numbers.
-  const playoffWeeks = Math.max(0, (playoffEndWeek || 0) - (playoffStartWeek || 0) + 1);
+  const playoffWeeks = playoffsEnabled
+    ? Math.max(0, (playoffEndWeek || 0) - (playoffStartWeek || 0) + 1)
+    : 0;
   const consolationWeeks = (
-    consolationEnabled && !consolationAlongPlayoffs
+    playoffsEnabled && consolationEnabled && !consolationAlongPlayoffs
       ? Math.max(0, (consolationEndWeek || 0) - (consolationStartWeek || 0) + 1)
       : 0
   );
@@ -325,29 +328,51 @@ export default function ScheduleStep({ ctx }) {
         </div>
       </div>
 
-      {/* Playoffs window */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-border pt-3">
-        <div>
-          <Label className="text-xs flex items-center">
-            Playoffs start (week)
-            <HelpTooltip text={HELP.playoffStart} testId="help-playoff-start" />
+      {/* Playoffs toggle + window */}
+      <div className="space-y-3 border-t border-border pt-3">
+        <div className="flex items-center gap-3">
+          <Switch
+            checked={playoffsEnabled}
+            onCheckedChange={setPlayoffsEnabled}
+            id="wiz-playoffs-enabled"
+            data-testid="wizard-playoffs-enabled"
+          />
+          <Label htmlFor="wiz-playoffs-enabled" className="cursor-pointer font-semibold">
+            Enable playoffs
           </Label>
-          <Input type="number" min={1} max={30} value={playoffStartWeek}
-            onChange={(e) => setPlayoffStartWeek(Math.max(1, Math.min(30, parseInt(e.target.value || "0", 10))))}
-            data-testid="wizard-playoff-start" />
+          {!playoffsEnabled && (
+            <span className="text-[11px] text-muted-foreground">
+              Season standings will determine the winner
+            </span>
+          )}
         </div>
-        <div>
-          <Label className="text-xs flex items-center">
-            Playoffs end (week)
-            <HelpTooltip text={HELP.playoffEnd} testId="help-playoff-end" />
-          </Label>
-          <Input type="number" min={1} max={40} value={playoffEndWeek}
-            onChange={(e) => setPlayoffEndWeek(Math.max(1, Math.min(40, parseInt(e.target.value || "0", 10))))}
-            data-testid="wizard-playoff-end" />
-        </div>
+
+        {playoffsEnabled && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs flex items-center">
+                Playoffs start (week)
+                <HelpTooltip text={HELP.playoffStart} testId="help-playoff-start" />
+              </Label>
+              <Input type="number" min={1} max={30} value={playoffStartWeek}
+                onChange={(e) => setPlayoffStartWeek(Math.max(1, Math.min(30, parseInt(e.target.value || "0", 10))))}
+                data-testid="wizard-playoff-start" />
+            </div>
+            <div>
+              <Label className="text-xs flex items-center">
+                Playoffs end (week)
+                <HelpTooltip text={HELP.playoffEnd} testId="help-playoff-end" />
+              </Label>
+              <Input type="number" min={1} max={40} value={playoffEndWeek}
+                onChange={(e) => setPlayoffEndWeek(Math.max(1, Math.min(40, parseInt(e.target.value || "0", 10))))}
+                data-testid="wizard-playoff-end" />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Consolation A/B */}
+      {/* Consolation A/B — only visible when playoffs are enabled */}
+      {playoffsEnabled && (
       <div className="space-y-3 border-t border-border pt-3" data-testid="wizard-consolation-card">
         <div className="flex items-center gap-3">
           <Switch
@@ -396,6 +421,7 @@ export default function ScheduleStep({ ctx }) {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

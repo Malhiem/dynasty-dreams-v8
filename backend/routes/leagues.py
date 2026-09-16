@@ -124,6 +124,7 @@ class LeagueResponse(BaseModel):
     waiver_faab_budget: Optional[int] = None
     waiver_period_days: Optional[int] = None
     playoff_teams: Optional[int] = None
+    playoffs_enabled: Optional[bool] = None
     playoff_start_week: Optional[int] = None
     playoff_rounds: Optional[int] = None
     playoff_end_week: Optional[int] = None
@@ -346,6 +347,7 @@ def _league_to_response(league: dict) -> LeagueResponse:
         waiver_faab_budget=league.get("waiver_faab_budget"),
         waiver_period_days=league.get("waiver_period_days"),
         playoff_teams=league.get("playoff_teams"),
+        playoffs_enabled=league.get("playoffs_enabled", True),
         playoff_start_week=league.get("playoff_start_week"),
         playoff_rounds=league.get("playoff_rounds"),
         playoff_end_week=league.get("playoff_end_week"),
@@ -1967,6 +1969,7 @@ class LeagueUpdate(BaseModel):
     waiver_faab_budget: Optional[int] = Field(default=None, ge=0, le=10000)
     waiver_period_days: Optional[int] = Field(default=None, ge=0, le=7)
     # Playoff settings
+    playoffs_enabled: Optional[bool] = None
     playoff_teams: Optional[int] = Field(default=None, ge=2, le=16)
     playoff_start_week: Optional[int] = Field(default=None, ge=1, le=30)
     playoff_rounds: Optional[int] = Field(default=None, ge=1, le=5)
@@ -2082,6 +2085,7 @@ _LEAGUE_UPDATE_ALLOWED = {
     "trade_deadline_at",
     "waiver_faab_budget", "waiver_period_days",
     "playoff_teams", "playoff_start_week", "playoff_rounds", "playoff_end_week",
+    "playoffs_enabled",
     "regular_season_weeks",
     "salary_retention_enabled", "salary_retention_max_pct", "salary_retention_slots",
     "season_start_date", "season_end_date",
@@ -2289,69 +2293,72 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
                 return update[k]
             return league.get(k, default)
 
-        reg_weeks = _eff("regular_season_weeks")
-        ps_week = _eff("playoff_start_week")
-        pe_week = _eff("playoff_end_week")
-        p_rounds = _eff("playoff_rounds")
-        p_teams = _eff("playoff_teams")
-        if reg_weeks is not None and ps_week is not None and int(ps_week) <= int(reg_weeks):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Playoffs must start AFTER the regular season ends. "
-                    f"Regular season ends week {reg_weeks}; playoffs start week {ps_week}."
-                ),
-            )
-        if ps_week is not None and pe_week is not None and int(pe_week) < int(ps_week):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Playoff end week ({pe_week}) cannot be before playoff start week ({ps_week})."
-                ),
-            )
-        if (
-            ps_week is not None and pe_week is not None and p_rounds is not None
-            and (int(pe_week) - int(ps_week) + 1) < int(p_rounds)
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Cannot award a champion: {p_rounds} rounds need at least "
-                    f"{p_rounds} week{'s' if int(p_rounds) != 1 else ''}, "
-                    f"but only {int(pe_week) - int(ps_week) + 1} week"
-                    f"{'s' if (int(pe_week) - int(ps_week) + 1) != 1 else ''} configured. "
-                    "Extend the playoff window or reduce the round count."
-                ),
-            )
-        if p_teams is not None and p_rounds is not None:
-            min_teams = 2 ** int(p_rounds)
-            if int(p_teams) < min_teams:
+        # Skip playoff-window validation when playoffs are being disabled.
+        _playoffs_on = _eff("playoffs_enabled", True)
+        if _playoffs_on is not False:
+            reg_weeks = _eff("regular_season_weeks")
+            ps_week = _eff("playoff_start_week")
+            pe_week = _eff("playoff_end_week")
+            p_rounds = _eff("playoff_rounds")
+            p_teams = _eff("playoff_teams")
+            if reg_weeks is not None and ps_week is not None and int(ps_week) <= int(reg_weeks):
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"With {p_rounds} round{'s' if int(p_rounds) != 1 else ''}, "
-                        f"need at least {min_teams} playoff teams to award a champion. "
-                        f"Currently {p_teams}."
+                        f"Playoffs must start AFTER the regular season ends. "
+                        f"Regular season ends week {reg_weeks}; playoffs start week {ps_week}."
                     ),
                 )
-        # Consolation teams cannot exceed teams NOT in playoffs
-        c_teams = _eff("consolation_teams")
-        league_team_count = int(league.get("current_teams") or league.get("max_teams") or 0)
-        if (
-            c_teams is not None
-            and p_teams is not None
-            and league_team_count > 0
-            and int(c_teams) > (league_team_count - int(p_teams))
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Consolation bracket can have at most "
-                    f"{league_team_count - int(p_teams)} team"
-                    f"{'s' if (league_team_count - int(p_teams)) != 1 else ''} "
-                    f"(teams not in the playoffs). Currently {c_teams}."
-                ),
-            )
+            if ps_week is not None and pe_week is not None and int(pe_week) < int(ps_week):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Playoff end week ({pe_week}) cannot be before playoff start week ({ps_week})."
+                    ),
+                )
+            if (
+                ps_week is not None and pe_week is not None and p_rounds is not None
+                and (int(pe_week) - int(ps_week) + 1) < int(p_rounds)
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Cannot award a champion: {p_rounds} rounds need at least "
+                        f"{p_rounds} week{'s' if int(p_rounds) != 1 else ''}, "
+                        f"but only {int(pe_week) - int(ps_week) + 1} week"
+                        f"{'s' if (int(pe_week) - int(ps_week) + 1) != 1 else ''} configured. "
+                        "Extend the playoff window or reduce the round count."
+                    ),
+                )
+            if p_teams is not None and p_rounds is not None:
+                min_teams = 2 ** int(p_rounds)
+                if int(p_teams) < min_teams:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"With {p_rounds} round{'s' if int(p_rounds) != 1 else ''}, "
+                            f"need at least {min_teams} playoff teams to award a champion. "
+                            f"Currently {p_teams}."
+                        ),
+                    )
+            # Consolation teams cannot exceed teams NOT in playoffs
+            c_teams = _eff("consolation_teams")
+            league_team_count = int(league.get("current_teams") or league.get("max_teams") or 0)
+            if (
+                c_teams is not None
+                and p_teams is not None
+                and league_team_count > 0
+                and int(c_teams) > (league_team_count - int(p_teams))
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Consolation bracket can have at most "
+                        f"{league_team_count - int(p_teams)} team"
+                        f"{'s' if (league_team_count - int(p_teams)) != 1 else ''} "
+                        f"(teams not in the playoffs). Currently {c_teams}."
+                    ),
+                )
 
     if update:
         await db.leagues.update_one({"_id": league["_id"]}, {"$set": update})

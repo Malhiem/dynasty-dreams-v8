@@ -16,7 +16,7 @@ export default function GenerateStep({ ctx }) {
     retentionEnabled, retentionSlots, retentionMaxPct,
     divSet,
     tradeDeadlineWeek,
-    playoffStartWeek, playoffEndWeek,
+    playoffsEnabled, playoffStartWeek, playoffEndWeek,
     numWeeks, setNumWeeks,
     busy,
     generateSchedule,
@@ -39,7 +39,7 @@ export default function GenerateStep({ ctx }) {
           <div><span className="text-muted-foreground">Divisions:</span> <strong>{divSet.size}</strong></div>
           <div><span className="text-muted-foreground">Mode:</span> <strong>{divSet.size >= 2 ? "Division-aware" : "Round-robin"}</strong></div>
           <div><span className="text-muted-foreground">Trade deadline:</span> <strong>Week {tradeDeadlineWeek}</strong></div>
-          <div><span className="text-muted-foreground">Playoffs:</span> <strong>Wk {playoffStartWeek}–{playoffEndWeek}</strong></div>
+          <div><span className="text-muted-foreground">Playoffs:</span> <strong>{playoffsEnabled ? `Wk ${playoffStartWeek}–${playoffEndWeek}` : "Disabled"}</strong></div>
         </div>
         <div className="flex items-end gap-2">
           <div className="flex-1">
