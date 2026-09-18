@@ -247,21 +247,29 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <Label>Number of Teams</Label>
-              <Input
-                type="number"
-                min={2}
-                max={p.activeLeague?.allow_duplicate_players ? 100 : 32}
-                step={1}
-                value={p.activeLeague?.max_teams ?? 12}
-                onChange={(e) => {
-                  const cap = p.activeLeague?.allow_duplicate_players ? 100 : 32;
-                  const v = Math.max(2, Math.min(cap, parseInt(e.target.value || "0", 10)));
-                  if (!p.activeLeague?.id || v === p.activeLeague?.max_teams) return;
-                  p.onMaxTeamsChange?.(v);
+              <Select
+                value={String(p.activeLeague?.max_teams ?? 12)}
+                onValueChange={(v) => {
+                  const num = parseInt(v, 10);
+                  if (!p.activeLeague?.id || num === p.activeLeague?.max_teams) return;
+                  p.onMaxTeamsChange?.(num);
                 }}
-                className="bg-secondary border-border"
-                data-testid="league-structure-max-teams"
-              />
+              >
+                <SelectTrigger
+                  className="bg-secondary border-border"
+                  data-testid="league-structure-max-teams"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from(
+                    { length: (p.activeLeague?.allow_duplicate_players ? 100 : 32) - 1 },
+                    (_, i) => i + 2,
+                  ).map((n) => (
+                    <SelectItem key={n} value={String(n)}>{n} Teams</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <p className="text-[10px] text-muted-foreground">
                 {p.activeLeague?.allow_duplicate_players
                   ? "Up to 100 (duplicate players enabled)"
