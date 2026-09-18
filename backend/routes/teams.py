@@ -126,6 +126,8 @@ class TeamResponse(BaseModel):
     playoffs_reached_at: Optional[datetime] = None
     consolation_won_at: Optional[datetime] = None
     is_pending: bool = False
+    division: Optional[str] = None
+    conference: Optional[str] = None
 
 
 def team_to_response(team: dict) -> TeamResponse:
@@ -175,6 +177,8 @@ def team_to_response(team: dict) -> TeamResponse:
         playoffs_reached_at=team.get("playoffs_reached_at"),
         consolation_won_at=team.get("consolation_won_at"),
         is_pending=bool(team.get("is_pending")),
+        division=team.get("division"),
+        conference=team.get("conference"),
     )
 
 

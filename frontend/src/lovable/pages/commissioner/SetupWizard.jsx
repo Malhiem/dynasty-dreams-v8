@@ -175,11 +175,12 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
     let cancelled = false;
     (async () => {
       try {
-        const [lgR, teamsR, cfgR, sugR] = await Promise.all([
+        const [lgR, teamsR, cfgR, sugR, divR] = await Promise.all([
           api.get(`/leagues/${leagueId}`),
           api.get(`/teams?league_id=${leagueId}`),
           api.get(`/leagues/${leagueId}/schedule-config`).catch(() => ({ data: null })),
           api.get(`/leagues/${leagueId}/setup-suggestions`).catch(() => ({ data: null })),
+          api.get(`/leagues/${leagueId}/divisions`).catch(() => ({ data: null })),
         ]);
         if (cancelled) return;
         setLeague(lgR.data);
@@ -231,19 +232,54 @@ export default function SetupWizard({ open, onClose, leagueId, onComplete }) {
         setConsolationStartWeek(lgR.data?.consolation_start_week ?? 19);
         setConsolationEndWeek(lgR.data?.consolation_end_week ?? 21);
 
+        // ─── Hydrate divisions, conferences, and team→division assignments ──
+        // Primary source: the /divisions endpoint which reads directly from
+        // each team's stored `division`/`conference` fields in MongoDB.
+        // Fallback: team-level fields from /teams response (same data, but
+        // historically these weren't returned — now they are).
         const seeded = {};
         const divs = new Set();
         const confs = new Set();
         const divToConf = {};
+
+        const divData = divR?.data;
+        if (divData?.divisions?.length) {
+          // Hydrate from the structured /divisions response
+          for (const d of divData.divisions) {
+            divs.add(d.division);
+            if (d.conference) {
+              confs.add(d.conference);
+              divToConf[d.division] = d.conference;
+            }
+            for (const t of (d.teams || [])) {
+              seeded[t.id] = { division: d.division, conference: d.conference || "" };
+            }
+          }
+          // Also add any unassigned teams
+          for (const t of (divData.unassigned || [])) {
+            if (!seeded[t.id]) seeded[t.id] = { division: "", conference: "" };
+          }
+          // If league has a persisted division_conference_map, merge it in
+          if (divData.division_conference_map) {
+            for (const [div, conf] of Object.entries(divData.division_conference_map)) {
+              if (div && conf && !divToConf[div]) divToConf[div] = conf;
+            }
+          }
+        }
+
+        // Fill in any teams that weren't covered by the /divisions response
         (teamsR.data || []).forEach((t) => {
-          seeded[t.id] = { division: t.division || "", conference: t.conference || "" };
-          if (t.division) divs.add(t.division);
-          if (t.conference) confs.add(t.conference);
-          // Reconstruct the division→conference map from existing team rows.
+          if (!seeded[t.id]) {
+            seeded[t.id] = { division: t.division || "", conference: t.conference || "" };
+          }
+          // Also collect any division/conference from team objects
+          if (t.division && !divs.has(t.division)) divs.add(t.division);
+          if (t.conference && !confs.has(t.conference)) confs.add(t.conference);
           if (t.division && t.conference && !divToConf[t.division]) {
             divToConf[t.division] = t.conference;
           }
         });
+
         setDivisionAssignments(seeded);
         setDivisionList(Array.from(divs));
         setConferenceList(Array.from(confs));

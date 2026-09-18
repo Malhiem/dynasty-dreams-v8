@@ -1,0 +1,89 @@
+{
+  "summary": "Bug Fix Verified: Wizard setup now correctly displays existing divisions and conference alignment. Backend: 9/9 tests PASS. Frontend: All UI elements verified for both Stat Chasers Roto (2 divisions, 1 conference) and Frozen Dynasty (4 divisions, 2 conferences).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_divisions_wizard_bug.py",
+    "/app/test_reports/pytest/iter156_divisions_wizard.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Backend teams.py: TeamResponse model now includes 'division' and 'conference' fields (lines 129-130)",
+    "Backend teams.py: team_to_response() function correctly extracts division/conference from team document (lines 180-181)",
+    "Backend leagues.py: GET /leagues/{id}/divisions endpoint returns full structure including team assignments, conferences, and division_conference_map (lines 747-787)",
+    "Frontend SetupWizard.jsx: Division hydration block now fetches /divisions endpoint (divR) alongside teams (line 183)",
+    "Frontend SetupWizard.jsx: Uses divData.divisions to populate divisionList, conferenceList, divisionToConference, and divisionAssignments (lines 245-286)",
+    "Frontend SetupWizard.jsx: Falls back to team-level fields from /teams response for backward compatibility (lines 271-280)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_divisions_wizard_bug.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 tests)",
+    "frontend": "100% (all UI elements verified)"
+  },
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "Used existing leagues: 'Stat Chasers Roto' (69e46af167999bfb85c39629), 'Frozen Dynasty' (69e46af167999bfb85c3962a)",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Division/conference wizard hydration bug is fixed. The wizard now correctly loads existing divisions, conferences, division-conference mappings, and team assignments from the /api/leagues/{id}/divisions endpoint. Both 2-division (Stat Chasers Roto) and 4-division (Frozen Dynasty) configurations verified working.",
+  "verified_features": {
+    "backend_api": {
+      "GET /api/teams?league_id={id}": {
+        "division_field": "Returns division field for each team (previously missing/null)",
+        "conference_field": "Returns conference field for each team (previously missing/null)",
+        "stat_chasers_roto": "14 teams, all have division (North/South) and conference (Test)",
+        "frozen_dynasty": "16 teams, all have division (Atlantic/Metropolitan/Central/Pacific) and conference (Eastern/Western)"
+      },
+      "GET /api/leagues/{id}/divisions": {
+        "divisions_array": "Returns full division structure with team assignments",
+        "conference_per_division": "Each division includes its conference",
+        "team_ids_and_teams": "Returns both team_ids array and teams array with id/name/abbr",
+        "unassigned_teams": "Returns list of teams not assigned to any division",
+        "division_conference_map": "Returns the persisted division→conference mapping",
+        "structure_locked": "Returns whether the structure is locked"
+      }
+    },
+    "frontend_wizard": {
+      "stat_chasers_roto": {
+        "divisions_displayed": "North, South (2 chips)",
+        "conferences_displayed": "Test (1 chip)",
+        "division_conference_mapping": "North→Test, South→Test",
+        "team_assignments": "7 teams in North, 7 teams in South, 0 unassigned",
+        "team_dropdowns": "Each team shows correct Division and Conference in table"
+      },
+      "frozen_dynasty": {
+        "divisions_displayed": "Atlantic, Metropolitan, Central, Pacific (4 chips)",
+        "conferences_displayed": "Eastern, Western (2 chips)",
+        "division_conference_mapping": "Atlantic→Eastern, Metropolitan→Eastern, Central→Western, Pacific→Western",
+        "team_assignments": "4 teams per division, 0 unassigned",
+        "team_dropdowns": "Each team shows correct Division and Conference in table"
+      },
+      "schedule_step": {
+        "playoffs_enabled_toggle": "Correctly shows ON state matching league's playoffs_enabled setting"
+      }
+    }
+  },
+  "root_cause_analysis": {
+    "bug_description": "Wizard setup doesn't see existing divisions and conference alignment that has already been set by the league",
+    "root_cause": [
+      "TeamResponse model in teams.py didn't include division/conference fields even though they were stored in MongoDB",
+      "team_to_response() function didn't extract division/conference from the team document",
+      "SetupWizard.jsx only read from team objects and never fetched the /divisions endpoint"
+    ],
+    "fix_applied": [
+      "Added division: Optional[str] = None and conference: Optional[str] = None to TeamResponse model",
+      "Added division=team.get('division') and conference=team.get('conference') to team_to_response()",
+      "Updated SetupWizard.jsx to fetch /api/leagues/{id}/divisions as the primary hydration source",
+      "Added fallback to team-level fields for backward compatibility"
+    ],
+    "verification": "Both Stat Chasers Roto (2 divisions, 1 conference) and Frozen Dynasty (4 divisions, 2 conferences) now correctly display all previously configured settings in the wizard"
+  }
+}
