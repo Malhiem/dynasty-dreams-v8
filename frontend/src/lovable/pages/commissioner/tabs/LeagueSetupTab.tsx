@@ -38,6 +38,8 @@ interface LeagueSetupTabProps {
   playoffsEnabled: boolean;
   savingPlayoffsEnabled?: boolean;
   onPlayoffsEnabledChange: (v: boolean) => void;
+  // Max teams
+  onMaxTeamsChange?: (v: number) => void;
   // League logo
   leagueLogo: string | null;
   leagueLogoName: string | null;
@@ -245,14 +247,26 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
           <div className="grid gap-4 md:grid-cols-3">
             <div className="space-y-2">
               <Label>Number of Teams</Label>
-              <Select defaultValue="12">
-                <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {[6, 8, 10, 12, 14, 16, 18, 20].map((n) => (
-                    <SelectItem key={n} value={n.toString()}>{n} Teams</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input
+                type="number"
+                min={2}
+                max={p.activeLeague?.allow_duplicate_players ? 100 : 32}
+                step={1}
+                value={p.activeLeague?.max_teams ?? 12}
+                onChange={(e) => {
+                  const cap = p.activeLeague?.allow_duplicate_players ? 100 : 32;
+                  const v = Math.max(2, Math.min(cap, parseInt(e.target.value || "0", 10)));
+                  if (!p.activeLeague?.id || v === p.activeLeague?.max_teams) return;
+                  p.onMaxTeamsChange?.(v);
+                }}
+                className="bg-secondary border-border"
+                data-testid="league-structure-max-teams"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                {p.activeLeague?.allow_duplicate_players
+                  ? "Up to 100 (duplicate players enabled)"
+                  : "Up to 32 · enable duplicate players for more"}
+              </p>
             </div>
             <div className="space-y-2">
               <Label>Number of Divisions</Label>

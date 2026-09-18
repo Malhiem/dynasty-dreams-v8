@@ -1,0 +1,67 @@
+{
+  "summary": "Iter 157 - Max Teams Validation Testing Complete. Backend: 9/9 tests PASS. Frontend: All UI elements verified for LeagueSetupTab and Wizard BasicsStep.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_max_teams_validation.py",
+    "/app/test_reports/pytest/iter157_max_teams.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Backend leagues.py: max_teams validation at lines 2166-2180 correctly enforces max_teams > 32 requires allow_duplicate_players=true",
+    "Backend LeagueUpdate model: max_teams field has ge=2, le=100 validation (line 1947)",
+    "Frontend LeagueSetupTab.tsx: Number input with type='number', min=2, max=(allow_dup?100:32), step=1 (lines 250-264)",
+    "Frontend LeagueSetupTab.tsx: Hint text correctly shows 'Up to 32 · enable duplicate players for more' or 'Up to 100 (duplicate players enabled)' (lines 265-269)",
+    "Frontend CommissionerSettings.tsx: handleMaxTeamsChange with 600ms debounce auto-saves via PUT API (lines 265-281)",
+    "Frontend BasicsStep.jsx: Teams input has explicit step={1}, max={teamCapMax} where teamCapMax = allowDuplicatePlayers ? 100 : 32 (lines 41, 70-71)",
+    "Frontend BasicsStep.jsx: Warning appears when maxTeams > 32 && !allowDuplicatePlayers (lines 80-84)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_max_teams_validation.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 tests)",
+    "frontend": "100% (all UI elements verified)"
+  },
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "Used existing leagues: 'Stat Chasers Roto' (69e46af167999bfb85c39629), 'Frozen Dynasty' (69e46af167999bfb85c3962a). Restored original values after testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Max teams validation is working correctly. The Number of Teams control in LeagueSetupTab is now a number input (not a dropdown) with step=1. Backend enforces max_teams > 32 requires allow_duplicate_players=true. Frontend dynamically adjusts max attribute based on duplicate players setting.",
+  "verified_features": {
+    "backend_api": {
+      "PUT /api/leagues/{id} with max_teams=25": "PASS - succeeds within 32 cap without duplicate players",
+      "PUT /api/leagues/{id} with max_teams=50 without allow_duplicate_players": "PASS - returns 400 with correct error message",
+      "PUT /api/leagues/{id} with max_teams=50 and allow_duplicate_players=true": "PASS - succeeds",
+      "PUT /api/leagues/{id} with max_teams=101": "PASS - returns 422 validation error (above 100 cap)",
+      "PUT /api/leagues/{id} with max_teams=32 boundary": "PASS - succeeds at boundary without duplicate players",
+      "PUT /api/leagues/{id} with max_teams=33 without allow_duplicate_players": "PASS - returns 400",
+      "PUT /api/leagues/{id} with max_teams=100 with allow_duplicate_players=true": "PASS - succeeds at max cap"
+    },
+    "frontend_league_setup_tab": {
+      "number_input_type": "PASS - Input type is 'number' (not dropdown)",
+      "step_attribute": "PASS - step=1 (increments by 1, not 2)",
+      "min_attribute": "PASS - min=2",
+      "max_attribute_without_duplicates": "PASS - max=32 when duplicate players disabled",
+      "max_attribute_with_duplicates": "PASS - max=100 when duplicate players enabled",
+      "hint_text_without_duplicates": "PASS - Shows 'Up to 32 · enable duplicate players for more'",
+      "hint_text_with_duplicates": "PASS - Shows 'Up to 100 (duplicate players enabled)'",
+      "auto_save_toast": "PASS - Toast 'Team cap updated to N' appears after debounced save"
+    },
+    "frontend_wizard_basics_step": {
+      "teams_input_type": "PASS - Input type is 'number'",
+      "step_attribute": "PASS - step=1",
+      "min_attribute": "PASS - min=2",
+      "max_attribute_dynamic": "PASS - max changes from 32 to 100 when duplicate players enabled",
+      "duplicate_players_toggle": "PASS - Toggle present with correct description",
+      "value_clamping": "PASS - Value clamped to 32 when disabling duplicate players with value > 32"
+    }
+  }
+}

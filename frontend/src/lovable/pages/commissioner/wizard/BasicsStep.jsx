@@ -67,7 +67,7 @@ export default function BasicsStep({ ctx }) {
           <Label className="text-muted-foreground text-xs" htmlFor="wiz-stat-teams">Teams</Label>
           <Input
             id="wiz-stat-teams"
-            type="number" min={2} max={teamCapMax} value={maxTeams}
+            type="number" min={2} max={teamCapMax} step={1} value={maxTeams}
             onChange={(e) => setMaxTeams(Math.max(2, Math.min(teamCapMax, parseInt(e.target.value || "0", 10))))}
             className="font-bold h-8 mt-1"
             data-testid="wizard-max-teams"

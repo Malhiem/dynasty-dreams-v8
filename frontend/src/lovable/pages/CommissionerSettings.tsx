@@ -260,6 +260,26 @@ const CommissionerSettings = () => {
   };
 
   // ─── Scoring format auto-save handler ──────────────────────────
+
+  // ─── Max teams auto-save (debounced) ───────────────────────────
+  const maxTeamsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleMaxTeamsChange = (value: number) => {
+    if (!activeLeague?.id) return;
+    // Debounce so rapid typing doesn't fire many PUTs
+    if (maxTeamsTimer.current) clearTimeout(maxTeamsTimer.current);
+    maxTeamsTimer.current = setTimeout(async () => {
+      try {
+        await api.put(`/leagues/${activeLeague.id}`, { max_teams: value });
+        reloadLeague();
+        toast.success(`Team cap updated to ${value}`);
+      } catch (e: any) {
+        toast.error("Failed to update team cap", {
+          description: e?.response?.data?.detail || e?.message,
+        });
+      }
+    }, 600);
+  };
+
   const SCORING_FORMAT_LABELS: Record<string, string> = {
     rotisserie: "Rotisserie",
     points: "Points-Based",
@@ -828,6 +848,7 @@ const CommissionerSettings = () => {
               playoffsEnabled={playoffsEnabled}
               savingPlayoffsEnabled={savingPlayoffsEnabled}
               onPlayoffsEnabledChange={handlePlayoffsEnabledChange}
+              onMaxTeamsChange={handleMaxTeamsChange}
               leagueLogo={leagueLogo}
               leagueLogoName={leagueLogoName}
               logoInputRef={logoInputRef}
