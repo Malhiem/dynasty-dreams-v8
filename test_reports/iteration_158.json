@@ -1,0 +1,63 @@
+{
+  "summary": "Condensed Rotisserie Playoff Format Feature - All Tests PASS. Backend: 8/8 tests pass. Frontend: All UI elements verified including dropdown options, CondensedRotoConfig panel, Fresh Playoff Totals toggle, Seed Bonuses grid, Save/Persistence, and format switching.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_condensed_roto.py",
+    "/app/test_reports/pytest/iter158_condensed_roto.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Backend leagues.py line 2051: playoff_format field has correct regex pattern ^(h2h_matchup|playoff_tree|condensed_roto)$",
+    "Backend leagues.py lines 2052-2053: playoff_roto_seed_bonuses and playoff_roto_fresh_totals fields properly defined",
+    "Backend leagues.py lines 2114-2115: Both roto fields included in allowed update fields list",
+    "Frontend PlayoffsScheduleCards.tsx lines 296-385: CondensedRotoConfig component properly implemented with Fresh Totals toggle, Seed Bonuses grid, and champion info box",
+    "Frontend PlayoffsScheduleCards.tsx lines 450-454: useMemo correctly includes 'format' in dependency array to fix bracket validation bug",
+    "Frontend PlayoffsScheduleCards.tsx lines 552-559: Playoff Format dropdown includes all 3 options (H2H Matchup, Playoff Tree, Condensed Rotisserie)",
+    "Frontend PlayoffsScheduleCards.tsx lines 586-595: CondensedRotoConfig conditionally rendered only when format === 'condensed_roto'"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_condensed_roto.py"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 tests)",
+    "frontend": "100% (all UI elements verified)"
+  },
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "Used existing league: 'Ice Breakers' (Stat Chasers Roto). Restored original values after testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Condensed Rotisserie playoff format feature is fully implemented and working. The feature adds a third playoff format option alongside H2H Matchup and Playoff Tree. When selected, it shows the CondensedRotoConfig panel with Fresh Playoff Totals toggle and Seed Bonuses grid. The bracket-size validation (2^rounds teams) correctly does NOT apply to condensed_roto format.",
+  "verified_features": {
+    "backend_api": {
+      "PUT /api/leagues/{id} with playoff_format=condensed_roto": "PASS - accepts value",
+      "PUT /api/leagues/{id} with playoff_format=h2h_matchup": "PASS - accepts value",
+      "PUT /api/leagues/{id} with playoff_format=playoff_tree": "PASS - accepts value",
+      "PUT /api/leagues/{id} with playoff_format=invalid_format": "PASS - returns 422 validation error",
+      "PUT /api/leagues/{id} with playoff_roto_fresh_totals=true/false": "PASS - field persists correctly",
+      "PUT /api/leagues/{id} with playoff_roto_seed_bonuses={1:5,2:3,3:1}": "PASS - field persists correctly",
+      "Full condensed_roto save with all fields": "PASS - all fields saved together"
+    },
+    "frontend_playoffs_card": {
+      "playoff_format_dropdown_options": "PASS - Shows all 3 options: H2H Matchup, Playoff Tree, Condensed Rotisserie",
+      "condensed_roto_config_panel_visibility": "PASS - Panel appears when Condensed Rotisserie selected",
+      "fresh_playoff_totals_toggle": "PASS - Toggle present with data-testid='roto-fresh-totals-toggle'",
+      "fresh_totals_description_text": "PASS - Text changes between 'Stats reset — only playoff-period stats count' and 'Cumulative — regular-season stats carry into'",
+      "seed_bonuses_grid": "PASS - Grid shows inputs for seeds 1-8 with data-testid='seed-bonus-input-{n}'",
+      "champion_info_box": "PASS - Shows 'The team with the highest total roto points... wins the championship'",
+      "bracket_validation_skipped": "PASS - No 'you need at least X playoff teams' error for condensed_roto",
+      "save_playoffs_button": "PASS - Saves successfully with toast 'Playoffs saved'",
+      "persistence_after_reload": "PASS - Format and seed bonuses persist after page reload",
+      "switch_to_h2h_hides_config": "PASS - CondensedRotoConfig panel hidden when H2H selected",
+      "switch_to_tree_shows_seeding": "PASS - Seeding Method dropdown appears for Playoff Tree"
+    }
+  },
+  "navigation_notes": "To access the Playoffs card: Login → Click 'League Administration' in sidebar → Click 'League Structure' tab → Scroll down to find Playoffs card"
+}

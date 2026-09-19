@@ -293,6 +293,97 @@ function CustomMatchupBuilder({
   );
 }
 
+/* ──────────── Condensed Roto Playoff Config ─────────────────────── */
+
+function CondensedRotoConfig({
+  league, freshTotals, setFreshTotals, seedBonuses, setSeedBonuses, playoffTeams,
+}: {
+  league: any;
+  freshTotals: boolean;
+  setFreshTotals: (v: boolean) => void;
+  seedBonuses: Record<string, number>;
+  setSeedBonuses: (v: Record<string, number>) => void;
+  playoffTeams: number;
+}) {
+  const updateBonus = (seed: number, value: number) => {
+    setSeedBonuses({ ...seedBonuses, [String(seed)]: value });
+  };
+
+  return (
+    <div
+      className="border-l-2 border-emerald-500/40 pl-3 space-y-4"
+      data-testid="condensed-roto-config"
+    >
+      <div className="text-xs font-semibold text-emerald-300">
+        Condensed Rotisserie Settings
+      </div>
+
+      {/* Fresh Totals toggle */}
+      <div className="flex items-center justify-between">
+        <div>
+          <Label htmlFor="roto-fresh-totals" className="text-xs">
+            Fresh Playoff Totals
+          </Label>
+          <p className="text-[10px] text-muted-foreground">
+            {freshTotals
+              ? "Stats reset — only playoff-period stats count toward the championship"
+              : "Cumulative — regular-season stats carry into the playoff period"}
+          </p>
+        </div>
+        <Switch
+          id="roto-fresh-totals"
+          checked={freshTotals}
+          onCheckedChange={setFreshTotals}
+          data-testid="roto-fresh-totals-toggle"
+        />
+      </div>
+
+      {/* Seed Bonuses */}
+      <div className="space-y-2">
+        <Label className="text-xs">Seed Bonuses (extra roto points)</Label>
+        <p className="text-[10px] text-muted-foreground">
+          Award bonus roto points based on regular-season seed. Higher seeds earn an advantage.
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+          {Array.from({ length: Math.min(playoffTeams, 16) }, (_, i) => {
+            const seed = i + 1;
+            const bonus = seedBonuses[String(seed)] ?? 0;
+            return (
+              <div
+                key={seed}
+                className="flex items-center gap-2 rounded-md border border-border bg-secondary/30 px-2 py-1.5"
+                data-testid={`seed-bonus-row-${seed}`}
+              >
+                <span className="text-[10px] font-medium text-muted-foreground w-10">
+                  #{seed}
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  max={50}
+                  step={0.5}
+                  value={bonus}
+                  onChange={(e) => updateBonus(seed, parseFloat(e.target.value) || 0)}
+                  className="h-7 text-xs bg-secondary border-border w-16"
+                  data-testid={`seed-bonus-input-${seed}`}
+                />
+                <span className="text-[10px] text-muted-foreground">pts</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Champion selection info */}
+      <div className="rounded-md bg-emerald-500/10 border border-emerald-500/20 p-2.5">
+        <p className="text-[11px] text-emerald-200">
+          The team with the highest total roto points{freshTotals ? " (playoff period only)" : " (cumulative)"}{Object.values(seedBonuses).some(v => v > 0) ? " plus seed bonuses" : ""} wins the championship.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /* ───────────────────────── Playoffs Card ───────────────────────────── */
 export function PlayoffsCard({ league, reloadLeague, teams }: any) {
   const [playoffTeams, setPlayoffTeams] = useState<string>(String(league?.playoff_teams ?? 6));
@@ -307,6 +398,10 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
   const [weekLengths, setWeekLengths] = useState<Record<string, { length_weeks: number }>>(
     league?.playoff_week_lengths || {},
   );
+  const [freshTotals, setFreshTotals] = useState<boolean>(league?.playoff_roto_fresh_totals !== false);
+  const [seedBonuses, setSeedBonuses] = useState<Record<string, number>>(
+    league?.playoff_roto_seed_bonuses || {},
+  );
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -318,11 +413,14 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
     setSeedingMethod(league?.playoff_seeding_method || "high_vs_low");
     setCustomMatchups(league?.playoff_custom_matchups || []);
     setWeekLengths(league?.playoff_week_lengths || {});
+    setFreshTotals(league?.playoff_roto_fresh_totals !== false);
+    setSeedBonuses(league?.playoff_roto_seed_bonuses || {});
   }, [
     league?.id, league?.playoff_teams, league?.playoff_start_week,
     league?.playoff_end_week, league?.playoff_rounds, league?.playoff_format,
     league?.playoff_seeding_method, league?.playoff_custom_matchups,
-    league?.playoff_week_lengths,
+    league?.playoff_week_lengths, league?.playoff_roto_fresh_totals,
+    league?.playoff_roto_seed_bonuses,
   ]);
 
   const reg = Number(league?.regular_season_weeks ?? 18);
@@ -348,11 +446,12 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
     if (rounds > 0 && playoffWeeks < totalRoundWeeks) {
       e.push(`Cannot fit ${rounds} rounds (${totalRoundWeeks} weeks total with current per-round lengths) into ${playoffWeeks} configured playoff week${playoffWeeks === 1 ? "" : "s"}.`);
     }
-    if (rounds > 0 && tms < 2 ** rounds) {
+    // Tree-specific: need 2^rounds teams for an elimination bracket
+    if (format !== "condensed_roto" && rounds > 0 && tms < 2 ** rounds) {
       e.push(`With ${rounds} round${rounds !== 1 ? "s" : ""}, you need at least ${2 ** rounds} playoff teams.`);
     }
     return e;
-  }, [playoffStart, playoffEnd, playoffRounds, playoffTeams, playoffWeeks, reg, weekLengths]);
+  }, [playoffStart, playoffEnd, playoffRounds, playoffTeams, playoffWeeks, reg, weekLengths, format]);
 
   const weeksList = useMemo(() => {
     const ps = parseInt(playoffStart, 10);
@@ -376,6 +475,9 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
         playoff_seeding_method: format === "playoff_tree" ? seedingMethod : null,
         playoff_custom_matchups: format === "playoff_tree" && seedingMethod === "custom" ? customMatchups : null,
         playoff_week_lengths: weekLengths,
+        // Condensed Roto fields
+        playoff_roto_fresh_totals: format === "condensed_roto" ? freshTotals : null,
+        playoff_roto_seed_bonuses: format === "condensed_roto" ? seedBonuses : null,
       });
       toast.success("Playoffs saved");
       reloadLeague?.();
@@ -454,10 +556,13 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
               <SelectContent className="bg-popover border-border z-50">
                 <SelectItem value="h2h_matchup">H2H Matchup (same as regular season)</SelectItem>
                 <SelectItem value="playoff_tree">Playoff Tree (elimination bracket)</SelectItem>
+                <SelectItem value="condensed_roto">Condensed Rotisserie (roto scoring period)</SelectItem>
               </SelectContent>
             </Select>
             <p className="text-[10px] text-muted-foreground">
-              Defaults to your regular-season format. Choose Playoff Tree for a knockout bracket.
+              {format === "condensed_roto"
+                ? "Qualifying teams play a shortened roto competition. Champion has the highest roto total."
+                : "Defaults to your regular-season format. Choose Playoff Tree for a knockout bracket."}
             </p>
           </div>
           {format === "playoff_tree" && (
@@ -476,6 +581,18 @@ export function PlayoffsCard({ league, reloadLeague, teams }: any) {
             </div>
           )}
         </div>
+
+        {/* Condensed Roto config */}
+        {format === "condensed_roto" && (
+          <CondensedRotoConfig
+            league={league}
+            freshTotals={freshTotals}
+            setFreshTotals={setFreshTotals}
+            seedBonuses={seedBonuses}
+            setSeedBonuses={setSeedBonuses}
+            playoffTeams={parseInt(playoffTeams, 10) || 0}
+          />
+        )}
 
         {format === "playoff_tree" && seedingMethod === "custom" && (
           <div className="border-l-2 border-amber-500/40 pl-3 space-y-2">

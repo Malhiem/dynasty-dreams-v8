@@ -173,6 +173,8 @@ class LeagueResponse(BaseModel):
     stats_count_start_date: Optional[str] = None
     stats_count_end_date: Optional[str] = None
     playoff_format: Optional[str] = None
+    playoff_roto_seed_bonuses: Optional[dict] = None
+    playoff_roto_fresh_totals: Optional[bool] = None
     playoff_seeding_method: Optional[str] = None
     playoff_custom_matchups: Optional[List[dict]] = None
     consolation_teams: Optional[int] = None
@@ -390,6 +392,8 @@ def _league_to_response(league: dict) -> LeagueResponse:
         stats_count_start_date=league.get("stats_count_start_date"),
         stats_count_end_date=league.get("stats_count_end_date"),
         playoff_format=league.get("playoff_format"),
+        playoff_roto_seed_bonuses=league.get("playoff_roto_seed_bonuses"),
+        playoff_roto_fresh_totals=league.get("playoff_roto_fresh_totals", True),
         playoff_seeding_method=league.get("playoff_seeding_method"),
         playoff_custom_matchups=league.get("playoff_custom_matchups"),
         consolation_teams=league.get("consolation_teams"),
@@ -2044,7 +2048,9 @@ class LeagueUpdate(BaseModel):
     # Playoff format: "h2h_matchup" mirrors regular-season scoring; "playoff_tree" runs
     # an elimination bracket. Seeding methods: high_vs_low (1vN, 2vN-1…), adjacent
     # (1v2, 3v4…), or custom (commissioner-built matchup ladder).
-    playoff_format: Optional[str] = Field(default=None, pattern=r"^(h2h_matchup|playoff_tree)$")
+    playoff_format: Optional[str] = Field(default=None, pattern=r"^(h2h_matchup|playoff_tree|condensed_roto)$")
+    playoff_roto_seed_bonuses: Optional[dict] = None  # {seed_rank: bonus_pts}
+    playoff_roto_fresh_totals: Optional[bool] = None   # True = reset stats for playoff period
     playoff_seeding_method: Optional[str] = Field(default=None, pattern=r"^(high_vs_low|adjacent|custom)$")
     # Custom ladder: [{week, matchups: [{home, away, label?}]}]
     # `home`/`away` are team_id strings OR the literal "tbd" sentinel.
@@ -2106,6 +2112,7 @@ _LEAGUE_UPDATE_ALLOWED = {
     "stats_count_start_date", "stats_count_end_date",
     # Iter 101: playoff bracket + consolation bracket configuration
     "playoff_format", "playoff_seeding_method", "playoff_custom_matchups",
+    "playoff_roto_seed_bonuses", "playoff_roto_fresh_totals",
     "consolation_teams", "consolation_seeding_method", "consolation_custom_matchups",
     # Iter 194b / 196: in-draft pick trade review + per-week playoff lengths
     "draft_trade_review_minutes", "draft_trade_post_delay_action",
