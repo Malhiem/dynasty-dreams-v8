@@ -857,7 +857,6 @@ const CommissionerSettings = () => {
               setLeagueLogoName={setLeagueLogoName}
               RosterLockCard={RosterLockCard}
               EmergencyRosterChangesCard={EmergencyRosterChangesCard}
-              GoalieScoringCard={GoalieScoringCard}
               reloadLeague={reloadLeague}
               isH2H={isH2H}
               rosterLockType={rosterLockType}
@@ -910,6 +909,9 @@ const CommissionerSettings = () => {
               scoringSettings={scoringSettings}
               toggleScoringCategory={toggleScoringCategory}
               updateScoringPoints={updateScoringPoints}
+              GoalieScoringCard={GoalieScoringCard}
+              activeLeague={activeLeague}
+              reloadLeague={reloadLeague}
             />
           </TabsContent>
 

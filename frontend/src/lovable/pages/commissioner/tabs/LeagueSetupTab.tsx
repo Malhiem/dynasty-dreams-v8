@@ -52,9 +52,7 @@ interface LeagueSetupTabProps {
   // Lock cards
   RosterLockCard: React.ComponentType<any>;
   EmergencyRosterChangesCard: React.ComponentType<any>;
-  GoalieScoringCard: React.ComponentType<any>;
-  reloadLeague: () => void;
-  // Lock-style preset
+  reloadLeague: () => void;  // Lock-style preset
   isH2H: boolean;
   rosterLockType: string;
   setRosterLockType: (v: string) => void;
@@ -438,12 +436,11 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
         </CardContent>
       </Card>
 
-      {/* Iter 103: Roster Lock & Lineup Lock + Iter 105: Emergency Roster + Goalie Scoring */}
+      {/* Iter 103: Roster Lock & Lineup Lock + Iter 105: Emergency Roster */}
       {p.activeLeague?.id && (
         <>
           <p.RosterLockCard league={p.activeLeague} reloadLeague={p.reloadLeague} />
           <p.EmergencyRosterChangesCard league={p.activeLeague} reloadLeague={p.reloadLeague} />
-          <p.GoalieScoringCard league={p.activeLeague} reloadLeague={p.reloadLeague} />
           {/* Iter 228i — Roster Limits removed from League Setup. The canonical
                source of truth is now League Administration → Rosters →
                Roster Size and Position Breakdown. */}
@@ -523,8 +520,8 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
             </div>
           )}
           <p className="text-[11px] text-muted-foreground italic">
-            Emergency Roster Changes and Goalie Scoring rules now live under{" "}
-            <span className="font-medium text-foreground">League Structure</span>.
+            Emergency Roster Changes rules live above. Goalie Scoring rules now live under{" "}
+            <span className="font-medium text-foreground">Scoring</span>.
           </p>
         </CardContent>
       </Card>

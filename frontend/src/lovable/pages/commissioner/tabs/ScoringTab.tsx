@@ -36,6 +36,9 @@ interface ScoringTabProps {
   updateScoringPoints: (id: string, pts: number) => void;
   onReset?: () => void;
   onSave?: () => void;
+  GoalieScoringCard?: React.ComponentType<any>;
+  activeLeague?: any;
+  reloadLeague?: () => void;
 }
 
 function CategoryRow({ cat, prefix, enabled, points, accentClass, onToggle, onChangePoints }: any) {
@@ -86,6 +89,9 @@ export default function ScoringTab({
   updateScoringPoints,
   onReset,
   onSave,
+  GoalieScoringCard,
+  activeLeague,
+  reloadLeague,
 }: ScoringTabProps) {
   const enabledSkaters = skaterCategories.filter((c) => scoringSettings[c.id]?.enabled);
   const enabledGoalies = goalieCategories.filter((c) => scoringSettings[c.id]?.enabled);
@@ -171,6 +177,11 @@ export default function ScoringTab({
           </div>
         </CardContent>
       </Card>
+
+      {/* Goalie Scoring — method, caps, daily lock */}
+      {GoalieScoringCard && activeLeague?.id && (
+        <GoalieScoringCard league={activeLeague} reloadLeague={reloadLeague} />
+      )}
 
       <div className="flex justify-end gap-3">
         <Button variant="outline" onClick={onReset} data-testid="scoring-reset-btn">Reset to Defaults</Button>
