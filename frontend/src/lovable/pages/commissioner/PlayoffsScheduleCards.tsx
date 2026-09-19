@@ -1149,7 +1149,7 @@ export function GoalieScoringCard({ league, reloadLeague }: any) {
           <Goal className="h-5 w-5 text-emerald-400" /> Goalie Scoring
         </CardTitle>
         <p className="text-sm text-muted-foreground">
-          Differentiate goalie scoring with cumulative / Best-X / Average × N methods,
+          Multiple goalie scoring options: cumulative / Best-X / Average × N methods,
           and optional games-played cap.
         </p>
       </CardHeader>
@@ -1158,7 +1158,7 @@ export function GoalieScoringCard({ league, reloadLeague }: any) {
           <Switch checked={enabled} onCheckedChange={setEnabled}
             id="gs-enabled" data-testid="gs-enabled" />
           <Label htmlFor="gs-enabled" className="cursor-pointer font-semibold">
-            Differentiate goalie scoring
+            Multiple goalie scoring options
           </Label>
         </div>
         {enabled && (
