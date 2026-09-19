@@ -19,7 +19,9 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Image as ImageIcon, Upload, Sliders, Loader2, Check, AlertCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { toast } from "sonner";
+import api from "@/lib/api";
 
 interface LeagueSetupTabProps {
   // Privacy + stats
@@ -76,9 +78,39 @@ const LOCK_STYLE_OPTIONS = [
   { value: "first-game",   label: "First Game of Matchup", desc: "Each player locks on their own first game." },
 ];
 const DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+const PLAYOFF_FORMATS = [
+  { value: "h2h_matchup", label: "H2H Matchup", desc: "Same scoring as regular season" },
+  { value: "playoff_tree", label: "Playoff Tree", desc: "Elimination bracket" },
+  { value: "condensed_roto", label: "Condensed Rotisserie", desc: "Shortened roto competition — highest roto total wins" },
+];
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export default function LeagueSetupTab(p: LeagueSetupTabProps) {
+  // ─── Playoff Format auto-save ──────────────────────────
+  const [playoffFormat, setPlayoffFormat] = useState<string>(
+    p.activeLeague?.playoff_format || "h2h_matchup"
+  );
+  const [savingFormat, setSavingFormat] = useState(false);
+
+  useEffect(() => {
+    setPlayoffFormat(p.activeLeague?.playoff_format || "h2h_matchup");
+  }, [p.activeLeague?.id, p.activeLeague?.playoff_format]);
+
+  const handlePlayoffFormatChange = async (newFormat: string) => {
+    setPlayoffFormat(newFormat);
+    if (!p.activeLeague?.id) return;
+    setSavingFormat(true);
+    try {
+      await api.put(`/leagues/${p.activeLeague.id}`, { playoff_format: newFormat });
+      toast.success(`Playoff format set to ${PLAYOFF_FORMATS.find(f => f.value === newFormat)?.label || newFormat}`);
+      p.reloadLeague?.();
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || "Failed to save playoff format");
+    } finally {
+      setSavingFormat(false);
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="commissioner-league-setup-tab">
       {/* ─── Privacy + Recalc Stats ────────────────────────── */}
@@ -309,6 +341,33 @@ export default function LeagueSetupTab(p: LeagueSetupTabProps) {
               </Select>
             </div>
           </div>
+
+          {/* Playoff Format */}
+          {p.playoffsEnabled && (
+            <div className="space-y-2 max-w-sm">
+              <Label>Playoff Format</Label>
+              <Select
+                value={playoffFormat}
+                onValueChange={handlePlayoffFormatChange}
+                disabled={savingFormat}
+              >
+                <SelectTrigger
+                  className="bg-secondary border-border"
+                  data-testid="league-structure-playoff-format"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PLAYOFF_FORMATS.map((f) => (
+                    <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground">
+                {PLAYOFF_FORMATS.find(f => f.value === playoffFormat)?.desc}
+              </p>
+            </div>
+          )}
 
           <Separator />
 

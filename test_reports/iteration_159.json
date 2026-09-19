@@ -1,0 +1,76 @@
+{
+  "summary": "Playoff Format Dropdown in League Setup Tab - All Tests PASS. The new Playoff Format dropdown was successfully added to the League Structure card in the League Setup tab. All 8 test scenarios verified: dropdown presence, all 3 options available, auto-save with toast, persistence after reload, toggle visibility with playoffs enabled/disabled, and sync with League Structure tab's Playoffs card.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_159.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "LeagueSetupTab.tsx lines 81-85: PLAYOFF_FORMATS constant correctly defines all 3 options (h2h_matchup, playoff_tree, condensed_roto) with labels and descriptions",
+    "LeagueSetupTab.tsx lines 89-112: playoffFormat state with useEffect hydration from activeLeague.playoff_format and handlePlayoffFormatChange auto-save handler implemented correctly",
+    "LeagueSetupTab.tsx lines 346-370: Playoff Format dropdown correctly gated on p.playoffsEnabled, uses data-testid='league-structure-playoff-format', and shows description text below",
+    "LeagueSetupTab.tsx line 104: API call uses api.put(`/leagues/${p.activeLeague.id}`, { playoff_format: newFormat }) which matches backend pattern",
+    "LeagueSetupTab.tsx line 106: reloadLeague() called after successful save to sync state across components"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "N/A (frontend-only test)",
+    "frontend": "100% (all 8 test scenarios passed)"
+  },
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "Used existing league: 'Ice Breakers' (Stat Chasers Roto). Restored original value (Condensed Rotisserie) after testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "The Playoff Format dropdown feature in the League Setup tab's League Structure card is fully implemented and working. The dropdown appears below the team count/divisions/playoff teams row when playoffs are enabled. It auto-saves on change with a success toast. Both dropdowns (League Setup tab and League Structure tab's Playoffs card) write to the same backend field (playoff_format) and stay in sync via reloadLeague().",
+  "verified_features": {
+    "test_1_dropdown_presence": {
+      "description": "Navigate to League Administration → League Setup tab → League Structure card. Verify Playoff Format dropdown appears",
+      "result": "PASS",
+      "details": "Found dropdown with data-testid='league-structure-playoff-format', current value was 'Condensed Rotisserie'"
+    },
+    "test_2_all_options_present": {
+      "description": "Open dropdown and verify all 3 options: H2H Matchup, Playoff Tree, Condensed Rotisserie",
+      "result": "PASS",
+      "details": "All 3 options found in dropdown menu"
+    },
+    "test_3_select_h2h_with_toast": {
+      "description": "Select H2H Matchup and verify success toast appears",
+      "result": "PASS",
+      "details": "Toast message: 'Playoff format set to H2H Matchup'"
+    },
+    "test_4_persistence_after_reload": {
+      "description": "Reload page and verify H2H Matchup persists",
+      "result": "PASS",
+      "details": "After reload, dropdown showed 'H2H Matchup'"
+    },
+    "test_5_switch_to_condensed_roto": {
+      "description": "Switch back to Condensed Rotisserie and verify it saves",
+      "result": "PASS",
+      "details": "Toast message: 'Playoff format set to Condensed Rotisserie'"
+    },
+    "test_6_playoffs_disabled_hides_dropdown": {
+      "description": "Disable Enable Playoffs toggle and verify dropdown disappears",
+      "result": "PASS",
+      "details": "Dropdown removed from DOM when playoffs disabled"
+    },
+    "test_7_playoffs_enabled_shows_dropdown": {
+      "description": "Re-enable Enable Playoffs toggle and verify dropdown reappears",
+      "result": "PASS",
+      "details": "Dropdown reappeared after re-enabling playoffs"
+    },
+    "test_8_sync_with_league_structure_tab": {
+      "description": "Navigate to League Structure tab → Playoffs card and verify format dropdown shows same value",
+      "result": "PASS",
+      "details": "Playoffs card format dropdown showed 'Condensed Rotisserie (roto scoring period)' - both dropdowns in sync"
+    }
+  },
+  "navigation_notes": "League Setup tab is the DEFAULT tab when clicking 'League Administration' in sidebar. The League Structure card is the 3rd card on this tab. The new Playoff Format dropdown has data-testid='league-structure-playoff-format'. The League Structure TAB (separate from the card) is accessed by clicking the 'League Structure' horizontal tab."
+}
