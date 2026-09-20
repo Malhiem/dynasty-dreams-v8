@@ -535,8 +535,12 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
       {activeLeague?.id && (
         <>
           <RegularSeasonScheduleCard league={activeLeague} reloadLeague={reloadLeague} />
-          <PlayoffsCard league={activeLeague} reloadLeague={reloadLeague} teams={teams} />
-          <ConsolationCard league={activeLeague} reloadLeague={reloadLeague} teams={teams} />
+          {activeLeague?.playoffs_enabled && (
+            <>
+              <PlayoffsCard league={activeLeague} reloadLeague={reloadLeague} teams={teams} />
+              <ConsolationCard league={activeLeague} reloadLeague={reloadLeague} teams={teams} />
+            </>
+          )}
         </>
       )}
     </div>
