@@ -75,9 +75,10 @@ DEFAULT_ROTO_CATEGORIES = [
 
 # ─── Engine ──────────────────────────────────────────────────────
 
-async def _team_stat_totals(db, league_id: str, period: Optional[int]):
+async def _team_stat_totals(db, league_id: str, period: Optional[int], periods: Optional[list[int]] = None):
     """For each team in the league, sum every rostered player's stats
-    for the target period (None → full season).
+    for the target period (None → full season), or across a list of
+    periods when *periods* is given (used by condensed-roto fresh totals).
 
     Returns: {team_id: {"team_name": str, "stats": {stat: float}}}
     """
@@ -92,10 +93,16 @@ async def _team_stat_totals(db, league_id: str, period: Optional[int]):
                 continue
             if not p:
                 continue
-            # Choose the right stat bucket: `period_stats.{period}` when
-            # a period is supplied, else `season_stats`. Falling back to
-            # season_stats when the period slice is missing keeps early
-            # weeks usable before the first stat sync lands.
+            # Multi-period sum (condensed-roto fresh totals)
+            if periods is not None:
+                player_period_stats = p.get("period_stats") or {}
+                for pnum in periods:
+                    src = player_period_stats.get(str(pnum)) or {}
+                    for cat in ALL_CATEGORIES:
+                        k = cat["key"]
+                        agg[k] = round(float(agg.get(k, 0.0)) + float(src.get(k, 0) or 0), 3)
+                continue
+            # Single-period or full-season
             src = None
             if period is not None:
                 src = (p.get("period_stats") or {}).get(str(period))
@@ -164,8 +171,13 @@ def _rank_category(
 
 async def compute_period(
     db, league_id: str, period: Optional[int] = None,
+    periods: Optional[list[int]] = None,
 ) -> dict:
     """Compute per-team stats + category points for the given period.
+
+    When *periods* (a list of week numbers) is supplied, stats are
+    aggregated across all those weeks — used by condensed-roto fresh
+    totals to restrict to the playoff window.
 
     Returns:
       {
@@ -179,7 +191,7 @@ async def compute_period(
         raise HTTPException(status_code=404, detail="League not found")
     cats = league.get("roto_categories") or DEFAULT_ROTO_CATEGORIES
     tiebreak = league.get("roto_tiebreak") or "split"
-    team_totals = await _team_stat_totals(db, league_id, period)
+    team_totals = await _team_stat_totals(db, league_id, period, periods=periods)
     team_ids = list(team_totals.keys())
     num_teams = len(team_ids)
     if num_teams == 0:
@@ -210,6 +222,8 @@ async def compute_period(
     } for tid in team_ids}
     return {
         "period": period,
+        "periods": periods,
+        "fresh_totals": periods is not None,
         "categories": out_cats,
         "totals": totals,
         "num_teams": num_teams,
@@ -219,10 +233,28 @@ async def compute_period(
 
 async def compute_season(db, league_id: str) -> dict:
     """Sum per-period points across every persisted period. Falls back
-    to the full-season snapshot when no periods exist yet."""
+    to the full-season snapshot when no periods exist yet.
+
+    When the league uses condensed_roto with fresh_totals, stats are
+    restricted to the playoff weeks (playoff_start → playoff_end)."""
     league = await db.leagues.find_one({"_id": ObjectId(league_id)})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
+
+    # ── Condensed-roto fresh totals ─────────────────────────────
+    fresh = (
+        league.get("playoff_format") == "condensed_roto"
+        and league.get("playoff_roto_fresh_totals") is True
+    )
+    if fresh:
+        start = league.get("playoff_start_week")
+        end = league.get("playoff_end_week")
+        if start is not None and end is not None:
+            playoff_periods = list(range(int(start), int(end) + 1))
+            return await compute_period(
+                db, league_id, period=None, periods=playoff_periods,
+            )
+
     periods = await db.roto_period_results.find(
         {"league_id": league_id, "closed": True},
         sort=[("period", 1)],
