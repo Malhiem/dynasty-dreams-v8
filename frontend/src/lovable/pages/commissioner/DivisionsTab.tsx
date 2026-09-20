@@ -463,9 +463,9 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
                 id="intra-div"
                 type="number"
                 min={0}
-                max={10}
+                max={20}
                 value={scheduleCfg.intra_division_games}
-                onChange={e => setScheduleCfg(prev => ({ ...prev, intra_division_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) }))}
+                onChange={e => setScheduleCfg(prev => ({ ...prev, intra_division_games: Math.max(0, Math.min(20, parseInt(e.target.value || "0", 10))) }))}
                 className="mt-1"
                 data-testid="schedule-mix-intra-div-input"
               />
@@ -485,9 +485,9 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
                 id="intra-conf"
                 type="number"
                 min={0}
-                max={10}
+                max={20}
                 value={scheduleCfg.intra_conference_games}
-                onChange={e => setScheduleCfg(prev => ({ ...prev, intra_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) }))}
+                onChange={e => setScheduleCfg(prev => ({ ...prev, intra_conference_games: Math.max(0, Math.min(20, parseInt(e.target.value || "0", 10))) }))}
                 className="mt-1"
                 data-testid="schedule-mix-intra-conf-input"
               />
@@ -507,9 +507,9 @@ export default function DivisionsTab({ leagueId }: { leagueId: string | null | u
                 id="inter-conf"
                 type="number"
                 min={0}
-                max={10}
+                max={20}
                 value={scheduleCfg.inter_conference_games}
-                onChange={e => setScheduleCfg(prev => ({ ...prev, inter_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) }))}
+                onChange={e => setScheduleCfg(prev => ({ ...prev, inter_conference_games: Math.max(0, Math.min(20, parseInt(e.target.value || "0", 10))) }))}
                 className="mt-1"
                 data-testid="schedule-mix-inter-conf-input"
               />

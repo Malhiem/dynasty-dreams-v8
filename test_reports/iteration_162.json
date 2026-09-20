@@ -1,0 +1,126 @@
+{
+  "summary": "Schedule Config Max 20 Bug Fix - All Tests PASS. The bug where schedule mix inputs were capped at 10 has been verified as FIXED. Both frontend (DivisionsTab.tsx) and backend (leagues.py) now accept values up to 20 for intra_division_games, intra_conference_games, and inter_conference_games.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter162_schedule_config_max20.py",
+    "/app/test_reports/pytest/iter162_schedule_config.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "DivisionsTab.tsx lines 462-519: All three schedule mix inputs correctly use max={20} and Math.min(20, ...) - previously was 10",
+    "ScheduleStep.jsx lines 307-327: Wizard schedule mix inputs also correctly use max={20} and Math.min(20, ...) - previously was 10",
+    "leagues.py line 1036: Backend validation correctly checks 'if val < 0 or val > 20' - previously was 0-10",
+    "matchups.py lines 489-499: Deduplication safety net added for round-robin schedule generation when multiple opponents per matchup period is selected"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter162_schedule_config_max20.py"
+  ],
+  "success_rate": {
+    "backend": "100% (8/8 tests)",
+    "frontend": "100% (all UI tests passed)"
+  },
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "Tests use existing roto league 69e46af167999bfb85c39629 (Stat Chasers Roto). Schedule config restored to defaults (2,1,1) after testing.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Schedule config max value bug fix verified. PUT /api/leagues/{id}/schedule-config now accepts values 0-20 for all three fields (intra_division_games, intra_conference_games, inter_conference_games). Frontend inputs in DivisionsTab.tsx and wizard ScheduleStep.jsx both use max=20. Values above 20 are rejected with 400 error.",
+  "verified_features": {
+    "backend_test_1_get_current_schedule_config": {
+      "description": "GET /api/leagues/{id}/schedule-config returns current config",
+      "result": "PASS"
+    },
+    "backend_test_2_put_inter_conference_12": {
+      "description": "PUT with inter_conference_games=12 (previously capped at 10)",
+      "result": "PASS",
+      "details": "Response saved.inter_conference_games == 12"
+    },
+    "backend_test_3_verify_persistence_inter_12": {
+      "description": "GET after PUT verifies inter_conference_games=12 persisted",
+      "result": "PASS"
+    },
+    "backend_test_4_put_all_fields_at_20": {
+      "description": "PUT with all fields at max value 20",
+      "result": "PASS",
+      "details": "All three fields saved as 20"
+    },
+    "backend_test_5_reject_value_above_20": {
+      "description": "PUT with inter_conference_games=21 returns 400",
+      "result": "PASS"
+    },
+    "backend_test_6_reject_intra_division_above_20": {
+      "description": "PUT with intra_division_games=25 returns 400",
+      "result": "PASS"
+    },
+    "backend_test_7_accept_zero_values": {
+      "description": "PUT with all fields at 0 (min value) accepted",
+      "result": "PASS"
+    },
+    "backend_test_8_restore_reasonable_defaults": {
+      "description": "Restore defaults (2,1,1) after testing",
+      "result": "PASS"
+    },
+    "frontend_test_1_input_accepts_12": {
+      "description": "Inter-conference input in DivisionsTab accepts value 12",
+      "result": "PASS",
+      "details": "Input value after entering 12: '12' (not clamped to 10)"
+    },
+    "frontend_test_2_save_success_toast": {
+      "description": "Save Schedule Mix shows success toast",
+      "result": "PASS",
+      "details": "Toast: 'Schedule mix saved — applies next time schedule is generated'"
+    },
+    "frontend_test_3_persistence_after_reload": {
+      "description": "Value 12 persists after page reload",
+      "result": "PASS",
+      "details": "Inter-conference value after reload: '12'"
+    }
+  },
+  "api_verification": {
+    "PUT /api/leagues/{id}/schedule-config (inter=12)": {
+      "status": 200,
+      "response_includes": ["saved.inter_conference_games: 12"]
+    },
+    "PUT /api/leagues/{id}/schedule-config (all=20)": {
+      "status": 200,
+      "response_includes": ["saved.intra_division_games: 20", "saved.intra_conference_games: 20", "saved.inter_conference_games: 20"]
+    },
+    "PUT /api/leagues/{id}/schedule-config (inter=21)": {
+      "status": 400,
+      "response_includes": ["inter_conference_games must be 0-20"]
+    },
+    "GET /api/leagues/{id}/schedule-config": {
+      "status": 200,
+      "response_includes": ["intra_division_games", "intra_conference_games", "inter_conference_games", "configured"]
+    }
+  },
+  "code_changes_verified": {
+    "DivisionsTab.tsx": {
+      "lines": "462-519",
+      "change": "max changed from 10 to 20, Math.min changed from 10 to 20 for all three schedule mix inputs",
+      "verified": true
+    },
+    "ScheduleStep.jsx": {
+      "lines": "307-327",
+      "change": "max changed from 10 to 20, Math.min changed from 10 to 20 for wizard schedule inputs",
+      "verified": true
+    },
+    "leagues.py": {
+      "lines": "1036",
+      "change": "validation changed from 0-10 to 0-20",
+      "verified": true
+    },
+    "matchups.py": {
+      "lines": "489-499",
+      "change": "added deduplication safety net for round-robin schedule generation",
+      "verified": true
+    }
+  }
+}

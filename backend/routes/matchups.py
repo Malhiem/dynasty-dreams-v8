@@ -487,6 +487,18 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
                     })
                 week += 1
 
+        # ── Dedup safety: remove duplicate opponents in same week ──
+        # Each (week, team_pair) must appear at most once.
+        seen: set = set()
+        deduped: list = []
+        for m in full_schedule:
+            pair = tuple(sorted([m["home_team_id"], m["away_team_id"]]))
+            key = (m["week"], pair)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(m)
+        full_schedule = deduped
+
     await db.matchups.delete_many({"league_id": input.league_id})
     if full_schedule:
         for m in full_schedule:

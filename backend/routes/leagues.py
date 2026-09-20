@@ -1033,8 +1033,8 @@ async def update_schedule_config(league_id: str, input: ScheduleConfig, request:
         ("intra_conference_games", input.intra_conference_games),
         ("inter_conference_games", input.inter_conference_games),
     ):
-        if val < 0 or val > 10:
-            raise HTTPException(status_code=400, detail=f"{field_name} must be 0-10")
+        if val < 0 or val > 20:
+            raise HTTPException(status_code=400, detail=f"{field_name} must be 0-20")
 
     cfg = {
         "intra_division_games": input.intra_division_games,

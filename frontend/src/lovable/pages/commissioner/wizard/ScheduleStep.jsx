@@ -304,8 +304,8 @@ export default function ScheduleStep({ ctx }) {
             Intra-division games
             <HelpTooltip text={HELP.intraDiv} testId="help-intra-div" />
           </Label>
-          <Input type="number" min={0} max={10} value={schedule.intra_division_games}
-            onChange={(e) => setSchedule({ ...schedule, intra_division_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) })}
+          <Input type="number" min={0} max={20} value={schedule.intra_division_games}
+            onChange={(e) => setSchedule({ ...schedule, intra_division_games: Math.max(0, Math.min(20, parseInt(e.target.value || "0", 10))) })}
             data-testid="wizard-schedule-intra-div" />
         </div>
         <div>
@@ -313,8 +313,8 @@ export default function ScheduleStep({ ctx }) {
             Intra-conference games
             <HelpTooltip text={HELP.intraConf} testId="help-intra-conf" />
           </Label>
-          <Input type="number" min={0} max={10} value={schedule.intra_conference_games}
-            onChange={(e) => setSchedule({ ...schedule, intra_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) })}
+          <Input type="number" min={0} max={20} value={schedule.intra_conference_games}
+            onChange={(e) => setSchedule({ ...schedule, intra_conference_games: Math.max(0, Math.min(20, parseInt(e.target.value || "0", 10))) })}
             data-testid="wizard-schedule-intra-conf" />
         </div>
         <div>
@@ -322,8 +322,8 @@ export default function ScheduleStep({ ctx }) {
             Inter-conference games
             <HelpTooltip text={HELP.interConf} testId="help-inter-conf" />
           </Label>
-          <Input type="number" min={0} max={10} value={schedule.inter_conference_games}
-            onChange={(e) => setSchedule({ ...schedule, inter_conference_games: Math.max(0, Math.min(10, parseInt(e.target.value || "0", 10))) })}
+          <Input type="number" min={0} max={20} value={schedule.inter_conference_games}
+            onChange={(e) => setSchedule({ ...schedule, inter_conference_games: Math.max(0, Math.min(20, parseInt(e.target.value || "0", 10))) })}
             data-testid="wizard-schedule-inter-conf" />
         </div>
       </div>
