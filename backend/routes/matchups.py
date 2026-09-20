@@ -253,14 +253,13 @@ def _build_playoff_bracket(
             "is_playoff": not is_consolation,
             "is_consolation": is_consolation,
         })
-    # Rounds 2..N — TBD placeholders, one per surviving slot
-    surviving = len(round_pairs)
+    # Rounds 2..N — TBD placeholders for future winners
+    surviving = len(round_pairs)  # = number of round-1 winners
     for rnd_offset in range(1, end_wk - start_wk + 1):
-        surviving = max(1, surviving // 2) if rnd_offset > 0 else surviving
-        if surviving < 1:
-            break
-        for _ in range(surviving // 2 if surviving > 1 else 1):
-            out.append({
+        num_matchups = max(1, surviving // 2)
+        is_final_round = num_matchups == 1 and surviving <= 2
+        for _ in range(num_matchups):
+            doc = {
                 "week": start_wk + rnd_offset,
                 "home_team_id": None,
                 "away_team_id": None,
@@ -269,8 +268,13 @@ def _build_playoff_bracket(
                 "bracket_round": rnd_offset + 1,
                 "is_playoff": not is_consolation,
                 "is_consolation": is_consolation,
-            })
-        if surviving == 1:
+            }
+            if is_final_round:
+                doc["is_final"] = True
+                doc["bracket"] = "consolation" if is_consolation else "championship"
+            out.append(doc)
+        surviving = num_matchups  # winners of this round feed into next
+        if surviving <= 1:
             break
     return out
 
@@ -762,6 +766,47 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                 "simulated_at": datetime.now(timezone.utc).isoformat(),
             }}
         )
+
+        # ─── Bracket advancement: propagate winner into next round TBD slot ──
+        if winner and m.get("is_playoff") and m.get("bracket_round"):
+            try:
+                cur_round = int(m["bracket_round"])
+                next_round = cur_round + 1
+                # Resolve winner team name for the next-round matchup
+                winner_team = await db.teams.find_one({"_id": ObjectId(winner)})
+                winner_name = (winner_team or {}).get("name", "")
+                next_matchups = await db.matchups.find({
+                    "league_id": input.league_id,
+                    "is_playoff": True,
+                    "bracket_round": next_round,
+                }).sort("_id", 1).to_list(50)
+                sibs = await db.matchups.find({
+                    "league_id": input.league_id,
+                    "is_playoff": True,
+                    "bracket_round": cur_round,
+                }).sort("_id", 1).to_list(50)
+                try:
+                    cur_idx = [str(x["_id"]) for x in sibs].index(str(m["_id"]))
+                except ValueError:
+                    cur_idx = -1
+                target_idx = cur_idx // 2 if cur_idx >= 0 else -1
+                if target_idx >= 0 and target_idx < len(next_matchups):
+                    target = next_matchups[target_idx]
+                    set_fields: dict = {}
+                    if not target.get("home_team_id"):
+                        set_fields = {
+                            "home_team_id": winner, "home_team_tbd": False,
+                            "home_team_name": winner_name,
+                        }
+                    elif not target.get("away_team_id"):
+                        set_fields = {
+                            "away_team_id": winner, "away_team_tbd": False,
+                            "away_team_name": winner_name,
+                        }
+                    if set_fields:
+                        await db.matchups.update_one({"_id": target["_id"]}, {"$set": set_fields})
+            except Exception as ex:
+                logger.warning("bracket-advance (simulate) failed: %s", ex)
 
         # ─── Apply ELO ratings update for this matchup ──────────────
         try:
