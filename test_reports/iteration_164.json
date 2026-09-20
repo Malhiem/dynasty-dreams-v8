@@ -1,0 +1,107 @@
+{
+  "summary": "Condensed Roto Seed Bonuses and Playoffs Enabled Bug Fixes - All 9 Tests PASS. Three bug fixes verified: (1) Seed bonuses now correctly applied to standings totals with seed_bonuses_applied=true flag, (2) Opponents-per-period now uses max_teams instead of current_teams in frontend, (3) Roto champion selection now respects playoffs_enabled flag.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter164_condensed_roto_seed_bonuses.py",
+    "/app/test_reports/pytest/iter164_condensed_roto_seed_bonuses.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "roto.py lines 245-249: playoffs_enabled check correctly added to fresh totals condition - `fresh = bool(league.get('playoffs_enabled')) and league.get('playoff_format') == 'condensed_roto' and bool(league.get('playoff_roto_fresh_totals'))`",
+    "roto.py lines 258-280: Seed bonus application correctly implemented - seeds determined from regular-season standings (compute_period with period=None), bonuses added to total_points, seed_bonus and seed fields added to team_data",
+    "PlayoffsScheduleCards.tsx line 60: maxOpponents calculation now uses max_teams first - `const teamCount = Number(league?.max_teams ?? league?.current_teams ?? 12)`"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter164_condensed_roto_seed_bonuses.py"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 tests)",
+    "frontend": "N/A (backend-only test, frontend fix verified via code review)"
+  },
+  "test_credentials": "admin@dynastydreams.com / Admin123!",
+  "seed_data_creation": "Tests configure league 69e46af167999bfb85c39629 (Stat Chasers Roto) with condensed_roto, fresh_totals=True, seed_bonuses={1:4, 2:3, 3:2, 4:1}. Player stats seeded with deterministic values for season_stats and period_stats. Cleanup restores original settings after tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Three condensed roto bug fixes verified: (1) Seed bonuses now applied in compute_season when playoffs_enabled=True + condensed_roto + fresh_totals=True. Seeds determined from regular-season standings, bonuses added to total_points. (2) Frontend maxOpponents calculation uses max_teams instead of current_teams. (3) playoffs_enabled check added to fresh totals condition - when False, standings use full season_stats without seed bonuses.",
+  "verified_features": {
+    "seed_bonuses_applied_flag": {
+      "description": "GET /api/leagues/{id}/roto/standings returns seed_bonuses_applied=true when configured",
+      "result": "PASS"
+    },
+    "seed_bonus_and_seed_fields": {
+      "description": "Standings totals include seed_bonus and seed fields for top 4 seeded teams",
+      "result": "PASS",
+      "details": "Seed 1: bonus=4.0, Seed 2: bonus=3.0, Seed 3: bonus=2.0, Seed 4: bonus=1.0"
+    },
+    "seed_bonus_added_to_total_points": {
+      "description": "Seed bonus correctly added to total_points (127.5 earned + 4.0 bonus = 131.5 total)",
+      "result": "PASS"
+    },
+    "playoffs_disabled_no_fresh_totals": {
+      "description": "With playoffs_enabled=False, fresh_totals is not True and no seed bonuses applied",
+      "result": "PASS"
+    },
+    "playoffs_disabled_regular_season_champion": {
+      "description": "With playoffs_enabled=False, complete-season uses regular-season leader as champion",
+      "result": "PASS"
+    },
+    "playoffs_enabled_playoff_leader_champion": {
+      "description": "With playoffs_enabled=True + condensed_roto, complete-season uses playoff leader (with bonuses) as champion",
+      "result": "PASS"
+    },
+    "opponents_per_period_max_teams_12": {
+      "description": "PUT /api/leagues/{id} with opponents_per_matchup_period=2 on max_teams=12 league saves successfully",
+      "result": "PASS"
+    },
+    "opponents_per_period_validation": {
+      "description": "opponents_per_matchup_period validation (ge=1, le=10) works correctly",
+      "result": "PASS"
+    },
+    "seeds_from_regular_season": {
+      "description": "Seeds are determined from regular-season standings, not playoff standings",
+      "result": "PASS"
+    }
+  },
+  "api_verification": {
+    "GET /api/leagues/{id}/roto/standings (condensed_roto + fresh_totals)": {
+      "status": 200,
+      "response_includes": ["seed_bonuses_applied: true", "fresh_totals: true", "totals with seed_bonus and seed fields"]
+    },
+    "GET /api/leagues/{id}/roto/standings (playoffs_enabled=False)": {
+      "status": 200,
+      "response_includes": ["fresh_totals: false/null", "no seed_bonus fields"]
+    },
+    "POST /api/leagues/{id}/complete-season (playoffs_enabled=False)": {
+      "status": 200,
+      "response_includes": ["champion: regular-season leader"]
+    },
+    "POST /api/leagues/{id}/complete-season (playoffs_enabled=True)": {
+      "status": 200,
+      "response_includes": ["champion: playoff leader with bonuses"]
+    },
+    "PUT /api/leagues/{id} (opponents_per_matchup_period=2)": {
+      "status": 200,
+      "response_includes": ["value persisted"]
+    }
+  },
+  "code_changes_verified": {
+    "roto.py": {
+      "lines": "244-280",
+      "change": "Added playoffs_enabled check to fresh totals condition. Added seed bonus application using regular-season standings to determine seeds.",
+      "verified": true
+    },
+    "PlayoffsScheduleCards.tsx": {
+      "lines": "60",
+      "change": "Changed maxOpponents calculation from current_teams to max_teams",
+      "verified": true
+    }
+  }
+}

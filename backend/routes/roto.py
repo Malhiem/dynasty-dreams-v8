@@ -243,7 +243,8 @@ async def compute_season(db, league_id: str) -> dict:
 
     # ── Condensed-roto fresh totals ─────────────────────────────
     fresh = (
-        league.get("playoff_format") == "condensed_roto"
+        bool(league.get("playoffs_enabled"))
+        and league.get("playoff_format") == "condensed_roto"
         and bool(league.get("playoff_roto_fresh_totals"))
     )
     if fresh:
@@ -251,9 +252,33 @@ async def compute_season(db, league_id: str) -> dict:
         end = league.get("playoff_end_week")
         if start is not None and end is not None:
             playoff_periods = list(range(int(start), int(end) + 1))
-            return await compute_period(
+            result = await compute_period(
                 db, league_id, period=None, periods=playoff_periods,
             )
+            # Apply seed bonuses: seeds are based on regular-season ranking
+            seed_bonuses = league.get("playoff_roto_seed_bonuses") or {}
+            if seed_bonuses and result.get("totals"):
+                # Determine seeds from regular-season standings
+                reg_result = await compute_period(db, league_id, period=None)
+                reg_sorted = sorted(
+                    reg_result.get("totals", {}).items(),
+                    key=lambda x: -x[1].get("total_points", 0),
+                )
+                seed_map: dict[str, int] = {}
+                for idx, (tid, _) in enumerate(reg_sorted):
+                    seed_map[tid] = idx + 1  # 1-indexed seed
+                # Add bonus to each team's total
+                for tid, team_data in result["totals"].items():
+                    seed = seed_map.get(tid, 999)
+                    bonus = float(seed_bonuses.get(str(seed), 0))
+                    if bonus:
+                        team_data["total_points"] = round(
+                            team_data["total_points"] + bonus, 3
+                        )
+                        team_data["seed_bonus"] = bonus
+                        team_data["seed"] = seed
+                result["seed_bonuses_applied"] = True
+            return result
 
     periods = await db.roto_period_results.find(
         {"league_id": league_id, "closed": True},

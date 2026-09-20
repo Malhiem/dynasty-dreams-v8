@@ -57,7 +57,7 @@ export function RegularSeasonScheduleCard({ league, reloadLeague }: any) {
     league?.opponents_per_matchup_period, league?.stats_count_start_date, league?.stats_count_end_date,
   ]);
 
-  const teamCount = Number(league?.current_teams ?? league?.max_teams ?? 12);
+  const teamCount = Number(league?.max_teams ?? league?.current_teams ?? 12);
   const maxOpponents = Math.max(1, teamCount - 1);
 
   const errors = useMemo(() => {
