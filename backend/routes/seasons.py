@@ -343,6 +343,30 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
             champion = ts["team_name"]
         teams_snapshot.append(ts)
 
+    # ── Rotisserie champion: highest total roto points ────────────
+    if not champion and league.get("scoring_format") == "rotisserie":
+        try:
+            from routes.roto import compute_season as _roto_season
+            roto = await _roto_season(db, league_id)
+            if roto.get("totals"):
+                leader_tid, leader = max(
+                    roto["totals"].items(),
+                    key=lambda x: x[1].get("total_points", 0),
+                )
+                champion = leader.get("team_name")
+                # Stamp the winning team so trophy room picks it up
+                await db.teams.update_one(
+                    {"_id": ObjectId(leader_tid)},
+                    {"$set": {"championship_won_at": now.isoformat()}},
+                )
+                # Update the snapshot entry too
+                for ts in teams_snapshot:
+                    if ts["team_id"] == leader_tid:
+                        ts["awards"]["championship_won_at"] = now.isoformat()
+                        break
+        except Exception:
+            pass  # Roto computation failure shouldn't block season completion
+
     # Awards / activity_feed entries from this season
     activity_cursor = db.activity_feed.find({
         "league_id": league_id,
@@ -863,6 +887,28 @@ async def _maybe_auto_snapshot_season(league_id: str):
         if t.get("championship_won_at"):
             champion = ts["team_name"]
         teams_snapshot.append(ts)
+
+    # ── Rotisserie champion: highest total roto points ────────────
+    if not champion and league.get("scoring_format") == "rotisserie":
+        try:
+            from routes.roto import compute_season as _roto_season
+            roto = await _roto_season(db, league_id)
+            if roto.get("totals"):
+                leader_tid, leader = max(
+                    roto["totals"].items(),
+                    key=lambda x: x[1].get("total_points", 0),
+                )
+                champion = leader.get("team_name")
+                await db.teams.update_one(
+                    {"_id": ObjectId(leader_tid)},
+                    {"$set": {"championship_won_at": now.isoformat()}},
+                )
+                for ts in teams_snapshot:
+                    if ts["team_id"] == leader_tid:
+                        ts["awards"]["championship_won_at"] = now.isoformat()
+                        break
+        except Exception:
+            pass
 
     # Awards
     activity_cursor = db.activity_feed.find({
