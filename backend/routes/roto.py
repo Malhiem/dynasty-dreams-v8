@@ -244,7 +244,7 @@ async def compute_season(db, league_id: str) -> dict:
     # ── Condensed-roto fresh totals ─────────────────────────────
     fresh = (
         league.get("playoff_format") == "condensed_roto"
-        and league.get("playoff_roto_fresh_totals") is True
+        and bool(league.get("playoff_roto_fresh_totals"))
     )
     if fresh:
         start = league.get("playoff_start_week")
@@ -377,7 +377,19 @@ async def roto_recompute(
     is_admin = user.get("role") in ("admin", "senior_admin")
     if not is_commissioner and not is_admin:
         raise HTTPException(status_code=403, detail="Commissioner only")
-    result = await compute_period(db, league_id, period=input.period)
+    # If condensed_roto + fresh totals, scope to playoff weeks
+    fresh = (
+        league.get("playoff_format") == "condensed_roto"
+        and bool(league.get("playoff_roto_fresh_totals"))
+        and input.period is None
+    )
+    playoff_periods = None
+    if fresh:
+        start = league.get("playoff_start_week")
+        end = league.get("playoff_end_week")
+        if start is not None and end is not None:
+            playoff_periods = list(range(int(start), int(end) + 1))
+    result = await compute_period(db, league_id, period=input.period, periods=playoff_periods)
     await db.roto_period_results.update_one(
         {"league_id": league_id, "period": input.period},
         {"$set": {
