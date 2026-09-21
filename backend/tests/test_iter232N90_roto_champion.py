@@ -107,12 +107,20 @@ class TestRotoChampionDetection:
     def test_1_roto_league_completion_identifies_champion(self, auth_headers, mongo_db):
         """
         Backend: Clear championship_won_at from all teams in the roto league.
+        Disable playoffs so champion is the regular-season leader.
         Call POST /api/leagues/{id}/complete-season with {season_year: 2026}.
         Verify the response includes a non-null champion field matching the 
         team with the highest roto points.
         """
         # Setup: Clean up any previous test data
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
+        
+        # Disable playoffs so champion = regular-season points leader
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": False},
+        )
         
         # Verify championship_won_at is cleared
         teams = list(mongo_db.teams.find({"league_id": ROTO_LEAGUE_ID}))
@@ -140,7 +148,12 @@ class TestRotoChampionDetection:
         print(f"  Teams snapshotted: {data.get('teams_snapshotted')}")
         print(f"  Season year: {data.get('season_year')}")
         
-        # Cleanup
+        # Cleanup: restore playoffs and clean test data
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": True},
+        )
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
     
     def test_2_winning_team_has_championship_won_at_set(self, auth_headers, mongo_db):
@@ -150,6 +163,13 @@ class TestRotoChampionDetection:
         """
         # Setup: Clean up any previous test data
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
+        
+        # Disable playoffs for season-only champion
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": False},
+        )
         
         # Call complete-season endpoint
         response = requests.post(
@@ -176,6 +196,11 @@ class TestRotoChampionDetection:
         print(f"✓ Winning team '{champion_name}' has championship_won_at: {winning_team.get('championship_won_at')}")
         
         # Cleanup
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": True},
+        )
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
     
     def test_3_league_seasons_snapshot_has_champion_team_name(self, auth_headers, mongo_db):
@@ -185,6 +210,13 @@ class TestRotoChampionDetection:
         """
         # Setup: Clean up any previous test data
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
+        
+        # Disable playoffs for season-only champion
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": False},
+        )
         
         # Call complete-season endpoint
         response = requests.post(
@@ -215,6 +247,11 @@ class TestRotoChampionDetection:
         print(f"  Snapshot at: {season_doc.get('snapshot_at')}")
         
         # Cleanup
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": True},
+        )
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
     
     def test_4_h2h_league_does_not_use_roto_champion_detection(self, auth_headers, mongo_db):
@@ -267,6 +304,13 @@ class TestRotoChampionDetection:
         # Setup: Clean up any previous test data
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
         
+        # Disable playoffs for season-only champion
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": False},
+        )
+        
         # First call
         response1 = requests.post(
             f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}/complete-season",
@@ -309,6 +353,11 @@ class TestRotoChampionDetection:
         print(f"  Only 1 league_seasons document exists (upsert working)")
         
         # Cleanup
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": True},
+        )
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
 
 
@@ -322,6 +371,13 @@ class TestRotoChampionVerification:
         """
         # Setup: Clean up any previous test data
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
+        
+        # Disable playoffs for season-only champion
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": False},
+        )
         
         # Get roto standings first
         standings_response = requests.get(
@@ -366,6 +422,11 @@ class TestRotoChampionVerification:
             print(f"  Champion identified: {actual_champion}")
         
         # Cleanup
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": True},
+        )
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
     
     def test_7_team_snapshot_awards_updated(self, auth_headers, mongo_db):
@@ -375,6 +436,13 @@ class TestRotoChampionVerification:
         """
         # Setup: Clean up any previous test data
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
+        
+        # Disable playoffs for season-only champion
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": False},
+        )
         
         # Complete the season
         response = requests.post(
@@ -415,6 +483,11 @@ class TestRotoChampionVerification:
         print(f"✓ Champion '{champion_name}' snapshot has awards.championship_won_at: {awards.get('championship_won_at')}")
         
         # Cleanup
+        requests.put(
+            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+            headers=auth_headers,
+            json={"playoffs_enabled": True},
+        )
         cleanup_roto_league(mongo_db, ROTO_LEAGUE_ID, TEST_SEASON_YEAR)
 
 
