@@ -255,6 +255,13 @@ async def compute_season(db, league_id: str) -> dict:
             result = await compute_period(
                 db, league_id, period=None, periods=playoff_periods,
             )
+            # Count closed playoff periods for metadata
+            closed_count = await db.roto_period_results.count_documents({
+                "league_id": league_id,
+                "closed": True,
+                "period": {"$in": playoff_periods},
+            })
+            result["periods_closed"] = closed_count
             # Apply seed bonuses: seeds are based on regular-season ranking
             seed_bonuses = league.get("playoff_roto_seed_bonuses") or {}
             if seed_bonuses and result.get("totals"):
@@ -286,7 +293,9 @@ async def compute_season(db, league_id: str) -> dict:
     ).to_list(200)
     if not periods:
         # No closed periods → return live full-season snapshot.
-        return await compute_period(db, league_id, period=None)
+        result = await compute_period(db, league_id, period=None)
+        result["periods_closed"] = 0
+        return result
     # Aggregate points across every closed period. Structure the same
     # as compute_period so the frontend renders identically.
     running: dict[str, float] = {}
