@@ -8,7 +8,7 @@ import RatingChangeBadge from "@/lovable/components/matchup/RatingChangeBadge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { TrendingUp, TrendingDown, Flame, ChevronLeft, ChevronRight } from "lucide-react";
+import { TrendingUp, TrendingDown, Flame, ChevronLeft, ChevronRight, Grid3X3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import TeamLogo from "@/lovable/components/TeamLogo";
@@ -18,6 +18,9 @@ import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import PullToRefreshIndicator from "@/components/PullToRefreshIndicator";
 // Iter 232b — Last-updated freshness pill.
 import LastUpdatedBadge from "@/components/LastUpdatedBadge";
+// Daily scoring components
+import { useDailyScoring } from "@/hooks/use-daily-scoring";
+import { DayPillStrip, DailyGrid } from "@/components/daily-scoring";
 
 interface MatchupPlayer {
   id: number | string;
@@ -73,12 +76,13 @@ const DEFAULT_OPP_PLAYERS: MatchupPlayer[] = [
   { id: 5, name: "Andrei Vasilevskiy", position: "G", team: "TBL", projected: 3.8, actual: 0, status: "upcoming", dailyScores: {}, is_goalie: true },
 ];
 
-type ViewMode = "totals" | "daily";
+type ViewMode = "totals" | "daily" | "grid";
 
 const Matchup = () => {
   const navigate = useNavigate();
   const [viewMode, setViewMode] = useState<ViewMode>("totals");
   const [selectedDayIndex, setSelectedDayIndex] = useState(3); // Thu 2/20 (today)
+  const [selectedDay, setSelectedDay] = useState<string | null>(null); // for DayPillStrip
 
   const { league, leagueTeams, myTeam } = useActiveLeague();
   const [matchup, setMatchup] = useState(null);
@@ -194,52 +198,99 @@ const Matchup = () => {
   }, [opponentTeam, refreshTick]);
 
   // Transform live players into MatchupPlayer shape
-  const makePlayers = (data) => {
+  const makePlayers = (data, dailyData) => {
     if (!data?.players) return [];
-    return data.players.slice(0, 12).map((p, i) => ({
-      id: p.id || i,
-      name: p.name,
-      position: p.position,
-      team: p.team,
-      projected: +(p.fpts / Math.max(1, p.games) * 7).toFixed(1), // weekly projection
-      actual: p.fpts,
-      status: p.games > 0 ? "done" : "upcoming",
-      dailyScores: { [matchupDays[3]]: p.fpts },
-      is_goalie: !!p.is_goalie,
-      goals: p.goals || 0,
-      assists: p.assists || 0,
-      shots: p.shots || 0,
-      saves: p.saves || 0,
-      goals_against: p.goals_against || 0,
-      wins: p.wins || 0,
-      games: p.games || 0,
-    }));
+    return data.players.slice(0, 12).map((p, i) => {
+      // Merge daily scoring data from API when available
+      const apiDaily = dailyData?.players?.find(dp => dp.name === p.name);
+      let dailyScores: Record<string, number> = {};
+      if (apiDaily && dailyData?.day_labels) {
+        dailyData.days.forEach((d: string, idx: number) => {
+          const label = dailyData.day_labels[idx];
+          const dayStats = apiDaily.daily[d];
+          if (dayStats) dailyScores[label] = dayStats.fpts;
+        });
+      } else {
+        dailyScores = { [matchupDays[3]]: p.fpts };
+      }
+      return {
+        id: p.id || i,
+        name: p.name,
+        position: p.position,
+        team: p.team,
+        projected: +(p.fpts / Math.max(1, p.games) * 7).toFixed(1),
+        actual: p.fpts,
+        status: p.games > 0 ? "done" : "upcoming",
+        dailyScores,
+        is_goalie: !!p.is_goalie,
+        goals: p.goals || 0,
+        assists: p.assists || 0,
+        shots: p.shots || 0,
+        saves: p.saves || 0,
+        goals_against: p.goals_against || 0,
+        wins: p.wins || 0,
+        games: p.games || 0,
+      };
+    });
   };
 
-  const myPlayers: MatchupPlayer[] = useMemo(() => {
-    const real = makePlayers(myLive);
-    return real.length > 0 ? real : DEFAULT_MY_PLAYERS;
-  }, [myLive]);
-  const opponentPlayers: MatchupPlayer[] = useMemo(() => {
-    const real = makePlayers(oppLive);
-    return real.length > 0 ? real : DEFAULT_OPP_PLAYERS;
-  }, [oppLive]);
+  // Daily scoring API data
+  const currentWeek = matchup?.week;
+  const { data: myDailyData } = useDailyScoring(
+    league?.id, focusedMyTeam?.id, currentWeek
+  );
+  const { data: oppDailyData } = useDailyScoring(
+    league?.id, opponentTeam?.id, currentWeek
+  );
 
-  const selectedDay = matchupDays[selectedDayIndex];
+  // Derive active matchup days from API or fallback
+  const activeDays = useMemo(() => {
+    if (myDailyData?.days?.length) return myDailyData.days;
+    return [];
+  }, [myDailyData]);
+  const activeDayLabels = useMemo(() => {
+    if (myDailyData?.day_labels?.length) return myDailyData.day_labels;
+    return matchupDays;
+  }, [myDailyData]);
+
+  const myPlayers: MatchupPlayer[] = useMemo(() => {
+    const real = makePlayers(myLive, myDailyData);
+    return real.length > 0 ? real : DEFAULT_MY_PLAYERS;
+  }, [myLive, myDailyData]);
+  const opponentPlayers: MatchupPlayer[] = useMemo(() => {
+    const real = makePlayers(oppLive, oppDailyData);
+    return real.length > 0 ? real : DEFAULT_OPP_PLAYERS;
+  }, [oppLive, oppDailyData]);
+
+  // For the legacy day-selector (used in "daily" pill mode)
+  const legacySelectedDay = matchupDays[selectedDayIndex];
 
   const getDisplayScore = (player: MatchupPlayer) => {
     if (viewMode === "daily") {
-      return player.dailyScores[selectedDay] ?? 0;
+      // When a day pill is selected, show that day's score
+      if (selectedDay && myDailyData) {
+        const label = myDailyData.day_labels[myDailyData.days.indexOf(selectedDay)];
+        return player.dailyScores[label] ?? 0;
+      }
+      return player.dailyScores[legacySelectedDay] ?? 0;
     }
     return player.actual;
   };
 
-  const myTotal = viewMode === "daily"
-    ? myPlayers.reduce((sum, p) => sum + (p.dailyScores[selectedDay] ?? 0), 0)
-    : myPlayers.reduce((sum, p) => sum + p.actual, 0);
-  const oppTotal = viewMode === "daily"
-    ? opponentPlayers.reduce((sum, p) => sum + (p.dailyScores[selectedDay] ?? 0), 0)
-    : opponentPlayers.reduce((sum, p) => sum + p.actual, 0);
+  // Compute totals — use API daily totals when available
+  const myDailyTotals = myDailyData?.daily_totals || {};
+  const oppDailyTotals = oppDailyData?.daily_totals || {};
+
+  const myTotal = viewMode === "daily" && selectedDay
+    ? (myDailyTotals[selectedDay] || 0)
+    : viewMode === "daily"
+      ? myPlayers.reduce((sum, p) => sum + (p.dailyScores[legacySelectedDay] ?? 0), 0)
+      : myPlayers.reduce((sum, p) => sum + p.actual, 0);
+  const oppTotal = viewMode === "daily" && selectedDay
+    ? (oppDailyTotals[selectedDay] || 0)
+    : viewMode === "daily"
+      ? opponentPlayers.reduce((sum, p) => sum + (p.dailyScores[legacySelectedDay] ?? 0), 0)
+      : opponentPlayers.reduce((sum, p) => sum + p.actual, 0);
   const myProjected = myPlayers.reduce((sum, p) => sum + p.projected, 0);
   const oppProjected = opponentPlayers.reduce((sum, p) => sum + p.projected, 0);
 
@@ -304,38 +355,66 @@ const Matchup = () => {
         )}
 
         {/* View Toggle */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
             <TabsList>
-              <TabsTrigger value="totals">Matchup Totals</TabsTrigger>
-              <TabsTrigger value="daily">Daily Scores</TabsTrigger>
+              <TabsTrigger value="totals" data-testid="matchup-tab-totals">Matchup Totals</TabsTrigger>
+              <TabsTrigger value="daily" data-testid="matchup-tab-daily">Daily Scores</TabsTrigger>
+              <TabsTrigger value="grid" data-testid="matchup-tab-grid">
+                <Grid3X3 className="h-3.5 w-3.5 mr-1" />
+                Daily Grid
+              </TabsTrigger>
             </TabsList>
           </Tabs>
 
-          {viewMode === "daily" && (
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setSelectedDayIndex(i => Math.max(0, i - 1))}
-                disabled={selectedDayIndex <= 0}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="text-sm font-semibold min-w-[80px] text-center">{selectedDay}</span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7"
-                onClick={() => setSelectedDayIndex(i => Math.min(matchupDays.length - 1, i + 1))}
-                disabled={selectedDayIndex >= matchupDays.length - 1}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
+          {matchup?.week && (
+            <span className="text-xs text-muted-foreground">
+              Week {matchup.week}
+              {myDailyData?.period_start && (
+                <> · {myDailyData.period_start} – {myDailyData.period_end}</>
+              )}
+            </span>
           )}
         </div>
+
+        {/* Day Pill Strip (daily mode) */}
+        {viewMode === "daily" && activeDays.length > 0 && (
+          <DayPillStrip
+            days={activeDays}
+            dayLabels={activeDayLabels}
+            dailyTotals={myDailyTotals}
+            selectedDay={selectedDay}
+            onSelectDay={setSelectedDay}
+            oppDailyTotals={oppDailyTotals}
+          />
+        )}
+        {viewMode === "daily" && activeDays.length === 0 && (
+          <div className="grid grid-cols-7 gap-2">
+            {matchupDays.map((day, idx) => {
+              const myDayTotal = myPlayers.reduce((s, p) => s + (p.dailyScores[day] ?? 0), 0);
+              const oppDayTotal = opponentPlayers.reduce((s, p) => s + (p.dailyScores[day] ?? 0), 0);
+              const isSelected = idx === selectedDayIndex;
+              const isWinning = myDayTotal >= oppDayTotal;
+              return (
+                <button
+                  key={day}
+                  onClick={() => setSelectedDayIndex(idx)}
+                  className={`rounded-lg p-2 text-center transition-colors border ${
+                    isSelected
+                      ? "border-primary bg-primary/10"
+                      : "border-border bg-secondary/30 hover:bg-secondary/50"
+                  }`}
+                >
+                  <p className="text-[10px] text-muted-foreground font-medium">{day.split(" ")[0]}</p>
+                  <p className={`text-sm font-bold ${isWinning ? "text-success" : "text-destructive"}`}>
+                    {myDayTotal.toFixed(1)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">{oppDayTotal.toFixed(1)}</p>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Matchup Header */}
         <div className="stat-card p-8">
@@ -434,36 +513,38 @@ const Matchup = () => {
           </div>
         </div>
 
-        {/* Daily Score Summary Bar (daily mode) */}
-        {viewMode === "daily" && (
-          <div className="grid grid-cols-7 gap-2">
-            {matchupDays.map((day, idx) => {
-              const myDayTotal = myPlayers.reduce((s, p) => s + (p.dailyScores[day] ?? 0), 0);
-              const oppDayTotal = opponentPlayers.reduce((s, p) => s + (p.dailyScores[day] ?? 0), 0);
-              const isSelected = idx === selectedDayIndex;
-              const isWinning = myDayTotal >= oppDayTotal;
-              return (
-                <button
-                  key={day}
-                  onClick={() => setSelectedDayIndex(idx)}
-                  className={`rounded-lg p-2 text-center transition-colors border ${
-                    isSelected
-                      ? "border-primary bg-primary/10"
-                      : "border-border bg-secondary/30 hover:bg-secondary/50"
-                  }`}
-                >
-                  <p className="text-[10px] text-muted-foreground font-medium">{day.split(" ")[0]}</p>
-                  <p className={`text-sm font-bold ${isWinning ? "text-success" : "text-destructive"}`}>
-                    {myDayTotal.toFixed(1)}
-                  </p>
-                  <p className="text-xs text-muted-foreground">{oppDayTotal.toFixed(1)}</p>
-                </button>
-              );
-            })}
+        {/* Daily Grid view (Option C) */}
+        {viewMode === "grid" && (
+          <div className="space-y-4">
+            <div>
+              <h3 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-2">
+                <TeamLogo logo={focusedMyTeam?.logo_url} name={focusedMyTeam?.name || 'ME'} abbr={focusedMyTeam?.logo_abbr || 'ME'} size="xs" />
+                {focusedMyTeam?.name || 'My Lineup'}
+              </h3>
+              <DailyGrid
+                days={myDailyData?.days || []}
+                dayLabels={myDailyData?.day_labels || []}
+                players={myDailyData?.players || []}
+                dailyTotals={myDailyTotals}
+              />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-muted-foreground mb-2 flex items-center gap-2">
+                <TeamLogo logo={opponentTeam?.logo_url} name={opponentTeam?.name || 'OPP'} abbr={opponentTeam?.logo_abbr || 'OPP'} size="xs" />
+                {opponentTeam?.name || 'Opponent Lineup'}
+              </h3>
+              <DailyGrid
+                days={oppDailyData?.days || []}
+                dayLabels={oppDailyData?.day_labels || []}
+                players={oppDailyData?.players || []}
+                dailyTotals={oppDailyTotals}
+              />
+            </div>
           </div>
         )}
 
-        {/* Player Comparison */}
+        {/* Player Comparison (totals + daily modes) */}
+        {viewMode !== "grid" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="bg-card border-border">
             <CardHeader>
@@ -499,6 +580,7 @@ const Matchup = () => {
             </CardContent>
           </Card>
         </div>
+        )}
           </div>
           {league?.id && (
             <MatchupSideRail

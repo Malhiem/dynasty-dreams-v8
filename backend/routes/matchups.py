@@ -693,6 +693,193 @@ async def get_current_week(league_id: str):
     return {"week": current, "matchups": matchups}
 
 
+@router.get("/matchups/{league_id}/daily-scoring")
+async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = None, request: Request = None):
+    """Return per-day fantasy point breakdowns for a team within a matchup period.
+
+    Groups each rostered player's `live_stats` entries by game date (derived
+    from `updated_at`), computes daily fantasy points, and returns a structure
+    suitable for Day Pill Strips, Daily Grids, and Player Card accordions.
+    Works for all scoring formats (H2H, Categories, Rotisserie).
+    """
+    from datetime import date as _date
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    _safe_object_id = _deps["_safe_object_id"]
+
+    await get_current_user(request)
+
+    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+
+    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+
+    # Determine the week (default: current week from scheduled matchups)
+    if week is None:
+        pipeline = [
+            {"$match": {"league_id": league_id, "status": {"$in": ["scheduled", "in_progress"]}}},
+            {"$group": {"_id": None, "min_week": {"$min": "$week"}}},
+        ]
+        result = await db.matchups.aggregate(pipeline).to_list(1)
+        week = result[0]["min_week"] if result else 1
+
+    # Calculate the date range for this matchup period
+    matchup_len = int(league.get("matchup_length_days") or 7)
+    season_start_str = league.get("season_start_date")
+    if season_start_str:
+        try:
+            season_start = _date.fromisoformat(str(season_start_str).split("T")[0])
+        except Exception:
+            season_start = _date(2025, 10, 7)
+    else:
+        season_start = _date(2025, 10, 7)
+
+    period_start = season_start + timedelta(days=(week - 1) * matchup_len)
+    period_end = period_start + timedelta(days=matchup_len - 1)
+
+    # Generate day labels for the period
+    days = []
+    day_labels = []
+    d = period_start
+    while d <= period_end:
+        days.append(d.isoformat())
+        day_labels.append(d.strftime("%a %-m/%-d"))
+        d += timedelta(days=1)
+
+    # Fetch roster players with live_stats
+    roster_ids = team.get("roster") or []
+    if not roster_ids:
+        return {
+            "league_id": league_id,
+            "team_id": team_id,
+            "team_name": team["name"],
+            "week": week,
+            "scoring_format": league.get("scoring_format", ""),
+            "period_start": period_start.isoformat(),
+            "period_end": period_end.isoformat(),
+            "days": days,
+            "day_labels": day_labels,
+            "players": [],
+            "daily_totals": {d: 0.0 for d in days},
+            "period_total_fpts": 0.0,
+        }
+
+    from live_scoring_worker import _fantasy_points_from_live
+
+    players = await db.players.find(
+        {"_id": {"$in": [ObjectId(pid) for pid in roster_ids]}},
+        {"name": 1, "position": 1, "team": 1, "player_type": 1, "live_stats": 1, "season_stats": 1},
+    ).to_list(200)
+
+    daily_totals = {d: 0.0 for d in days}
+    player_rows = []
+
+    for p in players:
+        is_goalie = p.get("player_type") == "goalie" or p.get("position") == "G"
+        pid = str(p["_id"])
+        daily = {}
+        total_fpts = 0.0
+        total_goals = 0
+        total_assists = 0
+        total_shots = 0
+        total_saves = 0
+        total_ga = 0
+        total_wins = 0
+        total_games = 0
+
+        for gid, ls in (p.get("live_stats") or {}).items():
+            # Determine game date from updated_at
+            updated = ls.get("updated_at")
+            if not updated:
+                continue
+            if isinstance(updated, str):
+                try:
+                    updated = datetime.fromisoformat(updated.replace("Z", "+00:00"))
+                except Exception:
+                    continue
+            if hasattr(updated, "date"):
+                game_date = updated.date().isoformat()
+            else:
+                continue
+
+            # Only include games within the matchup period
+            if game_date < period_start.isoformat() or game_date > period_end.isoformat():
+                continue
+
+            fpts = _fantasy_points_from_live(ls, is_goalie)
+            goals = ls.get("goals", 0) or 0
+            assists = ls.get("assists", 0) or 0
+            shots = ls.get("shots", 0) or 0
+            saves = ls.get("saves", 0) or 0
+            goals_against = ls.get("goals_against", 0) or 0
+            wins = ls.get("wins", 0) or 0
+
+            if game_date not in daily:
+                daily[game_date] = {
+                    "fpts": 0.0, "goals": 0, "assists": 0, "shots": 0,
+                    "saves": 0, "goals_against": 0, "wins": 0, "games": 0,
+                }
+            day_entry = daily[game_date]
+            day_entry["fpts"] = round(day_entry["fpts"] + fpts, 2)
+            day_entry["goals"] += goals
+            day_entry["assists"] += assists
+            day_entry["shots"] += shots
+            day_entry["saves"] += saves
+            day_entry["goals_against"] += goals_against
+            day_entry["wins"] += wins
+            day_entry["games"] += 1
+
+            total_fpts += fpts
+            total_goals += goals
+            total_assists += assists
+            total_shots += shots
+            total_saves += saves
+            total_ga += goals_against
+            total_wins += wins
+            total_games += 1
+
+            if game_date in daily_totals:
+                daily_totals[game_date] = round(daily_totals[game_date] + fpts, 2)
+
+        player_rows.append({
+            "id": pid,
+            "name": p.get("name"),
+            "position": p.get("position"),
+            "team": p.get("team"),
+            "is_goalie": is_goalie,
+            "total_fpts": round(total_fpts, 2),
+            "total_goals": total_goals,
+            "total_assists": total_assists,
+            "total_shots": total_shots,
+            "total_saves": total_saves,
+            "total_goals_against": total_ga,
+            "total_wins": total_wins,
+            "total_games": total_games,
+            "daily": daily,
+        })
+
+    player_rows.sort(key=lambda r: r["total_fpts"], reverse=True)
+    period_total = round(sum(r["total_fpts"] for r in player_rows), 2)
+
+    return {
+        "league_id": league_id,
+        "team_id": team_id,
+        "team_name": team["name"],
+        "week": week,
+        "scoring_format": league.get("scoring_format", ""),
+        "period_start": period_start.isoformat(),
+        "period_end": period_end.isoformat(),
+        "days": days,
+        "day_labels": day_labels,
+        "players": player_rows,
+        "daily_totals": daily_totals,
+        "period_total_fpts": period_total,
+    }
+
+
 @router.get("/matchups/{league_id}/results")
 async def get_week_results(league_id: str, week: int):
     db = _deps["db"]

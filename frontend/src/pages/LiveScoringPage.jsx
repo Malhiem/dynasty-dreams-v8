@@ -8,10 +8,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Activity, Flame, RefreshCw, Radio, Trophy, Loader2 } from 'lucide-react';
+import { Activity, Flame, RefreshCw, Radio, Trophy, Loader2, Grid3X3 } from 'lucide-react';
 import api from '@/lib/api';
 import { useGlobalSocketEvent } from '@/hooks/use-global-socket';
 import { useActiveLeague } from '@/hooks/use-active-league';
+import { useDailyScoring } from '@/hooks/use-daily-scoring';
+import { DayPillStrip, DailyGrid } from '@/components/daily-scoring';
 
 const STATE_BADGE = {
   LIVE: { label: 'LIVE', className: 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse' },
@@ -33,8 +35,14 @@ export default function LiveScoringPage() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [currentMatchup, setCurrentMatchup] = useState(null);
   const [selectedLeague, setSelectedLeague] = useState(null);
+  const [dailyScoringDay, setDailyScoringDay] = useState(null);
   const { myTeam } = useActiveLeague();
   const navigate = useNavigate();
+
+  // Daily scoring for the selected league + my team
+  const { data: myDailyData } = useDailyScoring(
+    selectedLeagueId, myTeam?.id
+  );
 
   useGlobalSocketEvent('live_scoring_update', (payload) => {
     setSummary(payload);
@@ -344,6 +352,10 @@ export default function LiveScoringPage() {
             <Tabs defaultValue="leaderboard">
               <TabsList>
                 <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
+                <TabsTrigger value="daily-scoring" data-testid="live-scoring-daily-tab">
+                  <Grid3X3 size={14} className="mr-1" />
+                  Daily Scoring
+                </TabsTrigger>
                 <TabsTrigger value="top-performers" data-testid="live-scoring-top-performers-tab">
                   Top Performers
                 </TabsTrigger>
@@ -421,6 +433,66 @@ export default function LiveScoringPage() {
                     </tbody>
                   </table>
                 </div>
+              </TabsContent>
+
+              <TabsContent value="daily-scoring" className="mt-4 space-y-4">
+                {myDailyData?.days?.length > 0 ? (
+                  <>
+                    <DayPillStrip
+                      days={myDailyData.days}
+                      dayLabels={myDailyData.day_labels}
+                      dailyTotals={myDailyData.daily_totals}
+                      selectedDay={dailyScoringDay}
+                      onSelectDay={setDailyScoringDay}
+                    />
+                    {dailyScoringDay === null ? (
+                      <DailyGrid
+                        days={myDailyData.days}
+                        dayLabels={myDailyData.day_labels}
+                        players={myDailyData.players || []}
+                        dailyTotals={myDailyData.daily_totals}
+                      />
+                    ) : (
+                      <div className="surface overflow-hidden">
+                        <table className="w-full text-left text-sm">
+                          <thead className="bg-white/5 text-[#52525B] text-xs uppercase tracking-wider">
+                            <tr>
+                              <th className="px-4 py-3">Player</th>
+                              <th className="px-4 py-3 text-center">Pos</th>
+                              <th className="px-4 py-3 text-center">G</th>
+                              <th className="px-4 py-3 text-center">A</th>
+                              <th className="px-4 py-3 text-center">SOG</th>
+                              <th className="px-4 py-3 text-right">FPTS</th>
+                            </tr>
+                          </thead>
+                          <tbody data-testid="daily-scoring-player-list">
+                            {(myDailyData.players || []).map((p) => {
+                              const dayStats = p.daily[dailyScoringDay];
+                              if (!dayStats || dayStats.games === 0) return null;
+                              return (
+                                <tr key={p.id} className="border-t border-white/5">
+                                  <td className="px-4 py-2.5">
+                                    <div className="font-medium text-white">{p.name}</div>
+                                    <div className="text-[10px] text-[#52525B]">{p.team}</div>
+                                  </td>
+                                  <td className="px-4 py-2.5 text-center text-[#A1A1AA] text-xs">{p.position}</td>
+                                  <td className="px-4 py-2.5 text-center tabular-nums">{p.is_goalie ? '—' : dayStats.goals}</td>
+                                  <td className="px-4 py-2.5 text-center tabular-nums">{p.is_goalie ? `${dayStats.saves} SVS` : dayStats.assists}</td>
+                                  <td className="px-4 py-2.5 text-center tabular-nums">{p.is_goalie ? `${dayStats.goals_against} GA` : dayStats.shots}</td>
+                                  <td className="px-4 py-2.5 text-right font-bold tabular-nums text-[#00D2FF]">{dayStats.fpts.toFixed(1)}</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="surface p-8 text-center text-[#A1A1AA] text-sm">
+                    No daily scoring data available yet for this matchup period.
+                  </div>
+                )}
               </TabsContent>
 
               <TabsContent value="top-performers" className="mt-4">

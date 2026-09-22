@@ -12,9 +12,11 @@ import TeamSalaryCap from "@/lovable/components/dashboard/TeamSalaryCap";
 import TeamClaimCounter from "@/lovable/components/dashboard/TeamClaimCounter";
 import CommissionerPendingTrades from "@/lovable/components/dashboard/CommissionerPendingTrades";
 import StatCard from "@/lovable/components/dashboard/StatCard";
-import { Trophy, TrendingUp, Users, Shield, ArrowRightLeft, X, AlertTriangle, DollarSign, UserMinus, UserPlus, CheckCircle2, ChevronDown, Crown } from "lucide-react";
+import { Trophy, TrendingUp, Users, Shield, ArrowRightLeft, X, AlertTriangle, DollarSign, UserMinus, UserPlus, CheckCircle2, ChevronDown, Crown, Grid3X3 } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TrophyRoomView } from "@/lovable/pages/TrophyRoom";
+import { useDailyScoring } from "@/hooks/use-daily-scoring";
+import { DayPillStrip, DailyGrid } from "@/components/daily-scoring";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -195,9 +197,15 @@ const Team = () => {
 
   const [commissionerMode, setCommissionerMode] = useState(false);
   const [tradeBannerDismissed, setTradeBannerDismissed] = useState(false);
+  const [dailyScoringDay, setDailyScoringDay] = useState<string | null>(null);
 
   const selectedTeam = allTeams.find(t => t.id === selectedTeamId) || null;
   const isOwnTeam = selectedTeamId && selectedTeamId === myTeamId;
+
+  // Daily scoring for the selected team
+  const { data: teamDailyData } = useDailyScoring(
+    league?.id, selectedTeamId || undefined
+  );
 
   // Rank among all teams by season points + live fpts
   const rank = useMemo(() => {
@@ -856,6 +864,9 @@ const Team = () => {
             <TabsTrigger value="roster" data-testid="roster-tab-roster">
               <Users className="h-4 w-4 mr-2" /> Roster
             </TabsTrigger>
+            <TabsTrigger value="daily-scoring" data-testid="roster-tab-daily-scoring">
+              <Grid3X3 className="h-4 w-4 mr-2" /> Daily Scoring
+            </TabsTrigger>
             <TabsTrigger value="trophy-room" data-testid="roster-tab-trophy-room">
               <Crown className="h-4 w-4 mr-2" /> Franchise Trophy Room
             </TabsTrigger>
@@ -911,6 +922,85 @@ const Team = () => {
                 );
               }}
             />
+          </TabsContent>
+
+          <TabsContent value="daily-scoring" className="space-y-4" data-testid="roster-daily-scoring-content">
+            {teamDailyData?.days?.length ? (
+              <>
+                <DayPillStrip
+                  days={teamDailyData.days}
+                  dayLabels={teamDailyData.day_labels}
+                  dailyTotals={teamDailyData.daily_totals}
+                  selectedDay={dailyScoringDay}
+                  onSelectDay={setDailyScoringDay}
+                />
+                {dailyScoringDay === null ? (
+                  <DailyGrid
+                    days={teamDailyData.days}
+                    dayLabels={teamDailyData.day_labels}
+                    players={teamDailyData.players || []}
+                    dailyTotals={teamDailyData.daily_totals}
+                  />
+                ) : (
+                  <div className="surface overflow-hidden">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-secondary/50 text-muted-foreground text-xs uppercase tracking-wider">
+                        <tr>
+                          <th className="px-4 py-3">Player</th>
+                          <th className="px-4 py-3 text-center">Pos</th>
+                          <th className="px-4 py-3 text-center">G</th>
+                          <th className="px-4 py-3 text-center">A</th>
+                          <th className="px-4 py-3 text-center">SOG</th>
+                          <th className="px-4 py-3 text-right">FPTS</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(teamDailyData.players || []).map((p) => {
+                          const dayStats = p.daily[dailyScoringDay];
+                          if (!dayStats || dayStats.games === 0) return null;
+                          return (
+                            <tr key={p.id} className="border-t border-border/50">
+                              <td className="px-4 py-2.5">
+                                <div className="font-medium">{p.name}</div>
+                                <div className="text-[10px] text-muted-foreground">{p.team}</div>
+                              </td>
+                              <td className="px-4 py-2.5 text-center text-muted-foreground text-xs">{p.position}</td>
+                              <td className="px-4 py-2.5 text-center tabular-nums">{p.is_goalie ? '—' : dayStats.goals}</td>
+                              <td className="px-4 py-2.5 text-center tabular-nums">{p.is_goalie ? `${dayStats.saves} SVS` : dayStats.assists}</td>
+                              <td className="px-4 py-2.5 text-center tabular-nums">{p.is_goalie ? `${dayStats.goals_against} GA` : dayStats.shots}</td>
+                              <td className="px-4 py-2.5 text-right font-bold tabular-nums text-primary">{dayStats.fpts.toFixed(1)}</td>
+                            </tr>
+                          );
+                        })}
+                        {(teamDailyData.players || []).every(p => !p.daily[dailyScoringDay]?.games) && (
+                          <tr>
+                            <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground text-sm">
+                              No games played on this day.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs text-muted-foreground px-1">
+                  <span>
+                    Week {teamDailyData.week} · {teamDailyData.period_start} – {teamDailyData.period_end}
+                  </span>
+                  <span className="font-semibold text-foreground">
+                    Period Total: {teamDailyData.period_total_fpts.toFixed(1)} FPTS
+                  </span>
+                </div>
+              </>
+            ) : (
+              <div className="surface p-8 text-center text-muted-foreground text-sm" data-testid="daily-scoring-empty">
+                <Grid3X3 className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
+                <p className="font-medium">No daily scoring data</p>
+                <p className="text-xs mt-1">
+                  Daily scoring becomes available once games are played in the current matchup period.
+                </p>
+              </div>
+            )}
           </TabsContent>
 
           <TabsContent value="trophy-room" className="space-y-4">

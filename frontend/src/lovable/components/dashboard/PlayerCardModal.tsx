@@ -50,6 +50,8 @@ import {
 } from "recharts";
 import { getPlayerAccolades, awardWinnersData, type PlayerAccolade } from "@/lovable/data/playerAwardsData";
 import api from "@/lib/api";
+import { useDailyScoring } from "@/hooks/use-daily-scoring";
+import { PlayerDailyAccordion } from "@/components/daily-scoring";
 
 // ── Types (shared with PlayerRoster) ───────────────────
 
@@ -253,6 +255,8 @@ interface PlayerCardModalProps {
   player: Player;
   defaultTab?: string;
   scoringConfig?: any;
+  leagueId?: string;
+  teamId?: string;
 }
 
 const CAT_TO_CFG_KEY: Record<string, string> = {
@@ -262,11 +266,26 @@ const CAT_TO_CFG_KEY: Record<string, string> = {
   W: "wins", L: "losses", SV: "saves", GA: "goals_against", SO: "shutouts", OTL: "overtime_losses",
 };
 
-const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", scoringConfig }: PlayerCardModalProps) => {
+const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", scoringConfig, leagueId, teamId }: PlayerCardModalProps) => {
   const [sideTab, setSideTab] = useState(defaultTab);
   useEffect(() => { if (open) setSideTab(defaultTab); }, [open, defaultTab]);
   const [chartCategory, setChartCategory] = useState("G");
   const [chartType, setChartType] = useState<"season" | "career">("career");
+
+  // ── Daily scoring for this player ──
+  const { data: dailyScoringData } = useDailyScoring(
+    open ? leagueId : undefined,
+    open ? teamId : undefined
+  );
+  const playerDailyData = dailyScoringData?.players?.find(
+    (p) => p.name === player.name || p.id === (player as any).id
+  );
+  const dayLabelMap: Record<string, string> = {};
+  if (dailyScoringData) {
+    dailyScoringData.days.forEach((d, i) => {
+      dayLabelMap[d] = dailyScoringData.day_labels[i];
+    });
+  }
 
   // ── Real news + recent games (league-aware) ──
   // Falls back to the legacy mock generators if either endpoint errors out so
@@ -320,6 +339,7 @@ const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", 
   const sideMenuItems = [
     { id: "overview", label: "Overview", icon: Newspaper },
     { id: "news", label: "News", icon: Newspaper },
+    { id: "daily-scoring", label: "Daily Scoring", icon: Calendar },
     { id: "season-stats", label: "Season Stats", icon: BarChart3 },
     { id: "career-stats", label: "Career Stats", icon: TrendingUp },
     { id: "transactions", label: "Transactions", icon: ArrowRightLeft },
@@ -479,6 +499,14 @@ const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", 
               )}
               {sideTab === "ownership" && <OwnershipTab />}
               {sideTab === "news" && <NewsTab news={news} />}
+              {sideTab === "daily-scoring" && (
+                <DailyScoringTab
+                  playerName={player.name}
+                  isGoalie={player.position === "G"}
+                  dailyData={playerDailyData}
+                  dayLabelMap={dayLabelMap}
+                />
+              )}
             </div>
           </ScrollArea>
         </div>
@@ -1150,6 +1178,86 @@ const OwnershipTab = () => {
           </Badge>
         </div>
       ))}
+    </div>
+  );
+};
+
+// ── Daily Scoring Tab ──────────────────────────────────
+
+const DailyScoringTab = ({
+  playerName,
+  isGoalie,
+  dailyData,
+  dayLabelMap,
+}: {
+  playerName: string;
+  isGoalie: boolean;
+  dailyData: any;
+  dayLabelMap: Record<string, string>;
+}) => {
+  if (!dailyData || Object.keys(dailyData.daily || {}).length === 0) {
+    return (
+      <div className="text-center text-muted-foreground py-12 text-sm" data-testid="daily-scoring-tab-empty">
+        <Calendar className="h-8 w-8 mx-auto mb-3 text-muted-foreground/40" />
+        <p className="font-medium">No daily scoring data</p>
+        <p className="text-xs mt-1">This player hasn't recorded any stats in the current matchup period yet.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div data-testid="daily-scoring-tab">
+      <h3 className="text-lg font-semibold mb-4">Daily Scoring Breakdown</h3>
+      <PlayerDailyAccordion
+        playerName={playerName}
+        isGoalie={isGoalie}
+        daily={dailyData.daily}
+        dayLabels={dayLabelMap}
+        totalFpts={dailyData.total_fpts}
+        className="mb-4"
+      />
+      {/* Summary stats */}
+      <div className="grid grid-cols-3 gap-3 mt-4">
+        <Card className="bg-secondary/20 border-border/50">
+          <CardContent className="p-3 text-center">
+            <p className="text-2xl font-bold text-primary tabular-nums">
+              {dailyData.total_fpts.toFixed(1)}
+            </p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Total FPTS</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-secondary/20 border-border/50">
+          <CardContent className="p-3 text-center">
+            <p className="text-2xl font-bold tabular-nums">
+              {dailyData.total_games}
+            </p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Games</p>
+          </CardContent>
+        </Card>
+        <Card className="bg-secondary/20 border-border/50">
+          <CardContent className="p-3 text-center">
+            <p className="text-2xl font-bold tabular-nums">
+              {dailyData.total_games > 0
+                ? (dailyData.total_fpts / dailyData.total_games).toFixed(1)
+                : "—"}
+            </p>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">FPTS / Game</p>
+          </CardContent>
+        </Card>
+      </div>
+      {/* Stat line summary */}
+      <div className="mt-4 p-3 rounded-lg bg-secondary/20 border border-border/50">
+        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Period Stat Line</p>
+        {isGoalie ? (
+          <p className="text-sm font-mono tabular-nums">
+            {dailyData.total_wins}W · {dailyData.total_saves} SVS · {dailyData.total_goals_against} GA
+          </p>
+        ) : (
+          <p className="text-sm font-mono tabular-nums">
+            {dailyData.total_goals}G {dailyData.total_assists}A · {dailyData.total_shots} SOG
+          </p>
+        )}
+      </div>
     </div>
   );
 };
