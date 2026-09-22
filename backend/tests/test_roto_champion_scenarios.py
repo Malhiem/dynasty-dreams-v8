@@ -1,11 +1,21 @@
-"""Iter 232N.91i — Rotisserie Champion Selection Tests
+"""Iter 232N.91j — Rotisserie Champion: Season-Only vs Condensed-Playoff
 
-Three separated scenarios:
-1. Season-only Rotisserie (playoffs disabled) → regular-season category-points leader
-2. Condensed Rotisserie playoffs (fresh totals) → playoff category-points leader
-3. Seed bonus swings the winner → bonus changes who wins
+Separates two champion-selection scenarios that were previously conflated:
 
-Uses deterministic fixtures to control exactly which team leads each standing.
+1. Season-only (playoffs disabled):
+   - Champion = regular-season category-points leader
+   - Expects: the team with the highest full-season roto total
+
+2. Condensed-playoff (playoffs enabled, fresh totals):
+   - Champion = playoff-period category-points leader (+ seed bonuses if configured)
+   - Expects: a DIFFERENT team that leads playoff-only stats
+
+3. Seed bonus swings winner:
+   - A large seed bonus can change which team wins the condensed playoff
+
+Each scenario zeroes all player stats first, then seeds controlled values
+so that the regular-season leader and playoff-period leader are provably
+different teams.
 """
 import os
 import pytest
@@ -14,13 +24,10 @@ from pymongo import MongoClient
 from bson import ObjectId
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-MONGO_URL = "mongodb://localhost:27017"
-DB_NAME = "test_database"
-
 ROTO_LEAGUE_ID = "69e46af167999bfb85c39629"
 ADMIN_EMAIL = "admin@dynastydreams.com"
 ADMIN_PASSWORD = "Admin123!"
-TEST_YEAR = 2098  # unique year to avoid conflicts
+TEST_YEAR = 2097
 
 
 @pytest.fixture(scope="module")
@@ -38,58 +45,105 @@ def auth_headers():
 
 @pytest.fixture(scope="module")
 def db():
-    client = MongoClient(MONGO_URL)
-    yield client[DB_NAME]
+    client = MongoClient("mongodb://localhost:27017")
+    yield client["test_database"]
     client.close()
 
 
-def _cleanup(db, league_id=ROTO_LEAGUE_ID, year=TEST_YEAR):
+@pytest.fixture(scope="module")
+def seeded_league(db, auth_headers):
+    """Zero all player stats, then seed controlled values so:
+    - Team[0] leads regular season (goals=100)
+    - Team[-1] leads playoff period (goals=44)
+    These are deterministically different teams.
+    """
+    teams = list(db.teams.find({"league_id": ROTO_LEAGUE_ID}).sort("_id", 1))
+
+    # Collect all player IDs across the league
+    all_pids = set()
+    for t in teams:
+        for pid in (t.get("roster") or []):
+            all_pids.add(pid)
+
+    # Zero everyone
+    db.players.update_many(
+        {"_id": {"$in": [ObjectId(p) for p in all_pids]}},
+        {"$set": {"season_stats": {}, "period_stats": {}}},
+    )
+
+    # Seed one player per team with diverging stats
+    first_pids = []
+    for i, t in enumerate(teams):
+        roster = t.get("roster") or []
+        if roster:
+            pid = roster[0]
+            first_pids.append(pid)
+            reg_goals = 100 - (i * 5)   # 100, 95, 90, …
+            po_goals = 5 + (i * 3)      # 5, 8, 11, …
+            db.players.update_one(
+                {"_id": ObjectId(pid)},
+                {"$set": {
+                    "season_stats": {"goals": reg_goals},
+                    "period_stats": {"19": {"goals": po_goals}},
+                }},
+            )
+
+    yield teams
+
+    # Restore: clear test-year snapshots and championship flags
+    _cleanup(db)
+    # Re-enable playoffs
+    requests.put(
+        f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
+        headers=auth_headers,
+        json={"playoffs_enabled": True},
+    )
+
+
+def _cleanup(db):
     db.teams.update_many(
-        {"league_id": league_id},
+        {"league_id": ROTO_LEAGUE_ID},
         {"$unset": {"championship_won_at": ""}},
     )
     db.leagues.update_one(
-        {"_id": ObjectId(league_id)},
+        {"_id": ObjectId(ROTO_LEAGUE_ID)},
         {"$set": {"current_season_status": "in_progress"}},
     )
-    db.league_seasons.delete_many({"league_id": league_id, "season_year": year})
-
-
-def _complete(auth_headers, league_id=ROTO_LEAGUE_ID, year=TEST_YEAR):
-    resp = requests.post(
-        f"{BASE_URL}/api/leagues/{league_id}/complete-season",
-        headers=auth_headers,
-        json={"season_year": year},
+    db.league_seasons.delete_many(
+        {"league_id": ROTO_LEAGUE_ID, "season_year": TEST_YEAR},
     )
-    assert resp.status_code == 200, f"complete-season failed: {resp.text}"
-    return resp.json()
 
 
-def _standings(auth_headers, league_id=ROTO_LEAGUE_ID):
+def _standings(auth_headers):
     resp = requests.get(
-        f"{BASE_URL}/api/leagues/{league_id}/roto/standings",
+        f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}/roto/standings",
         headers=auth_headers,
     )
     assert resp.status_code == 200
     return resp.json()
 
 
+def _complete(auth_headers):
+    resp = requests.post(
+        f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}/complete-season",
+        headers=auth_headers,
+        json={"season_year": TEST_YEAR},
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
 def _leader(standings):
-    """Return (team_id, team_name, total_points) for the standings leader."""
-    totals = standings.get("totals", {})
-    tid, td = max(totals.items(), key=lambda x: x[1].get("total_points", 0))
+    totals = standings["totals"]
+    tid, td = max(totals.items(), key=lambda x: x[1]["total_points"])
     return tid, td["team_name"], td["total_points"]
 
 
-# ────────────────────────────────────────────────────────────────
-# Scenario 1: Season-only Rotisserie (playoffs disabled)
-# ────────────────────────────────────────────────────────────────
 class TestSeasonOnlyChampion:
-    """With playoffs disabled, champion = regular-season points leader."""
+    """Playoffs disabled → champion is the regular-season leader."""
 
-    def test_champion_is_regular_season_leader(self, auth_headers, db):
+    def test_champion_is_season_leader(self, auth_headers, db, seeded_league):
         _cleanup(db)
-        # Disable playoffs so compute_season uses full season stats
         requests.put(
             f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
             headers=auth_headers,
@@ -97,32 +151,22 @@ class TestSeasonOnlyChampion:
         )
 
         standings = _standings(auth_headers)
-        assert not standings.get("fresh_totals"), \
-            "With playoffs off, fresh_totals should be falsy"
+        assert not standings.get("fresh_totals")
         _, leader_name, leader_pts = _leader(standings)
 
         data = _complete(auth_headers)
-        assert data["champion"] == leader_name, \
-            f"Expected season leader '{leader_name}' ({leader_pts} pts), got '{data['champion']}'"
-
-        # Restore
-        requests.put(
-            f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
-            headers=auth_headers,
-            json={"playoffs_enabled": True},
+        assert data["champion"] == leader_name, (
+            f"Season-only: expected '{leader_name}' ({leader_pts} pts), "
+            f"got '{data['champion']}'"
         )
         _cleanup(db)
 
 
-# ────────────────────────────────────────────────────────────────
-# Scenario 2: Condensed Rotisserie playoffs (fresh totals)
-# ────────────────────────────────────────────────────────────────
 class TestCondensedPlayoffChampion:
-    """With condensed_roto + fresh totals, champion = playoff points leader."""
+    """Condensed playoffs with fresh totals → champion is the playoff leader."""
 
-    def test_champion_is_playoff_leader(self, auth_headers, db):
+    def test_champion_is_playoff_leader(self, auth_headers, db, seeded_league):
         _cleanup(db)
-        # Enable condensed roto with fresh totals, no seed bonuses
         requests.put(
             f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
             headers=auth_headers,
@@ -135,29 +179,27 @@ class TestCondensedPlayoffChampion:
         )
 
         standings = _standings(auth_headers)
-        assert standings.get("fresh_totals") is True, \
-            "With condensed_roto + fresh_totals, fresh_totals should be True"
+        assert standings.get("fresh_totals") is True
         _, leader_name, leader_pts = _leader(standings)
 
         data = _complete(auth_headers)
-        assert data["champion"] == leader_name, \
-            f"Expected playoff leader '{leader_name}' ({leader_pts} pts), got '{data['champion']}'"
-
+        assert data["champion"] == leader_name, (
+            f"Condensed playoff: expected '{leader_name}' ({leader_pts} pts), "
+            f"got '{data['champion']}'"
+        )
         _cleanup(db)
 
-    def test_season_leader_differs_from_playoff_leader(self, auth_headers, db):
-        """Verify that season-only and playoff standings can produce
-        different leaders (proves the two paths diverge)."""
-        # Get season-only standings
+    def test_season_and_playoff_leaders_differ(self, auth_headers, db, seeded_league):
+        """Prove the two code paths select different champions."""
+        # Season standings
         requests.put(
             f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
             headers=auth_headers,
             json={"playoffs_enabled": False},
         )
-        season_standings = _standings(auth_headers)
-        _, season_leader, _ = _leader(season_standings)
+        season_leader_tid, season_leader_name, _ = _leader(_standings(auth_headers))
 
-        # Get playoff standings
+        # Playoff standings
         requests.put(
             f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
             headers=auth_headers,
@@ -168,32 +210,21 @@ class TestCondensedPlayoffChampion:
                 "playoff_roto_seed_bonuses": {},
             },
         )
-        playoff_standings = _standings(auth_headers)
-        _, playoff_leader, _ = _leader(playoff_standings)
+        playoff_leader_tid, playoff_leader_name, _ = _leader(_standings(auth_headers))
 
-        # They may or may not differ depending on data, but at least both
-        # should return valid team names
-        assert season_leader, "Season leader should be a valid team name"
-        assert playoff_leader, "Playoff leader should be a valid team name"
-        print(f"  Season leader: {season_leader}")
-        print(f"  Playoff leader: {playoff_leader}")
-        if season_leader != playoff_leader:
-            print("  ✓ Leaders differ — fresh totals path is distinct")
-        else:
-            print("  ⚠ Leaders are the same (data happens to align)")
+        assert season_leader_tid != playoff_leader_tid, (
+            f"Season leader ({season_leader_name}) should differ from "
+            f"playoff leader ({playoff_leader_name}) with controlled test data"
+        )
 
 
-# ────────────────────────────────────────────────────────────────
-# Scenario 3: Seed bonus swings the winner
-# ────────────────────────────────────────────────────────────────
 class TestSeedBonusSwingsWinner:
-    """Configure bonuses so the top seed (with a big bonus) overtakes
-    the natural playoff-points leader."""
+    """A large seed bonus should change who wins."""
 
-    def test_bonus_changes_champion(self, auth_headers, db):
+    def test_bonus_changes_champion(self, auth_headers, db, seeded_league):
         _cleanup(db)
 
-        # First, get playoff standings WITHOUT bonuses to find natural leader
+        # Playoff standings without bonuses
         requests.put(
             f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
             headers=auth_headers,
@@ -205,48 +236,40 @@ class TestSeedBonusSwingsWinner:
             },
         )
         no_bonus = _standings(auth_headers)
-        totals_nb = no_bonus["totals"]
-        sorted_nb = sorted(totals_nb.items(), key=lambda x: -x[1]["total_points"])
-        natural_leader_tid = sorted_nb[0][0]
-        natural_leader_name = sorted_nb[0][1]["team_name"]
-        natural_leader_pts = sorted_nb[0][1]["total_points"]
+        natural_tid, natural_name, natural_pts = _leader(no_bonus)
 
-        # Find the #1 regular-season seed (for bonus targeting)
+        # Get seed 1 (regular-season leader)
         requests.put(
             f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
             headers=auth_headers,
             json={"playoffs_enabled": False},
         )
-        season_standings = _standings(auth_headers)
+        season = _standings(auth_headers)
         season_sorted = sorted(
-            season_standings["totals"].items(),
+            season["totals"].items(),
             key=lambda x: -x[1]["total_points"],
         )
         seed1_tid = season_sorted[0][0]
-        seed1_name = season_sorted[0][1]["team_name"]
 
-        # Find a team that isn't the natural playoff leader but IS the #1 seed
-        # Give seed 1 a massive bonus to overtake
-        if seed1_tid == natural_leader_tid:
-            # Seed 1 is already the natural leader; give seed 2 a huge bonus
-            seed2_tid = season_sorted[1][0]
-            seed2_name = season_sorted[1][1]["team_name"]
-            seed2_playoff_pts = totals_nb.get(seed2_tid, {}).get("total_points", 0)
-            gap = natural_leader_pts - seed2_playoff_pts
-            bonus = int(gap) + 10  # enough to overtake
-            bonuses = {"2": bonus}
-            expected_winner = seed2_name
-            print(f"  Natural leader is seed 1; giving seed 2 ({seed2_name}) bonus={bonus}")
+        # Determine a team that is NOT the natural playoff leader,
+        # give it a massive bonus to overtake
+        if seed1_tid != natural_tid:
+            # Seed 1 trails in playoffs — give it a huge bonus
+            seed1_playoff_pts = no_bonus["totals"][seed1_tid]["total_points"]
+            gap = natural_pts - seed1_playoff_pts
+            bonus_val = int(gap) + 20
+            bonuses = {"1": bonus_val}
+            expected_winner = season_sorted[0][1]["team_name"]
         else:
-            # Give seed 1 enough bonus to overtake the natural leader
-            seed1_playoff_pts = totals_nb.get(seed1_tid, {}).get("total_points", 0)
-            gap = natural_leader_pts - seed1_playoff_pts
-            bonus = int(gap) + 10
-            bonuses = {"1": bonus}
-            expected_winner = seed1_name
-            print(f"  Natural leader is NOT seed 1; giving seed 1 ({seed1_name}) bonus={bonus}")
+            # Seed 1 is also the natural leader — boost seed 2 instead
+            seed2_tid = season_sorted[1][0]
+            seed2_playoff_pts = no_bonus["totals"][seed2_tid]["total_points"]
+            gap = natural_pts - seed2_playoff_pts
+            bonus_val = int(gap) + 20
+            bonuses = {"2": bonus_val}
+            expected_winner = season_sorted[1][1]["team_name"]
 
-        # Apply bonuses and complete
+        # Apply bonus and complete season
         requests.put(
             f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
             headers=auth_headers,
@@ -257,19 +280,13 @@ class TestSeedBonusSwingsWinner:
                 "playoff_roto_seed_bonuses": bonuses,
             },
         )
-
-        # Verify standings reflect the bonus
-        bonus_standings = _standings(auth_headers)
-        _, bonus_leader_name, bonus_leader_pts = _leader(bonus_standings)
-        assert bonus_leader_name == expected_winner, \
-            f"With bonus, expected leader '{expected_winner}', got '{bonus_leader_name}'"
-
         data = _complete(auth_headers)
-        assert data["champion"] == expected_winner, \
-            f"Champion should be '{expected_winner}' (bonus-boosted), got '{data['champion']}'"
-        print(f"  ✓ Seed bonus swung champion to {expected_winner} ({bonus_leader_pts} pts)")
+        assert data["champion"] == expected_winner, (
+            f"Seed bonus should swing winner to '{expected_winner}', "
+            f"got '{data['champion']}'"
+        )
 
-        # Restore: clear bonuses
+        # Restore
         requests.put(
             f"{BASE_URL}/api/leagues/{ROTO_LEAGUE_ID}",
             headers=auth_headers,
