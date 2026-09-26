@@ -270,25 +270,35 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
     on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"])
     on_clock_team_id = (draft.get("team_map") or {}).get(on_clock, {}).get("id")
 
-    # Check if this pick was traded to a different team
+    # Iter 232x — Check if this pick was traded to a different team.
+    # Query by (round, original_team_id) since slot ordering doesn't
+    # account for snake draft reversal.  `on_clock` from
+    # `get_team_for_pick` already handles snake ordering, so it gives
+    # us the correct *original* team that owns this slot.
     total_teams = len(draft["team_abbrs"])
     current_pick = draft["current_pick"]
     round_num = ((current_pick - 1) // total_teams) + 1
-    pick_in_round = ((current_pick - 1) % total_teams) + 1
-    traded_pick = await _db().draft_picks.find_one({
-        "league_id": draft.get("league_id"),
-        "round": round_num,
-        "pick": pick_in_round,
-    })
-    if traded_pick and traded_pick.get("current_team_id"):
-        traded_team_id = traded_pick["current_team_id"]
-        if traded_team_id != traded_pick.get("original_team_id"):
-            # Pick was traded — use the new owner
-            on_clock_team_id = traded_team_id
-            # Update on_clock abbr for the pick doc
-            traded_team = await _db().teams.find_one({"_id": ObjectId(traded_team_id)})
-            if traded_team:
-                on_clock = traded_team.get("abbreviation") or traded_team.get("name", on_clock)
+    if on_clock_team_id:
+        traded_pick = await _db().draft_picks.find_one({
+            "league_id": draft.get("league_id"),
+            "draft_id": str(draft["_id"]),
+            "round": round_num,
+            "original_team_id": on_clock_team_id,
+        })
+        if not traded_pick:
+            # Fallback: try without draft_id for older leagues
+            traded_pick = await _db().draft_picks.find_one({
+                "league_id": draft.get("league_id"),
+                "round": round_num,
+                "original_team_id": on_clock_team_id,
+            })
+        if traded_pick and traded_pick.get("current_team_id"):
+            traded_team_id = str(traded_pick["current_team_id"])
+            if traded_team_id != str(traded_pick.get("original_team_id")):
+                on_clock_team_id = traded_team_id
+                traded_team = await _db().teams.find_one({"_id": ObjectId(traded_team_id)})
+                if traded_team:
+                    on_clock = traded_team.get("abbreviation") or traded_team.get("name", on_clock)
 
     if not on_clock_team_id:
         raise HTTPException(status_code=500, detail="Could not resolve on-clock team")

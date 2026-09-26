@@ -226,7 +226,7 @@ class UserRegister(BaseModel):
     username: str = Field(..., min_length=3, max_length=24, pattern=r"^[a-zA-Z0-9_-]+$")
 
 class UserLogin(BaseModel):
-    email: EmailStr
+    email: str  # Iter 232x — Use str (not EmailStr) to accept sandbox .local addresses
     password: str
     # Iter 207 — optional client-supplied device fingerprint for
     # multi-account detection (extra="allow" already accepts it but we

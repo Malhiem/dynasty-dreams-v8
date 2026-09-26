@@ -998,7 +998,21 @@ async def respond_to_trade_proposal(trade_id: str, request: Request):
         if hours is None:
             league = await db.leagues.find_one({"_id": ObjectId(league_id)})
             hours = _resolve_review_period_hours(league or {})
-        processes_at = (now + timedelta(hours=int(hours))).isoformat()
+
+        # Iter 232x — Schedule processing at midnight UTC-8 (Pacific)
+        # after the review period elapses. If review period is 0, process
+        # immediately (no midnight scheduling).
+        if int(hours) <= 0:
+            processes_at = now.isoformat()
+        else:
+            raw_deadline = now + timedelta(hours=int(hours))
+            utc_minus_8 = timezone(timedelta(hours=-8))
+            deadline_pst = raw_deadline.astimezone(utc_minus_8)
+            # Advance to next midnight PST
+            next_midnight = (deadline_pst + timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            processes_at = next_midnight.astimezone(timezone.utc).isoformat()
 
         await db.trades.update_one(
             {"_id": trade["_id"]},

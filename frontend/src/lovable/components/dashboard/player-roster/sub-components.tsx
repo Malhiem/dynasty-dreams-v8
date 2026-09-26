@@ -26,7 +26,7 @@
  *     at module init time.
  */
 import { useState, useMemo, useEffect, useRef } from "react";
-import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Megaphone } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Megaphone, Shield } from "lucide-react";
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
 import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { PlayerStatusBadges } from "@/components/player/PlayerStatusBadges";
@@ -425,6 +425,8 @@ export const FantasyPointsTable = ({
   onTrade,
   onPlayerClick,
   getSectionTotal,
+  getPlayerPoints,
+  sectionTimeframe = "season",
   isOwnTeam = true,
   commissionerMode = false,
   highlightedPlayerId,
@@ -441,6 +443,8 @@ export const FantasyPointsTable = ({
   onTrade: (p: Player) => void;
   onPlayerClick: (p: Player) => void;
   getSectionTotal: (s: RosterSection) => number;
+  getPlayerPoints?: (p: Player) => number;
+  sectionTimeframe?: string;
   isOwnTeam?: boolean;
   commissionerMode?: boolean;
   visibleCategories?: string[];
@@ -604,6 +608,8 @@ export const MatchupScheduleTable = ({
   grouped,
   onTrade,
   onPlayerClick,
+  getPlayerPoints,
+  sectionTimeframe = "season",
   isOwnTeam = true,
   commissionerMode = false,
   highlightedPlayerId,
@@ -616,6 +622,8 @@ export const MatchupScheduleTable = ({
   grouped: Record<RosterSection, Player[]>;
   onTrade: (p: Player) => void;
   onPlayerClick: (p: Player) => void;
+  getPlayerPoints?: (p: Player) => number;
+  sectionTimeframe?: string;
   isOwnTeam?: boolean;
   commissionerMode?: boolean;
   showPositionEligibility?: boolean;
@@ -722,6 +730,8 @@ export const FullScheduleTable = ({
   grouped,
   onTrade,
   onPlayerClick,
+  getPlayerPoints,
+  sectionTimeframe = "season",
   isOwnTeam = true,
   commissionerMode = false,
   highlightedPlayerId,
@@ -734,6 +744,8 @@ export const FullScheduleTable = ({
   grouped: Record<RosterSection, Player[]>;
   onTrade: (p: Player) => void;
   onPlayerClick: (p: Player) => void;
+  getPlayerPoints?: (p: Player) => number;
+  sectionTimeframe?: string;
   isOwnTeam?: boolean;
   commissionerMode?: boolean;
   showPositionEligibility?: boolean;
