@@ -136,6 +136,24 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
     on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"], draft.get("bonus_picks"))
     on_clock_team_id = (draft.get("team_map") or {}).get(on_clock, {}).get("id")
 
+    # Iter 232x — Honor traded picks: check draft_picks for current owner
+    _total_teams = len(draft["team_abbrs"])
+    _cur_pick = draft["current_pick"]
+    _rnd = ((_cur_pick - 1) // _total_teams) + 1
+    _pir = ((_cur_pick - 1) % _total_teams) + 1
+    _traded = await _db().draft_picks.find_one({
+        "league_id": draft.get("league_id"),
+        "round": _rnd,
+        "pick": _pir,
+    })
+    if _traded and _traded.get("current_team_id"):
+        _traded_tid = _traded["current_team_id"]
+        if _traded_tid != _traded.get("original_team_id"):
+            on_clock_team_id = _traded_tid
+            _traded_team = await _db().teams.find_one({"_id": ObjectId(_traded_tid)})
+            if _traded_team:
+                on_clock = _traded_team.get("abbreviation") or _traded_team.get("name", on_clock)
+
     # Commissioner / co-commissioner / platform admin can pick for any team,
     # otherwise it must be the user's turn.
     # Iter 231ad — Pulled the role check into `routes._authz.is_league_admin`.

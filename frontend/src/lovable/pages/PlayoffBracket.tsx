@@ -120,9 +120,10 @@ const TeamCard = ({ team, isWinner, isLoser, tbdLabel }: { team: BracketTeam | n
       </div>
     );
   }
+  const record = `${team.wins ?? 0}-${team.losses ?? 0}${team.ties ? `-${team.ties}` : ""}`;
   return (
     <div
-      className={`flex items-center gap-2 rounded-md px-2.5 py-2 border transition-colors h-[56px] ${
+      className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 border transition-colors h-[56px] ${
         isWinner
           ? "border-accent/60 bg-accent/10"
           : isLoser
@@ -140,8 +141,16 @@ const TeamCard = ({ team, isWinner, isLoser, tbdLabel }: { team: BracketTeam | n
           {team.team_name}
           {isWinner && <Crown className="inline-block h-3.5 w-3.5 ml-1 text-accent" />}
         </div>
-        <div className="text-[10px] text-muted-foreground leading-tight">
-          {team.wins ?? 0}-{team.losses ?? 0}{team.ties ? `-${team.ties}` : ""} · {team.points_for ?? 0} PF
+        <div className="text-[10px] text-muted-foreground leading-tight flex items-center gap-1.5">
+          <span className="font-medium tabular-nums">{record}</span>
+          <span className="text-muted-foreground/40">·</span>
+          <span className="tabular-nums">{team.points_for ?? 0} PF</span>
+          {team.games_back != null && team.games_back > 0 && (
+            <>
+              <span className="text-muted-foreground/40">·</span>
+              <span className="text-muted-foreground/60 tabular-nums">{team.games_back} GB</span>
+            </>
+          )}
         </div>
       </div>
     </div>

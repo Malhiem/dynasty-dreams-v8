@@ -3,8 +3,10 @@
  * DailyGrid — Full grid view: rows = players, columns = days.
  * Each cell shows FPTS, color-coded (green = above avg, red = below).
  * Option C design for comprehensive day-by-day view.
+ * Hot Streak badge: fire icon for 3+ consecutive above-average days.
  */
 import { cn } from "@/lib/utils";
+import { Flame } from "lucide-react";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import type { DailyScoringPlayer } from "@/hooks/use-daily-scoring";
 import {
@@ -38,6 +40,22 @@ export function DailyGrid({
     });
   });
   const avg = allValues.length > 0 ? allValues.reduce((a, b) => a + b, 0) / allValues.length : 0;
+
+  // Hot streak detection: 3+ consecutive days above average
+  const getHotStreak = (player: DailyScoringPlayer): number => {
+    let maxConsecutive = 0;
+    let current = 0;
+    for (const d of days) {
+      const fpts = player.daily[d]?.fpts || 0;
+      if (fpts > 0 && fpts >= avg) {
+        current++;
+        maxConsecutive = Math.max(maxConsecutive, current);
+      } else {
+        current = 0;
+      }
+    }
+    return maxConsecutive;
+  };
 
   const cellColor = (val: number) => {
     if (val === 0) return "text-muted-foreground/40";
@@ -75,7 +93,9 @@ export function DailyGrid({
             </tr>
           </thead>
           <tbody>
-            {players.map((p, idx) => (
+            {players.map((p, idx) => {
+              const streak = getHotStreak(p);
+              return (
               <TooltipProvider key={p.id} delayDuration={200}>
                 <tr
                   className={cn(
@@ -85,7 +105,24 @@ export function DailyGrid({
                   data-testid={`daily-grid-row-${p.id}`}
                 >
                   <td className="px-3 py-2 sticky left-0 bg-card z-10">
-                    <div className="font-medium truncate max-w-[140px]">{p.name}</div>
+                    <div className="font-medium truncate max-w-[140px] flex items-center gap-1">
+                      {p.name}
+                      {streak >= 3 && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-flex" data-testid={`hot-streak-badge-${p.id}`}>
+                              <Flame className={cn(
+                                "h-3.5 w-3.5 shrink-0",
+                                streak >= 5 ? "text-red-400 animate-pulse" : "text-orange-400"
+                              )} />
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="text-xs">
+                            {streak}-day hot streak (above avg)
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </div>
                     <div className="text-[10px] text-muted-foreground">{p.team}</div>
                   </td>
                   <td className="px-3 py-2 text-center text-muted-foreground text-xs">
@@ -129,7 +166,8 @@ export function DailyGrid({
                   </td>
                 </tr>
               </TooltipProvider>
-            ))}
+            );
+            })}
             {/* Totals row */}
             <tr className="border-t-2 border-border bg-secondary/40 font-semibold">
               <td className="px-3 py-2.5 sticky left-0 bg-secondary/40 z-10 text-sm">

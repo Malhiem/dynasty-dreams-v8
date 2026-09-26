@@ -16,7 +16,7 @@ import { Trophy, TrendingUp, Users, Shield, ArrowRightLeft, X, AlertTriangle, Do
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TrophyRoomView } from "@/lovable/pages/TrophyRoom";
 import { useDailyScoring } from "@/hooks/use-daily-scoring";
-import { DayPillStrip, DailyGrid } from "@/components/daily-scoring";
+import { DayPillStrip, DailyGrid, WeekSelector } from "@/components/daily-scoring";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -198,13 +198,17 @@ const Team = () => {
   const [commissionerMode, setCommissionerMode] = useState(false);
   const [tradeBannerDismissed, setTradeBannerDismissed] = useState(false);
   const [dailyScoringDay, setDailyScoringDay] = useState<string | null>(null);
+  const [dailyScoringWeek, setDailyScoringWeek] = useState<number | null>(null);
 
   const selectedTeam = allTeams.find(t => t.id === selectedTeamId) || null;
   const isOwnTeam = selectedTeamId && selectedTeamId === myTeamId;
 
   // Daily scoring for the selected team
+  const currentWeek = league?.current_week || 1;
+  const totalWeeks = league?.regular_season_weeks || currentWeek;
+  const effectiveWeek = dailyScoringWeek ?? currentWeek;
   const { data: teamDailyData } = useDailyScoring(
-    league?.id, selectedTeamId || undefined
+    league?.id, selectedTeamId || undefined, effectiveWeek
   );
 
   // Rank among all teams by season points + live fpts
@@ -925,6 +929,14 @@ const Team = () => {
           </TabsContent>
 
           <TabsContent value="daily-scoring" className="space-y-4" data-testid="roster-daily-scoring-content">
+            <div className="flex items-center justify-between">
+              <WeekSelector
+                currentWeek={currentWeek}
+                totalWeeks={totalWeeks}
+                selectedWeek={effectiveWeek}
+                onWeekChange={(w) => { setDailyScoringWeek(w); setDailyScoringDay(null); }}
+              />
+            </div>
             {teamDailyData?.days?.length ? (
               <>
                 <DayPillStrip

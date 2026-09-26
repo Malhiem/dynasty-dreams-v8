@@ -13,7 +13,7 @@ import api from '@/lib/api';
 import { useGlobalSocketEvent } from '@/hooks/use-global-socket';
 import { useActiveLeague } from '@/hooks/use-active-league';
 import { useDailyScoring } from '@/hooks/use-daily-scoring';
-import { DayPillStrip, DailyGrid } from '@/components/daily-scoring';
+import { DayPillStrip, DailyGrid, WeekSelector } from '@/components/daily-scoring';
 
 const STATE_BADGE = {
   LIVE: { label: 'LIVE', className: 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse' },
@@ -36,12 +36,16 @@ export default function LiveScoringPage() {
   const [currentMatchup, setCurrentMatchup] = useState(null);
   const [selectedLeague, setSelectedLeague] = useState(null);
   const [dailyScoringDay, setDailyScoringDay] = useState(null);
+  const [dailyScoringWeek, setDailyScoringWeek] = useState(null);
   const { myTeam } = useActiveLeague();
   const navigate = useNavigate();
 
   // Daily scoring for the selected league + my team
+  const currentWeekNum = selectedLeague?.current_week || 1;
+  const totalWeeksNum = selectedLeague?.regular_season_weeks || currentWeekNum;
+  const effectiveDailyWeek = dailyScoringWeek ?? currentWeekNum;
   const { data: myDailyData } = useDailyScoring(
-    selectedLeagueId, myTeam?.id
+    selectedLeagueId, myTeam?.id, effectiveDailyWeek
   );
 
   useGlobalSocketEvent('live_scoring_update', (payload) => {
@@ -436,6 +440,14 @@ export default function LiveScoringPage() {
               </TabsContent>
 
               <TabsContent value="daily-scoring" className="mt-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <WeekSelector
+                    currentWeek={currentWeekNum}
+                    totalWeeks={totalWeeksNum}
+                    selectedWeek={effectiveDailyWeek}
+                    onWeekChange={(w) => { setDailyScoringWeek(w); setDailyScoringDay(null); }}
+                  />
+                </div>
                 {myDailyData?.days?.length > 0 ? (
                   <>
                     <DayPillStrip

@@ -87,17 +87,34 @@ async def _notify_league_event(
             _logger().debug(f"league fanout {event_type} → {uid} skipped: {e}")
 
 
-# Iter 231h — Read the canonical review-period hours from the new
-# `transactions_config.trades` envelope with a fallback to the legacy
-# top-level `league.trade_review_period_hours` for backward compat.
+# Iter 232x — Read the canonical review-period from the league config.
+# Supports `trade_review_period_days` (0-7, preferred) and falls back
+# to legacy `trade_review_period_hours`.  Returns integer hours.
 def _resolve_review_period_hours(league: dict) -> int:
     cfg = (league.get("transactions_config") or {}).get("trades") or {}
+    # Prefer day-based config (0-7 days)
+    days = cfg.get("review_period_days")
+    if days is None:
+        days = league.get("trade_review_period_days")
+    if days is not None:
+        try:
+            d = int(days)
+            return max(0, min(7, d)) * 24
+        except Exception:
+            pass
+    # Legacy hours-based config
     if cfg.get("review_period_hours") is not None:
         try:
             return int(cfg["review_period_hours"])
         except Exception:
             pass
-    return int(league.get("trade_review_period_hours") or 72)
+    if league.get("trade_review_period_hours") is not None:
+        try:
+            return int(league["trade_review_period_hours"])
+        except Exception:
+            pass
+    # Default: 1 day (24h)
+    return 24
 
 
 # Iter 231j — Pull the trades-config sub-doc with safe defaults so the
@@ -2110,6 +2127,28 @@ async def execute_trade_endpoint(trade_id: str, request: Request):
     )
     if not (is_participant or is_comm):
         raise HTTPException(status_code=403, detail="Not authorized to execute this trade")
+
+    # Iter 232x — Non-commissioners must wait for the review period to
+    # elapse before executing. Only commissioners may push through early.
+    if not is_comm:
+        processes_at = trade.get("processes_at")
+        if processes_at:
+            try:
+                deadline = datetime.fromisoformat(str(processes_at).replace("Z", "+00:00"))
+            except Exception:
+                deadline = None
+            if deadline and datetime.now(timezone.utc) < deadline:
+                remaining = deadline - datetime.now(timezone.utc)
+                hours_left = remaining.total_seconds() / 3600
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"Trade is still in review period. "
+                        f"Approximately {hours_left:.1f} hours remaining. "
+                        f"Only a commissioner can push this trade through early."
+                    ),
+                )
+
     if trade.get("conditions"):
         check = await _evaluate_conditions(trade)
         if not check["all_met"]:

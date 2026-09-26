@@ -118,6 +118,7 @@ class LeagueResponse(BaseModel):
     minors_skater_spots: Optional[int] = None
     minors_goalie_spots: Optional[int] = None
     trade_review_period_hours: Optional[int] = None
+    trade_review_period_days: Optional[int] = None  # 0-7 days, preferred over hours
     trade_veto_threshold_pct: Optional[int] = None
     trade_deadline_week: Optional[int] = None
     trade_deadline_at: Optional[str] = None

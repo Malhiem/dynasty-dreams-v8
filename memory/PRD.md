@@ -36,31 +36,37 @@ Build a comprehensive fantasy NHL management platform with advanced admin tools,
   - Groups `live_stats` entries by game date, calculates daily FPTS
   - Works for all scoring formats (H2H, Categories, Rotisserie)
 - **Matchup Page**: 3 view tabs — Matchup Totals, Daily Scores (Day Pill Strip), Daily Grid
-  - Day Pill Strip: horizontal day pills (Mon-Sun) with daily totals, "Total" pill for period aggregate
-  - Daily Grid: full grid with players as rows, days as columns, color-coded FPTS cells
-  - Both views show my team vs opponent comparison
-- **Roster/Team Page**: New "Daily Scoring" tab between Roster and Franchise Trophy Room
-  - DayPillStrip + DailyGrid showing per-day player performance
-  - Day filtering: clicking a day pill shows only that day's players and stats
+- **Roster/Team Page**: New "Daily Scoring" tab with DayPillStrip + DailyGrid
 - **Live Scoring Page**: New "Daily Scoring" tab in Fantasy Leaderboard
-  - DayPillStrip + DailyGrid + day-specific player table
-- **Player Card Modal**: New "Daily Scoring" side menu with expandable day-by-day breakdown
-  - PlayerDailyAccordion component: mini table with date | stat line | FPTS
-  - Summary cards: Total FPTS, Games, FPTS/Game
-  - Period stat line (G/A/SOG for skaters, W/SVS/GA for goalies)
+- **Player Card Modal**: New "Daily Scoring" side menu with expandable accordion
+
+### Phase 5 - Weekly Review, Hot Streaks, Bracket Polish & Trade Fixes (Complete - Sep 26, 2026)
+
+#### New Features:
+- **Week Selector Dropdown**: Added to Matchup, Roster, and Live Scoring daily scoring views. Allows reviewing any past matchup period (not just current week). Shows "• Current" label for the active week. Resets day selection when changing weeks.
+- **Hot Streak Badges**: Fire icon (🔥) appears next to players who scored above average on 3+ consecutive days in the DailyGrid. Orange for 3-4 day streaks, pulsing red for 5+ day streaks. Tooltip shows streak length.
+- **Bracket Visualizer Cleanup**: Enhanced TeamCard with better layout — team logo, abbreviation, W-L-T record, Points For, Games Back all visible. Improved spacing and visual hierarchy.
+
+#### Bug Fixes:
+- **Trade Review Period Enforcement**: Non-commissioner users now receive 403 error when attempting to execute a trade still in its review period. Error message shows remaining time and suggests commissioner override. Only commissioners can push trades through early.
+- **Configurable Trade Review Period**: `trade_review_period_days` (0–7 days in 1-day increments) added to league settings. Falls back to legacy `trade_review_period_hours`. Default: 1 day (24h).
+- **Traded Picks Honored in Draft**: Both auto-pick (`perform_one_auto_pick`) and manual pick now check the `draft_picks` collection for `current_team_id` to honor traded picks. Previously, picks were always awarded to the original owner from `team_abbrs`.
 
 ## Key Files
 - `/app/backend/routes/matchups.py` — daily-scoring endpoint + schedule/bracket logic
+- `/app/backend/routes/trades.py` — Trade execution with review period enforcement
+- `/app/backend/routes/draft_helpers.py` — Auto-pick with traded pick support
+- `/app/backend/routes/draft_pick_actions.py` — Manual pick with traded pick support
 - `/app/backend/routes/roto.py` — Roto standings, fresh totals
-- `/app/backend/routes/seasons.py` — Champion declaration
+- `/app/backend/routes/leagues.py` — League config including trade_review_period_days
 - `/app/frontend/src/hooks/use-daily-scoring.ts` — Daily scoring React hook
-- `/app/frontend/src/components/daily-scoring/` — DayPillStrip, DailyGrid, PlayerDailyAccordion
-- `/app/frontend/src/lovable/pages/Matchup.tsx` — Matchup page with 3 view tabs
-- `/app/frontend/src/lovable/pages/Team.tsx` — Roster page with Daily Scoring tab
-- `/app/frontend/src/pages/LiveScoringPage.jsx` — Live scoring with Daily Scoring tab
-- `/app/frontend/src/lovable/components/dashboard/PlayerCardModal.tsx` — Player card with Daily Scoring tab
+- `/app/frontend/src/components/daily-scoring/` — DayPillStrip, DailyGrid, PlayerDailyAccordion, WeekSelector
+- `/app/frontend/src/lovable/pages/Matchup.tsx` — Matchup page with 3 view tabs + week selector
+- `/app/frontend/src/lovable/pages/Team.tsx` — Roster page with Daily Scoring tab + week selector
+- `/app/frontend/src/pages/LiveScoringPage.jsx` — Live scoring with Daily Scoring tab + week selector
+- `/app/frontend/src/lovable/pages/PlayoffBracket.tsx` — Enhanced bracket TeamCard
 
 ## Backlog / Upcoming
-- P2: UX polish on Drag-and-Drop Division step and Bracket Visualizer
+- P2: UX polish on Drag-and-Drop Division step
 - P2: Refactor `PlayoffsScheduleCards.tsx` (1150+ lines → split into smaller components)
 - P3: Additional scoring format enhancements

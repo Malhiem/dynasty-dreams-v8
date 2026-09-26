@@ -20,7 +20,7 @@ import PullToRefreshIndicator from "@/components/PullToRefreshIndicator";
 import LastUpdatedBadge from "@/components/LastUpdatedBadge";
 // Daily scoring components
 import { useDailyScoring } from "@/hooks/use-daily-scoring";
-import { DayPillStrip, DailyGrid } from "@/components/daily-scoring";
+import { DayPillStrip, DailyGrid, WeekSelector } from "@/components/daily-scoring";
 
 interface MatchupPlayer {
   id: number | string;
@@ -83,6 +83,7 @@ const Matchup = () => {
   const [viewMode, setViewMode] = useState<ViewMode>("totals");
   const [selectedDayIndex, setSelectedDayIndex] = useState(3); // Thu 2/20 (today)
   const [selectedDay, setSelectedDay] = useState<string | null>(null); // for DayPillStrip
+  const [dailyScoringWeek, setDailyScoringWeek] = useState<number | null>(null);
 
   const { league, leagueTeams, myTeam } = useActiveLeague();
   const [matchup, setMatchup] = useState(null);
@@ -236,11 +237,14 @@ const Matchup = () => {
 
   // Daily scoring API data
   const currentWeek = matchup?.week;
+  const matchupCurrentWeek = currentWeek || 1;
+  const matchupTotalWeeks = league?.regular_season_weeks || matchupCurrentWeek;
+  const effectiveMatchupWeek = dailyScoringWeek ?? matchupCurrentWeek;
   const { data: myDailyData } = useDailyScoring(
-    league?.id, focusedMyTeam?.id, currentWeek
+    league?.id, focusedMyTeam?.id, effectiveMatchupWeek
   );
   const { data: oppDailyData } = useDailyScoring(
-    league?.id, opponentTeam?.id, currentWeek
+    league?.id, opponentTeam?.id, effectiveMatchupWeek
   );
 
   // Derive active matchup days from API or fallback
@@ -368,10 +372,15 @@ const Matchup = () => {
           </Tabs>
 
           {matchup?.week && (
-            <span className="text-xs text-muted-foreground">
-              Week {matchup.week}
+            <span className="text-xs text-muted-foreground flex items-center gap-2">
+              <WeekSelector
+                currentWeek={matchupCurrentWeek}
+                totalWeeks={matchupTotalWeeks}
+                selectedWeek={effectiveMatchupWeek}
+                onWeekChange={(w) => { setDailyScoringWeek(w); setSelectedDay(null); }}
+              />
               {myDailyData?.period_start && (
-                <> · {myDailyData.period_start} – {myDailyData.period_end}</>
+                <span>{myDailyData.period_start} – {myDailyData.period_end}</span>
               )}
             </span>
           )}
