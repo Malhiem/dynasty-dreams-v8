@@ -8,6 +8,8 @@ from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from routes.league_guards import require_league_member
+
 
 DEFAULT_SKATER_SCORING = {
     "goals": 3, "assists": 2, "plus_minus": 1, "penalty_minutes": -0.5,
@@ -67,8 +69,10 @@ async def save_scoring_config(input: ScoringConfigCreate, request: Request):
 
 
 @router.get("/scoring/config")
-async def get_scoring_config(league_id: str):
+async def get_scoring_config(league_id: str, request: Request):
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     config = await db.scoring_configs.find_one({"league_id": league_id})
     if not config:
         return {
@@ -82,9 +86,11 @@ async def get_scoring_config(league_id: str):
 
 
 @router.get("/scoring/calculate/{league_id}")
-async def calculate_league_scoring(league_id: str):
+async def calculate_league_scoring(league_id: str, request: Request):
     """Calculate fantasy points for all teams in a league."""
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     calculate_fantasy_points = _deps["calculate_fantasy_points"]
     config = await db.scoring_configs.find_one({"league_id": league_id})
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
@@ -112,9 +118,11 @@ async def calculate_league_scoring(league_id: str):
 
 
 @router.get("/scoring/roto/{league_id}")
-async def calculate_roto_standings(league_id: str):
+async def calculate_roto_standings(league_id: str, request: Request):
     """Calculate rotisserie standings across selected categories."""
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     config = await db.scoring_configs.find_one({"league_id": league_id})
     categories = (config or {}).get("roto_categories", [
         "goals", "assists", "plus_minus", "power_play_points",

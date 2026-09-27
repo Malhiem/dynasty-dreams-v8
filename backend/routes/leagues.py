@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from utils.roster_rules import check_position_breakdown_within_caps
+from routes.league_guards import require_league_member, verify_team_in_league
 
 router = APIRouter()
 _deps: dict = {}
@@ -541,11 +542,10 @@ async def get_leagues(
 
 
 @router.get("/leagues/{league_id}", response_model=LeagueResponse)
-async def get_league(league_id: str):
+async def get_league(league_id: str, request: Request):
     db = _deps["db"]
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
+    user = await _deps["get_current_user"](request)
+    league = await require_league_member(db, user, league_id)
     return _league_to_response(league)
 
 
@@ -614,11 +614,13 @@ def _games_back(leader: dict, team: dict) -> float:
 
 # ─── Endpoints ───────────────────────────────────────────────
 @router.get("/leagues/{league_id}/standings")
-async def get_standings(league_id: str):
+async def get_standings(league_id: str, request: Request):
     """Standings with live cap remaining, last-5 W/L/T, division/conference
     grouping, Games Back (GB), and week-over-week rank movement arrows.
     """
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     _recompute_team_salary_used = _deps["_recompute_team_salary_used"]
 
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
@@ -750,9 +752,11 @@ async def get_standings(league_id: str):
 
 
 @router.get("/leagues/{league_id}/divisions")
-async def get_divisions(league_id: str):
+async def get_divisions(league_id: str, request: Request):
     """Return division/conference setup for a league."""
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     teams = await db.teams.find(
         {"league_id": league_id},
         {"_id": 1, "name": 1, "division": 1, "conference": 1, "logo_abbr": 1},
@@ -997,9 +1001,11 @@ async def unlock_divisions(league_id: str, request: Request):
 
 
 @router.get("/leagues/{league_id}/schedule-config")
-async def get_schedule_config(league_id: str):
+async def get_schedule_config(league_id: str, request: Request):
     """Return the league's schedule mix config (or defaults if unset)."""
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"schedule_config": 1})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
@@ -1322,7 +1328,7 @@ def _build_single_elim_rounds(slots: list, seeding_method: str, label_prefix: st
 
 
 @router.get("/leagues/{league_id}/playoff-bracket")
-async def get_playoff_bracket(league_id: str):
+async def get_playoff_bracket(league_id: str, request: Request):
     """Projected playoff bracket using current standings.
 
     Format:
@@ -1335,9 +1341,8 @@ async def get_playoff_bracket(league_id: str):
     Pairings follow standard single-elimination seeding.
     """
     db = _deps["db"]
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
+    user = await _deps["get_current_user"](request)
+    league = await require_league_member(db, user, league_id)
 
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
     total = len(teams)
@@ -1912,12 +1917,10 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
 
 @router.get("/leagues/{league_id}/premium-status")
 async def get_premium_status(league_id: str, request: Request):
-    """Public-ish endpoint (any logged-in user) so the banner can render.
-
-    Returns the live trial countdown for the league.
-    """
+    """Returns the live trial countdown for the league."""
     db = _deps["db"]
-    await _deps["get_current_user"](request)
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     league = await db.leagues.find_one({"_id": ObjectId(league_id)})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
@@ -2513,10 +2516,12 @@ DEFAULT_ROSTER_LIMITS_LEAGUES = {
 
 
 @router.get("/leagues/{league_id}/roster-limits")
-async def get_roster_limits(league_id: str):
+async def get_roster_limits(league_id: str, request: Request):
     """Return the league's roster section limits (defaults applied if unset)."""
     db = _deps["db"]
     _safe_object_id = _deps["_safe_object_id"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
@@ -2611,7 +2616,8 @@ async def veto_threshold_preview(
     """
     import math
     db = _deps["db"]
-    await _deps["get_current_user"](request)
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     league = await db.leagues.find_one({"_id": ObjectId(league_id)})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
@@ -2701,10 +2707,11 @@ async def team_emergency_swap_budget(team_id: str, request: Request):
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
     _safe_object_id = _deps["_safe_object_id"]
-    await get_current_user(request)
+    user = await get_current_user(request)
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    await require_league_member(db, user, team["league_id"])
     league = await db.leagues.find_one({"_id": _safe_object_id(team["league_id"], "league_id")})
     if not league or not league.get("emergency_changes_enabled"):
         return {
@@ -2792,7 +2799,8 @@ async def league_lock_status(league_id: str, request: Request, week: Optional[in
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
     _safe_object_id = _deps["_safe_object_id"]
-    await get_current_user(request)
+    user = await get_current_user(request)
+    await require_league_member(db, user, league_id)
     league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")

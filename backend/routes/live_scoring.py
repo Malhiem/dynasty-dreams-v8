@@ -7,6 +7,8 @@ from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
 
+from routes.league_guards import require_league_member, verify_team_in_league
+
 router = APIRouter()
 _deps: dict = {}
 
@@ -67,10 +69,11 @@ async def get_team_live_scoring(team_id: str, request: Request):
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
     _safe_object_id = _deps["_safe_object_id"]
-    await get_current_user(request)
+    user = await get_current_user(request)
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    await require_league_member(db, user, team["league_id"])
 
     roster_ids = team.get("roster", [])
     if not roster_ids:
@@ -139,7 +142,8 @@ async def get_league_live_scoring(league_id: str, request: Request):
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
     _safe_object_id = _deps["_safe_object_id"]
-    await get_current_user(request)
+    user = await get_current_user(request)
+    await require_league_member(db, user, league_id)
     _ = _safe_object_id(league_id, "league_id")
 
     teams = await db.teams.find(
@@ -243,10 +247,11 @@ async def get_team_week_summary(team_id: str, request: Request):
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
     _safe_object_id = _deps["_safe_object_id"]
-    await get_current_user(request)
+    user = await get_current_user(request)
     team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    await require_league_member(db, user, team["league_id"])
 
     league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])}, {"name": 1, "scoring_format": 1})
 

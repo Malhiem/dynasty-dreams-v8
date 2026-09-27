@@ -29,6 +29,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 
+from routes.league_guards import require_league_member
+
+
 router = APIRouter()
 _deps: dict = {}
 
@@ -358,11 +361,9 @@ async def roto_catalog(league_id: str, request: Request):
     """Full catalog of stat categories a commissioner can pick from,
     plus the current league's selection so the settings UI can
     pre-check the right rows."""
-    await _require_user(request)
+    user = await _require_user(request)
     db = _deps["db"]
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
+    league = await require_league_member(db, user, league_id)
     return {
         "categories": ALL_CATEGORIES,
         "defaults": DEFAULT_ROTO_CATEGORIES,
@@ -377,8 +378,10 @@ async def roto_catalog(league_id: str, request: Request):
 @router.get("/leagues/{league_id}/roto/standings")
 async def roto_standings(league_id: str, request: Request):
     """Season-level standings: total_points DESC + per-category rank."""
-    await _require_user(request)
-    return await compute_season(_deps["db"], league_id)
+    user = await _require_user(request)
+    db = _deps["db"]
+    await require_league_member(db, user, league_id)
+    return await compute_season(db, league_id)
 
 
 @router.get("/leagues/{league_id}/roto/matchup")
@@ -387,8 +390,10 @@ async def roto_matchup(
     period: Optional[int] = Query(None, ge=0, le=52),
 ):
     """Live per-team category stats for the requested scoring period."""
-    await _require_user(request)
-    return await compute_period(_deps["db"], league_id, period=period)
+    user = await _require_user(request)
+    db = _deps["db"]
+    await require_league_member(db, user, league_id)
+    return await compute_period(db, league_id, period=period)
 
 
 class RecomputeRequest(BaseModel):
@@ -404,9 +409,7 @@ async def roto_recompute(
     `db.roto_period_results` so `compute_season` can accumulate."""
     user = await _require_user(request)
     db = _deps["db"]
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
+    league = await require_league_member(db, user, league_id)
     is_commissioner = str(league.get("commissioner_id")) == str(user.get("_id"))
     is_admin = user.get("role") in ("admin", "senior_admin")
     if not is_commissioner and not is_admin:

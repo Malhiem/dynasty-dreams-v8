@@ -9,6 +9,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from routes import awards as awards_module
+from routes.league_guards import require_league_member, verify_team_in_league
 
 router = APIRouter()
 _deps: dict = {}
@@ -665,8 +666,10 @@ async def _resolve_open_slots(db, league_id: str, matchups: list) -> list:
 
 
 @router.get("/matchups/{league_id}")
-async def get_matchups(league_id: str, week: Optional[int] = None):
+async def get_matchups(league_id: str, request: Request, week: Optional[int] = None):
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     query = {"league_id": league_id}
     if week:
         query["week"] = week
@@ -678,8 +681,10 @@ async def get_matchups(league_id: str, week: Optional[int] = None):
 
 
 @router.get("/matchups/{league_id}/current-week")
-async def get_current_week(league_id: str):
+async def get_current_week(league_id: str, request: Request):
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     pipeline = [
         {"$match": {"league_id": league_id, "status": "scheduled"}},
         {"$group": {"_id": None, "min_week": {"$min": "$week"}}},
@@ -707,15 +712,9 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
     get_current_user = _deps["get_current_user"]
     _safe_object_id = _deps["_safe_object_id"]
 
-    await get_current_user(request)
-
-    league = await db.leagues.find_one({"_id": _safe_object_id(league_id, "league_id")})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-
-    team = await db.teams.find_one({"_id": _safe_object_id(team_id, "team_id")})
-    if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
+    user = await get_current_user(request)
+    league = await require_league_member(db, user, league_id)
+    team = await verify_team_in_league(db, team_id, league_id)
 
     # Determine the week (default: current week from scheduled matchups)
     if week is None:
@@ -881,8 +880,10 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
 
 
 @router.get("/matchups/{league_id}/results")
-async def get_week_results(league_id: str, week: int):
+async def get_week_results(league_id: str, week: int, request: Request):
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     matchups = await db.matchups.find({"league_id": league_id, "week": week}).to_list(100)
     for m in matchups:
         m["_id"] = str(m["_id"])
