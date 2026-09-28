@@ -1495,6 +1495,32 @@ async def admin_revert_trade(trade_id: str, request: Request):
     await db.teams.update_one({"_id": proposer["_id"]}, {"$set": {"roster": proposer_roster}})
     await db.teams.update_one({"_id": target["_id"]}, {"$set": {"roster": target_roster}})
 
+    # ── Ownership tracking (admin trade revert) ──────────────────
+    try:
+        from utils.scoring_roster import log_roster_change
+        prop_id = str(proposer["_id"])
+        targ_id = str(target["_id"])
+        league_id = trade["league_id"]
+        # Revert = proposed assets go back to proposer, requested go back to target
+        for a in trade.get("assets_offered") or trade.get("proposer_assets") or []:
+            if a.get("asset_type") == "player" and a.get("player_id"):
+                await log_roster_change(db, team_id=targ_id, league_id=league_id,
+                    player_id=a["player_id"], action="remove", source="admin",
+                    metadata={"reason": "trade_revert"})
+                await log_roster_change(db, team_id=prop_id, league_id=league_id,
+                    player_id=a["player_id"], action="add", source="admin",
+                    metadata={"reason": "trade_revert"})
+        for a in trade.get("assets_requested") or trade.get("receiver_assets") or []:
+            if a.get("asset_type") == "player" and a.get("player_id"):
+                await log_roster_change(db, team_id=prop_id, league_id=league_id,
+                    player_id=a["player_id"], action="remove", source="admin",
+                    metadata={"reason": "trade_revert"})
+                await log_roster_change(db, team_id=targ_id, league_id=league_id,
+                    player_id=a["player_id"], action="add", source="admin",
+                    metadata={"reason": "trade_revert"})
+    except Exception:
+        pass
+
     now = datetime.now(timezone.utc).isoformat()
     await db.trades.update_one(
         {"_id": tid},

@@ -168,6 +168,16 @@ async def _finalize_winner(
                         {"$addToSet": {"roster": player_id}},
                         session=session,
                     )
+            # ── Ownership tracking (waiver claim) ────────────────
+            try:
+                from utils.scoring_roster import log_roster_change
+                if drop_player_id:
+                    await log_roster_change(db, team_id=team_id, league_id=league_id,
+                        player_id=drop_player_id, action="remove", source="waiver")
+                await log_roster_change(db, team_id=team_id, league_id=league_id,
+                    player_id=player_id, action="add", source="waiver")
+            except Exception:
+                pass
             return True
         except Exception as tx_err:
             err_msg = str(tx_err).lower()
@@ -232,6 +242,16 @@ async def _finalize_winner(
             {"_id": ObjectId(team_id)},
             {"$addToSet": {"roster": player_id}},
         )
+        # ── Ownership tracking (waiver claim — fallback path) ────
+        try:
+            from utils.scoring_roster import log_roster_change
+            if drop_player_id:
+                await log_roster_change(db, team_id=team_id, league_id=league_id,
+                    player_id=drop_player_id, action="remove", source="waiver")
+            await log_roster_change(db, team_id=team_id, league_id=league_id,
+                player_id=player_id, action="add", source="waiver")
+        except Exception:
+            pass
         return True
     except Exception as ex:
         log.warning(f"waiver finalize fallback failed for claim {winner.get('_id')}: {ex}")

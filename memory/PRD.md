@@ -59,27 +59,46 @@ Build a comprehensive fantasy NHL management platform with advanced admin tools,
 
 ### Phase 8 - Historical Scoring Allocation (Complete - Sep 28, 2026)
 - **Problem**: Trades, drops, pickups and lineup changes retroactively reassigned historical stats. Recalculation changed earlier standings.
-- **Solution (Phase 8a)**: `scoring_rosters` collection (week-level snapshots) + `roster_change_log` audit trail
-- **Solution (Phase 8b)**: Point-in-time ownership (`player_ownership_periods`) + lineup eligibility (`lineup_status_periods`) tracking
-- **Module**: `/app/backend/utils/scoring_roster.py` — full rewrite with:
+- **Rules document**: `/app/backend/SCORING_RULES.md` — Defines transaction-time, game-time, timezone, ownership, lineup eligibility, correction, and recomputation conventions.
+- **Collections**:
+  - `player_ownership_periods` — Continuous ownership spans (acquired_at/released_at)
+  - `lineup_status_periods` — Active/bench/IR position changes (started_at/ended_at)
+  - `scoring_rosters` — Week-level snapshots (caching layer)
+  - `roster_change_log` — Append-only audit ledger
+- **Module**: `/app/backend/utils/scoring_roster.py`:
   - `record_ownership_start/end` — open/close ownership spans
-  - `record_lineup_change` — track active/bench/IR position changes
-  - `get_owner_at(db, player_id, league_id, timestamp)` — who owned a player at time T?
-  - `get_roster_at(db, team_id, league_id, timestamp)` — team's roster at time T
-  - `is_lineup_eligible_at` — was player in an active position at time T?
-  - `get_eligible_roster_for_period(db, team_id, league_id, start, end)` — canonical scoring helper
-  - `week_to_time_range(league, week)` — convert week number to datetime range
+  - `record_lineup_change` — track position changes
+  - `get_owner_at / get_roster_at` — point-in-time ownership queries
+  - `is_lineup_eligible_at` — was player active at time T?
+  - `get_eligible_roster_for_period` — canonical scoring helper: owned AND active during [start, end]
+  - `week_to_time_range` — week number → datetime range
   - `get_scoring_roster` — unified entry point (period → week snapshot → live fallback)
+- **All 15 roster-changing paths instrumented**:
+  1. `trades.py` — Trade execution
+  2. `roster.py` — Direct pickup (add)
+  3. `roster.py` — Drop player
+  4. `services/waiver_engine.py` — Processed waiver claims (transaction + fallback)
+  5. `draft_pick_actions.py` — Manual draft pick
+  6. `draft_helpers.py` — Auto-pick
+  7. `draft_pick_actions.py` — Undo picks (bulk)
+  8. `draft_pick_actions.py` — Undo specific picks
+  9. `draft_pick_actions.py` — Swap pick player
+  10. `admin_platform.py` — Admin trade revert
+  11. `roster_snapshots.py` — Snapshot restore (diff-based)
+  12. `admin_players.py` — Player merge
+  13. `teams.py` — Buyout (remove)
+  14. `teams.py` — Reverse buyout (add back)
+  15. `lineup.py` — Lineup position changes
 - **5 scoring paths** use `get_scoring_roster()` with period-aware resolution
-- **5 mutation points** write to both `roster_change_log` AND `player_ownership_periods`:
-  - `trades.py`, `roster.py` (add/drop), `draft_pick_actions.py`, `lineup.py` (position changes)
-- **Recomputation**: All endpoints accept `?week=N` to recompute using historical roster for that week, not current roster. Results are idempotent.
+- **Recomputation**: All endpoints accept `?week=N`, results idempotent
 - **API**: `GET /api/players/{id}/ownership-history`, `GET /api/players/{id}/lineup-history`
-- **Frontend**: `FantasyTransactionsTab` + `OwnershipTab` in PlayerCardModal now fetch real data (no more mock data)
-- **DailyGrid.tsx**: Fixed pre-existing TooltipProvider build error
+- **Frontend**: FantasyTransactionsTab + OwnershipTab in PlayerCardModal use real API data
+- **Bug fix**: DailyGrid.tsx TooltipProvider wrapping + live_scoring_worker KeyError 'name'
 
 ## Key Files
+- `/app/backend/SCORING_RULES.md` — Scoring allocation rules & conventions
 - `/app/backend/utils/scoring_roster.py` — Historical scoring roster module
+- `/app/backend/services/waiver_engine.py` — Waiver processing (ownership-instrumented)
 - `/app/backend/routes/league_guards.py` — Security guards
 - `/app/backend/routes/leagues.py` — League endpoints
 - `/app/backend/routes/scoring.py` — Scoring endpoints

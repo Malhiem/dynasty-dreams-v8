@@ -254,7 +254,7 @@ async def _recompute_team_live_totals(db):
         await db.teams.update_one({"_id": t["_id"]}, {"$set": {"live_points": fpts}})
         team_deltas.append({
             "team_id": str(t["_id"]),
-            "team_name": t["name"],
+            "team_name": t.get("name", ""),
             "league_id": t["league_id"],
             "live_points": fpts,
         })

@@ -1041,6 +1041,19 @@ async def admin_merge_duplicates(input: DedupeMergeRequest, request: Request):
                             {"_id": t["_id"], "roster": {"$ne": keep_id}},
                             {"$addToSet": {"roster": keep_id}},
                         )
+                        # ── Ownership tracking (player merge) ────
+                        try:
+                            from utils.scoring_roster import log_roster_change
+                            tid = str(t["_id"])
+                            lid = t.get("league_id", "")
+                            await log_roster_change(db, team_id=tid, league_id=lid,
+                                player_id=drop_id, action="remove", source="admin",
+                                metadata={"reason": "player_merge", "merged_into": keep_id})
+                            await log_roster_change(db, team_id=tid, league_id=lid,
+                                player_id=keep_id, action="add", source="admin",
+                                metadata={"reason": "player_merge", "merged_from": drop_id})
+                        except Exception:
+                            pass
                     # Rewire any contracts stamped with the stale id to
                     # point at the survivor. Best-effort; missing
                     # collection is fine.

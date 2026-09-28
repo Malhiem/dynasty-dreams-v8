@@ -682,6 +682,15 @@ async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, r
         },
     )
 
+    # ── Ownership tracking (buyout) ──────────────────────────────
+    try:
+        from utils.scoring_roster import log_roster_change
+        await log_roster_change(db, team_id=team_id, league_id=team.get("league_id", ""),
+            player_id=player_id, action="remove", source="buyout",
+            metadata={"dead_cap_total": total_dead})
+    except Exception:
+        pass
+
     return {
         "team_id": team_id,
         "player_id": player_id,
@@ -730,6 +739,15 @@ async def reverse_buyout(team_id: str, player_id: str, request: Request):
         {"_id": team["_id"]},
         {"$set": {"dead_cap_schedule": kept, "roster": roster}},
     )
+
+    # ── Ownership tracking (buyout reversal) ─────────────────────
+    try:
+        from utils.scoring_roster import log_roster_change
+        await log_roster_change(db, team_id=team_id, league_id=team.get("league_id", ""),
+            player_id=player_id, action="add", source="admin",
+            metadata={"reason": "buyout_reversal"})
+    except Exception:
+        pass
     return {
         "team_id": team_id,
         "player_id": player_id,

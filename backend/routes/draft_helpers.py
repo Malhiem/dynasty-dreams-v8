@@ -423,6 +423,15 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
             "$pull": {"draft_queue": str(chosen_player["_id"])},
         },
     )
+    # ── Ownership tracking (auto-pick) ───────────────────────────
+    try:
+        from utils.scoring_roster import log_roster_change
+        await log_roster_change(_db(), team_id=on_clock_team_id,
+            league_id=draft.get("league_id", ""),
+            player_id=str(chosen_player["_id"]), action="add", source="draft",
+            metadata={"draft_id": draft_id, "pick": current_pick, "via": via})
+    except Exception:
+        pass
     label = "Auto-pick" if source != "eviction" else "Eviction auto-pick"
     msg = {
         "id": f"autopick-{datetime.now(timezone.utc).timestamp()}",

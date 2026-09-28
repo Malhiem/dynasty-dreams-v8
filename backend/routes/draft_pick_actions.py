@@ -416,6 +416,15 @@ async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, reques
                 {"_id": ObjectId(tid)},
                 {"$pull": {"roster": pid}},
             )
+            # ── Ownership tracking (undo pick) ───────────────────
+            try:
+                from utils.scoring_roster import log_roster_change
+                await log_roster_change(_db(), team_id=tid,
+                    league_id=draft.get("league_id", ""),
+                    player_id=pid, action="remove", source="admin",
+                    metadata={"reason": "undo_picks"})
+            except Exception:
+                pass
 
     new_current = max(1, draft.get("current_pick", 1) - count)
     new_status = "active" if draft.get("draft_started") else draft.get("status", "scheduled")
@@ -546,6 +555,12 @@ async def undo_specific_pick(
                     {"_id": ObjectId(tid)},
                     {"$pull": {"roster": pid}},
                 )
+                # ── Ownership tracking (undo specific pick) ──────
+                from utils.scoring_roster import log_roster_change
+                await log_roster_change(_db(), team_id=tid,
+                    league_id=draft.get("league_id", ""),
+                    player_id=pid, action="remove", source="admin",
+                    metadata={"reason": "undo_specific_pick"})
             except Exception as e:
                 logger.warning(f"undo_specific_pick roster pull failed for {tid}/{pid}: {e}")
 
@@ -702,11 +717,29 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
             {"_id": ObjectId(tid)},
             {"$pull": {"roster": old_player_id}},
         )
+        # ── Ownership tracking (swap — remove old) ───────────────
+        try:
+            from utils.scoring_roster import log_roster_change
+            await log_roster_change(_db(), team_id=tid,
+                league_id=draft.get("league_id", ""),
+                player_id=old_player_id, action="remove", source="admin",
+                metadata={"reason": "draft_swap_out"})
+        except Exception:
+            pass
     if tid:
         await _db().teams.update_one(
             {"_id": ObjectId(tid)},
             {"$addToSet": {"roster": str(new_player["_id"])}},
         )
+        # ── Ownership tracking (swap — add new) ──────────────────
+        try:
+            from utils.scoring_roster import log_roster_change
+            await log_roster_change(_db(), team_id=tid,
+                league_id=draft.get("league_id", ""),
+                player_id=str(new_player["_id"]), action="add", source="admin",
+                metadata={"reason": "draft_swap_in"})
+        except Exception:
+            pass
 
     picks[target_idx] = {
         **old_pick,

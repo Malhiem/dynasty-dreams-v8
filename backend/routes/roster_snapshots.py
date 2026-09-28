@@ -179,6 +179,11 @@ async def restore_snapshot(team_id: str, snap_id: str, request: Request):
         reason=f"pre_restore_of_{snap_id}",
         metadata={"restore_target_snapshot": snap_id},
     )
+    # Compute roster diff for ownership tracking
+    old_roster = set(str(p) for p in (team.get("roster") or []))
+    new_roster_list = s.get("roster") or []
+    new_roster = set(str(p) for p in new_roster_list)
+
     await _db().teams.update_one(
         {"_id": team["_id"]},
         {"$set": {
@@ -193,5 +198,22 @@ async def restore_snapshot(team_id: str, snap_id: str, request: Request):
             "last_restored_by": user.get("email"),
         }},
     )
+
+    # ── Ownership tracking (snapshot restore) ────────────────────
+    try:
+        from utils.scoring_roster import log_roster_change
+        lid = team.get("league_id", "")
+        tid = str(team["_id"])
+        for pid in old_roster - new_roster:
+            await log_roster_change(_db(), team_id=tid, league_id=lid,
+                player_id=pid, action="remove", source="admin",
+                metadata={"reason": "snapshot_restore", "snapshot_id": snap_id})
+        for pid in new_roster - old_roster:
+            await log_roster_change(_db(), team_id=tid, league_id=lid,
+                player_id=pid, action="add", source="admin",
+                metadata={"reason": "snapshot_restore", "snapshot_id": snap_id})
+    except Exception:
+        pass
+
     return {"ok": True, "restored_from_snapshot": snap_id,
             "pre_restore_snapshot_id": pre_sid}
