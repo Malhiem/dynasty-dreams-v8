@@ -171,6 +171,7 @@ async def _recompute_team_live_totals(db):
             "goalie_avg_multiplier_count": 1,
             "goalie_gp_limit_enabled": 1,
             "goalie_gp_limit": 1,
+            "current_week": 1,
         })
     }
 
@@ -178,6 +179,12 @@ async def _recompute_team_live_totals(db):
         {},
         {"_id": 1, "league_id": 1, "roster": 1, "name": 1, "goalie_daily_lock": 1, "live_stats_game_dates": 1},
     ).to_list(1000)
+
+    # Pre-load scoring rosters for each (league, week) pair so we use
+    # historical ownership instead of the live roster.
+    from utils.scoring_roster import get_scoring_roster
+    _scoring_roster_cache: dict[str, list[str]] = {}
+
     team_deltas = []
     for t in teams:
         league = leagues_by_id.get(str(t.get("league_id") or "")) or {}
@@ -190,8 +197,20 @@ async def _recompute_team_live_totals(db):
         daily_lock = t.get("goalie_daily_lock") or {}  # {date_iso: player_id}
         locked_player_ids = set(daily_lock.values())
 
+        # Use scoring roster (historical ownership) when available
+        tid = str(t["_id"])
+        lid = str(t.get("league_id") or "")
+        cache_key = f"{tid}:{lid}"
+        if cache_key not in _scoring_roster_cache:
+            try:
+                week = int(league.get("current_week") or 0) or None
+                _scoring_roster_cache[cache_key] = await get_scoring_roster(db, tid, lid, week)
+            except Exception:
+                _scoring_roster_cache[cache_key] = list(t.get("roster") or [])
+        scoring_roster = _scoring_roster_cache[cache_key]
+
         fpts = 0.0
-        for pid in (t.get("roster") or []):
+        for pid in scoring_roster:
             games = player_game_fpts.get(pid, {})
             if not games:
                 continue

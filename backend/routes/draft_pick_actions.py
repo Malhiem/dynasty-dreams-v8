@@ -233,6 +233,17 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
             {"_id": ObjectId(on_clock_team_id)},
             {"$addToSet": {"roster": str(player["_id"])}},
         )
+        # ── Historical scoring: log draft pick ───────────────────
+        try:
+            from utils.scoring_roster import log_roster_change
+            _league = await _db().leagues.find_one({"_id": ObjectId(draft.get("league_id") or "")}, {"current_week": 1})
+            _week = int((_league or {}).get("current_week") or 1)
+            await log_roster_change(_db(), team_id=on_clock_team_id,
+                league_id=draft.get("league_id", ""),
+                player_id=str(player["_id"]), action="add", source="draft", week=_week,
+                metadata={"draft_id": draft_id})
+        except Exception:
+            pass
 
     await _broadcast(f"draft_{draft_id}", "draft_pick", {
         **pick_doc,

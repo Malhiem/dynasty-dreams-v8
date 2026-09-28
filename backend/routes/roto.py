@@ -83,13 +83,21 @@ async def _team_stat_totals(db, league_id: str, period: Optional[int], periods: 
     for the target period (None → full season), or across a list of
     periods when *periods* is given (used by condensed-roto fresh totals).
 
+    Uses the historical scoring roster when available.
+
     Returns: {team_id: {"team_name": str, "stats": {stat: float}}}
     """
+    from utils.scoring_roster import get_scoring_roster
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
+    week = int((league or {}).get("current_week") or 0) or None
+
     teams = await db.teams.find({"league_id": league_id}).to_list(200)
     out = {}
     for t in teams:
         agg: dict = {}
-        for pid in (t.get("roster") or []):
+        tid = str(t["_id"])
+        roster = await get_scoring_roster(db, tid, league_id, week)
+        for pid in roster:
             try:
                 p = await db.players.find_one({"_id": ObjectId(pid)})
             except Exception:

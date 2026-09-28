@@ -1118,6 +1118,13 @@ async def startup():
     except Exception as e:
         logger.warning(f"chat_channels DM dedup skipped: {e}")
     
+    # Scoring-roster indexes (historical ownership tracking)
+    try:
+        from utils.scoring_roster import ensure_indexes as _sr_indexes
+        await _sr_indexes(db)
+    except Exception as e:
+        logger.warning(f"scoring_roster indexes skipped: {e}")
+
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")

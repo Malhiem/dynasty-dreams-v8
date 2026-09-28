@@ -926,6 +926,15 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
         {"$push": {"roster": input.player_id}},
     )
 
+    # ── Historical scoring: log roster add ───────────────────────
+    try:
+        from utils.scoring_roster import log_roster_change
+        _week = int((league or {}).get("current_week") or 1)
+        await log_roster_change(db, team_id=team_id, league_id=team["league_id"],
+            player_id=input.player_id, action="add", source="add", week=_week)
+    except Exception:
+        pass
+
     # ── Iter 229 — Default minor-eligible auto-placement ─────────────
     # When the added player is minor-eligible AND the league has space
     # in the Minors pool, drop the player straight into a Minors lineup
@@ -1003,6 +1012,15 @@ async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
         {"_id": ObjectId(team_id)},
         {"$pull": {"roster": input.player_id}},
     )
+
+    # ── Historical scoring: log roster drop ──────────────────────
+    try:
+        from utils.scoring_roster import log_roster_change
+        _week = int((league or {}).get("current_week") or 1)
+        await log_roster_change(db, team_id=team_id, league_id=team["league_id"],
+            player_id=input.player_id, action="remove", source="drop", week=_week)
+    except Exception:
+        pass
 
     # Refresh salary_used so the compliance + UI numbers track immediately.
     await _recompute_team_salary_used(team_id)

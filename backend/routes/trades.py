@@ -405,6 +405,30 @@ async def _execute_in_draft_pick_trade(db, trade: dict) -> dict:
     await db.teams.update_one({"_id": proposer["_id"]}, {"$set": {"roster": p_roster}})
     await db.teams.update_one({"_id": receiver["_id"]}, {"$set": {"roster": r_roster}})
 
+    # ── Historical scoring: log every player move ────────────────
+    try:
+        from utils.scoring_roster import log_roster_change
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
+        _week = int((league or {}).get("current_week") or 1)
+        for a in trade.get("proposer_assets") or []:
+            if a.get("type") == "player" and a.get("player_id"):
+                await log_roster_change(db, team_id=proposer_team_id, league_id=league_id,
+                    player_id=a["player_id"], action="remove", source="trade", week=_week,
+                    metadata={"trade_id": str(trade["_id"])})
+                await log_roster_change(db, team_id=receiver_team_id, league_id=league_id,
+                    player_id=a["player_id"], action="add", source="trade", week=_week,
+                    metadata={"trade_id": str(trade["_id"])})
+        for a in trade.get("receiver_assets") or []:
+            if a.get("type") == "player" and a.get("player_id"):
+                await log_roster_change(db, team_id=receiver_team_id, league_id=league_id,
+                    player_id=a["player_id"], action="remove", source="trade", week=_week,
+                    metadata={"trade_id": str(trade["_id"])})
+                await log_roster_change(db, team_id=proposer_team_id, league_id=league_id,
+                    player_id=a["player_id"], action="add", source="trade", week=_week,
+                    metadata={"trade_id": str(trade["_id"])})
+    except Exception:
+        pass
+
     now = datetime.now(timezone.utc).isoformat()
     await db.trades.update_one(
         {"_id": trade["_id"]},

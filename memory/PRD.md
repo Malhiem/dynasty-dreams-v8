@@ -57,7 +57,26 @@ Build a comprehensive fantasy NHL management platform with advanced admin tools,
   - Team-league cross-validation (404 for mismatched IDs)
   - Handles mixed ObjectId/str commissioner_id comparison
 
+### Phase 8 - Historical Scoring Allocation Fix (Complete - Sep 28, 2026)
+- **Problem**: Trades, drops, pickups and lineup changes retroactively reassigned historical stats. Recalculation changed earlier standings.
+- **Solution**: Introduced `scoring_rosters` collection (per-team, per-week locked roster snapshots) and `roster_change_log` (append-only ledger of all roster mutations)
+- **New module**: `/app/backend/utils/scoring_roster.py` — `log_roster_change()`, `ensure_scoring_roster()`, `get_scoring_roster()`, `lock_league_week()`
+- **5 scoring paths updated** to use `get_scoring_roster()` instead of `team.get("roster")`:
+  - `scoring.py`: calculate_league_scoring, calculate_roto_standings
+  - `matchups.py`: calc_team_score (simulate_week), get_daily_scoring
+  - `roto.py`: _team_stat_totals
+  - `live_scoring_worker.py`: _recompute_team_live_totals
+  - `live_scoring.py`: get_team_live_scoring
+- **4 roster mutation points instrumented** with `log_roster_change()`:
+  - `trades.py`: trade execution (both sides logged)
+  - `roster.py`: add player, drop player
+  - `draft_pick_actions.py`: draft pick
+- **Admin endpoint**: `POST /api/admin/lock-scoring-rosters` for manual week locking
+- **Auto-lock**: simulate_week auto-locks all teams at matchup start
+- **Fallback**: When no snapshot exists, falls back to live roster (backward-compatible)
+
 ## Key Files
+- `/app/backend/utils/scoring_roster.py` — Historical scoring roster module
 - `/app/backend/routes/league_guards.py` — Security guards
 - `/app/backend/routes/leagues.py` — League endpoints
 - `/app/backend/routes/scoring.py` — Scoring endpoints

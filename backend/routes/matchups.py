@@ -748,8 +748,9 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
         day_labels.append(d.strftime("%a %-m/%-d"))
         d += timedelta(days=1)
 
-    # Fetch roster players with live_stats
-    roster_ids = team.get("roster") or []
+    # Fetch roster players with live_stats — use historical scoring roster
+    from utils.scoring_roster import get_scoring_roster, ensure_scoring_roster
+    roster_ids = await get_scoring_roster(db, team_id, league_id, week)
     if not roster_ids:
         return {
             "league_id": league_id,
@@ -921,11 +922,19 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
     config = await db.scoring_configs.find_one({"league_id": input.league_id})
     scoring_format = league.get("scoring_format", "head_to_head")
 
+    # ── Auto-lock scoring rosters for this week (idempotent) ─────
+    try:
+        from utils.scoring_roster import lock_league_week
+        await lock_league_week(db, league, week=input.week)
+    except Exception:
+        pass
+
     async def calc_team_score(team_id):
         team = await db.teams.find_one({"_id": ObjectId(team_id)})
         if not team:
             return 0.0
-        roster = team.get("roster", [])
+        from utils.scoring_roster import get_scoring_roster
+        roster = await get_scoring_roster(db, str(team["_id"]), input.league_id, input.week)
         total = 0.0
         for pid in roster:
             player = await db.players.find_one({"_id": ObjectId(pid)})

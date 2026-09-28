@@ -75,7 +75,11 @@ async def get_team_live_scoring(team_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Team not found")
     await require_league_member(db, user, team["league_id"])
 
-    roster_ids = team.get("roster", [])
+    # Use historical scoring roster for consistency
+    from utils.scoring_roster import get_scoring_roster
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])}, {"current_week": 1})
+    week = int((league or {}).get("current_week") or 0) or None
+    roster_ids = await get_scoring_roster(db, team_id, team["league_id"], week)
     if not roster_ids:
         return {"team_id": team_id, "team_name": team["name"], "live_points": 0.0, "players": []}
 

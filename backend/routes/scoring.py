@@ -95,17 +95,23 @@ async def calculate_league_scoring(league_id: str, request: Request):
     config = await db.scoring_configs.find_one({"league_id": league_id})
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
 
+    # Use historical scoring roster when a current_week is known.
+    from utils.scoring_roster import get_scoring_roster, ensure_scoring_roster
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
+    week = int((league or {}).get("current_week") or 0) or None
+
     results = []
     for team in teams:
         total_fpts = 0.0
-        roster = team.get("roster", [])
+        tid = str(team["_id"])
+        roster = await get_scoring_roster(db, tid, league_id, week)
         for pid in roster:
             player = await db.players.find_one({"_id": ObjectId(pid)})
             if player:
                 total_fpts += calculate_fantasy_points(player, config)
 
         results.append({
-            "team_id": str(team["_id"]),
+            "team_id": tid,
             "team_name": team["name"],
             "owner_name": team["owner_name"],
             "roster_size": len(roster),
@@ -131,10 +137,15 @@ async def calculate_roto_standings(league_id: str, request: Request):
 
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
 
+    from utils.scoring_roster import get_scoring_roster
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
+    week = int((league or {}).get("current_week") or 0) or None
+
     team_stats = []
     for team in teams:
         stats = {cat: 0 for cat in categories}
-        roster = team.get("roster", [])
+        tid = str(team["_id"])
+        roster = await get_scoring_roster(db, tid, league_id, week)
         for pid in roster:
             player = await db.players.find_one({"_id": ObjectId(pid)})
             if player:
@@ -142,7 +153,7 @@ async def calculate_roto_standings(league_id: str, request: Request):
                     stats[cat] += player.get(cat, 0)
 
         team_stats.append({
-            "team_id": str(team["_id"]),
+            "team_id": tid,
             "team_name": team["name"],
             "owner_name": team["owner_name"],
             "stats": stats,

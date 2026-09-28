@@ -1,0 +1,84 @@
+{
+  "summary": "Iteration 170 - Historical Scoring Roster Feature Testing Complete. All 18 backend tests passed verifying: (1) POST /api/admin/lock-scoring-rosters creates scoring roster snapshots, (2) Idempotency verified - second call creates 0 new snapshots, (3) GET /api/scoring/calculate/{league_id} uses scoring roster, (4) GET /api/scoring/roto/{league_id} uses scoring roster, (5) GET /api/matchups/{league_id}/daily-scoring returns 200 with player data, (6) GET /api/live-scoring/team/{team_id} returns 200 with live scoring data, (7) Fallback to live roster when no snapshot exists for week=999, (8) Schema verification passed for scoring_rosters collection.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter170_scoring_roster.py",
+    "/app/test_reports/pytest/iter170_scoring_roster.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "scoring_rosters collection schema verified: league_id, team_id, week, roster (array), lineup (object), locked_at (datetime)",
+    "Unique index ux_scoring_roster_league_team_week ensures idempotency",
+    "roster_change_log collection has proper indexes: ix_roster_change_log_team_time, ix_roster_change_log_league_week",
+    "get_scoring_roster correctly falls back to live roster when no snapshot exists",
+    "All scoring paths updated: scoring.py (calculate, roto), matchups.py (daily-scoring, simulate_week), live_scoring.py, roto.py, live_scoring_worker.py",
+    "Roster change logging implemented in: roster.py (add/drop), trades.py (trade execution), draft_pick_actions.py (draft picks)",
+    "ensure_indexes called at server startup (server.py line 1123)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter170_scoring_roster.py"
+  ],
+  "success_rate": {
+    "backend": "100% (18/18 tests passed)",
+    "frontend": "N/A (backend only testing)"
+  },
+  "test_credentials": "Email: admin@dynastydreams.com / Password: Admin123!",
+  "seed_data_creation": "None - used existing league 69e46af167999bfb85c39629 and team 69e59b33cbd3fea02a914c79",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 170 verified the historical scoring roster feature. The scoring_rosters collection has 28 documents with correct schema. The roster_change_log collection exists with proper indexes but has 0 entries (expected - no actual add/drop operations performed during testing, only endpoint validation). All scoring endpoints (calculate, roto, daily-scoring, live-scoring) correctly use get_scoring_roster which falls back to live roster when no snapshot exists. Test file: /app/backend/tests/test_iter170_scoring_roster.py",
+  "verified_features": {
+    "lock_scoring_rosters_endpoint": {
+      "status": "PASS",
+      "details": "POST /api/admin/lock-scoring-rosters creates snapshots and is idempotent"
+    },
+    "scoring_calculate_uses_historical_roster": {
+      "status": "PASS",
+      "details": "GET /api/scoring/calculate/{league_id} uses get_scoring_roster"
+    },
+    "roto_standings_uses_historical_roster": {
+      "status": "PASS",
+      "details": "GET /api/scoring/roto/{league_id} uses get_scoring_roster"
+    },
+    "daily_scoring_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/matchups/{league_id}/daily-scoring returns 200 with player data"
+    },
+    "live_scoring_team_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/live-scoring/team/{team_id} returns 200 with live scoring data"
+    },
+    "fallback_to_live_roster": {
+      "status": "PASS",
+      "details": "get_scoring_roster falls back to live roster when no snapshot exists (tested with week=999)"
+    },
+    "scoring_rosters_schema": {
+      "status": "PASS",
+      "details": "Collection has correct schema: league_id, team_id, week, roster (array), lineup (object), locked_at (datetime)"
+    },
+    "roster_change_log_instrumentation": {
+      "status": "VERIFIED_IN_CODE",
+      "details": "log_roster_change called in roster.py (add/drop), trades.py (trade execution), draft_pick_actions.py (draft picks)"
+    }
+  },
+  "mongodb_collections_verified": {
+    "scoring_rosters": {
+      "document_count": 28,
+      "schema_fields": ["league_id", "team_id", "week", "roster", "lineup", "locked_at"],
+      "indexes": ["_id_", "ux_scoring_roster_league_team_week (unique)"]
+    },
+    "roster_change_log": {
+      "document_count": 0,
+      "note": "No entries yet - expected since no actual add/drop operations performed during testing",
+      "indexes": ["_id_", "ix_roster_change_log_team_time", "ix_roster_change_log_league_week"]
+    }
+  }
+}

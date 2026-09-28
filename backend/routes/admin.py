@@ -51,6 +51,29 @@ async def admin_snapshot_ownership(request: Request):
     return await snapshot_once(_db())
 
 
+@router.post("/admin/lock-scoring-rosters")
+async def admin_lock_scoring_rosters(request: Request):
+    """Lock scoring rosters for a league's current (or specified) week.
+
+    Body: { league_id: str, week?: int }
+    Idempotent — safe to call multiple times.
+    """
+    user = await _get_user(request)
+    if not _is_site_admin(user):
+        raise HTTPException(status_code=403, detail="Site admin only")
+    payload = await request.json()
+    league_id = payload.get("league_id")
+    if not league_id:
+        raise HTTPException(status_code=400, detail="league_id required")
+    league = await _db().leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
+    from utils.scoring_roster import lock_league_week
+    week = payload.get("week")
+    created = await lock_league_week(_db(), league, week=int(week) if week else None)
+    return {"league_id": league_id, "week": week or league.get("current_week"), "snapshots_created": created}
+
+
 @router.get("/admin/health-deep")
 async def admin_health_deep(
     request: Request,
