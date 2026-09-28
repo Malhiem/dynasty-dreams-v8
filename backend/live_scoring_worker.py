@@ -183,7 +183,46 @@ async def _recompute_team_live_totals(db):
     # Pre-load scoring rosters for each (league, week) pair so we use
     # historical ownership instead of the live roster.
     from utils.scoring_roster import get_scoring_roster
-    _scoring_roster_cache: dict[str, list[str]] = {}
+
+    # Pre-load game_id → date mapping for per-game ownership checks
+    all_game_ids_int = []
+    for pid_games in player_game_fpts.values():
+        for gid_str in pid_games:
+            try:
+                all_game_ids_int.append(int(gid_str))
+            except (ValueError, TypeError):
+                pass
+    _game_date_cache: dict[int, str] = {}  # gid_int → "YYYY-MM-DD"
+    if all_game_ids_int:
+        async for g in db.games.find(
+            {"nhl_game_id": {"$in": list(set(all_game_ids_int))}},
+            {"nhl_game_id": 1, "date": 1},
+        ):
+            _game_date_cache[g["nhl_game_id"]] = str(g.get("date", "")).split("T")[0]
+
+    # Pre-load ownership periods per league for per-game checks
+    from datetime import datetime as _dt
+    _ownership_cache: dict[str, list[tuple]] = {}  # f"{pid}:{lid}" → [(acquired, released)]
+    async for op in db.player_ownership_periods.find({}):
+        key = f"{op['player_id']}:{op['league_id']}"
+        _ownership_cache.setdefault(key, []).append(
+            (op["acquired_at"], op.get("released_at"))
+        )
+
+    def _owned_at_game(pid: str, lid: str, game_date_str: str) -> bool:
+        """Quick in-memory ownership check for a game date."""
+        key = f"{pid}:{lid}"
+        spans = _ownership_cache.get(key)
+        if not spans:
+            return True  # No ownership data → assume owned (backward compat)
+        try:
+            gd = _dt.fromisoformat(game_date_str).replace(tzinfo=timezone.utc)
+        except Exception:
+            return True
+        for acquired, released in spans:
+            if acquired <= gd and (released is None or released > gd):
+                return True
+        return False
 
     team_deltas = []
     for t in teams:
@@ -194,31 +233,41 @@ async def _recompute_team_live_totals(db):
         avg_mult = int(league.get("goalie_avg_multiplier_count") or 3)
         gp_cap_on = bool(league.get("goalie_gp_limit_enabled"))
         gp_cap = int(league.get("goalie_gp_limit") or 0)
-        daily_lock = t.get("goalie_daily_lock") or {}  # {date_iso: player_id}
+        daily_lock = t.get("goalie_daily_lock") or {}
         locked_player_ids = set(daily_lock.values())
 
-        # Use scoring roster (historical ownership) when available
         tid = str(t["_id"])
         lid = str(t.get("league_id") or "")
-        cache_key = f"{tid}:{lid}"
-        if cache_key not in _scoring_roster_cache:
-            try:
-                week = int(league.get("current_week") or 0) or None
-                _scoring_roster_cache[cache_key] = await get_scoring_roster(db, tid, lid, week)
-            except Exception:
-                _scoring_roster_cache[cache_key] = list(t.get("roster") or [])
-        scoring_roster = _scoring_roster_cache[cache_key]
 
         fpts = 0.0
-        for pid in scoring_roster:
+        for pid in (t.get("roster") or []):
             games = player_game_fpts.get(pid, {})
             if not games:
                 continue
+
+            # Filter games by ownership at game date
+            owned_games: dict[str, float] = {}
+            for gid_str, gfpts in games.items():
+                try:
+                    gid_int = int(gid_str)
+                except (ValueError, TypeError):
+                    owned_games[gid_str] = gfpts
+                    continue
+                date_str = _game_date_cache.get(gid_int, "")
+                if not date_str:
+                    owned_games[gid_str] = gfpts  # Can't check → assume owned
+                    continue
+                if _owned_at_game(pid, lid, date_str):
+                    owned_games[gid_str] = gfpts
+
+            if not owned_games:
+                continue
+
             if not diff_goalies or not player_is_goalie.get(pid):
-                fpts += sum(games.values())
+                fpts += sum(owned_games.values())
                 continue
             # Goalie + differentiated scoring active
-            scores = sorted(games.values(), reverse=True)
+            scores = sorted(owned_games.values(), reverse=True)
             if method == "best_x":
                 cap = min(best_x, len(scores))
                 if gp_cap_on and gp_cap:
@@ -235,9 +284,9 @@ async def _recompute_team_live_totals(db):
                     # fallback: count every game (treats daily_lock as a no-op cap).
                     game_dates = (t.get("live_stats_game_dates") or {})
                     matched = [
-                        score for gid, score in games.items()
+                        score for gid, score in owned_games.items()
                         if game_dates.get(gid) in locked_dates
-                    ] or list(games.values())
+                    ] or list(owned_games.values())
                     if gp_cap_on and gp_cap:
                         matched = sorted(matched, reverse=True)[:gp_cap]
                     fpts += sum(matched)

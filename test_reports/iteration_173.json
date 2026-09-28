@@ -1,0 +1,150 @@
+{
+  "summary": "Iteration 173 - Game-Level Scoring Allocation Testing Complete. Standalone acceptance test passes all 17 assertions (10/6 split, idempotency, corrections, unowned intervals, bench exclusion, roto split). All 16 backend API tests pass. Frontend compiles and loads without errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_game_allocation.py",
+    "/app/backend/tests/test_iter173_game_allocation.py",
+    "/app/test_reports/pytest/iter173_game_allocation.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Standalone acceptance test (python tests/test_game_allocation.py) passes all 17 assertions",
+    "Test 1: Team A=10 goals (5 games), Team B=6 goals (3 games) - PASS",
+    "Test 2: Idempotent recomputation - same fpts and game count on second call - PASS",
+    "Test 3: Correction to game 2 changes Team A total, Team B unchanged - PASS",
+    "Test 4: Unowned interval gets no credit (Team B: 2 games after gap) - PASS",
+    "Test 5: Benched period excludes stats (Team A: 3 eligible games) - PASS",
+    "Test 6: Roto stats split correctly (A: 10G/5A/15SOG, B: 6G/3A/9SOG) - PASS",
+    "GET /api/scoring/calculate/{league_id} returns 200 with team scores including game_count field",
+    "GET /api/scoring/calculate/{league_id}?week=1 returns 200 (historical week recomputation)",
+    "GET /api/scoring/roto/{league_id} returns 200 with roto standings",
+    "GET /api/scoring/roto/{league_id}?week=1 returns 200 (historical roto recomputation)",
+    "GET /api/matchups/{league_id}/daily-scoring?team_id={team_id} returns 200 with player daily data",
+    "GET /api/players/{player_id}/ownership-history returns ownership timeline",
+    "GET /api/players/{player_id}/lineup-history returns lineup position history",
+    "POST /api/roster/{team_id}/add creates ownership period (player_ownership_periods record)",
+    "POST /api/roster/{team_id}/drop closes ownership period (sets released_at)",
+    "All auth guards working: unauthenticated requests return 401",
+    "Frontend compiles without errors (webpack compiled successfully)",
+    "Frontend loads without critical errors"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter173_game_allocation.py"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16 API tests passed + 17/17 standalone acceptance tests)",
+    "frontend": "100% (compiles and loads without errors)"
+  },
+  "test_credentials": "Email: admin@dynastydreams.com / Password: Admin123!",
+  "seed_data_creation": "Standalone test creates isolated test DB (test_alloc_{ObjectId}) with test data and cleans up after. API tests use existing league 69e46af167999bfb85c39629 and team 69e59b33cbd3fea02a914c7b.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 173 verified the new game-level scoring allocation system. The key acceptance criteria (10 goals before trade = Team A:10, 6 goals after = Team B:6) is verified by the standalone test. All scoring endpoints now use allocate_team_period_fpts and allocate_team_period_roto_stats from utils/game_allocation.py. The system correctly handles: ownership at puck-drop, lineup eligibility, corrections to original owner, unowned intervals, bench exclusion, and idempotent recomputation. Test files: /app/backend/tests/test_game_allocation.py (standalone), /app/backend/tests/test_iter173_game_allocation.py (API tests).",
+  "verified_features": {
+    "game_level_allocation_10_6_split": {
+      "status": "PASS",
+      "details": "Player scores 10 goals (5 games) on Team A, traded, scores 6 goals (3 games) on Team B. Result: A=10, B=6"
+    },
+    "idempotent_recomputation": {
+      "status": "PASS",
+      "details": "Calling allocate_team_period_fpts twice returns identical results"
+    },
+    "corrections_to_original_owner": {
+      "status": "PASS",
+      "details": "Correction to game 2 (pre-trade) changes Team A total, Team B unchanged"
+    },
+    "unowned_interval_exclusion": {
+      "status": "PASS",
+      "details": "Games during unowned interval (after drop) get no credit"
+    },
+    "bench_exclusion": {
+      "status": "PASS",
+      "details": "Games while player on bench are excluded from scoring"
+    },
+    "roto_stats_split": {
+      "status": "PASS",
+      "details": "Roto category stats (goals, assists, shots) split correctly by ownership"
+    },
+    "scoring_calculate_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/scoring/calculate/{league_id} returns 200 with team scores and game_count"
+    },
+    "historical_scoring_recomputation": {
+      "status": "PASS",
+      "details": "GET /api/scoring/calculate/{league_id}?week=1 returns 200"
+    },
+    "roto_standings_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/scoring/roto/{league_id} returns 200 with categories and standings"
+    },
+    "historical_roto_recomputation": {
+      "status": "PASS",
+      "details": "GET /api/scoring/roto/{league_id}?week=1 returns 200"
+    },
+    "daily_scoring_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/matchups/{league_id}/daily-scoring?team_id={team_id} returns 200 with player daily data"
+    },
+    "ownership_history_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/players/{player_id}/ownership-history returns ownership timeline"
+    },
+    "lineup_history_endpoint": {
+      "status": "PASS",
+      "details": "GET /api/players/{player_id}/lineup-history returns lineup position history"
+    },
+    "roster_add_creates_ownership": {
+      "status": "PASS",
+      "details": "POST /api/roster/{team_id}/add creates player_ownership_periods record"
+    },
+    "roster_drop_closes_ownership": {
+      "status": "PASS",
+      "details": "POST /api/roster/{team_id}/drop sets released_at on ownership period"
+    },
+    "auth_guards": {
+      "status": "PASS",
+      "details": "All endpoints return 401 for unauthenticated requests"
+    },
+    "frontend_compilation": {
+      "status": "PASS",
+      "details": "Frontend compiles without errors (webpack compiled successfully)"
+    },
+    "frontend_loads": {
+      "status": "PASS",
+      "details": "Frontend loads without critical errors, login form visible"
+    }
+  },
+  "api_endpoints_tested": [
+    "GET /api/scoring/calculate/{league_id} - 200 OK",
+    "GET /api/scoring/calculate/{league_id}?week=1 - 200 OK",
+    "GET /api/scoring/roto/{league_id} - 200 OK",
+    "GET /api/scoring/roto/{league_id}?week=1 - 200 OK",
+    "GET /api/matchups/{league_id}/daily-scoring?team_id={team_id} - 200 OK",
+    "GET /api/matchups/{league_id}/daily-scoring?team_id={team_id}&week=1 - 200 OK",
+    "GET /api/players/{player_id}/ownership-history?league_id={league_id} - 200 OK",
+    "GET /api/players/{player_id}/lineup-history?league_id={league_id}&team_id={team_id} - 200 OK",
+    "POST /api/roster/{team_id}/add - 200 OK (creates ownership period)",
+    "POST /api/roster/{team_id}/drop - 200 OK (closes ownership period)"
+  ],
+  "standalone_acceptance_test": {
+    "file": "/app/backend/tests/test_game_allocation.py",
+    "run_command": "cd /app/backend && python tests/test_game_allocation.py",
+    "results": "17 passed, 0 failed - ALL ACCEPTANCE TESTS PASSED",
+    "scenarios_tested": [
+      "10/6 goal split between Team A and Team B",
+      "Idempotent recomputation",
+      "Correction applies to original owner",
+      "Unowned interval gets no credit",
+      "Benched period excludes stats",
+      "Roto stats split correctly"
+    ]
+  }
+}

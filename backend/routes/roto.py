@@ -79,61 +79,81 @@ DEFAULT_ROTO_CATEGORIES = [
 # ─── Engine ──────────────────────────────────────────────────────
 
 async def _team_stat_totals(db, league_id: str, period: Optional[int], periods: Optional[list[int]] = None):
-    """For each team in the league, sum every rostered player's stats
-    for the target period (None → full season), or across a list of
-    periods when *periods* is given (used by condensed-roto fresh totals).
+    """For each team in the league, compute roto category stats using
+    game-level ownership allocation.
 
-    Uses historical scoring roster for the *requested* period — not the
-    current week — so recomputation is stable and idempotent.
+    Each game's stats are credited only to the team that owned the player
+    at puck-drop AND had the player in an active lineup position.
 
     Returns: {team_id: {"team_name": str, "stats": {stat: float}}}
     """
-    from utils.scoring_roster import get_scoring_roster
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    from utils.scoring_roster import week_to_time_range
+    from utils.game_allocation import allocate_team_period_roto_stats
 
-    # Determine which week to use for roster resolution:
-    # - Single period request → use that period's roster
-    # - Multi-period (condensed roto) → use the first period's roster
-    # - Full season (period=None, periods=None) → use current_week
-    if period is not None:
-        scoring_week = period
-    elif periods:
-        scoring_week = periods[0]
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        return {}
+
+    # Resolve which weeks/periods to compute
+    weeks_to_compute = []
+    if periods is not None:
+        weeks_to_compute = list(periods)
+    elif period is not None:
+        weeks_to_compute = [period]
     else:
-        scoring_week = int((league or {}).get("current_week") or 0) or None
+        # Full season: compute all weeks up to current_week
+        cw = int(league.get("current_week") or 1)
+        weeks_to_compute = list(range(1, cw + 1))
+
+    category_keys = [c["key"] for c in ALL_CATEGORIES]
 
     teams = await db.teams.find({"league_id": league_id}).to_list(200)
     out = {}
     for t in teams:
-        agg: dict = {}
         tid = str(t["_id"])
-        roster = await get_scoring_roster(db, tid, league_id, week=scoring_week)
-        for pid in roster:
-            try:
-                p = await db.players.find_one({"_id": ObjectId(pid)})
-            except Exception:
-                continue
-            if not p:
-                continue
-            # Multi-period sum (condensed-roto fresh totals)
-            if periods is not None:
-                player_period_stats = p.get("period_stats") or {}
-                for pnum in periods:
-                    src = player_period_stats.get(str(pnum)) or {}
+        agg: dict = {k: 0 for k in category_keys}
+
+        has_period_data = False
+        for w in weeks_to_compute:
+            ps, pe = week_to_time_range(league, w)
+            if ps and pe:
+                has_period_data = True
+                period_stats = await allocate_team_period_roto_stats(
+                    db, tid, league_id, ps, pe, category_keys,
+                )
+                for k in category_keys:
+                    agg[k] = round(float(agg.get(k, 0)) + float(period_stats.get(k, 0)), 3)
+
+        if not has_period_data:
+            # Fallback: no season_start_date → use aggregate player stats
+            from utils.scoring_roster import get_scoring_roster
+            roster = await get_scoring_roster(db, tid, league_id)
+            for pid in roster:
+                try:
+                    p = await db.players.find_one({"_id": ObjectId(pid)})
+                except Exception:
+                    continue
+                if not p:
+                    continue
+                if periods is not None:
+                    player_period_stats = p.get("period_stats") or {}
+                    for pnum in periods:
+                        src = player_period_stats.get(str(pnum)) or {}
+                        for cat in ALL_CATEGORIES:
+                            k = cat["key"]
+                            agg[k] = round(float(agg.get(k, 0)) + float(src.get(k, 0) or 0), 3)
+                elif period is not None:
+                    src = (p.get("period_stats") or {}).get(str(period)) or p.get("season_stats") or {}
                     for cat in ALL_CATEGORIES:
                         k = cat["key"]
-                        agg[k] = round(float(agg.get(k, 0.0)) + float(src.get(k, 0) or 0), 3)
-                continue
-            # Single-period or full-season
-            src = None
-            if period is not None:
-                src = (p.get("period_stats") or {}).get(str(period))
-            if src is None:
-                src = p.get("season_stats") or {}
-            for cat in ALL_CATEGORIES:
-                k = cat["key"]
-                agg[k] = round(float(agg.get(k, 0.0)) + float(src.get(k, 0) or 0), 3)
-        out[str(t["_id"])] = {"team_name": t.get("name"), "stats": agg}
+                        agg[k] = round(float(agg.get(k, 0)) + float(src.get(k, 0) or 0), 3)
+                else:
+                    src = p.get("season_stats") or {}
+                    for cat in ALL_CATEGORIES:
+                        k = cat["key"]
+                        agg[k] = round(float(agg.get(k, 0)) + float(src.get(k, 0) or 0), 3)
+
+        out[tid] = {"team_name": t.get("name"), "stats": agg}
     return out
 
 

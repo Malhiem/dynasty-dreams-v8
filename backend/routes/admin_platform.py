@@ -2122,6 +2122,36 @@ async def _build_user_extensions(db, user_id: str, u: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────
 # Iter 216 — Recent admin actions feed (Overview tab)
 # ─────────────────────────────────────────────────────────────────────
+# ─── Ownership Backfill ──────────────────────────────────────────────
+
+@router.post("/backfill-ownership/{league_id}")
+async def backfill_league_ownership_endpoint(league_id: str, request: Request):
+    """Backfill ownership and lineup periods for a specific league from
+    historical evidence (trades, activity feed, roster change log).
+
+    Idempotent: re-running clears previous backfilled records and
+    reconstructs from scratch. Manually-created records are preserved.
+    """
+    await _require_admin(request)
+    db = _deps["db"]
+    from utils.backfill_ownership import backfill_league_ownership
+    result = await backfill_league_ownership(db, league_id)
+    return result
+
+
+@router.post("/backfill-ownership")
+async def backfill_all_ownership_endpoint(request: Request):
+    """Backfill ownership and lineup periods for ALL leagues."""
+    await _require_admin(request)
+    db = _deps["db"]
+    from utils.backfill_ownership import backfill_all_leagues
+    results = await backfill_all_leagues(db)
+    return {
+        "leagues_processed": len(results),
+        "results": results,
+    }
+
+
 @router.get("/recent-admin-actions")
 async def recent_admin_actions(request: Request, limit: int = Query(20, ge=1, le=100)):
     """Cross-user feed of the latest admin actions taken anywhere on

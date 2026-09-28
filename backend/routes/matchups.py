@@ -748,9 +748,31 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
         day_labels.append(d.strftime("%a %-m/%-d"))
         d += timedelta(days=1)
 
-    # Fetch roster players with live_stats — use historical scoring roster
-    from utils.scoring_roster import get_scoring_roster, ensure_scoring_roster
-    roster_ids = await get_scoring_roster(db, team_id, league_id, week)
+    # Fetch roster players with live_stats — ownership-aware
+    # Get all players that were ever on this team in the period
+    from utils.scoring_roster import get_owner_at, is_lineup_eligible_at
+    from live_scoring_worker import _fantasy_points_from_live
+
+    # First try ownership-based roster
+    # Ensure period_end is a datetime for MongoDB queries
+    _pe_dt = datetime.combine(period_end, datetime.min.time()).replace(tzinfo=timezone.utc) if not isinstance(period_end, datetime) else period_end
+    _ps_dt = datetime.combine(period_start, datetime.min.time()).replace(tzinfo=timezone.utc) if not isinstance(period_start, datetime) else period_start
+    owned_cursor = db.player_ownership_periods.find({
+        "team_id": team_id, "league_id": league_id,
+        "acquired_at": {"$lt": _pe_dt + timedelta(days=1)},
+        "$or": [{"released_at": None}, {"released_at": {"$gt": _ps_dt}}],
+    }, {"player_id": 1, "acquired_at": 1, "released_at": 1})
+    ownership_spans = {}
+    async for doc in owned_cursor:
+        pid = doc["player_id"]
+        ownership_spans.setdefault(pid, []).append(
+            (doc["acquired_at"], doc.get("released_at"))
+        )
+    roster_ids = list(ownership_spans.keys())
+
+    if not roster_ids:
+        # Fallback: use live roster
+        roster_ids = list(team.get("roster") or [])
     if not roster_ids:
         return {
             "league_id": league_id,
@@ -766,8 +788,6 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
             "daily_totals": {d: 0.0 for d in days},
             "period_total_fpts": 0.0,
         }
-
-    from live_scoring_worker import _fantasy_points_from_live
 
     players = await db.players.find(
         {"_id": {"$in": [ObjectId(pid) for pid in roster_ids]}},
@@ -808,6 +828,23 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
             # Only include games within the matchup period
             if game_date < period_start.isoformat() or game_date > period_end.isoformat():
                 continue
+
+            # Per-game ownership check: credit only if owned at game date
+            if ownership_spans:
+                try:
+                    gd_dt = datetime.fromisoformat(game_date).replace(tzinfo=timezone.utc)
+                    spans = ownership_spans.get(pid, [])
+                    owned = False
+                    for a, r in spans:
+                        a_utc = a.replace(tzinfo=timezone.utc) if a.tzinfo is None else a
+                        r_utc = r.replace(tzinfo=timezone.utc) if r and r.tzinfo is None else r
+                        if a_utc <= gd_dt and (r_utc is None or r_utc > gd_dt):
+                            owned = True
+                            break
+                    if not owned:
+                        continue
+                except Exception:
+                    pass
 
             fpts = _fantasy_points_from_live(ls, is_goalie)
             goals = ls.get("goals", 0) or 0
@@ -933,10 +970,19 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         team = await db.teams.find_one({"_id": ObjectId(team_id)})
         if not team:
             return 0.0
-        from utils.scoring_roster import get_scoring_roster
-        roster = await get_scoring_roster(db, str(team["_id"]), input.league_id, input.week)
+        # Game-level allocation: credit only games owned + active at puck drop
+        from utils.scoring_roster import week_to_time_range
+        from utils.game_allocation import allocate_team_period_fpts
+        period_start, period_end = week_to_time_range(league, input.week)
+        if period_start and period_end:
+            alloc = await allocate_team_period_fpts(
+                db, str(team["_id"]), input.league_id,
+                period_start, period_end, config,
+            )
+            return round(alloc["total_fpts"], 1)
+        # Fallback: no season_start_date
         total = 0.0
-        for pid in roster:
+        for pid in (team.get("roster") or []):
             player = await db.players.find_one({"_id": ObjectId(pid)})
             if player:
                 total += calculate_fantasy_points(player, config)

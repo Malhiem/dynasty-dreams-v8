@@ -90,41 +90,58 @@ async def get_scoring_config(league_id: str, request: Request):
 async def calculate_league_scoring(league_id: str, request: Request, week: Optional[int] = None):
     """Calculate fantasy points for all teams in a league.
 
-    Accepts optional `?week=N` to compute using the historical roster
-    for that week. Defaults to current_week if omitted.
+    Uses game-level ownership allocation: each game's stats are credited
+    only to the team that owned the player at puck-drop, and only if the
+    player was in an active lineup position at that time.
+
+    Accepts optional `?week=N` to compute for a specific week.
     """
     db = _deps["db"]
     user = await _deps["get_current_user"](request)
     await require_league_member(db, user, league_id)
-    calculate_fantasy_points = _deps["calculate_fantasy_points"]
     config = await db.scoring_configs.find_one({"league_id": league_id})
-    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
 
-    from utils.scoring_roster import get_scoring_roster
     if week is None:
-        league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
-        week = int((league or {}).get("current_week") or 0) or None
+        week = int(league.get("current_week") or 1)
+
+    from utils.scoring_roster import week_to_time_range
+    from utils.game_allocation import allocate_team_period_fpts
+
+    period_start, period_end = week_to_time_range(league, week)
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
 
     results = []
     for team in teams:
-        total_fpts = 0.0
         tid = str(team["_id"])
-        roster = await get_scoring_roster(db, tid, league_id, week)
-        for pid in roster:
-            player = await db.players.find_one({"_id": ObjectId(pid)})
-            if player:
-                total_fpts += calculate_fantasy_points(player, config)
+        if period_start and period_end:
+            alloc = await allocate_team_period_fpts(
+                db, tid, league_id, period_start, period_end, config,
+            )
+            total_fpts = alloc["total_fpts"]
+            game_count = alloc["game_count"]
+        else:
+            # No season_start_date → fall back to aggregate scoring
+            calculate_fantasy_points = _deps["calculate_fantasy_points"]
+            total_fpts = 0.0
+            game_count = 0
+            for pid in (team.get("roster") or []):
+                player = await db.players.find_one({"_id": ObjectId(pid)})
+                if player:
+                    total_fpts += calculate_fantasy_points(player, config)
 
         results.append({
             "team_id": tid,
             "team_name": team["name"],
             "owner_name": team["owner_name"],
-            "roster_size": len(roster),
-            "total_fantasy_points": round(total_fpts, 1)
+            "roster_size": len(team.get("roster") or []),
+            "total_fantasy_points": round(total_fpts, 1),
+            "game_count": game_count,
         })
 
     results.sort(key=lambda t: -t["total_fantasy_points"])
-
     return results
 
 
@@ -132,6 +149,7 @@ async def calculate_league_scoring(league_id: str, request: Request, week: Optio
 async def calculate_roto_standings(league_id: str, request: Request, week: Optional[int] = None):
     """Calculate rotisserie standings across selected categories.
 
+    Uses game-level ownership allocation for each category stat.
     Accepts optional `?week=N` for historical recomputation.
     """
     db = _deps["db"]
@@ -142,31 +160,40 @@ async def calculate_roto_standings(league_id: str, request: Request, week: Optio
         "goals", "assists", "plus_minus", "power_play_points",
         "shots", "penalty_minutes", "wins", "save_pct", "goals_against_avg", "shutouts"
     ])
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    if not league:
+        raise HTTPException(status_code=404, detail="League not found")
 
-    teams = await db.teams.find({"league_id": league_id}).to_list(100)
-
-    from utils.scoring_roster import get_scoring_roster
     if week is None:
-        league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
-        week = int((league or {}).get("current_week") or 0) or None
+        week = int(league.get("current_week") or 1)
+
+    from utils.scoring_roster import week_to_time_range
+    from utils.game_allocation import allocate_team_period_roto_stats
+
+    period_start, period_end = week_to_time_range(league, week)
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
 
     team_stats = []
     for team in teams:
-        stats = {cat: 0 for cat in categories}
         tid = str(team["_id"])
-        roster = await get_scoring_roster(db, tid, league_id, week)
-        for pid in roster:
-            player = await db.players.find_one({"_id": ObjectId(pid)})
-            if player:
-                for cat in categories:
-                    stats[cat] += player.get(cat, 0)
+        if period_start and period_end:
+            stats = await allocate_team_period_roto_stats(
+                db, tid, league_id, period_start, period_end, categories,
+            )
+        else:
+            stats = {cat: 0 for cat in categories}
+            for pid in (team.get("roster") or []):
+                player = await db.players.find_one({"_id": ObjectId(pid)})
+                if player:
+                    for cat in categories:
+                        stats[cat] += player.get(cat, 0)
 
         team_stats.append({
             "team_id": tid,
             "team_name": team["name"],
             "owner_name": team["owner_name"],
             "stats": stats,
-            "roto_points": 0
+            "roto_points": 0,
         })
 
     num_teams = len(team_stats)

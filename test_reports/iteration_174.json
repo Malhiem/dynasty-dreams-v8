@@ -1,0 +1,181 @@
+{
+  "summary": "Iteration 174 - Game-Level Scoring Allocation with Backfill Engine Testing Complete. All 18 pytest unit tests pass (trade splits, drops, bench exclusion, corrections, idempotency, backfill engine, uncertainty flagging). All 6 API integration tests pass (backfill single league, backfill all leagues, backfill idempotency, auth guard, scoring calculate, roto scoring).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_game_allocation.py",
+    "/app/test_reports/pytest/iter174_game_allocation.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "All 18 pytest tests pass covering all 5 user-reported failure scenarios",
+    "Test 1: Trade 10/6 goal split - Team A gets 5 games (10 goals), Team B gets 3 games (6 goals) - PASS",
+    "Test 2: Drop + reacquisition - unowned gap excludes stats - PASS",
+    "Test 3: Bench period excludes stats - PASS",
+    "Test 4: IR period excludes stats - PASS",
+    "Test 5: Correction applies to original owner at game time - PASS",
+    "Test 6: Late import goes to owner at game time - PASS",
+    "Test 7: Recomputation is idempotent - PASS",
+    "Test 8: Recomputation after correction is stable - PASS",
+    "Test 9: Roto stats split correctly by ownership - PASS",
+    "Test 10: Backfill from trades reconstructs ownership periods - PASS",
+    "Test 11: Backfill is idempotent - PASS",
+    "Test 12: Backfill creates inferred_baseline for players with no events - PASS",
+    "Test 13: Fallback flags uncertain when no ownership data - PASS",
+    "Test 14: Backfilled league returns zero (not uncertain) for empty team - PASS",
+    "Test 15: Known unowned interval awards no stats - PASS",
+    "Test 16: End-to-end backfill then allocate produces correct split - PASS",
+    "Test 17: Drop preserves earlier earnings - PASS",
+    "Test 18: Reacquisition excludes unowned stats - PASS",
+    "POST /api/admin/platform/backfill-ownership/{league_id} - 200 OK (377 ownership periods created)",
+    "POST /api/admin/platform/backfill-ownership - 200 OK (2506 ownership periods across 12 leagues)",
+    "Backfill idempotency verified - same count on repeated runs",
+    "GET /api/scoring/calculate/{league_id}?week=1 - 200 OK with no uncertain flags after backfill",
+    "GET /api/scoring/roto/{league_id}?week=1 - 200 OK with no uncertain flags after backfill"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (18/18 pytest tests + 6/6 API integration tests)"
+  },
+  "test_credentials": "Email: admin@dynastydreams.com / Password: Admin123!",
+  "seed_data_creation": "Pytest tests create isolated test databases (test_alloc_{ObjectId}) with test data and clean up after. API tests use existing leagues in production database.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 174 verified the expanded game-level scoring allocation system with backfill engine. Key features verified: (1) Stats allocated at game level based on ownership at puck-drop, (2) Earlier earnings preserved after trades, (3) Unowned intervals excluded, (4) Bench/IR periods excluded, (5) Corrections apply to original owner, (6) Recomputation is idempotent, (7) Backfill engine reconstructs ownership from trades/activity_feed/roster_change_log, (8) Fallback path flags uncertain results when no backfill has been run. Test files: /app/backend/tests/test_game_allocation.py (18 unit tests).",
+  "verified_features": {
+    "trade_10_6_split": {
+      "status": "PASS",
+      "details": "Player scores 10 goals (5 games) on Team A, traded, scores 6 goals (3 games) on Team B. Result: A=10, B=6"
+    },
+    "drop_reacquisition_unowned_gap": {
+      "status": "PASS",
+      "details": "Stats during unowned interval are not credited to anyone"
+    },
+    "drop_preserves_earlier_earnings": {
+      "status": "PASS",
+      "details": "Team A's stats unchanged when Team B drops the player"
+    },
+    "reacquisition_excludes_unowned_stats": {
+      "status": "PASS",
+      "details": "Team C acquiring after game time gets 0 games"
+    },
+    "bench_period_excludes_stats": {
+      "status": "PASS",
+      "details": "Games while player on bench are excluded from scoring"
+    },
+    "ir_period_excludes_stats": {
+      "status": "PASS",
+      "details": "Games while player on IR are excluded from scoring"
+    },
+    "correction_applies_to_original_owner": {
+      "status": "PASS",
+      "details": "Correction to pre-trade game changes Team A, not Team B"
+    },
+    "late_import_goes_to_owner_at_game_time": {
+      "status": "PASS",
+      "details": "Late-arriving stats credited to whoever owned player at game time"
+    },
+    "recomputation_is_idempotent": {
+      "status": "PASS",
+      "details": "Running allocation twice produces identical results"
+    },
+    "recomputation_after_correction_is_stable": {
+      "status": "PASS",
+      "details": "After correction, recomputation produces same results on every call"
+    },
+    "roto_stats_split_correctly": {
+      "status": "PASS",
+      "details": "Roto categories (goals, assists, shots) split by ownership: A=10G/5A/15SOG, B=6G/3A/9SOG"
+    },
+    "backfill_from_trades": {
+      "status": "PASS",
+      "details": "Backfill engine reconstructs ownership periods from trade records"
+    },
+    "backfill_is_idempotent": {
+      "status": "PASS",
+      "details": "Running backfill twice produces same number of ownership periods"
+    },
+    "backfill_inferred_baseline": {
+      "status": "PASS",
+      "details": "Players on roster with no events get inferred_baseline evidence"
+    },
+    "fallback_flags_uncertain": {
+      "status": "PASS",
+      "details": "When no ownership data and no backfill, results flagged uncertain=true, needs_backfill=true"
+    },
+    "backfilled_empty_team_returns_zero": {
+      "status": "PASS",
+      "details": "After backfill, empty team gets 0 fpts with uncertain=false"
+    },
+    "known_unowned_awards_no_stats": {
+      "status": "PASS",
+      "details": "Explicitly unowned interval: no stats credited to any team"
+    },
+    "backfill_then_allocate_e2e": {
+      "status": "PASS",
+      "details": "Full pipeline: seed trade data -> backfill -> allocate -> verify 5:3 split"
+    },
+    "admin_backfill_single_league_api": {
+      "status": "PASS",
+      "details": "POST /api/admin/platform/backfill-ownership/{league_id} returns 200 with ownership periods"
+    },
+    "admin_backfill_all_leagues_api": {
+      "status": "PASS",
+      "details": "POST /api/admin/platform/backfill-ownership returns 200, processes all 12 leagues"
+    },
+    "admin_backfill_idempotent_api": {
+      "status": "PASS",
+      "details": "Running backfill API twice produces same ownership period count"
+    },
+    "admin_backfill_requires_auth": {
+      "status": "PASS",
+      "details": "Backfill endpoint returns 401/403 without admin auth"
+    },
+    "scoring_calculate_no_uncertain_after_backfill": {
+      "status": "PASS",
+      "details": "GET /api/scoring/calculate/{league_id}?week=1 returns 0 uncertain flags after backfill"
+    },
+    "roto_scoring_no_uncertain_after_backfill": {
+      "status": "PASS",
+      "details": "GET /api/scoring/roto/{league_id}?week=1 returns 0 uncertain flags after backfill"
+    }
+  },
+  "api_endpoints_tested": [
+    "POST /api/admin/platform/backfill-ownership/{league_id} - 200 OK",
+    "POST /api/admin/platform/backfill-ownership - 200 OK",
+    "GET /api/scoring/calculate/{league_id}?week=1 - 200 OK",
+    "GET /api/scoring/roto/{league_id}?week=1 - 200 OK"
+  ],
+  "pytest_results": {
+    "file": "/app/backend/tests/test_game_allocation.py",
+    "run_command": "cd /app/backend && python -m pytest tests/test_game_allocation.py -v",
+    "results": "18 passed, 0 failed",
+    "scenarios_tested": [
+      "Trade 10/6 goal split",
+      "Drop + reacquisition unowned gap",
+      "Drop preserves earlier earnings",
+      "Reacquisition excludes unowned stats",
+      "Bench period excludes stats",
+      "IR period excludes stats",
+      "Correction applies to original owner",
+      "Late import goes to owner at game time",
+      "Recomputation is idempotent",
+      "Recomputation after correction is stable",
+      "Roto stats split correctly",
+      "Backfill from trades",
+      "Backfill is idempotent",
+      "Backfill inferred baseline for no events",
+      "Fallback flags uncertain when no ownership",
+      "Backfilled league returns zero for empty team",
+      "Known unowned awards no stats",
+      "End-to-end backfill then allocate"
+    ]
+  }
+}
