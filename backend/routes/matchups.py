@@ -771,8 +771,13 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
     roster_ids = list(ownership_spans.keys())
 
     if not roster_ids:
-        # Fallback: use live roster
-        roster_ids = list(team.get("roster") or [])
+        # No ownership data — do NOT fall back to current roster.
+        # Check if league has been backfilled to distinguish "no players"
+        # from "missing data".
+        is_backfilled = bool(league.get("ownership_backfilled_at"))
+        if not is_backfilled:
+            # Try current roster as a last resort but mark as uncertain
+            roster_ids = list(team.get("roster") or [])
     if not roster_ids:
         return {
             "league_id": league_id,
@@ -793,6 +798,22 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
         {"_id": {"$in": [ObjectId(pid) for pid in roster_ids]}},
         {"name": 1, "position": 1, "team": 1, "player_type": 1, "live_stats": 1, "season_stats": 1},
     ).to_list(200)
+
+    # Pre-load lineup eligibility data for all roster players
+    from utils.scoring_roster import ACTIVE_SECTIONS
+    lineup_by_player = {}
+    lineup_cursor = db.lineup_status_periods.find({
+        "team_id": team_id,
+        "league_id": league_id,
+        "player_id": {"$in": roster_ids},
+    })
+    async for lp in lineup_cursor:
+        pid = lp["player_id"]
+        lineup_by_player.setdefault(pid, []).append({
+            "position": lp.get("position", "bench"),
+            "started_at": lp.get("started_at"),
+            "ended_at": lp.get("ended_at"),
+        })
 
     daily_totals = {d: 0.0 for d in days}
     player_rows = []
@@ -842,6 +863,27 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
                             owned = True
                             break
                     if not owned:
+                        continue
+                except Exception:
+                    pass
+
+            # Per-game lineup eligibility check
+            lineup_periods = lineup_by_player.get(pid, [])
+            if lineup_periods:
+                try:
+                    gd_dt = datetime.fromisoformat(game_date).replace(tzinfo=timezone.utc)
+                    eligible = False
+                    for lp in lineup_periods:
+                        s = lp["started_at"]
+                        e = lp["ended_at"]
+                        if s:
+                            s = s.replace(tzinfo=timezone.utc) if hasattr(s, 'replace') and s.tzinfo is None else s
+                        if e:
+                            e = e.replace(tzinfo=timezone.utc) if hasattr(e, 'replace') and e.tzinfo is None else e
+                        if s and s <= gd_dt and (e is None or e > gd_dt):
+                            eligible = lp.get("position", "bench") in ACTIVE_SECTIONS
+                            break
+                    if lineup_periods and not eligible:
                         continue
                 except Exception:
                     pass

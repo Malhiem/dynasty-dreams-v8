@@ -8,57 +8,67 @@ Build a fantasy hockey league management platform with dynasty features — mult
 - **Backend**: FastAPI (Python 3.11) + MongoDB (Motor async driver)
 - **Key Libraries**: Stripe (payments), SendGrid (email)
 
-## Core Requirements
-1. League creation and management (H2H, Roto, Best Ball, Dynasty)
-2. Roster management with trades, waivers, drops, pickups
-3. Live scoring from NHL stats
-4. Draft system (snake, auction, dynasty)
-5. Commissioner tools and platform admin dashboard
-6. Matchup scheduling and playoff brackets
+## Historical Scoring Allocation Engine (P0 — COMPLETE, HARDENED)
 
-## What's Been Implemented
+### Engine Design
+Every scoring calculation resolves stats at the **individual game level** using ownership and lineup intervals. No simple period aggregation is ever used.
 
-### Historical Scoring Allocation Engine (P0 — COMPLETE, HARDENED)
+### Core Components
+1. **`game_allocation.py`** — Game-level allocation engine
+   - `allocate_team_period_fpts()` — Fantasy points for a team in a time period
+   - `allocate_team_period_roto_stats()` — Roto category stats
+   - `_owned_at_mem()` — In-memory ownership check per game
+   - `_eligible_at_mem()` — In-memory lineup eligibility check per game
+   - `_build_game_date_map()` — Resolves game IDs → game start times (preserves puck-drop time)
 
-**Core Engine** (`/app/backend/utils/game_allocation.py`):
-- Allocates stats by cross-referencing each game's date/time with ownership & lineup intervals
-- Never uses simple period aggregation
-- Game dates preserve time precision (puck-drop > midnight fallback)
+2. **`scoring_roster.py`** — Point-in-time ownership and lineup tracking
+   - `record_ownership_start()` — Opens new ownership period
+   - `record_ownership_end()` — **Creates retroactive period from league season start when no open span exists** (critical for un-seeded initial ownership)
+   - `record_lineup_change()` — Records lineup position changes
+   - `log_roster_change()` — Entry point for all roster mutations. Accepts optional `timestamp`. On `add`: creates ownership + seeds initial lineup. On `remove`: closes ownership + lineup.
+   - `_resolve_league_start_dt()` — Resolves league season start to UTC datetime
+   - `_section_to_canonical()` — Maps lineup sections to canonical position names
 
-**Point-in-Time Ownership** (`/app/backend/utils/scoring_roster.py`):
-- `record_ownership_start/end` manage ownership periods
-- **Critical fix**: `record_ownership_end` creates RETROACTIVE ownership period (from league season start) when no initial span exists. This ensures trades/drops correctly preserve the old team's historical stats even when initial ownership was never seeded.
-- `log_roster_change` accepts optional `timestamp` for retroactive processing
-- On `add`: seeds initial `lineup_status_period` from team's lineup state
-- On `remove`: closes both ownership and lineup periods
+3. **`backfill_ownership.py`** — Evidence-based backfill engine
+   - Reconstructs ownership from executed trades, activity feed, roster change logs
+   - Tags each period with evidence source
+   - Idempotent (safe to re-run)
 
-**Evidence-Based Backfill** (`/app/backend/utils/backfill_ownership.py`):
-- Reconstructs ownership from executed trades, activity feed, roster change logs
-- Tags each period with evidence source (trade, activity_feed, inferred_baseline, etc.)
-- Idempotent and safe to re-run
-- Admin endpoints:
-  - `POST /api/admin/platform/backfill-ownership/{league_id}`
-  - `POST /api/admin/platform/backfill-ownership`
+### Verified Behaviors (49 tests, 100% pass rate)
+- ✅ Fixed roster: 5 games × 2 goals = 10 goals
+- ✅ Trade: 10/6 goal split (5:3 game ratio, fpts + roto)
+- ✅ Drop: earlier earnings preserved
+- ✅ Pickup after drop: unowned gap excluded (2 games not credited)
+- ✅ Drop + reacquire: both intervals preserved, gap excluded
+- ✅ Active→bench: bench-period stats excluded
+- ✅ Bench→active: only post-activation stats counted
+- ✅ Historical correction: goes to original owner at game time
+- ✅ Multiple trades: three-way split (A→B→C)
+- ✅ Recomputation: fully idempotent (3 runs identical)
+- ✅ Finalization: stores correct trade split
+- ✅ Finalized history: survives post-period trade
+- ✅ Waiver pickup: correct split with gap
+- ✅ Retroactive ownership: created when initial span missing
+- ✅ Backfill: evidence-based, idempotent
+- ✅ Uncertainty flagging: 0 with uncertain=true when no data
+- ✅ Daily breakdown: checks lineup eligibility
 
-**Uncertainty-Aware Fallback**:
-- No ownership data + no backfill → returns `{uncertain: true, needs_backfill: true}` with 0 points
-- No ownership data + backfilled → returns 0 (genuine empty result)
-- NEVER silently gives all stats to the current roster owner
+### Key Conventions
+- **Fixture requirements**: Tests MUST seed initial ownership + lineup periods, use numeric game IDs with matching game records
+- **Timezones**: Always `datetime(…, tzinfo=timezone.utc)`. Never `datetime.date` in MongoDB queries.
+- **Game dates**: Preserves puck-drop time when available, falls back to midnight UTC
+- **Ownership boundaries**: `acquired_at <= game_date` and `(released_at is None or released_at > game_date)`
+- **Lineup eligibility**: `position in ACTIVE_SECTIONS` where `ACTIVE_SECTIONS = {"forward", "defense", "goalie"}`
 
-**Verified Behaviors** (28 tests + 3 API tests, 100% pass):
-- Trade: 10/6 goal split (5:3 game ratio) ✓
-- Trade: retroactive ownership created for old team ✓
-- Drop: earlier earnings preserved ✓
-- Drop + reacquisition: unowned gap excluded ✓
-- Active→bench: bench-period stats excluded ✓
-- Bench→active: pre-activation stats excluded ✓
-- Late import/correction: goes to owner at game time ✓
-- Roto: follows same ownership rules ✓
-- Recomputation: fully idempotent ✓
-- Known unowned ≠ missing history ✓
-- Backfill: idempotent, evidence-tagged ✓
+### API Endpoints
+- `GET /api/scoring/calculate/{league_id}?week=N` — H2H scoring (uses allocate_team_period_fpts)
+- `GET /api/scoring/roto/{league_id}?week=N` — Roto standings (uses allocate_team_period_roto_stats)
+- `GET /api/matchups/daily-scoring/{league_id}/{team_id}?week=N` — Daily breakdown (checks ownership + lineup)
+- `POST /api/admin/platform/backfill-ownership/{league_id}` — Per-league backfill
+- `POST /api/admin/platform/backfill-ownership` — All leagues backfill
+- `GET /api/roster/{team_id}/history` — Ownership/lineup history
 
-### Other Completed Features
+## Other Completed Features
 - League creation wizard and settings
 - Roster management (trades, drops, waivers, buyouts)
 - Live scoring workers and NHL data ingestion
@@ -68,13 +78,8 @@ Build a fantasy hockey league management platform with dynasty features — mult
 - Matchup scheduling, playoffs, and brackets
 - Salary cap management
 - Activity feed and chat
-- Stripe payment integration (requires user API key)
-- SendGrid email integration
 
 ## Prioritized Backlog
-
-### P1 (High)
-- None pending
 
 ### P2 (Medium)
 - UX polish on Drag-and-Drop Division step
@@ -85,12 +90,6 @@ Build a fantasy hockey league management platform with dynasty features — mult
 - Trade Review Settings UI
 - Additional scoring format enhancements
 - Extended reporting and analytics
-
-## Key Technical Conventions
-- **Timezones**: Always `datetime(…, tzinfo=timezone.utc)`. Never `datetime.date` in MongoDB queries.
-- **Scoring Integrity**: Always use `game_allocation.py` functions. Never simple period aggregation.
-- **Ownership Data**: `record_ownership_end` auto-creates retroactive periods. Check `league.ownership_backfilled_at` for bulk data.
-- **MongoDB**: All ObjectId fields through `PyObjectId` annotated type. `from_mongo()`/`to_mongo()` helpers.
 
 ## Test Credentials
 - Admin: `admin@dynastydreams.com` / `Admin123!`

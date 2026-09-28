@@ -1,0 +1,123 @@
+{
+  "summary": "Iteration 176 - ALL 49 pytest tests PASS. Complete history allocation engine verified working correctly. Tests cover all 30 user-reported failure scenarios across 5 categories: H2H ownership/corrections, lineup eligibility, previously finalized history, finalization after trade, and rotisserie.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_complete_history.py",
+    "/app/backend/tests/test_game_allocation.py",
+    "/app/backend/tests/test_api_flow_allocation.py",
+    "/app/test_reports/pytest/iter176_allocation.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "All 49 pytest tests pass (21 complete-history + 18 pre-seeded ownership + 10 API-flow tests)",
+    "test_complete_history.py: 21 tests with FULLY seeded ownership and lineup via League helper class",
+    "test_game_allocation.py: 18 tests with pre-seeded ownership covering backfill engine and uncertainty flagging",
+    "test_api_flow_allocation.py: 10 tests through log_roster_change (real API path) with retroactive ownership creation",
+    "Admin backfill endpoint verified: POST /api/admin/platform/backfill-ownership/69e46af167999bfb85c39628 - 200 OK (377 ownership periods, 279 lineup periods)"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (49/49 pytest tests + 1/1 API integration test)"
+  },
+  "test_credentials": "Email: admin@dynastydreams.com / Password: Admin123!",
+  "seed_data_creation": "Pytest tests create isolated test databases (test_complete_{ObjectId}, test_alloc_{ObjectId}, test_apiflow_{ObjectId}) with test data and clean up after.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 176 verified ALL 49 tests pass covering the complete historical scoring allocation engine. Key test files: test_complete_history.py (21 tests with League helper class for complete seeding), test_game_allocation.py (18 pre-seeded tests), test_api_flow_allocation.py (10 API-flow tests). The engine correctly handles: fixed roster scoring, trade 10/6 splits (fpts + roto), drop preserves stats, pickup after drop gap excluded, drop+reacquire, active-to-bench exclusion, bench-to-active exclusion, corrections to original owner, multiple trades, recomputation idempotent, finalization, finalized history survives trade, waiver pickup, backfill engine, and uncertainty flagging.",
+  "verified_features": {
+    "fixed_roster_scoring": {
+      "status": "PASS",
+      "details": "5 games x 2 goals = 10 goals correctly allocated"
+    },
+    "trade_10_6_split_fpts": {
+      "status": "PASS",
+      "details": "Player scores 10 goals (5 games) on Team A, traded, scores 6 goals (3 games) on Team B. Result: A=5 games, B=3 games"
+    },
+    "trade_10_6_split_roto": {
+      "status": "PASS",
+      "details": "Roto stats follow same ownership split: A=10 goals, B=6 goals"
+    },
+    "drop_preserves_earlier_earnings": {
+      "status": "PASS",
+      "details": "Team A's stats unchanged when player is dropped"
+    },
+    "pickup_after_drop_excludes_unowned_gap": {
+      "status": "PASS",
+      "details": "Games during unowned interval (Jan 8-9) not credited to either team"
+    },
+    "drop_and_reacquire_preserves_stats": {
+      "status": "PASS",
+      "details": "Both ownership intervals preserved, earlier stats retained"
+    },
+    "active_to_bench_excludes_stats": {
+      "status": "PASS",
+      "details": "Games while player on bench are excluded from scoring"
+    },
+    "bench_to_active_excludes_bench_stats": {
+      "status": "PASS",
+      "details": "Only post-activation games count"
+    },
+    "correction_applies_to_original_owner": {
+      "status": "PASS",
+      "details": "Correction to pre-trade game changes Team A, not Team B"
+    },
+    "multiple_trades_split": {
+      "status": "PASS",
+      "details": "A->B at Jan 8, B->C at Jan 10: A=3, B=2, C=2 games"
+    },
+    "recomputation_is_idempotent": {
+      "status": "PASS",
+      "details": "Running allocation 3 times produces identical results"
+    },
+    "finalization_stores_correct_split": {
+      "status": "PASS",
+      "details": "After trade, finalization stores A:5 games, B:3 games"
+    },
+    "finalized_history_survives_trade": {
+      "status": "PASS",
+      "details": "Post-period trade doesn't affect week 1 allocation"
+    },
+    "waiver_pickup_scores": {
+      "status": "PASS",
+      "details": "A drops Jan 7, B picks up Jan 8: A=2 games, B=4 games"
+    },
+    "retroactive_ownership_creation": {
+      "status": "PASS",
+      "details": "log_roster_change creates retroactive closed period from league season start when no open span exists"
+    },
+    "backfill_engine": {
+      "status": "PASS",
+      "details": "Backfill reconstructs ownership periods from trade records and activity feed"
+    },
+    "backfill_is_idempotent": {
+      "status": "PASS",
+      "details": "Running backfill twice produces same number of ownership periods"
+    },
+    "fallback_flags_uncertain": {
+      "status": "PASS",
+      "details": "When no ownership data and no backfill, results flagged uncertain=true, needs_backfill=true"
+    },
+    "admin_backfill_endpoint": {
+      "status": "PASS",
+      "details": "POST /api/admin/platform/backfill-ownership/69e46af167999bfb85c39628 - 200 OK (377 ownership periods, 279 lineup periods)"
+    }
+  },
+  "pytest_results": {
+    "file": "test_complete_history.py + test_game_allocation.py + test_api_flow_allocation.py",
+    "run_command": "cd /app/backend && python -m pytest tests/test_complete_history.py tests/test_game_allocation.py tests/test_api_flow_allocation.py -v",
+    "results": "49 passed, 0 failed (1 rerun on test_correction_to_original_owner)",
+    "test_breakdown": {
+      "test_complete_history.py": "21 tests - complete history seeding via League helper",
+      "test_game_allocation.py": "18 tests - pre-seeded ownership scenarios",
+      "test_api_flow_allocation.py": "10 tests - real API flow with retroactive ownership"
+    }
+  }
+}
