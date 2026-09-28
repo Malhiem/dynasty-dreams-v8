@@ -57,23 +57,26 @@ Build a comprehensive fantasy NHL management platform with advanced admin tools,
   - Team-league cross-validation (404 for mismatched IDs)
   - Handles mixed ObjectId/str commissioner_id comparison
 
-### Phase 8 - Historical Scoring Allocation Fix (Complete - Sep 28, 2026)
+### Phase 8 - Historical Scoring Allocation (Complete - Sep 28, 2026)
 - **Problem**: Trades, drops, pickups and lineup changes retroactively reassigned historical stats. Recalculation changed earlier standings.
-- **Solution**: Introduced `scoring_rosters` collection (per-team, per-week locked roster snapshots) and `roster_change_log` (append-only ledger of all roster mutations)
-- **New module**: `/app/backend/utils/scoring_roster.py` — `log_roster_change()`, `ensure_scoring_roster()`, `get_scoring_roster()`, `lock_league_week()`
-- **5 scoring paths updated** to use `get_scoring_roster()` instead of `team.get("roster")`:
-  - `scoring.py`: calculate_league_scoring, calculate_roto_standings
-  - `matchups.py`: calc_team_score (simulate_week), get_daily_scoring
-  - `roto.py`: _team_stat_totals
-  - `live_scoring_worker.py`: _recompute_team_live_totals
-  - `live_scoring.py`: get_team_live_scoring
-- **4 roster mutation points instrumented** with `log_roster_change()`:
-  - `trades.py`: trade execution (both sides logged)
-  - `roster.py`: add player, drop player
-  - `draft_pick_actions.py`: draft pick
-- **Admin endpoint**: `POST /api/admin/lock-scoring-rosters` for manual week locking
-- **Auto-lock**: simulate_week auto-locks all teams at matchup start
-- **Fallback**: When no snapshot exists, falls back to live roster (backward-compatible)
+- **Solution (Phase 8a)**: `scoring_rosters` collection (week-level snapshots) + `roster_change_log` audit trail
+- **Solution (Phase 8b)**: Point-in-time ownership (`player_ownership_periods`) + lineup eligibility (`lineup_status_periods`) tracking
+- **Module**: `/app/backend/utils/scoring_roster.py` — full rewrite with:
+  - `record_ownership_start/end` — open/close ownership spans
+  - `record_lineup_change` — track active/bench/IR position changes
+  - `get_owner_at(db, player_id, league_id, timestamp)` — who owned a player at time T?
+  - `get_roster_at(db, team_id, league_id, timestamp)` — team's roster at time T
+  - `is_lineup_eligible_at` — was player in an active position at time T?
+  - `get_eligible_roster_for_period(db, team_id, league_id, start, end)` — canonical scoring helper
+  - `week_to_time_range(league, week)` — convert week number to datetime range
+  - `get_scoring_roster` — unified entry point (period → week snapshot → live fallback)
+- **5 scoring paths** use `get_scoring_roster()` with period-aware resolution
+- **5 mutation points** write to both `roster_change_log` AND `player_ownership_periods`:
+  - `trades.py`, `roster.py` (add/drop), `draft_pick_actions.py`, `lineup.py` (position changes)
+- **Recomputation**: All endpoints accept `?week=N` to recompute using historical roster for that week, not current roster. Results are idempotent.
+- **API**: `GET /api/players/{id}/ownership-history`, `GET /api/players/{id}/lineup-history`
+- **Frontend**: `FantasyTransactionsTab` + `OwnershipTab` in PlayerCardModal now fetch real data (no more mock data)
+- **DailyGrid.tsx**: Fixed pre-existing TooltipProvider build error
 
 ## Key Files
 - `/app/backend/utils/scoring_roster.py` — Historical scoring roster module

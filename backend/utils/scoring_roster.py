@@ -1,72 +1,365 @@
-"""Historical scoring-roster helpers.
+"""Historical scoring-roster helpers — point-in-time ownership & lineup eligibility.
 
-Solves the "retroactive stat reassignment" bug: every scoring path
-previously read `team.roster` (the live/current roster), so a mid-week
-trade would retroactively credit historical stats to the new owner.
-
-This module introduces two collections and one key helper:
+Fixes the "retroactive stat reassignment" bug: stats are credited based on
+who owned the player AND whether the player was lineup-eligible at the time
+each stat was earned — not based on the current (live) roster.
 
 Collections
 -----------
-`scoring_rosters`  — per-team, per-week snapshots locked at the start of
-                     each matchup period.  Schema::
+``player_ownership_periods``
+    Continuous ownership ledger. Each doc represents one ownership span::
 
-    { league_id, team_id, week, roster: [str], lineup: {}, locked_at: datetime }
+        { player_id, team_id, league_id,
+          acquired_at: datetime, released_at: datetime|null,
+          source: "trade"|"add"|"draft"|"waiver"|"admin",
+          release_source: "trade"|"drop"|"release"|"admin"|null }
 
-    Unique index: (league_id, team_id, week)
+    ``released_at = null`` → player is currently on this team.
+    Unique compound: (player_id, league_id, acquired_at).
 
-`roster_change_log` — append-only ledger of every roster mutation
-                      (trade, drop, add, draft, waiver, admin).  Schema::
+``lineup_status_periods``
+    Tracks when players move between active / bench / IR / etc.::
 
-    { team_id, league_id, player_id, action: "add"|"remove",
-      source: "trade"|"drop"|"add"|"draft"|"waiver"|"admin"|"undo",
-      week, timestamp }
+        { player_id, team_id, league_id,
+          position: "forward"|"defense"|"goalie"|"bench"|"ir"|"ir-plus"|"taxi"|"minors",
+          started_at: datetime, ended_at: datetime|null }
 
-Helpers
--------
-`log_roster_change(db, ...)` — call from every roster-mutating code path.
-`ensure_scoring_roster(db, league, team_id, week)` — idempotent: creates
-    a scoring-roster snapshot for (team, week) if one doesn't exist yet.
-`get_scoring_roster(db, team_id, league_id, week)` — returns the locked
-    roster list for the given week. Falls back to current roster when no
-    snapshot exists (backward-compat for older leagues / pre-lock weeks).
-`lock_league_week(db, league)` — batch-lock every team in a league for
-    the current week (called on week-start or first scoring call).
+    ``ended_at = null`` → current position.
+
+``scoring_rosters``  (kept for fast weekly caching)
+``roster_change_log`` (kept for auditing)
+
+Key helpers
+-----------
+``record_ownership_start / record_ownership_end`` — write to ownership_periods
+``record_lineup_change``  — write to lineup_status_periods
+``get_owner_at``          — who owned player P in league L at time T?
+``get_roster_at``         — which players did team T own at time T?
+``is_lineup_eligible_at`` — was player P active (not bench/IR) at time T?
+``get_eligible_roster_for_period`` — the big one: returns only players who
+    were both owned AND lineup-eligible during [start, end], respecting
+    the league's lock rules.
+``get_scoring_roster``    — backward-compatible wrapper (week-based).
 """
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from bson import ObjectId
 
 logger = logging.getLogger("scoring_roster")
 
+ACTIVE_SECTIONS = {"forward", "defense", "goalie"}
 
-# ── Roster Change Log ────────────────────────────────────────────
 
-async def log_roster_change(
-    db,
-    *,
-    team_id: str,
-    league_id: str,
-    player_id: str,
-    action: str,          # "add" | "remove"
-    source: str,          # "trade" | "drop" | "add" | "draft" | "waiver" | "admin" | "undo"
-    week: Optional[int] = None,
-    metadata: Optional[dict] = None,
+# ──────────────────────────────────────────────────────────────────
+# Ownership Periods
+# ──────────────────────────────────────────────────────────────────
+
+async def record_ownership_start(
+    db, *, player_id: str, team_id: str, league_id: str,
+    source: str, timestamp: Optional[datetime] = None,
 ) -> None:
-    """Append one row to `roster_change_log`. Best-effort; never raises."""
+    """Open a new ownership span for (player, team, league)."""
+    now = timestamp or datetime.now(timezone.utc)
     try:
-        doc = {
+        await db.player_ownership_periods.insert_one({
+            "player_id": player_id,
             "team_id": team_id,
             "league_id": league_id,
-            "player_id": player_id,
-            "action": action,
+            "acquired_at": now,
+            "released_at": None,
             "source": source,
+            "release_source": None,
+        })
+    except Exception as exc:
+        logger.warning("ownership_start write failed: %s", exc)
+
+
+async def record_ownership_end(
+    db, *, player_id: str, team_id: str, league_id: str,
+    release_source: str, timestamp: Optional[datetime] = None,
+) -> None:
+    """Close the open ownership span for (player, team, league)."""
+    now = timestamp or datetime.now(timezone.utc)
+    try:
+        await db.player_ownership_periods.update_one(
+            {"player_id": player_id, "team_id": team_id,
+             "league_id": league_id, "released_at": None},
+            {"$set": {"released_at": now, "release_source": release_source}},
+        )
+    except Exception as exc:
+        logger.warning("ownership_end write failed: %s", exc)
+
+
+async def get_owner_at(
+    db, player_id: str, league_id: str, at: datetime,
+) -> Optional[str]:
+    """Return team_id that owned *player_id* at datetime *at*, or None."""
+    doc = await db.player_ownership_periods.find_one({
+        "player_id": player_id,
+        "league_id": league_id,
+        "acquired_at": {"$lte": at},
+        "$or": [
+            {"released_at": None},
+            {"released_at": {"$gt": at}},
+        ],
+    })
+    return doc["team_id"] if doc else None
+
+
+async def get_roster_at(
+    db, team_id: str, league_id: str, at: datetime,
+) -> list[str]:
+    """Return player_ids owned by *team_id* at datetime *at*."""
+    cursor = db.player_ownership_periods.find({
+        "team_id": team_id,
+        "league_id": league_id,
+        "acquired_at": {"$lte": at},
+        "$or": [
+            {"released_at": None},
+            {"released_at": {"$gt": at}},
+        ],
+    }, {"player_id": 1})
+    return [doc["player_id"] async for doc in cursor]
+
+
+async def get_player_ownership_history(
+    db, player_id: str, league_id: str,
+) -> list[dict]:
+    """Return full ownership timeline for a player in a league, newest first."""
+    cursor = db.player_ownership_periods.find(
+        {"player_id": player_id, "league_id": league_id},
+        {"_id": 0},
+    ).sort("acquired_at", -1)
+    return await cursor.to_list(200)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Lineup Status Periods
+# ──────────────────────────────────────────────────────────────────
+
+async def record_lineup_change(
+    db, *, player_id: str, team_id: str, league_id: str,
+    new_position: str, timestamp: Optional[datetime] = None,
+) -> None:
+    """Close the current lineup period and open a new one."""
+    now = timestamp or datetime.now(timezone.utc)
+    try:
+        # Close the current open period
+        await db.lineup_status_periods.update_one(
+            {"player_id": player_id, "team_id": team_id,
+             "league_id": league_id, "ended_at": None},
+            {"$set": {"ended_at": now}},
+        )
+        # Open a new period
+        await db.lineup_status_periods.insert_one({
+            "player_id": player_id,
+            "team_id": team_id,
+            "league_id": league_id,
+            "position": new_position,
+            "started_at": now,
+            "ended_at": None,
+        })
+    except Exception as exc:
+        logger.warning("lineup_change write failed: %s", exc)
+
+
+async def is_lineup_eligible_at(
+    db, player_id: str, team_id: str, league_id: str, at: datetime,
+) -> bool:
+    """Was the player in an active (scoring-eligible) position at *at*?
+
+    Active sections: forward, defense, goalie.
+    Bench, IR, IR+, taxi, minors are NOT eligible.
+
+    Falls back to True when no lineup_status_periods exist (backward compat).
+    """
+    doc = await db.lineup_status_periods.find_one({
+        "player_id": player_id,
+        "team_id": team_id,
+        "league_id": league_id,
+        "started_at": {"$lte": at},
+        "$or": [
+            {"ended_at": None},
+            {"ended_at": {"$gt": at}},
+        ],
+    })
+    if not doc:
+        return True  # No tracking data → assume eligible (backward compat)
+    return doc.get("position", "bench") in ACTIVE_SECTIONS
+
+
+async def get_player_lineup_history(
+    db, player_id: str, team_id: str, league_id: str,
+) -> list[dict]:
+    """Return lineup position timeline for a player, newest first."""
+    cursor = db.lineup_status_periods.find(
+        {"player_id": player_id, "team_id": team_id, "league_id": league_id},
+        {"_id": 0},
+    ).sort("started_at", -1)
+    return await cursor.to_list(500)
+
+
+# ──────────────────────────────────────────────────────────────────
+# Eligible Roster for a Period (the main scoring helper)
+# ──────────────────────────────────────────────────────────────────
+
+async def get_eligible_roster_for_period(
+    db, team_id: str, league_id: str,
+    period_start: datetime, period_end: datetime,
+) -> list[str]:
+    """Return player_ids that were BOTH owned by *team_id* AND in an
+    active lineup position for at least part of [period_start, period_end].
+
+    This is the canonical helper for all scoring computations.
+    """
+    # Step 1: all players owned during the period (ownership overlaps)
+    owned_cursor = db.player_ownership_periods.find({
+        "team_id": team_id,
+        "league_id": league_id,
+        "acquired_at": {"$lt": period_end},
+        "$or": [
+            {"released_at": None},
+            {"released_at": {"$gt": period_start}},
+        ],
+    }, {"player_id": 1})
+    owned_pids = [doc["player_id"] async for doc in owned_cursor]
+    if not owned_pids:
+        return []
+
+    # Step 2: filter to those who were lineup-eligible during the period
+    eligible = []
+    for pid in owned_pids:
+        # Check if any active lineup period overlaps with the scoring period
+        active_doc = await db.lineup_status_periods.find_one({
+            "player_id": pid,
+            "team_id": team_id,
+            "league_id": league_id,
+            "position": {"$in": list(ACTIVE_SECTIONS)},
+            "started_at": {"$lt": period_end},
+            "$or": [
+                {"ended_at": None},
+                {"ended_at": {"$gt": period_start}},
+            ],
+        })
+        if active_doc:
+            eligible.append(pid)
+        else:
+            # Backward compat: if NO lineup_status_periods exist for this
+            # player at all, assume eligible (data predates tracking).
+            has_any = await db.lineup_status_periods.find_one({
+                "player_id": pid, "team_id": team_id, "league_id": league_id,
+            })
+            if not has_any:
+                eligible.append(pid)
+
+    return eligible
+
+
+# ──────────────────────────────────────────────────────────────────
+# Week ↔ Time Range Resolution
+# ──────────────────────────────────────────────────────────────────
+
+def week_to_time_range(
+    league: dict, week: int,
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Convert a matchup week number to (start_dt, end_dt) using the
+    league's season_start_date and matchup_length_days.
+
+    Returns (None, None) if the league has no season_start_date.
+    """
+    start_str = league.get("season_start_date")
+    if not start_str:
+        return None, None
+    try:
+        season_start = datetime.fromisoformat(str(start_str).split("T", 1)[0])
+        season_start = season_start.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None, None
+    length = max(1, int(league.get("matchup_length_days") or 7))
+    period_start = season_start + timedelta(days=(week - 1) * length)
+    period_end = period_start + timedelta(days=length)
+    return period_start, period_end
+
+
+# ──────────────────────────────────────────────────────────────────
+# Scoring Roster — unified entry point
+# ──────────────────────────────────────────────────────────────────
+
+async def get_scoring_roster(
+    db, team_id: str, league_id: str,
+    week: Optional[int] = None,
+    period_start: Optional[datetime] = None,
+    period_end: Optional[datetime] = None,
+) -> list[str]:
+    """Return the roster to use for scoring.
+
+    Resolution order:
+      1. If period_start/period_end are given → point-in-time eligible roster.
+      2. If week is given → resolve to time range via league config, then (1).
+         Falls back to week-level scoring_rosters snapshot if league has no
+         season_start_date, then to live roster.
+      3. No week → live roster (current state).
+    """
+    # Direct time-range query
+    if period_start and period_end:
+        eligible = await get_eligible_roster_for_period(
+            db, team_id, league_id, period_start, period_end,
+        )
+        if eligible:
+            return eligible
+        # Fallback to live roster if no ownership data exists
+        team = await db.teams.find_one({"_id": ObjectId(team_id)}, {"roster": 1})
+        return list((team or {}).get("roster") or [])
+
+    # Week-based resolution
+    if week is not None:
+        league = await db.leagues.find_one(
+            {"_id": ObjectId(league_id)},
+            {"season_start_date": 1, "matchup_length_days": 1},
+        )
+        if league:
+            ps, pe = week_to_time_range(league, week)
+            if ps and pe:
+                eligible = await get_eligible_roster_for_period(
+                    db, team_id, league_id, ps, pe,
+                )
+                if eligible:
+                    return eligible
+
+        # Fall back to week-level snapshot
+        snap = await db.scoring_rosters.find_one({
+            "league_id": league_id,
+            "team_id": team_id,
             "week": week,
-            "timestamp": datetime.now(timezone.utc),
+        })
+        if snap:
+            return list(snap.get("roster") or [])
+
+    # Final fallback: live roster
+    team = await db.teams.find_one({"_id": ObjectId(team_id)}, {"roster": 1})
+    return list((team or {}).get("roster") or [])
+
+
+# ──────────────────────────────────────────────────────────────────
+# Roster Change Log (kept for auditing)
+# ──────────────────────────────────────────────────────────────────
+
+async def log_roster_change(
+    db, *, team_id: str, league_id: str, player_id: str,
+    action: str, source: str,
+    week: Optional[int] = None, metadata: Optional[dict] = None,
+) -> None:
+    """Append a row to roster_change_log AND update ownership periods."""
+    now = datetime.now(timezone.utc)
+    try:
+        doc = {
+            "team_id": team_id, "league_id": league_id,
+            "player_id": player_id, "action": action,
+            "source": source, "week": week, "timestamp": now,
         }
         if metadata:
             doc["metadata"] = metadata
@@ -74,25 +367,28 @@ async def log_roster_change(
     except Exception as exc:
         logger.warning("roster_change_log write failed: %s", exc)
 
+    # Also maintain ownership periods
+    if action == "add":
+        await record_ownership_start(
+            db, player_id=player_id, team_id=team_id,
+            league_id=league_id, source=source, timestamp=now,
+        )
+    elif action == "remove":
+        await record_ownership_end(
+            db, player_id=player_id, team_id=team_id,
+            league_id=league_id, release_source=source, timestamp=now,
+        )
 
-# ── Scoring Roster Snapshots ─────────────────────────────────────
 
-async def ensure_scoring_roster(
-    db,
-    league: dict,
-    team_id: str,
-    week: int,
-) -> dict:
-    """Idempotent: return the scoring-roster doc for (team, week).
+# ──────────────────────────────────────────────────────────────────
+# Scoring Roster Snapshots (week-level cache, kept for fast lookups)
+# ──────────────────────────────────────────────────────────────────
 
-    If none exists yet, snapshot the team's *current* roster+lineup
-    and persist it. Subsequent calls are no-ops (first write wins).
-    """
+async def ensure_scoring_roster(db, league: dict, team_id: str, week: int) -> dict:
+    """Idempotent week-level snapshot (first write wins)."""
     league_id = str(league["_id"])
     existing = await db.scoring_rosters.find_one({
-        "league_id": league_id,
-        "team_id": team_id,
-        "week": week,
+        "league_id": league_id, "team_id": team_id, "week": week,
     })
     if existing:
         return existing
@@ -102,77 +398,33 @@ async def ensure_scoring_roster(
         return {"roster": [], "lineup": {}}
 
     doc = {
-        "league_id": league_id,
-        "team_id": team_id,
-        "week": week,
+        "league_id": league_id, "team_id": team_id, "week": week,
         "roster": list(team.get("roster") or []),
         "lineup": dict(team.get("lineup") or {}),
         "locked_at": datetime.now(timezone.utc),
     }
     try:
         await db.scoring_rosters.insert_one(doc)
-        logger.info("scoring_roster locked: league=%s team=%s week=%d (%d players)",
-                     league_id, team_id, week, len(doc["roster"]))
     except Exception:
-        # Duplicate key race — another process won; read theirs.
         existing = await db.scoring_rosters.find_one({
-            "league_id": league_id,
-            "team_id": team_id,
-            "week": week,
+            "league_id": league_id, "team_id": team_id, "week": week,
         })
         if existing:
             return existing
     return doc
 
 
-async def get_scoring_roster(
-    db,
-    team_id: str,
-    league_id: str,
-    week: Optional[int] = None,
-) -> list[str]:
-    """Return the roster that should be used for scoring in *week*.
-
-    Priority:
-      1. Locked scoring-roster snapshot for (team, week).
-      2. Current live roster (fallback for weeks before the feature
-         existed, or when no lock has fired yet).
-    """
-    if week is not None:
-        snap = await db.scoring_rosters.find_one({
-            "league_id": league_id,
-            "team_id": team_id,
-            "week": week,
-        })
-        if snap:
-            return list(snap.get("roster") or [])
-
-    # Fallback: live roster
-    team = await db.teams.find_one({"_id": ObjectId(team_id)}, {"roster": 1})
-    return list((team or {}).get("roster") or [])
-
-
 async def lock_league_week(db, league: dict, week: Optional[int] = None) -> int:
-    """Batch-lock all teams in a league for *week* (default: current_week).
-
-    Returns the number of newly created snapshots.
-    """
+    """Batch-lock all teams in a league for *week*."""
     league_id = str(league["_id"])
     if week is None:
         week = int(league.get("current_week") or 1)
-
-    teams = await db.teams.find(
-        {"league_id": league_id},
-        {"_id": 1},
-    ).to_list(200)
-
+    teams = await db.teams.find({"league_id": league_id}, {"_id": 1}).to_list(200)
     created = 0
     for t in teams:
         tid = str(t["_id"])
         existing = await db.scoring_rosters.find_one({
-            "league_id": league_id,
-            "team_id": tid,
-            "week": week,
+            "league_id": league_id, "team_id": tid, "week": week,
         })
         if not existing:
             await ensure_scoring_roster(db, league, tid, week)
@@ -180,15 +432,16 @@ async def lock_league_week(db, league: dict, week: Optional[int] = None) -> int:
     return created
 
 
-# ── Index bootstrap (call once at startup) ───────────────────────
+# ──────────────────────────────────────────────────────────────────
+# Index bootstrap
+# ──────────────────────────────────────────────────────────────────
 
 async def ensure_indexes(db) -> None:
-    """Create required indexes for scoring_rosters and roster_change_log."""
+    """Create all required indexes."""
     try:
         await db.scoring_rosters.create_index(
             [("league_id", 1), ("team_id", 1), ("week", 1)],
-            unique=True,
-            name="ux_scoring_roster_league_team_week",
+            unique=True, name="ux_scoring_roster_league_team_week",
         )
         await db.roster_change_log.create_index(
             [("team_id", 1), ("timestamp", -1)],
@@ -197,6 +450,25 @@ async def ensure_indexes(db) -> None:
         await db.roster_change_log.create_index(
             [("league_id", 1), ("week", 1)],
             name="ix_roster_change_log_league_week",
+        )
+        # Ownership periods indexes
+        await db.player_ownership_periods.create_index(
+            [("player_id", 1), ("league_id", 1), ("acquired_at", -1)],
+            name="ix_ownership_player_league_time",
+        )
+        await db.player_ownership_periods.create_index(
+            [("team_id", 1), ("league_id", 1), ("acquired_at", 1), ("released_at", 1)],
+            name="ix_ownership_team_league_range",
+        )
+        # Lineup status periods indexes
+        await db.lineup_status_periods.create_index(
+            [("player_id", 1), ("team_id", 1), ("league_id", 1), ("started_at", -1)],
+            name="ix_lineup_status_player_team_time",
+        )
+        await db.lineup_status_periods.create_index(
+            [("team_id", 1), ("league_id", 1), ("position", 1),
+             ("started_at", 1), ("ended_at", 1)],
+            name="ix_lineup_status_team_position_range",
         )
     except Exception as exc:
         logger.warning("scoring_roster index creation: %s", exc)

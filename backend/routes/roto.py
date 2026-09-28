@@ -83,20 +83,31 @@ async def _team_stat_totals(db, league_id: str, period: Optional[int], periods: 
     for the target period (None → full season), or across a list of
     periods when *periods* is given (used by condensed-roto fresh totals).
 
-    Uses the historical scoring roster when available.
+    Uses historical scoring roster for the *requested* period — not the
+    current week — so recomputation is stable and idempotent.
 
     Returns: {team_id: {"team_name": str, "stats": {stat: float}}}
     """
     from utils.scoring_roster import get_scoring_roster
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
-    week = int((league or {}).get("current_week") or 0) or None
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+
+    # Determine which week to use for roster resolution:
+    # - Single period request → use that period's roster
+    # - Multi-period (condensed roto) → use the first period's roster
+    # - Full season (period=None, periods=None) → use current_week
+    if period is not None:
+        scoring_week = period
+    elif periods:
+        scoring_week = periods[0]
+    else:
+        scoring_week = int((league or {}).get("current_week") or 0) or None
 
     teams = await db.teams.find({"league_id": league_id}).to_list(200)
     out = {}
     for t in teams:
         agg: dict = {}
         tid = str(t["_id"])
-        roster = await get_scoring_roster(db, tid, league_id, week)
+        roster = await get_scoring_roster(db, tid, league_id, week=scoring_week)
         for pid in roster:
             try:
                 p = await db.players.find_one({"_id": ObjectId(pid)})

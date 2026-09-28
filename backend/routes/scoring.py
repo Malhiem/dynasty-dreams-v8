@@ -3,6 +3,7 @@ during Iter 108 server-extraction sweep. Endpoints/payloads/auth identical
 to the pre-extraction implementation.
 """
 from datetime import datetime, timezone
+from typing import Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
@@ -86,8 +87,12 @@ async def get_scoring_config(league_id: str, request: Request):
 
 
 @router.get("/scoring/calculate/{league_id}")
-async def calculate_league_scoring(league_id: str, request: Request):
-    """Calculate fantasy points for all teams in a league."""
+async def calculate_league_scoring(league_id: str, request: Request, week: Optional[int] = None):
+    """Calculate fantasy points for all teams in a league.
+
+    Accepts optional `?week=N` to compute using the historical roster
+    for that week. Defaults to current_week if omitted.
+    """
     db = _deps["db"]
     user = await _deps["get_current_user"](request)
     await require_league_member(db, user, league_id)
@@ -95,10 +100,10 @@ async def calculate_league_scoring(league_id: str, request: Request):
     config = await db.scoring_configs.find_one({"league_id": league_id})
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
 
-    # Use historical scoring roster when a current_week is known.
-    from utils.scoring_roster import get_scoring_roster, ensure_scoring_roster
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
-    week = int((league or {}).get("current_week") or 0) or None
+    from utils.scoring_roster import get_scoring_roster
+    if week is None:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
+        week = int((league or {}).get("current_week") or 0) or None
 
     results = []
     for team in teams:
@@ -124,8 +129,11 @@ async def calculate_league_scoring(league_id: str, request: Request):
 
 
 @router.get("/scoring/roto/{league_id}")
-async def calculate_roto_standings(league_id: str, request: Request):
-    """Calculate rotisserie standings across selected categories."""
+async def calculate_roto_standings(league_id: str, request: Request, week: Optional[int] = None):
+    """Calculate rotisserie standings across selected categories.
+
+    Accepts optional `?week=N` for historical recomputation.
+    """
     db = _deps["db"]
     user = await _deps["get_current_user"](request)
     await require_league_member(db, user, league_id)
@@ -138,8 +146,9 @@ async def calculate_roto_standings(league_id: str, request: Request):
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
 
     from utils.scoring_roster import get_scoring_roster
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
-    week = int((league or {}).get("current_week") or 0) or None
+    if week is None:
+        league = await db.leagues.find_one({"_id": ObjectId(league_id)}, {"current_week": 1})
+        week = int((league or {}).get("current_week") or 0) or None
 
     team_stats = []
     for team in teams:

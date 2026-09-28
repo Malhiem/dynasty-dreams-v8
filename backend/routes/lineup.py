@@ -258,6 +258,19 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
         {"$set": {"lineup": lineup, "lineup_updated_at": datetime.now(timezone.utc)}},
     )
 
+    # ── Historical lineup eligibility tracking ───────────────────
+    if moves:
+        try:
+            from utils.scoring_roster import record_lineup_change
+            for m in moves:
+                await record_lineup_change(
+                    db, player_id=m["player_id"], team_id=team_id,
+                    league_id=team["league_id"],
+                    new_position=m["to"].lower(),
+                )
+        except Exception:
+            pass
+
     if moves:
         try:
             log_activity = _deps.get("log_activity")

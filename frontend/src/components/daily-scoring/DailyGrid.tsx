@@ -96,8 +96,8 @@ export function DailyGrid({
             {players.map((p, idx) => {
               const streak = getHotStreak(p);
               return (
-              <TooltipProvider key={p.id} delayDuration={200}>
                 <tr
+                  key={p.id}
                   className={cn(
                     "border-t border-border/50 transition-colors hover:bg-secondary/30",
                     idx === 0 && "bg-primary/5"
@@ -108,6 +108,7 @@ export function DailyGrid({
                     <div className="font-medium truncate max-w-[140px] flex items-center gap-1">
                       {p.name}
                       {streak >= 3 && (
+                        <TooltipProvider delayDuration={200}>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span className="inline-flex" data-testid={`hot-streak-badge-${p.id}`}>
@@ -121,6 +122,7 @@ export function DailyGrid({
                             {streak}-day hot streak (above avg)
                           </TooltipContent>
                         </Tooltip>
+                        </TooltipProvider>
                       )}
                     </div>
                     <div className="text-[10px] text-muted-foreground">{p.team}</div>
@@ -133,6 +135,7 @@ export function DailyGrid({
                     const fpts = dayStats?.fpts || 0;
                     return (
                       <td key={d} className="px-1 py-2 text-center">
+                        <TooltipProvider delayDuration={200}>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span
@@ -156,6 +159,7 @@ export function DailyGrid({
                             </TooltipContent>
                           )}
                         </Tooltip>
+                        </TooltipProvider>
                       </td>
                     );
                   })}
@@ -165,7 +169,6 @@ export function DailyGrid({
                     </span>
                   </td>
                 </tr>
-              </TooltipProvider>
             );
             })}
             {/* Totals row */}

@@ -783,6 +783,63 @@ async def _recompute_team_salary_used(team_id: str) -> float:
     return float(used)
 
 
+
+# ─── Player Ownership & Lineup History API ────────────────────────
+
+@router.get("/players/{player_id}/ownership-history")
+async def get_player_ownership_history_endpoint(player_id: str, request: Request, league_id: str = ""):
+    """Return the ownership timeline for a player in a specific league.
+
+    Shows when each team acquired/released the player with timestamps and
+    sources (trade, draft, waiver, add, drop). Sorted newest-first.
+    Used by the Player Card's "Fantasy Transactions" tab.
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    await get_current_user(request)  # require authentication
+
+    from utils.scoring_roster import get_player_ownership_history
+    history = await get_player_ownership_history(db, player_id, league_id)
+
+    # Enrich with team names
+    team_name_cache: dict[str, str] = {}
+    for entry in history:
+        tid = entry.get("team_id", "")
+        if tid and tid not in team_name_cache:
+            team = await db.teams.find_one({"_id": ObjectId(tid)}, {"name": 1})
+            team_name_cache[tid] = (team or {}).get("name", "Unknown Team")
+        entry["team_name"] = team_name_cache.get(tid, "Unknown Team")
+        # Serialize datetimes
+        for key in ("acquired_at", "released_at"):
+            if entry.get(key):
+                entry[key] = entry[key].isoformat()
+
+    return {"player_id": player_id, "league_id": league_id, "history": history}
+
+
+@router.get("/players/{player_id}/lineup-history")
+async def get_player_lineup_history_endpoint(player_id: str, request: Request, league_id: str = "", team_id: str = ""):
+    """Return the lineup position timeline for a player.
+
+    Shows when the player was moved between active/bench/IR positions.
+    Used by the Player Card's "Fantasy Transactions" tab.
+    """
+    db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    await get_current_user(request)
+
+    from utils.scoring_roster import get_player_lineup_history
+    history = await get_player_lineup_history(db, player_id, team_id, league_id)
+
+    for entry in history:
+        for key in ("started_at", "ended_at"):
+            if entry.get(key):
+                entry[key] = entry[key].isoformat()
+
+    return {"player_id": player_id, "team_id": team_id, "league_id": league_id, "history": history}
+
+
+
 @router.post("/roster/{team_id}/add")
 async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     db = _deps["db"]

@@ -194,10 +194,18 @@ const mockLeagueMovements = (name: string) => [
 
 const movementTypeConfig: Record<string, { color: string; icon: string }> = {
   Traded: { color: "bg-primary/15 text-primary border-primary/30", icon: "↔" },
+  Trade: { color: "bg-primary/15 text-primary border-primary/30", icon: "↔" },
   Added: { color: "bg-success/15 text-success border-success/30", icon: "+" },
+  Add: { color: "bg-success/15 text-success border-success/30", icon: "+" },
   Dropped: { color: "bg-destructive/15 text-destructive border-destructive/30", icon: "−" },
+  Drop: { color: "bg-destructive/15 text-destructive border-destructive/30", icon: "−" },
+  Release: { color: "bg-destructive/15 text-destructive border-destructive/30", icon: "−" },
   Kept: { color: "bg-accent/15 text-accent border-accent/30", icon: "★" },
   Drafted: { color: "bg-secondary text-secondary-foreground border-border", icon: "🎯" },
+  Draft: { color: "bg-secondary text-secondary-foreground border-border", icon: "🎯" },
+  Waiver: { color: "bg-accent/15 text-accent border-accent/30", icon: "⏳" },
+  Lineup: { color: "bg-muted text-muted-foreground border-border", icon: "⇄" },
+  Admin: { color: "bg-muted text-muted-foreground border-border", icon: "⚙" },
 };
 
 const mockOwnership = () => [
@@ -495,9 +503,9 @@ const PlayerCardModal = ({ open, onOpenChange, player, defaultTab = "overview", 
                 <LeagueMovementsTab name={player.name} />
               )}
               {sideTab === "fantasy-transactions" && (
-                <FantasyTransactionsTab name={player.name} />
+                <FantasyTransactionsTab playerId={(player as any).id} leagueId={leagueId} />
               )}
-              {sideTab === "ownership" && <OwnershipTab />}
+              {sideTab === "ownership" && <OwnershipTab playerId={(player as any).id} leagueId={leagueId} />}
               {sideTab === "news" && <NewsTab news={news} />}
               {sideTab === "daily-scoring" && (
                 <DailyScoringTab
@@ -1067,26 +1075,98 @@ const LeagueMovementsTab = ({ name }: { name: string }) => {
 
 
 
-const FantasyTransactionsTab = ({ name }: { name: string }) => {
-  const transactions = mockFantasyTransactions(name);
+const FantasyTransactionsTab = ({ playerId, leagueId }: { playerId?: string; leagueId?: string }) => {
+  const [history, setHistory] = useState<any[]>([]);
+  const [lineupHistory, setLineupHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!playerId) { setLoading(false); return; }
+    let cancelled = false;
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const [ownerRes, lineupRes] = await Promise.all([
+          api.get(`/players/${playerId}/ownership-history`, { params: { league_id: leagueId || "" } }).catch(() => ({ data: { history: [] } })),
+          api.get(`/players/${playerId}/lineup-history`, { params: { league_id: leagueId || "", team_id: "" } }).catch(() => ({ data: { history: [] } })),
+        ]);
+        if (!cancelled) {
+          setHistory(ownerRes.data?.history || []);
+          setLineupHistory(lineupRes.data?.history || []);
+        }
+      } catch { /* fallback handled */ }
+      if (!cancelled) setLoading(false);
+    };
+    fetchData();
+    return () => { cancelled = true; };
+  }, [playerId, leagueId]);
+
+  // Merge ownership + lineup events into a unified timeline
+  const events: { date: string; type: string; detail: string; team: string }[] = [];
+  for (const h of history) {
+    events.push({
+      date: h.acquired_at ? new Date(h.acquired_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "—",
+      type: (h.source || "add").charAt(0).toUpperCase() + (h.source || "add").slice(1),
+      detail: `Acquired by ${h.team_name || "team"} via ${h.source || "unknown"}`,
+      team: h.team_name || "—",
+    });
+    if (h.released_at) {
+      events.push({
+        date: new Date(h.released_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }),
+        type: (h.release_source || "release").charAt(0).toUpperCase() + (h.release_source || "release").slice(1),
+        detail: `Released from ${h.team_name || "team"} via ${h.release_source || "release"}`,
+        team: h.team_name || "—",
+      });
+    }
+  }
+  for (const l of lineupHistory) {
+    events.push({
+      date: l.started_at ? new Date(l.started_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "—",
+      type: "Lineup",
+      detail: `Moved to ${(l.position || "bench").toUpperCase()}`,
+      team: "",
+    });
+  }
+  // Sort newest first
+  events.sort((a, b) => {
+    const da = new Date(a.date).getTime() || 0;
+    const db2 = new Date(b.date).getTime() || 0;
+    return db2 - da;
+  });
+
+  if (loading) {
+    return <div className="text-center text-muted-foreground py-12 text-sm">Loading transaction history...</div>;
+  }
+
   return (
-    <div className="space-y-3">
-      <h4 className="text-sm font-semibold">Fantasy Transaction History</h4>
-      {transactions.map((t, i) => (
-        <div
-          key={i}
-          className="flex items-center gap-3 p-3 rounded-lg bg-secondary/20 border border-border/50"
-        >
-          <Calendar className="h-4 w-4 text-accent flex-shrink-0" />
-          <div className="flex-1">
-            <p className="text-sm font-medium">{t.detail}</p>
-            <p className="text-xs text-muted-foreground">{t.date}</p>
-          </div>
-          <Badge variant="outline" className="text-xs">
-            {t.type}
-          </Badge>
+    <div className="space-y-3" data-testid="fantasy-transactions-tab">
+      <h4 className="text-sm font-semibold flex items-center gap-2">
+        <Calendar className="h-4 w-4 text-primary" />
+        Fantasy Transaction History
+      </h4>
+      {events.length === 0 ? (
+        <div className="p-3 rounded-lg bg-secondary/20 border border-border/50 text-xs text-muted-foreground italic">
+          No transaction history recorded yet.
         </div>
-      ))}
+      ) : (
+        events.map((t, i) => {
+          const config = movementTypeConfig[t.type] || movementTypeConfig.Added;
+          return (
+            <div key={i} className="flex items-center gap-3 p-3 rounded-lg bg-secondary/20 border border-border/50" data-testid={`fantasy-tx-${i}`}>
+              <div className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 border ${config.color} bg-background`}>
+                {config.icon}
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium">{t.detail}</p>
+                <p className="text-xs text-muted-foreground">{t.date}</p>
+              </div>
+              <Badge variant="outline" className={`text-xs border ${config.color}`}>
+                {t.type}
+              </Badge>
+            </div>
+          );
+        })
+      )}
     </div>
   );
 };
@@ -1152,32 +1232,73 @@ const NewsTab = ({ news }: { news: any[] }) => {
 
 // ── Ownership Tab ──────────────────────────────────────
 
-const OwnershipTab = () => {
-  const ownership = mockOwnership();
+const OwnershipTab = ({ playerId, leagueId }: { playerId?: string; leagueId?: string }) => {
+  const [history, setHistory] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!playerId) { setLoading(false); return; }
+    let cancelled = false;
+    api.get(`/players/${playerId}/ownership-history`, { params: { league_id: leagueId || "" } })
+      .then(({ data }) => { if (!cancelled) setHistory(data?.history || []); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [playerId, leagueId]);
+
+  if (loading) return <div className="text-center text-muted-foreground py-12 text-sm">Loading...</div>;
+
+  // Build ownership periods: current vs past
+  const current = history.find(h => !h.released_at);
+  const past = history.filter(h => h.released_at);
+
   return (
-    <div className="space-y-3">
-      <h4 className="text-sm font-semibold">Ownership Across Leagues</h4>
-      {ownership.map((o, i) => (
-        <div
-          key={i}
-          className="flex items-center justify-between p-3 rounded-lg bg-secondary/20 border border-border/50"
-        >
+    <div className="space-y-4" data-testid="ownership-tab">
+      <h4 className="text-sm font-semibold flex items-center gap-2">
+        <Users className="h-4 w-4 text-primary" />
+        Ownership Timeline
+      </h4>
+      {current ? (
+        <div className="flex items-center justify-between p-3 rounded-lg bg-primary/5 border border-primary/20">
           <div>
-            <p className="text-sm font-medium">{o.league}</p>
-            <p className="text-xs text-muted-foreground">{o.owner}</p>
+            <p className="text-sm font-medium">{current.team_name || "Unknown Team"}</p>
+            <p className="text-xs text-muted-foreground">
+              Since {current.acquired_at ? new Date(current.acquired_at).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "—"}
+              {current.source ? ` (via ${current.source})` : ""}
+            </p>
           </div>
-          <Badge
-            variant="outline"
-            className={`text-xs ${
-              o.status === "Available"
-                ? "border-success text-success"
-                : "border-primary text-primary"
-            }`}
-          >
-            {o.status}
-          </Badge>
+          <Badge variant="outline" className="text-xs border-primary text-primary">Current</Badge>
         </div>
-      ))}
+      ) : (
+        <div className="p-3 rounded-lg bg-secondary/20 border border-border/50 text-xs text-muted-foreground italic">
+          Not currently rostered in this league.
+        </div>
+      )}
+      {past.length > 0 && (
+        <>
+          <p className="text-xs text-muted-foreground font-medium pt-1">Previous Owners</p>
+          {past.map((h, i) => (
+            <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-secondary/20 border border-border/50">
+              <div>
+                <p className="text-sm font-medium">{h.team_name || "Unknown Team"}</p>
+                <p className="text-xs text-muted-foreground">
+                  {h.acquired_at ? new Date(h.acquired_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                  {" → "}
+                  {h.released_at ? new Date(h.released_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}
+                </p>
+              </div>
+              <Badge variant="outline" className="text-xs">
+                {h.source || "—"} → {h.release_source || "—"}
+              </Badge>
+            </div>
+          ))}
+        </>
+      )}
+      {history.length === 0 && (
+        <div className="p-3 rounded-lg bg-secondary/20 border border-border/50 text-xs text-muted-foreground italic">
+          No ownership history recorded yet.
+        </div>
+      )}
     </div>
   );
 };
