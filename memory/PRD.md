@@ -41,14 +41,16 @@ Build a comprehensive fantasy NHL management platform with advanced admin tools,
 - Traded picks honored in draft auto-pick + manual pick
 - Sandbox login fix (UserLogin accepts .local emails)
 
-### Phase 7 - Private League API Security (Complete - Sep 26, 2026)
+### Phase 7 - Private League API Security (Complete - Sep 28, 2026)
 - **Created**: `/app/backend/routes/league_guards.py` — centralized `require_league_member()` and `verify_team_in_league()` guards
-- **18 endpoints protected** across 5 route files:
+- **21 endpoints protected** across 7 route files:
   - `leagues.py`: get_league, get_standings, get_divisions, get_schedule_config, get_playoff_bracket, roster-limits, lock-status, premium-status, veto-threshold-preview, emergency-swap-budget
   - `scoring.py`: get_scoring_config, calculate_league_scoring, calculate_roto_standings
   - `roto.py`: roto_catalog, roto_standings, roto_matchup, roto_recompute
   - `matchups.py`: get_matchups, get_current_week, get_daily_scoring, get_week_results
   - `live_scoring.py`: get_team_live_scoring, get_league_live_scoring, get_team_week_summary
+  - `lineup.py`: get_team_lineup, get_team_compliance
+  - `draft_inspection.py`: get_team_draft_picks
 - **Guards enforce**:
   - Authentication required (401 for unauthenticated)
   - League membership required (403 for non-members)
@@ -62,10 +64,15 @@ Build a comprehensive fantasy NHL management platform with advanced admin tools,
 - `/app/backend/routes/roto.py` — Rotisserie endpoints
 - `/app/backend/routes/matchups.py` — Matchup + daily scoring endpoints
 - `/app/backend/routes/live_scoring.py` — Live scoring endpoints
+- `/app/backend/routes/lineup.py` — Lineup + compliance endpoints
+- `/app/backend/routes/draft_inspection.py` — Draft read-only endpoints
 - `/app/backend/routes/trades.py` — Trade execution, review period
 - `/app/backend/routes/draft_helpers.py` — Auto-pick with traded pick support
 - `/app/frontend/src/components/daily-scoring/` — Daily scoring components
 - `/app/frontend/src/lovable/pages/PlayoffBracket.tsx` — Bracket visualizer
+
+## Known Issues
+- GET /api/teams (without league_id) returns 500 due to pre-existing ObjectId serialization bug in team_to_response (LOW priority)
 
 ## Backlog / Upcoming
 - P2: UX polish on Drag-and-Drop Division step

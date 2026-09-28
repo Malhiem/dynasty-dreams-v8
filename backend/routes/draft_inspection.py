@@ -901,7 +901,7 @@ async def get_draft_player_stats(draft_id: str):
 # Iter 166 — Per-team draft picks (currently owned). Powers the
 # Roster page's Draft Picks section + the team's pick provenance chips.
 @router.get("/teams/{team_id}/draft-picks")
-async def get_team_draft_picks(team_id: str, year: Optional[int] = None):
+async def get_team_draft_picks(team_id: str, request: Request, year: Optional[int] = None):
     """Return every pick currently owned by this team.
 
     A pick is considered "currently owned" when its `current_team_id`
@@ -917,6 +917,14 @@ async def get_team_draft_picks(team_id: str, year: Optional[int] = None):
     `(league_id, year)` against the league's drafts collection.
     """
     db = _db()
+    # SEC-002 — auth + league-membership guard
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    team = await db.teams.find_one({"_id": ObjectId(team_id)}, {"league_id": 1})
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    from routes.league_guards import require_league_member
+    await require_league_member(db, user, team.get("league_id") or "")
     query = {"current_team_id": team_id}
     if year:
         query["year"] = int(year)

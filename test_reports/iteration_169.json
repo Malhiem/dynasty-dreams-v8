@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration 169 - Team endpoint security fix testing complete. All 13 backend tests passed verifying: (1) Unauthenticated users get 401 on all 3 protected team endpoints, (2) Invalid/expired tokens get 401, (3) Non-existent teams return 404 when authenticated, (4) Authenticated admin CAN access team data with 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/teams (without league_id)",
+        "issue": "Returns 500 due to ObjectId serialization error in team_to_response - owner_id not converted to string. This is a pre-existing bug unrelated to the security fix.",
+        "priority": "LOW"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter169_team_endpoint_security.py",
+    "/app/test_reports/pytest/iter169_team_security.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Security fix correctly implemented: require_league_member guard applied to all 3 team endpoints",
+    "GET /api/teams/{team_id}/lineup (lines 325-335) - auth + membership check via require_league_member",
+    "GET /api/teams/{team_id}/compliance (lines 338-352) - auth + membership check via require_league_member",
+    "GET /api/teams/{team_id}/draft-picks (lines 903-927) - auth + membership check via require_league_member",
+    "All 3 endpoints correctly return 401 for unauthenticated requests",
+    "All 3 endpoints correctly return 401 for invalid/expired tokens",
+    "All 3 endpoints correctly return 404 for non-existent teams (when authenticated)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter169_team_endpoint_security.py"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13 tests passed)",
+    "frontend": "N/A (backend security fix only)"
+  },
+  "test_credentials": "Email: admin@dynastydreams.com / Password: Admin123!",
+  "seed_data_creation": "None - used existing team 69e59b33cbd3fea02a914c79 from league 69e46af167999bfb85c39629",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 169 verified team endpoint security fix. Three endpoints now require authentication (401 for unauthenticated/invalid token) and league membership (403 for non-members). Non-existent teams return 404. Test file: /app/backend/tests/test_iter169_team_endpoint_security.py. Note: GET /api/teams without league_id has a pre-existing ObjectId serialization bug (returns 500) - unrelated to this security fix.",
+  "security_fix_verified": {
+    "endpoints_protected": [
+      "GET /api/teams/{team_id}/lineup",
+      "GET /api/teams/{team_id}/compliance",
+      "GET /api/teams/{team_id}/draft-picks"
+    ],
+    "guards_used": [
+      "require_league_member - ensures user is authenticated AND is a member of the league"
+    ],
+    "unauthenticated_returns": "401 Unauthorized",
+    "invalid_token_returns": "401 Unauthorized",
+    "non_existent_team_returns": "404 Not Found",
+    "authenticated_member_returns": "200 OK"
+  }
+}

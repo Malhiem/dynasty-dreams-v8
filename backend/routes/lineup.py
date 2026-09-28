@@ -325,24 +325,33 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
 @router.get("/teams/{team_id}/lineup")
 async def get_team_lineup(team_id: str, request: Request):
     db = _deps["db"]
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
     team = await db.teams.find_one({"_id": ObjectId(team_id)})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    from routes.league_guards import require_league_member
+    await require_league_member(db, user, team.get("league_id") or "")
     return {"team_id": team_id, "lineup": team.get("lineup") or {}}
 
 
 @router.get("/teams/{team_id}/compliance")
-async def get_team_compliance(team_id: str):
+async def get_team_compliance(team_id: str, request: Request):
     """Return roster compliance status and reasons.
 
     See iter-83/iter-84 docs for reason codes:
       - roster_size_exceeded, over_salary_cap, healthy_on_ir, minor_ineligible.
     """
     db = _deps["db"]
-    _recompute_team_salary_used = _deps["_recompute_team_salary_used"]
-    team = await db.teams.find_one({"_id": ObjectId(team_id)})
-    if not team:
+    get_current_user = _deps["get_current_user"]
+    user = await get_current_user(request)
+    team_doc = await db.teams.find_one({"_id": ObjectId(team_id)})
+    if not team_doc:
         raise HTTPException(status_code=404, detail="Team not found")
+    from routes.league_guards import require_league_member
+    await require_league_member(db, user, team_doc.get("league_id") or "")
+    _recompute_team_salary_used = _deps["_recompute_team_salary_used"]
+    team = team_doc
     league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
 
     reasons: list[dict] = []
