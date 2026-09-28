@@ -1,0 +1,130 @@
+{
+  "summary": "Iteration 175 - Historical Scoring Allocation Engine Bug Fix Verification Complete. ALL 28 pytest tests pass (18 pre-seeded ownership tests + 10 API-flow tests). Admin backfill endpoint verified working with idempotency.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_game_allocation.py",
+    "/app/backend/tests/test_api_flow_allocation.py",
+    "/app/test_reports/pytest/iter175_allocation.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "All 28 pytest tests pass covering all 5 user-reported failure scenarios",
+    "CRITICAL FIX VERIFIED: record_ownership_end (lines 123-164) now creates retroactive ownership period when no open span exists",
+    "CRITICAL FIX VERIFIED: log_roster_change (lines 421-491) accepts timestamp param, seeds initial lineup on add, closes lineup periods on remove",
+    "CRITICAL FIX VERIFIED: allocate_team_period_fpts (lines 265-295) returns 0 with uncertain=true, needs_backfill=true when no ownership data (instead of silently giving stats to current owner)",
+    "API Test: POST /api/admin/platform/backfill-ownership/69e46af167999bfb85c39628 - 200 OK (377 ownership periods created)",
+    "API Test: Backfill idempotency verified - same count (377) on repeated runs",
+    "API Test: Auth guard working - returns 401 without token"
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (28/28 pytest tests + 3/3 API integration tests)"
+  },
+  "test_credentials": "Email: admin@dynastydreams.com / Password: Admin123!",
+  "seed_data_creation": "Pytest tests create isolated test databases (test_alloc_{ObjectId} and test_apiflow_{ObjectId}) with test data and clean up after.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 175 verified the ROOT CAUSE fix for all 5 user-reported historical scoring allocation failures. Key fixes verified: (1) record_ownership_end creates retroactive periods when no initial span exists, (2) fallback returns 0 with uncertain flag instead of aggregate, (3) log_roster_change accepts timestamp + seeds initial lineup, (4) lineup period close on remove, (5) date handling preserves time precision. Test files: /app/backend/tests/test_game_allocation.py (18 tests) + /app/backend/tests/test_api_flow_allocation.py (10 tests).",
+  "verified_features": {
+    "retroactive_ownership_creation": {
+      "status": "PASS",
+      "details": "record_ownership_end creates retroactive closed period from league season start when no open span exists"
+    },
+    "trade_10_6_split": {
+      "status": "PASS",
+      "details": "Player scores 10 goals (5 games) on Team A, traded, scores 6 goals (3 games) on Team B. Result: A=10, B=6"
+    },
+    "drop_preserves_earlier_earnings": {
+      "status": "PASS",
+      "details": "Team A's stats unchanged when Team B drops the player"
+    },
+    "pickup_after_drop_excludes_unowned_gap": {
+      "status": "PASS",
+      "details": "Games during unowned interval (Jan 8-9) not credited to either team"
+    },
+    "drop_and_reacquire_preserves_stats": {
+      "status": "PASS",
+      "details": "Both ownership intervals preserved, earlier stats retained"
+    },
+    "bench_period_excludes_stats": {
+      "status": "PASS",
+      "details": "Games while player on bench are excluded from scoring"
+    },
+    "bench_to_active_excludes_bench_stats": {
+      "status": "PASS",
+      "details": "Only post-activation games count"
+    },
+    "correction_applies_to_original_owner": {
+      "status": "PASS",
+      "details": "Correction to pre-trade game changes Team A, not Team B"
+    },
+    "roto_allocation_via_api_flow": {
+      "status": "PASS",
+      "details": "Roto stats split correctly after trade via API flow"
+    },
+    "recomputation_is_idempotent": {
+      "status": "PASS",
+      "details": "Running allocation twice produces identical results"
+    },
+    "fallback_flags_uncertain": {
+      "status": "PASS",
+      "details": "When no ownership data and no backfill, results flagged uncertain=true, needs_backfill=true"
+    },
+    "backfill_is_idempotent": {
+      "status": "PASS",
+      "details": "Running backfill twice produces same number of ownership periods (377)"
+    },
+    "admin_backfill_requires_auth": {
+      "status": "PASS",
+      "details": "Backfill endpoint returns 401 without admin auth"
+    }
+  },
+  "api_endpoints_tested": [
+    "POST /api/admin/platform/backfill-ownership/69e46af167999bfb85c39628 - 200 OK (377 periods)",
+    "POST /api/admin/platform/backfill-ownership/69e46af167999bfb85c39628 (2nd run) - 200 OK (377 periods, idempotent)",
+    "POST /api/admin/platform/backfill-ownership/69e46af167999bfb85c39628 (no auth) - 401 Unauthorized"
+  ],
+  "pytest_results": {
+    "file": "/app/backend/tests/test_game_allocation.py + /app/backend/tests/test_api_flow_allocation.py",
+    "run_command": "cd /app/backend && python -m pytest tests/test_game_allocation.py tests/test_api_flow_allocation.py -v",
+    "results": "28 passed, 0 failed",
+    "scenarios_tested": [
+      "Trade 10/6 goal split (pre-seeded)",
+      "Drop + reacquisition unowned gap (pre-seeded)",
+      "Drop preserves earlier earnings (pre-seeded)",
+      "Reacquisition excludes unowned stats (pre-seeded)",
+      "Bench period excludes stats (pre-seeded)",
+      "IR period excludes stats (pre-seeded)",
+      "Correction applies to original owner (pre-seeded)",
+      "Late import goes to owner at game time (pre-seeded)",
+      "Recomputation is idempotent (pre-seeded)",
+      "Recomputation after correction is stable (pre-seeded)",
+      "Roto stats split correctly (pre-seeded)",
+      "Backfill from trades (pre-seeded)",
+      "Backfill is idempotent (pre-seeded)",
+      "Backfill inferred baseline for no events (pre-seeded)",
+      "Fallback flags uncertain when no ownership (pre-seeded)",
+      "Backfilled league returns zero for empty team (pre-seeded)",
+      "Known unowned awards no stats (pre-seeded)",
+      "End-to-end backfill then allocate (pre-seeded)",
+      "Trade creates retroactive ownership (API flow)",
+      "Trade with midnight games and midnight trade (API flow)",
+      "Drop preserves historical stats (API flow)",
+      "Pickup after drop excludes unowned gap (API flow)",
+      "Drop and reacquire preserves earlier stats (API flow)",
+      "Active to bench excludes bench stats (API flow)",
+      "Bench to active excludes bench stats (API flow)",
+      "Correction after trade goes to original owner (API flow)",
+      "Roto allocation via API flow (API flow)",
+      "Recomputation idempotent via API flow (API flow)"
+    ]
+  }
+}

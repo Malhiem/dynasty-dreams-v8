@@ -54,6 +54,48 @@ logger = logging.getLogger("scoring_roster")
 ACTIVE_SECTIONS = {"forward", "defense", "goalie"}
 
 
+def _resolve_league_start_dt(league: Optional[dict]) -> datetime:
+    """Return the league's season start as a UTC datetime.
+
+    Falls back to league created_at, then to a hardcoded epoch.
+    """
+    if league:
+        ssd = league.get("season_start_date")
+        if ssd:
+            try:
+                dt = datetime.fromisoformat(str(ssd).split("T", 1)[0])
+                return dt.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                pass
+        created = league.get("created_at")
+        if created:
+            if isinstance(created, datetime):
+                return created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created
+            try:
+                return datetime.fromisoformat(str(created)).replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                pass
+    return datetime(2025, 10, 1, tzinfo=timezone.utc)
+
+
+def _section_to_canonical(section: str) -> str:
+    """Map lineup section names to canonical position names."""
+    section = section.lower()
+    if section in ("forward", "forwards", "f", "c", "lw", "rw", "w"):
+        return "forward"
+    if section in ("defense", "d", "defence"):
+        return "defense"
+    if section in ("goalie", "goalies", "g", "goalies_minors"):
+        return "goalie"
+    if section in ("ir", "ir-plus", "ir+", "injured_reserve"):
+        return "ir"
+    if section in ("taxi", "taxi_squad"):
+        return "taxi"
+    if section in ("minors", "minor"):
+        return "minors"
+    return "bench"
+
+
 # ──────────────────────────────────────────────────────────────────
 # Ownership Periods
 # ──────────────────────────────────────────────────────────────────
@@ -82,14 +124,42 @@ async def record_ownership_end(
     db, *, player_id: str, team_id: str, league_id: str,
     release_source: str, timestamp: Optional[datetime] = None,
 ) -> None:
-    """Close the open ownership span for (player, team, league)."""
+    """Close the open ownership span for (player, team, league).
+
+    If no open span exists (initial ownership was never seeded), creates
+    a retroactive closed period from the league's season start to *now*.
+    This preserves the old team's historical stat credit.
+    """
     now = timestamp or datetime.now(timezone.utc)
     try:
-        await db.player_ownership_periods.update_one(
+        result = await db.player_ownership_periods.update_one(
             {"player_id": player_id, "team_id": team_id,
              "league_id": league_id, "released_at": None},
             {"$set": {"released_at": now, "release_source": release_source}},
         )
+        if result.modified_count == 0:
+            # No open span found → initial ownership was never seeded.
+            # Create a retroactive closed period so the old team retains
+            # credit for games during its ownership.
+            league = await db.leagues.find_one(
+                {"_id": ObjectId(league_id)},
+                {"season_start_date": 1, "created_at": 1},
+            )
+            start = _resolve_league_start_dt(league)
+            await db.player_ownership_periods.insert_one({
+                "player_id": player_id,
+                "team_id": team_id,
+                "league_id": league_id,
+                "acquired_at": start,
+                "released_at": now,
+                "source": "inferred_initial",
+                "release_source": release_source,
+            })
+            logger.info(
+                "Created retroactive ownership for player %s on team %s "
+                "(league %s): %s → %s [source: inferred_initial]",
+                player_id, team_id, league_id, start, now,
+            )
     except Exception as exc:
         logger.warning("ownership_end write failed: %s", exc)
 
@@ -352,9 +422,16 @@ async def log_roster_change(
     db, *, team_id: str, league_id: str, player_id: str,
     action: str, source: str,
     week: Optional[int] = None, metadata: Optional[dict] = None,
+    timestamp: Optional[datetime] = None,
 ) -> None:
-    """Append a row to roster_change_log AND update ownership periods."""
-    now = datetime.now(timezone.utc)
+    """Append a row to roster_change_log AND update ownership + lineup periods.
+
+    Args:
+        timestamp: When the change occurred. Defaults to now if not given.
+            Passing an explicit time is important for retroactive processing
+            (e.g., waiver claims, test fixtures).
+    """
+    now = timestamp or datetime.now(timezone.utc)
     try:
         doc = {
             "team_id": team_id, "league_id": league_id,
@@ -367,17 +444,51 @@ async def log_roster_change(
     except Exception as exc:
         logger.warning("roster_change_log write failed: %s", exc)
 
-    # Also maintain ownership periods
+    # Maintain ownership periods
     if action == "add":
         await record_ownership_start(
             db, player_id=player_id, team_id=team_id,
             league_id=league_id, source=source, timestamp=now,
         )
+        # Seed initial lineup position from team's current lineup state.
+        # This ensures no gap exists for eligibility checks.
+        try:
+            team = await db.teams.find_one(
+                {"_id": ObjectId(team_id)}, {"lineup": 1},
+            )
+            lineup = (team or {}).get("lineup") or {}
+            player_slot = lineup.get(player_id)
+            if isinstance(player_slot, dict):
+                section = (player_slot.get("section") or "bench").lower()
+            else:
+                section = "bench"
+            # Map section to canonical position
+            position = _section_to_canonical(section)
+            await db.lineup_status_periods.insert_one({
+                "player_id": player_id,
+                "team_id": team_id,
+                "league_id": league_id,
+                "position": position,
+                "started_at": now,
+                "ended_at": None,
+            })
+        except Exception as exc:
+            logger.warning("initial lineup seed failed: %s", exc)
+
     elif action == "remove":
         await record_ownership_end(
             db, player_id=player_id, team_id=team_id,
             league_id=league_id, release_source=source, timestamp=now,
         )
+        # Close any open lineup period for this player on this team
+        try:
+            await db.lineup_status_periods.update_many(
+                {"player_id": player_id, "team_id": team_id,
+                 "league_id": league_id, "ended_at": None},
+                {"$set": {"ended_at": now}},
+            )
+        except Exception as exc:
+            logger.warning("lineup period close on remove failed: %s", exc)
 
 
 # ──────────────────────────────────────────────────────────────────

@@ -18,32 +18,45 @@ Build a fantasy hockey league management platform with dynasty features — mult
 
 ## What's Been Implemented
 
-### Historical Scoring Allocation Engine (P0 — COMPLETE)
-- **Point-in-Time Ownership Tracking** (`/app/backend/utils/scoring_roster.py`):
-  Records exact timestamps for ownership and lineup eligibility changes.
-  All 15 roster mutation paths instrumented.
-- **Game-Level Allocation Engine** (`/app/backend/utils/game_allocation.py`):
-  Allocates stats by cross-referencing each game's puck-drop time with
-  ownership/lineup intervals. Never uses simple period aggregation.
-- **Evidence-Based Backfill** (`/app/backend/utils/backfill_ownership.py`):
-  Reconstructs ownership and lineup periods from executed trades, activity
-  feed events, and roster change logs. Idempotent. Tags each period with
-  evidence source (trade, activity_feed, inferred_baseline, etc.).
-  Marks periods with insufficient evidence rather than inventing history.
-- **Uncertainty-Aware Fallback**: When no ownership data exists and backfill
-  hasn't been run, results are flagged `uncertain: true, needs_backfill: true`
-  instead of silently giving all stats to the current roster owner.
-- **Admin Backfill Endpoints**:
-  - `POST /api/admin/platform/backfill-ownership/{league_id}` — Per-league
-  - `POST /api/admin/platform/backfill-ownership` — All leagues
-- **Verified Behaviors** (18 acceptance tests + 6 API tests, 100% pass):
-  - Trade: 10/6 goal split preserved
-  - Drop: earlier earnings stay with original owner
-  - Reacquisition: unowned gap stats excluded
-  - Bench/IR: ineligible period stats excluded
-  - Late import/correction: goes to owner at game time
-  - Recomputation: fully idempotent
-  - Known unowned ≠ missing history (distinct handling)
+### Historical Scoring Allocation Engine (P0 — COMPLETE, HARDENED)
+
+**Core Engine** (`/app/backend/utils/game_allocation.py`):
+- Allocates stats by cross-referencing each game's date/time with ownership & lineup intervals
+- Never uses simple period aggregation
+- Game dates preserve time precision (puck-drop > midnight fallback)
+
+**Point-in-Time Ownership** (`/app/backend/utils/scoring_roster.py`):
+- `record_ownership_start/end` manage ownership periods
+- **Critical fix**: `record_ownership_end` creates RETROACTIVE ownership period (from league season start) when no initial span exists. This ensures trades/drops correctly preserve the old team's historical stats even when initial ownership was never seeded.
+- `log_roster_change` accepts optional `timestamp` for retroactive processing
+- On `add`: seeds initial `lineup_status_period` from team's lineup state
+- On `remove`: closes both ownership and lineup periods
+
+**Evidence-Based Backfill** (`/app/backend/utils/backfill_ownership.py`):
+- Reconstructs ownership from executed trades, activity feed, roster change logs
+- Tags each period with evidence source (trade, activity_feed, inferred_baseline, etc.)
+- Idempotent and safe to re-run
+- Admin endpoints:
+  - `POST /api/admin/platform/backfill-ownership/{league_id}`
+  - `POST /api/admin/platform/backfill-ownership`
+
+**Uncertainty-Aware Fallback**:
+- No ownership data + no backfill → returns `{uncertain: true, needs_backfill: true}` with 0 points
+- No ownership data + backfilled → returns 0 (genuine empty result)
+- NEVER silently gives all stats to the current roster owner
+
+**Verified Behaviors** (28 tests + 3 API tests, 100% pass):
+- Trade: 10/6 goal split (5:3 game ratio) ✓
+- Trade: retroactive ownership created for old team ✓
+- Drop: earlier earnings preserved ✓
+- Drop + reacquisition: unowned gap excluded ✓
+- Active→bench: bench-period stats excluded ✓
+- Bench→active: pre-activation stats excluded ✓
+- Late import/correction: goes to owner at game time ✓
+- Roto: follows same ownership rules ✓
+- Recomputation: fully idempotent ✓
+- Known unowned ≠ missing history ✓
+- Backfill: idempotent, evidence-tagged ✓
 
 ### Other Completed Features
 - League creation wizard and settings
@@ -76,7 +89,7 @@ Build a fantasy hockey league management platform with dynasty features — mult
 ## Key Technical Conventions
 - **Timezones**: Always `datetime(…, tzinfo=timezone.utc)`. Never `datetime.date` in MongoDB queries.
 - **Scoring Integrity**: Always use `game_allocation.py` functions. Never simple period aggregation.
-- **Ownership Data**: Check `league.ownership_backfilled_at` before trusting allocation results.
+- **Ownership Data**: `record_ownership_end` auto-creates retroactive periods. Check `league.ownership_backfilled_at` for bulk data.
 - **MongoDB**: All ObjectId fields through `PyObjectId` annotated type. `from_mongo()`/`to_mongo()` helpers.
 
 ## Test Credentials

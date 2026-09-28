@@ -141,17 +141,33 @@ def calc_game_roto_stats_from_game_log(game_log: dict, is_goalie: bool) -> dict:
 # ──────────────────────────────────────────────────────────────────
 
 async def _build_game_date_map(db, game_ids: list) -> dict[int, datetime]:
-    """Map NHL game_ids → game date (midnight UTC) using the games collection."""
+    """Map NHL game_ids → game start time using the games collection.
+
+    Prefers explicit start_time/puck_drop field. Falls back to the date
+    field as midnight UTC (convention: transactions AFTER midnight on the
+    game date mean the game is credited to the pre-transaction owner).
+    """
     if not game_ids:
         return {}
     result = {}
-    # game_ids in live_stats are ints like 2025021289
     cursor = db.games.find(
         {"nhl_game_id": {"$in": game_ids}},
-        {"nhl_game_id": 1, "date": 1},
+        {"nhl_game_id": 1, "date": 1, "start_time": 1, "puck_drop": 1},
     )
     async for g in cursor:
         try:
+            # Prefer explicit start_time or puck_drop
+            start = g.get("start_time") or g.get("puck_drop")
+            if start:
+                if isinstance(start, datetime):
+                    dt = start if start.tzinfo else start.replace(tzinfo=timezone.utc)
+                else:
+                    dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                result[g["nhl_game_id"]] = dt
+                continue
+            # Fall back to date string → midnight UTC
             d = str(g["date"]).split("T")[0]
             result[g["nhl_game_id"]] = datetime.fromisoformat(d).replace(tzinfo=timezone.utc)
         except Exception:
@@ -160,14 +176,26 @@ async def _build_game_date_map(db, game_ids: list) -> dict[int, datetime]:
 
 
 def _parse_game_date(date_val) -> Optional[datetime]:
-    """Parse a date string or datetime to midnight UTC."""
+    """Parse a date/datetime value to a UTC datetime.
+
+    Preserves time component when available. Falls back to midnight UTC
+    for date-only strings.
+    """
     if isinstance(date_val, datetime):
-        return date_val.replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=timezone.utc)
+        return date_val.replace(tzinfo=timezone.utc) if date_val.tzinfo is None else date_val
     if date_val:
         try:
-            return datetime.fromisoformat(str(date_val).split("T")[0]).replace(tzinfo=timezone.utc)
+            s = str(date_val).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
         except Exception:
-            pass
+            try:
+                # Date-only string
+                return datetime.fromisoformat(str(date_val).split("T")[0]).replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
     return None
 
 
@@ -253,26 +281,18 @@ async def allocate_team_period_fpts(
                 "uncertain": False,
             }
         # Not backfilled — we have insufficient evidence.
-        # Return uncertain result with a needs_backfill flag.
-        # Do NOT fall back to current roster (that produces wrong results).
+        # Return 0 with uncertain flag. Do NOT aggregate current roster
+        # stats (that produces the exact "all stats go to current owner"
+        # bug we are fixing).
         logger.warning(
             "No ownership data for team %s in league %s (period %s–%s). "
             "Run backfill to populate historical ownership.",
             team_id, league_id, period_start, period_end,
         )
-        team = await db.teams.find_one({"_id": ObjectId(team_id)}, {"roster": 1})
-        roster = list((team or {}).get("roster") or [])
-        if not roster:
-            return {
-                "total_fpts": 0.0, "game_count": 0, "player_breakdown": {},
-                "uncertain": True, "needs_backfill": True,
-            }
-        # Return a conservative estimate using the legacy aggregate path
-        # but clearly flagged as uncertain.
-        result = await _fallback_aggregate_scoring(db, team_id, roster, config)
-        result["uncertain"] = True
-        result["needs_backfill"] = True
-        return result
+        return {
+            "total_fpts": 0.0, "game_count": 0, "player_breakdown": {},
+            "uncertain": True, "needs_backfill": True,
+        }
 
     # Step 2: Build per-player ownership intervals for fast in-memory checks
     ownership_by_player: dict[str, list[tuple[datetime, Optional[datetime]]]] = {}
@@ -436,14 +456,7 @@ async def allocate_team_period_roto_stats(
             "Run backfill to populate historical ownership.",
             team_id, league_id, period_start, period_end,
         )
-        team = await db.teams.find_one({"_id": ObjectId(team_id)}, {"roster": 1})
-        roster = list((team or {}).get("roster") or [])
-        if not roster:
-            result = {cat: 0 for cat in categories}
-            result["uncertain"] = True
-            result["needs_backfill"] = True
-            return result
-        result = await _fallback_aggregate_roto(db, roster, categories)
+        result = {cat: 0 for cat in categories}
         result["uncertain"] = True
         result["needs_backfill"] = True
         return result
@@ -571,19 +584,21 @@ def _eligible_at_mem(
 ) -> bool:
     """Check lineup eligibility from pre-loaded periods (no DB call).
 
-    No data → assume eligible (backward compat).
+    No data → assume eligible (backward compat for un-tracked leagues).
+    Gap in data → assume eligible (the gap typically represents the
+    initial active state before any lineup change was recorded).
     """
     from utils.scoring_roster import ACTIVE_SECTIONS
     at = _normalize_dt(at)
     periods = lineup_by_player.get(player_id, [])
     if not periods:
-        return True  # No tracking data → assume eligible
+        return True  # No tracking data at all → assume eligible
     for started, ended, position in periods:
         started = _normalize_dt(started)
         ended = _normalize_dt(ended)
         if started <= at and (ended is None or ended > at):
             return position in ACTIVE_SECTIONS
-    return True  # No matching period → assume eligible (gap in data)
+    return True  # Gap in data → assume eligible (pre-tracking period)
 
 
 # ──────────────────────────────────────────────────────────────────
