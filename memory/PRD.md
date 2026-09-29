@@ -34,24 +34,20 @@ Every scoring calculation resolves stats at the **individual game level** using 
    - Tags each period with evidence source
    - Idempotent (safe to re-run)
 
-### Verified Behaviors (49 tests, 100% pass rate)
-- ✅ Fixed roster: 5 games × 2 goals = 10 goals
-- ✅ Trade: 10/6 goal split (5:3 game ratio, fpts + roto)
-- ✅ Drop: earlier earnings preserved
-- ✅ Pickup after drop: unowned gap excluded (2 games not credited)
-- ✅ Drop + reacquire: both intervals preserved, gap excluded
-- ✅ Active→bench: bench-period stats excluded
-- ✅ Bench→active: only post-activation stats counted
-- ✅ Historical correction: goes to original owner at game time
-- ✅ Multiple trades: three-way split (A→B→C)
-- ✅ Recomputation: fully idempotent (3 runs identical)
-- ✅ Finalization: stores correct trade split
-- ✅ Finalized history: survives post-period trade
-- ✅ Waiver pickup: correct split with gap
-- ✅ Retroactive ownership: created when initial span missing
-- ✅ Backfill: evidence-based, idempotent
-- ✅ Uncertainty flagging: 0 with uncertain=true when no data
-- ✅ Daily breakdown: checks lineup eligibility
+### Verified Behaviors (69 tests across 3 suites, 100% pass rate)
+
+**E2E Allocation Suite (38 tests — `test_e2e_allocation.py`)**
+- ✅ Fixed roster controls: H2H points, H2H categories, Roto (3 tests)
+- ✅ Trade 10/6 split, drop preserves stats, unowned gap excluded, reacquisition, multiple trades (A→B→C), no overlap verification, multi-player partial trade, waiver pickup after gap (8 tests)
+- ✅ Active→bench, bench→active, eligibility at puck drop, mid-game lineup no change, IR→active, bench→active→bench sandwich (6 tests)
+- ✅ Late import uses game time, correction to original owner, no duplication on reimport, goalie scoring allocation (4 tests)
+- ✅ Finalization after trade, finalize-before-trade-then-recalculate, breakdown agrees with total, fpts idempotent with trade (4 tests)
+- ✅ Roto historical ownership, no retroactive movement, recomputation idempotent, correction updates allocation (4 tests)
+- ✅ Missing vs unowned, uncertain not definitive zero, backfill uses evidence, current roster not season-long, repeated backfill no duplicates (5 tests)
+- ✅ Game before transaction → old owner, game exactly at transaction → new owner, timezone equivalence, same-day double-header trade between puck drops (4 tests)
+
+**Complete History Suite (18 tests — `test_complete_history.py`)**
+**API Flow Allocation Suite (13 tests — `test_api_flow_allocation.py`)**
 
 ### Key Conventions
 - **Fixture requirements**: Tests MUST seed initial ownership + lineup periods, use numeric game IDs with matching game records
