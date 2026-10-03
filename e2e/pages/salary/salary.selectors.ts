@@ -1,0 +1,23 @@
+import type {Page} from '@playwright/test';
+export const selectors={
+ trade:(p:Page,id:string)=>p.getByTestId(`roster-trade-btn-${id}`),
+ asset:(p:Page,id:string)=>p.getByTestId(`tb-asset-${id}`),
+ retain:(p:Page,id:string)=>p.getByTestId(`tb-asset-${id}`).getByRole('checkbox',{name:'Retain salary'}),
+ percentage:(p:Page,id:string)=>p.getByTestId(`tb-asset-${id}`).getByRole('slider'),
+ capHit:(p:Page)=>p.getByTestId('cap-overview-card-hit'),
+ dead:(p:Page)=>p.getByTestId('cap-overview-card-dead'),
+ tab:(p:Page)=>p.getByRole('tab',{name:'Salary Cap & Contracts',exact:true}),
+ cap:(p:Page)=>p.getByTestId('rules-schedule-salary-cap-card'),
+ retention:(p:Page)=>p.getByTestId('rules-schedule-retention-card'),
+ amount:(p:Page)=>p.getByTestId('rules-schedule-cap-amount-input'),
+ next:(p:Page)=>p.getByTestId('rules-schedule-cap-yr1-input'),
+ saveCap:(p:Page)=>p.getByTestId('rules-schedule-cap-save'),
+ saveRetention:(p:Page)=>p.getByTestId('rules-schedule-retention-save'),
+ slots:(p:Page)=>p.getByTestId('rules-schedule-retention-slots-input'),
+ maxPct:(p:Page)=>p.getByTestId('rules-schedule-retention-max-pct-input'),
+ enabled:(p:Page)=>p.getByTestId('rules-schedule-retention-enabled'),
+ rookie:(p:Page)=>p.getByTestId('rules-cap-default-rookie-aav'),
+ denied:(p:Page)=>p.getByRole('alert').filter({hasText:'Only the league commissioner'}),
+ error:(p:Page)=>p.getByText('Salary save unavailable',{exact:true}),
+ salaryHeading:(p:Page)=>p.getByRole('heading',{name:'Salary Cap',exact:true}),
+};

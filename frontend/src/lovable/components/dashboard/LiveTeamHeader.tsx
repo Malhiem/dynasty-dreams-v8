@@ -1,0 +1,218 @@
+// @ts-nocheck
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import api from "@/lib/api";
+import { useActiveLeague } from "@/hooks/use-active-league";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ArrowRight, Flame, Radio, ListOrdered } from "lucide-react";
+import TeamLogo from "@/lovable/components/TeamLogo";
+import TeamLogoUploader from "@/lovable/components/TeamLogoUploader";
+import TeamClaimCounter from "@/lovable/components/dashboard/TeamClaimCounter";
+import { useSeasonStreaks, streakChip } from "@/hooks/use-season-streaks";
+
+/**
+ * Live header that sits atop the Lovable Team page.
+ * Reads the user's active team from /api/live-scoring/team/{id} and surfaces
+ * real roster size, live fpts, rank, and a "View full roster" CTA.
+ */
+export default function LiveTeamHeader() {
+  const { league, leagueTeams, myTeam, myLeagues, leagueId, switchLeague, reloadTeams } = useActiveLeague();
+  const { streaks } = useSeasonStreaks(leagueId);
+  const [live, setLive] = useState(null);
+  const [week, setWeek] = useState(null);
+  // Iter 230z — Waiver pick rank chip. Only renders when the league
+  // actually has waivers enabled AND the requesting user owns a team
+  // in that league (the endpoint returns `my_rank: null` for outsiders).
+  const [waiver, setWaiver] = useState(null);
+
+  useEffect(() => {
+    if (!myTeam?.id) return;
+    let cancelled = false;
+    Promise.all([
+      api.get(`/live-scoring/team/${myTeam.id}`),
+      api.get(`/live-scoring/team/${myTeam.id}/week`),
+    ])
+      .then(([l, w]) => {
+        if (cancelled) return;
+        setLive(l.data);
+        setWeek(w.data);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [myTeam?.id]);
+
+  useEffect(() => {
+    if (!leagueId) { setWaiver(null); return; }
+    let cancelled = false;
+    const fetchWaiver = () => {
+      api.get(`/leagues/${leagueId}/waiver-priority`)
+        .then((r) => { if (!cancelled) setWaiver(r.data); })
+        .catch(() => { if (!cancelled) setWaiver(null); });
+    };
+    fetchWaiver();
+    // Iter 230af — Refetch the waiver chip on tab focus + visibility
+    // change so commissioners who flip "Enable waiver wire" in the
+    // Transactions Config card see the chip update next time they
+    // come back to the page, without a hard refresh.
+    const onFocus = () => fetchWaiver();
+    const onVisible = () => { if (document.visibilityState === "visible") fetchWaiver(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [leagueId]);
+
+  if (!myTeam) {
+    return (
+      <div className="surface p-5 mb-6 border border-white/5 text-sm text-[#A1A1AA]">
+        You don&apos;t own a team in any demo league yet. Visit <Link to="/leagues" className="text-[#00D2FF]">/leagues</Link> to join one.
+      </div>
+    );
+  }
+
+  const top = live?.players?.filter(p => p.games > 0)?.[0];
+
+  return (
+    <div
+      data-testid="live-team-header"
+      className="surface p-5 mb-6 border border-[#00D2FF]/30 bg-gradient-to-br from-[#00D2FF]/5 to-transparent"
+    >
+      <div className="flex items-start justify-between flex-wrap gap-4">
+        <div className="flex items-start gap-4 flex-1 min-w-[240px]">
+          {/* Iter 230ad — Restore logo editing on the Team page. iter
+              230z dedupe accidentally removed the only `TeamLogoUploader`
+              instance on the page; this LiveTeamHeader now hosts it for
+              the user's own team (camera-on-hover → file picker).
+              Read-only <TeamLogo /> is still used for other-team views
+              (where the LiveTeamHeader is rendered but the user has no
+              edit rights to it — `myTeam` is always the requester's
+              team here, so the uploader is safe to mount). */}
+          <TeamLogoUploader
+            teamId={myTeam.id}
+            name={myTeam.name}
+            abbr={myTeam.logo_abbr}
+            logo={myTeam.logo_url}
+            size="lg"
+            onChange={() => {
+              // Iter 230ad — Hard reload the active-league hook so the
+              // new logo_url is reflected immediately on the page
+              // (matches what Team.tsx's uploader call site did via
+              // `reloadTeams?.()`).
+              try { reloadTeams?.(); } catch { /* non-fatal */ }
+            }}
+          />
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-2">
+              <Radio size={14} className="text-[#00D2FF] animate-pulse" />
+              <span className="text-[10px] uppercase tracking-widest text-[#00D2FF]">LIVE · {league?.name}</span>
+            </div>
+            <Link
+              to="/roster"
+              className="font-heading text-3xl font-bold text-white tracking-tight hover:text-[#00D2FF] transition-colors block"
+            >
+              {myTeam.name}
+            </Link>
+            {(() => {
+              const chip = streakChip(streaks?.[myTeam.id]?.active);
+              if (!chip) return null;
+              return (
+                <div className="mt-1">
+                  <span
+                    data-testid={`dashboard-streak-chip-${myTeam.id}`}
+                    title={`${chip.count} consecutive ${chip.label === "Hot" ? "winning" : "losing"} seasons`}
+                    className={`inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                      chip.tone === "hot"
+                        ? "bg-orange-500/20 text-orange-300 border-orange-400/40"
+                        : "bg-sky-500/20 text-sky-200 border-sky-400/40"
+                    }`}
+                  >
+                    {chip.emoji} {chip.label} streak · {chip.count} seasons
+                  </span>
+                </div>
+              );
+            })()}
+            <div className="text-[#A1A1AA] text-sm mt-1">
+              Record <span className="text-white">{myTeam.wins || 0}–{myTeam.losses || 0}–{myTeam.ties || 0}</span>
+              {' · '}
+              Roster <span className="text-white">{(myTeam.roster || []).length} players</span>
+              {' · '}
+              Rank <span className="text-white">#{week?.rank || '—'}/{week?.total_teams || leagueTeams?.length || '?'}</span>
+              {/* Iter 230z — Waiver pick rank when applicable. */}
+              {waiver?.enabled && waiver?.my_rank ? (
+                <>
+                  {' · '}
+                  <span
+                    data-testid="live-team-header-waiver-rank"
+                    title={`Waiver priority order: ${waiver.priority_order || 'reverse_standings_serpentine'}`}
+                    className="inline-flex items-center gap-1"
+                  >
+                    <ListOrdered className="inline h-3 w-3 -mt-0.5" />
+                    Waiver <span className="text-white">#{waiver.my_rank}/{waiver.total_teams || leagueTeams?.length || '?'}</span>
+                  </span>
+                </>
+              ) : null}
+            </div>
+            {/* Iter 230z — Claims chip moved up from the duplicate team
+                hero into this header (single source of truth on the
+                Team page). Renders `Claims · Season N · Week M` when
+                visible per the league's claim_rules.pending_visibility. */}
+            <div className="mt-2" data-testid="live-team-header-claims-row">
+              <TeamClaimCounter teamId={myTeam.id} />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-6 flex-wrap">
+          <div className="text-right">
+            <div className="text-[10px] uppercase text-[#52525B]">Today</div>
+            <div className="text-2xl font-bold text-[#00D2FF] tabular-nums">
+              {week?.daily_fpts?.toFixed(1) || '—'}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] uppercase text-[#52525B]">This Week</div>
+            <div className="text-2xl font-bold text-white tabular-nums">
+              {week?.weekly_fpts?.toFixed(1) || '—'}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] uppercase text-[#52525B]">Season FPTS</div>
+            <div className="text-2xl font-bold text-white tabular-nums">
+              {live?.live_points?.toFixed(1) || '—'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {top && (
+        <Link
+          to={`/players/${top.id}`}
+          className="mt-4 flex items-center gap-3 p-3 bg-black/30 rounded-lg hover:bg-black/50 transition-colors"
+        >
+          <Flame size={16} className="text-orange-400 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-[10px] uppercase tracking-wider text-[#A1A1AA]">Top Performer</div>
+            <div className="text-white text-sm font-semibold truncate">{top.name}</div>
+            <div className="text-[#52525B] text-[11px]">
+              {top.team} · {top.position}
+              {top.is_goalie
+                ? ` · ${top.saves || 0} SV / ${top.goals_against || 0} GA`
+                : ` · ${top.goals}G ${top.assists}A ${top.shots}SOG`}
+            </div>
+          </div>
+          <div className="text-[#00D2FF] font-bold tabular-nums">+{top.fpts?.toFixed(1)}</div>
+        </Link>
+      )}
+
+      <div className="mt-4 flex items-center justify-between flex-wrap gap-2">
+        {/* League switcher + "View full roster" CTA removed — user is already
+            inside the league page (/team) so both controls were redundant
+            and confusing. */}
+      </div>
+    </div>
+  );
+}

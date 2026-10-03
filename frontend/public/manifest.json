@@ -1,0 +1,46 @@
+{
+  "name": "DynastyDreams Fantasy Hockey",
+  "short_name": "DynastyDreams",
+  "description": "Dynasty fantasy hockey leagues, drafts, prospect pools, and live scoring — built for serious commissioners and owners.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#0B0B0F",
+  "background_color": "#0B0B0F",
+  "categories": ["sports", "games", "entertainment"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Draft Room",
+      "short_name": "Draft",
+      "description": "Open the live Draft Room",
+      "url": "/draft-room"
+    },
+    {
+      "name": "My Lineups",
+      "short_name": "Lineups",
+      "description": "Set this week's starters",
+      "url": "/lineups"
+    },
+    {
+      "name": "Trades",
+      "short_name": "Trades",
+      "description": "Review pending trade proposals",
+      "url": "/trades"
+    }
+  ]
+}

@@ -1,0 +1,2465 @@
+{
+  "league_id": "69e46af167999bfb85c39628",
+  "league_name": "Ice Kings Head-to-Head",
+  "captured_at": "20260621-054704",
+  "trades": [],
+  "activity_feed": [
+    {
+      "_id": "69e819eb126ea0a754ae225c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-22T00:44:27.958000"
+    },
+    {
+      "_id": "69e819ec126ea0a754ae225f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-22T00:44:28.101000"
+    },
+    {
+      "_id": "69e81b8b126ea0a754ae2264",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-22T00:51:23.827000"
+    },
+    {
+      "_id": "69e81b8b126ea0a754ae2267",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-22T00:51:23.964000"
+    },
+    {
+      "_id": "69e844e79db565cd3fc4b258",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-22T03:47:51.267000"
+    },
+    {
+      "_id": "69e844e79db565cd3fc4b25b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-22T03:47:51.406000"
+    },
+    {
+      "_id": "69e844f7762bbe3fb1905203",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-22T03:48:07.253000"
+    },
+    {
+      "_id": "69e844f7762bbe3fb1905206",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-22T03:48:07.389000"
+    },
+    {
+      "_id": "69e844f7762bbe3fb190520b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-22T03:48:07.656000"
+    },
+    {
+      "_id": "69ec2d1f46d920fbb5797d5f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T02:55:27.702000"
+    },
+    {
+      "_id": "69ec2d1f46d920fbb5797d62",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T02:55:27.843000"
+    },
+    {
+      "_id": "69ec2d2046d920fbb5797d67",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T02:55:28.030000"
+    },
+    {
+      "_id": "69ec2d3546d920fbb5797d6a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T02:55:49.136000"
+    },
+    {
+      "_id": "69ec2d3546d920fbb5797d6d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T02:55:49.272000"
+    },
+    {
+      "_id": "69ec2d3546d920fbb5797d72",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T02:55:49.542000"
+    },
+    {
+      "_id": "69ec2fad6d3d6beeb4f6c8bb",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T03:06:21.045000"
+    },
+    {
+      "_id": "69ec2fad6d3d6beeb4f6c8be",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T03:06:21.180000"
+    },
+    {
+      "_id": "69ec2fad6d3d6beeb4f6c8c3",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T03:06:21.362000"
+    },
+    {
+      "_id": "69ec2fb46d3d6beeb4f6c8c6",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T03:06:28.533000"
+    },
+    {
+      "_id": "69ec2fb46d3d6beeb4f6c8c9",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T03:06:28.669000"
+    },
+    {
+      "_id": "69ec2fb46d3d6beeb4f6c8ce",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T03:06:28.936000"
+    },
+    {
+      "_id": "69ec301947fd5315bc6b0d73",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T03:08:09.036000"
+    },
+    {
+      "_id": "69ec301947fd5315bc6b0d76",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T03:08:09.171000"
+    },
+    {
+      "_id": "69ec301947fd5315bc6b0d7b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T03:08:09.440000"
+    },
+    {
+      "_id": "69ec3f8f83fe714752570d38",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T04:14:07.368000"
+    },
+    {
+      "_id": "69ec3f8f83fe714752570d3b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T04:14:07.505000"
+    },
+    {
+      "_id": "69ec3f8f83fe714752570d40",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T04:14:07.778000"
+    },
+    {
+      "_id": "69ec406687746aabf653fb38",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T04:17:42.230000"
+    },
+    {
+      "_id": "69ec406687746aabf653fb3b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T04:17:42.372000"
+    },
+    {
+      "_id": "69ec406687746aabf653fb40",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T04:17:42.647000"
+    },
+    {
+      "_id": "69ec40c4d471298b6e1e663e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T04:19:16.832000"
+    },
+    {
+      "_id": "69ec40c4d471298b6e1e6641",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T04:19:16.968000"
+    },
+    {
+      "_id": "69ec40c5d471298b6e1e6646",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T04:19:17.240000"
+    },
+    {
+      "_id": "69ec4b16367a2e07edee9dc5",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T05:03:18.151000"
+    },
+    {
+      "_id": "69ec4b16367a2e07edee9dc8",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T05:03:18.290000"
+    },
+    {
+      "_id": "69ec4b16367a2e07edee9dcd",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T05:03:18.562000"
+    },
+    {
+      "_id": "69ec53040366f5bd232c9db3",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T05:37:08.949000"
+    },
+    {
+      "_id": "69ec53050366f5bd232c9db6",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T05:37:09.088000"
+    },
+    {
+      "_id": "69ec53050366f5bd232c9dbb",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T05:37:09.359000"
+    },
+    {
+      "_id": "69ec5af4609e470846ba15f1",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T06:11:00.225000"
+    },
+    {
+      "_id": "69ec5af4609e470846ba15f4",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T06:11:00.361000"
+    },
+    {
+      "_id": "69ec5af4609e470846ba15f9",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T06:11:00.632000"
+    },
+    {
+      "_id": "69ecd8306a632a3a783537d4",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:05:20.049000"
+    },
+    {
+      "_id": "69ecd8306a632a3a783537d7",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:05:20.184000"
+    },
+    {
+      "_id": "69ecd8306a632a3a783537dc",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:05:20.454000"
+    },
+    {
+      "_id": "69ecd983eefb0b04554e27a8",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:10:59.179000"
+    },
+    {
+      "_id": "69ecd983eefb0b04554e27ab",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:10:59.318000"
+    },
+    {
+      "_id": "69ecd983eefb0b04554e27b0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:10:59.600000"
+    },
+    {
+      "_id": "69ecdde4266df5c8ba2a39e1",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:29:40.921000"
+    },
+    {
+      "_id": "69ecdde5266df5c8ba2a39e4",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:29:41.060000"
+    },
+    {
+      "_id": "69ecdde5266df5c8ba2a39e9",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:29:41.332000"
+    },
+    {
+      "_id": "69ecdf537c3e95b3d783e70f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:35:47.034000"
+    },
+    {
+      "_id": "69ecdf697c3e95b3d783e714",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:36:09.203000"
+    },
+    {
+      "_id": "69ecdf697c3e95b3d783e717",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:36:09.338000"
+    },
+    {
+      "_id": "69ecdf697c3e95b3d783e71c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T15:36:09.608000"
+    },
+    {
+      "_id": "69ed2375d9f22ebbf638f5bb",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T20:26:29.086000"
+    },
+    {
+      "_id": "69ed2375d9f22ebbf638f5be",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T20:26:29.226000"
+    },
+    {
+      "_id": "69ed2375d9f22ebbf638f5c3",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-25T20:26:29.498000"
+    },
+    {
+      "_id": "69eda370e55baa18c14f2a89",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T05:32:32.827000"
+    },
+    {
+      "_id": "69eda370e55baa18c14f2a8c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T05:32:32.966000"
+    },
+    {
+      "_id": "69eda371e55baa18c14f2a91",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T05:32:33.239000"
+    },
+    {
+      "_id": "69eda7eb6577e738ade813b7",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T05:51:39.118000"
+    },
+    {
+      "_id": "69eda7eb6577e738ade813ba",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T05:51:39.256000"
+    },
+    {
+      "_id": "69eda7eb6577e738ade813bf",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T05:51:39.528000"
+    },
+    {
+      "_id": "69edbb4d1c188ea76e0570ed",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T07:14:21.676000"
+    },
+    {
+      "_id": "69edbb4d1c188ea76e0570f0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T07:14:21.817000"
+    },
+    {
+      "_id": "69edbb4e1c188ea76e0570f5",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T07:14:22.093000"
+    },
+    {
+      "_id": "69ee55fcac6e49c1f1b785cc",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T18:14:20.749000"
+    },
+    {
+      "_id": "69ee55fcac6e49c1f1b785cf",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T18:14:20.888000"
+    },
+    {
+      "_id": "69ee55fdac6e49c1f1b785d4",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-26T18:14:21.162000"
+    },
+    {
+      "_id": "69eec84fa86ba9b5d60c343d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T02:22:07.688000"
+    },
+    {
+      "_id": "69eec84fa86ba9b5d60c3440",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T02:22:07.827000"
+    },
+    {
+      "_id": "69eec850a86ba9b5d60c3445",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T02:22:08.101000"
+    },
+    {
+      "_id": "69eed27506aa73ae1b08bb28",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:05:25.637000"
+    },
+    {
+      "_id": "69eed27506aa73ae1b08bb2e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:05:25.777000"
+    },
+    {
+      "_id": "69eed27606aa73ae1b08bb36",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:05:26.054000"
+    },
+    {
+      "_id": "69eed313161d11abb25c1629",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:08:03.817000"
+    },
+    {
+      "_id": "69eed344161d11abb25c1647",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:08:52.966000"
+    },
+    {
+      "_id": "69eed3ee161d11abb25c1651",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:11:42.488000"
+    },
+    {
+      "_id": "69eed51b9ff1038729859cac",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:16:43.774000"
+    },
+    {
+      "_id": "69eed64d0be0b6ed68798547",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:21:49.510000"
+    },
+    {
+      "_id": "69eed95573d0363b16228759",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:34:45.281000"
+    },
+    {
+      "_id": "69eed95573d0363b16228763",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:34:45.998000"
+    },
+    {
+      "_id": "69eeda8473d0363b16228783",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:39:48.687000"
+    },
+    {
+      "_id": "69eeda8673d0363b1622878b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:39:50.025000"
+    },
+    {
+      "_id": "69eeda8673d0363b16228795",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:39:50.745000"
+    },
+    {
+      "_id": "69eeda8e73d0363b1622879d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:39:58.237000"
+    },
+    {
+      "_id": "69eeda8e73d0363b162287a3",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:39:58.382000"
+    },
+    {
+      "_id": "69eeda8e73d0363b162287ab",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:39:58.658000"
+    },
+    {
+      "_id": "69eedc1f78dadc8430c9ccfc",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:46:39.412000"
+    },
+    {
+      "_id": "69eedc2078dadc8430c9cd04",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:46:40.486000"
+    },
+    {
+      "_id": "69eedc2178dadc8430c9cd0e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:46:41.263000"
+    },
+    {
+      "_id": "69eedc2878dadc8430c9cd16",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:46:48.948000"
+    },
+    {
+      "_id": "69eedc3578dadc8430c9cd24",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:47:01.227000"
+    },
+    {
+      "_id": "69eedc3578dadc8430c9cd2a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:47:01.369000"
+    },
+    {
+      "_id": "69eedc3578dadc8430c9cd32",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:47:01.643000"
+    },
+    {
+      "_id": "69eedc3c78dadc8430c9cd38",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:47:08.698000"
+    },
+    {
+      "_id": "69eedc3c78dadc8430c9cd3e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:47:08.841000"
+    },
+    {
+      "_id": "69eedc3d78dadc8430c9cd46",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:47:09.115000"
+    },
+    {
+      "_id": "69eedca178dadc8430c9cd4c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:48:49.413000"
+    },
+    {
+      "_id": "69eede3a3344d6d51c05544d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:55:38.850000"
+    },
+    {
+      "_id": "69eede3b3344d6d51c055457",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T03:55:39.561000"
+    },
+    {
+      "_id": "69eee1c63344d6d51c05545f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T04:10:46.096000"
+    },
+    {
+      "_id": "69eee1c63344d6d51c055469",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T04:10:46.845000"
+    },
+    {
+      "_id": "69eeed6dbb9d118749774838",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:00:29.117000"
+    },
+    {
+      "_id": "69eeed6dbb9d118749774842",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:00:29.852000"
+    },
+    {
+      "_id": "69eeed6ebb9d11874977484a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:00:30.436000"
+    },
+    {
+      "_id": "69eeed97bb9d11874977486a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:01:11.529000"
+    },
+    {
+      "_id": "69eeed98bb9d118749774872",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:01:12.631000"
+    },
+    {
+      "_id": "69eeed99bb9d11874977487c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:01:13.264000"
+    },
+    {
+      "_id": "69eeed99bb9d118749774884",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:01:13.816000"
+    },
+    {
+      "_id": "69eeed9abb9d11874977488c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:01:14.859000"
+    },
+    {
+      "_id": "69eeed9bbb9d118749774892",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:01:15.008000"
+    },
+    {
+      "_id": "69eeed9bbb9d11874977489a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:01:15.289000"
+    },
+    {
+      "_id": "69eef124bb9d1187497748a0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:16:20.694000"
+    },
+    {
+      "_id": "69eef125bb9d1187497748aa",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:16:21.403000"
+    },
+    {
+      "_id": "69eef125bb9d1187497748b2",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:16:21.934000"
+    },
+    {
+      "_id": "69eef129bb9d1187497748bc",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:16:25.917000"
+    },
+    {
+      "_id": "69eef34863f4bdda13b86d63",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:25:28.477000"
+    },
+    {
+      "_id": "69eef34963f4bdda13b86d6d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:25:29.120000"
+    },
+    {
+      "_id": "69eef4489ca2ef85d192f773",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:29:44.791000"
+    },
+    {
+      "_id": "69eef4499ca2ef85d192f77d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:29:45.436000"
+    },
+    {
+      "_id": "69eef44b9ca2ef85d192f785",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:29:47.580000"
+    },
+    {
+      "_id": "69eef48343f59dedfa630a9a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:30:43.493000"
+    },
+    {
+      "_id": "69eef48443f59dedfa630aa4",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:30:44.127000"
+    },
+    {
+      "_id": "69eef48643f59dedfa630ab0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:30:46.255000"
+    },
+    {
+      "_id": "69eef4c2f7dd486faa7f4e55",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:31:46.707000"
+    },
+    {
+      "_id": "69eef4c3f7dd486faa7f4e5f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:31:47.341000"
+    },
+    {
+      "_id": "69eef4c3f7dd486faa7f4e67",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:31:47.873000"
+    },
+    {
+      "_id": "69eef4c4f7dd486faa7f4e6f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:31:48.361000"
+    },
+    {
+      "_id": "69eef4c5f7dd486faa7f4e75",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:31:49.355000"
+    },
+    {
+      "_id": "69eef552f7dd486faa7f4e7d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:34:10.814000"
+    },
+    {
+      "_id": "69eef553f7dd486faa7f4e87",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:34:11.500000"
+    },
+    {
+      "_id": "69eef554f7dd486faa7f4e8f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:34:12.010000"
+    },
+    {
+      "_id": "69eef554f7dd486faa7f4e97",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:34:12.512000"
+    },
+    {
+      "_id": "69eef596f7dd486faa7f4eb7",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:35:18.005000"
+    },
+    {
+      "_id": "69eef596f7dd486faa7f4ec1",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:35:18.631000"
+    },
+    {
+      "_id": "69eef597f7dd486faa7f4ec9",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:35:19.138000"
+    },
+    {
+      "_id": "69eef597f7dd486faa7f4ed1",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:35:19.633000"
+    },
+    {
+      "_id": "69eef598f7dd486faa7f4ed7",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:35:20.646000"
+    },
+    {
+      "_id": "69eef5c9b218657f08701a44",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:09.381000"
+    },
+    {
+      "_id": "69eef5cab218657f08701a4e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:10.026000"
+    },
+    {
+      "_id": "69eef5cab218657f08701a56",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:10.566000"
+    },
+    {
+      "_id": "69eef5cbb218657f08701a5e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:11.068000"
+    },
+    {
+      "_id": "69eef5ccb218657f08701a64",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:12.084000"
+    },
+    {
+      "_id": "69eef5dab218657f08701a6c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:26.929000"
+    },
+    {
+      "_id": "69eef5dbb218657f08701a76",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:27.589000"
+    },
+    {
+      "_id": "69eef5dcb218657f08701a7e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:28.113000"
+    },
+    {
+      "_id": "69eef5dcb218657f08701a86",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:28.613000"
+    },
+    {
+      "_id": "69eef5ddb218657f08701a8c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T05:36:29.589000"
+    },
+    {
+      "_id": "69ef73c472f3c72b1aee4d44",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:33:40.598000"
+    },
+    {
+      "_id": "69ef73c572f3c72b1aee4d4e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:33:41.302000"
+    },
+    {
+      "_id": "69ef73c572f3c72b1aee4d56",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:33:41.889000"
+    },
+    {
+      "_id": "69ef73c672f3c72b1aee4d5e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:33:42.432000"
+    },
+    {
+      "_id": "69ef73c772f3c72b1aee4d64",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:33:43.528000"
+    },
+    {
+      "_id": "69ef73e9a6148734e21a6771",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:17.198000"
+    },
+    {
+      "_id": "69ef73fbc8cfaed11bcf5146",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:35.566000"
+    },
+    {
+      "_id": "69ef73fcc8cfaed11bcf5150",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:36.252000"
+    },
+    {
+      "_id": "69ef73fcc8cfaed11bcf5158",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:36.847000"
+    },
+    {
+      "_id": "69ef73fdc8cfaed11bcf5160",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:37.496000"
+    },
+    {
+      "_id": "69ef73fec8cfaed11bcf5166",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:38.639000"
+    },
+    {
+      "_id": "69ef73ffc8cfaed11bcf516e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:39.288000"
+    },
+    {
+      "_id": "69ef73ffc8cfaed11bcf5177",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:39.922000"
+    },
+    {
+      "_id": "69ef7407c8cfaed11bcf5180",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:47.796000"
+    },
+    {
+      "_id": "69ef7408c8cfaed11bcf518a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:48.497000"
+    },
+    {
+      "_id": "69ef7409c8cfaed11bcf5192",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:49.086000"
+    },
+    {
+      "_id": "69ef7409c8cfaed11bcf519a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:34:49.633000"
+    },
+    {
+      "_id": "69ef74b9c8cfaed11bcf51d0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:45.002000"
+    },
+    {
+      "_id": "69ef74b9c8cfaed11bcf51da",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:45.751000"
+    },
+    {
+      "_id": "69ef74bac8cfaed11bcf51e2",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:46.316000"
+    },
+    {
+      "_id": "69ef74bac8cfaed11bcf51ea",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:46.844000"
+    },
+    {
+      "_id": "69ef74bbc8cfaed11bcf51f0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:47.925000"
+    },
+    {
+      "_id": "69ef74bcc8cfaed11bcf51f8",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:48.511000"
+    },
+    {
+      "_id": "69ef74bdc8cfaed11bcf5201",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:49.115000"
+    },
+    {
+      "_id": "69ef74c3c8cfaed11bcf520a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:55.848000"
+    },
+    {
+      "_id": "69ef74c4c8cfaed11bcf5214",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:56.553000"
+    },
+    {
+      "_id": "69ef74c5c8cfaed11bcf521c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:57.085000"
+    },
+    {
+      "_id": "69ef74c5c8cfaed11bcf5224",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:57.647000"
+    },
+    {
+      "_id": "69ef74c6c8cfaed11bcf522a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:58.714000"
+    },
+    {
+      "_id": "69ef74c7c8cfaed11bcf5232",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:59.251000"
+    },
+    {
+      "_id": "69ef74c7c8cfaed11bcf523b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:37:59.877000"
+    },
+    {
+      "_id": "69ef74d5c8cfaed11bcf5246",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T14:38:13.841000"
+    },
+    {
+      "_id": "69efb74d7f524d275b2cf787",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T19:21:49.546000"
+    },
+    {
+      "_id": "69efb74d7f524d275b2cf78d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T19:21:49.693000"
+    },
+    {
+      "_id": "69efb74d7f524d275b2cf795",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T19:21:49.970000"
+    },
+    {
+      "_id": "69efb7617f524d275b2cf7a4",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T19:22:09.315000"
+    },
+    {
+      "_id": "69efb7cc7f524d275b2cf820",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T19:23:56.776000"
+    },
+    {
+      "_id": "69efb7cd7f524d275b2cf82a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T19:23:57.449000"
+    },
+    {
+      "_id": "69efb7ce7f524d275b2cf832",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-04-27T19:23:58.051000"
+    },
+    {
+      "_id": "6a068e49c34dc7f2b9d7f7f0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-15T03:08:57.302000"
+    },
+    {
+      "_id": "6a08bab995182bd875bfc685",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-16T18:43:05.851000"
+    },
+    {
+      "_id": "6a08cf0ce655e32ce9b1ae10",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-16T20:09:48.702000"
+    },
+    {
+      "_id": "6a0a8e16ad0352e167d7339c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-18T03:57:10.177000"
+    },
+    {
+      "_id": "6a0a8e7592feb8ffe60b3ad6",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-18T03:58:45.849000"
+    },
+    {
+      "_id": "6a0a8fdbaaee554b97b906da",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-18T04:04:43.517000"
+    },
+    {
+      "_id": "6a0a902969492c1afa7f88a0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-18T04:06:01.555000"
+    },
+    {
+      "_id": "6a0a96db8bd54602373da0e6",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-18T04:34:35.124000"
+    },
+    {
+      "_id": "6a0aa8bb9ece66b3e9475a9a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-18T05:50:51.120000"
+    },
+    {
+      "_id": "6a0aa936dbeb0631351185a7",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-18T05:52:54.311000"
+    },
+    {
+      "_id": "6a0b5f62f3e6193f1b5f74a6",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-18T18:50:10.550000"
+    },
+    {
+      "_id": "6a0b6d151ea50bff00153ec2",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-18T19:48:37.490000"
+    },
+    {
+      "_id": "6a128759730b69a5cc2df620",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-24T05:06:33.958000"
+    },
+    {
+      "_id": "6a1288b50d4dc9acb639d62d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-24T05:12:21.355000"
+    },
+    {
+      "_id": "6a166b2d40512bc1942f05b7",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-27T03:55:25.167000"
+    },
+    {
+      "_id": "6a166c62f98a3df4a73d836b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-27T04:00:34.895000"
+    },
+    {
+      "_id": "6a166d55c79591049f186afb",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-27T04:04:37.328000"
+    },
+    {
+      "_id": "6a166e601ea73bc07a715829",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-27T04:09:04.956000"
+    },
+    {
+      "_id": "6a166ed227603ae1e68a009c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-05-27T04:10:58.976000"
+    },
+    {
+      "_id": "6a2831620f3327526d885bb0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-09T15:29:38.508000"
+    },
+    {
+      "_id": "6a2b7e848ac0ccf114a06d5d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T03:35:32.207000"
+    },
+    {
+      "_id": "6a2b7e978ac0ccf114a06d6b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T03:35:51.548000"
+    },
+    {
+      "_id": "6a2b7ef5b68afec1c09176d7",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T03:37:25.835000"
+    },
+    {
+      "_id": "6a2b7ef7b68afec1c09176ea",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T03:37:27.286000"
+    },
+    {
+      "_id": "6a2b7ef7b68afec1c09176f4",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T03:37:27.709000"
+    },
+    {
+      "_id": "6a2b7f47b68afec1c091794b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T03:38:47.270000"
+    },
+    {
+      "_id": "6a2b7f48b68afec1c091795e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T03:38:48.739000"
+    },
+    {
+      "_id": "6a2b7f49b68afec1c0917967",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T03:38:49.158000"
+    },
+    {
+      "_id": "6a2b84fe28566cff6f8a95c4",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T04:03:10.021000"
+    },
+    {
+      "_id": "6a2b84fe28566cff6f8a95c8",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T04:03:10.142000"
+    },
+    {
+      "_id": "6a2b8cf3a0228212881c3bfe",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Slapshot Snipers \u2194 Zarek's Frozen",
+      "message": "Trade executed: Slapshot Snipers \u2194 Zarek's Frozen",
+      "created_at": "2026-06-12T04:37:07.327000"
+    },
+    {
+      "_id": "6a2b8db52ffdd16a3dc4db7a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T04:40:21.906000"
+    },
+    {
+      "_id": "6a2b8db72ffdd16a3dc4db8d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T04:40:23.216000"
+    },
+    {
+      "_id": "6a2b8db72ffdd16a3dc4db96",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T04:40:23.621000"
+    },
+    {
+      "_id": "6a2b91586b66258db4ec51b7",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T04:55:52.545000"
+    },
+    {
+      "_id": "6a2b91596b66258db4ec51ca",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T04:55:53.994000"
+    },
+    {
+      "_id": "6a2b915a6b66258db4ec51d3",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T04:55:54.438000"
+    },
+    {
+      "_id": "6a2c10a99196126b1323ee3f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T13:59:05.500000"
+    },
+    {
+      "_id": "6a2c10a99196126b1323ee43",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Slapshot Snipers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Slapshot Snipers",
+      "created_at": "2026-06-12T13:59:05.560000"
+    },
+    {
+      "_id": "6a2c10a99196126b1323ee47",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T13:59:05.622000"
+    },
+    {
+      "_id": "6a2c10a99196126b1323ee4b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T13:59:05.678000"
+    },
+    {
+      "_id": "6a2c121da8436a00a16d0a9f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-12T14:05:17.864000"
+    },
+    {
+      "_id": "6a2c121fa8436a00a16d0ab2",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T14:05:19.368000"
+    },
+    {
+      "_id": "6a2c121fa8436a00a16d0abb",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-12T14:05:19.755000"
+    },
+    {
+      "_id": "6a30c33344093dc4b650b04c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T03:29:55.234000"
+    },
+    {
+      "_id": "6a30c33444093dc4b650b05f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T03:29:56.517000"
+    },
+    {
+      "_id": "6a30c33444093dc4b650b068",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T03:29:56.960000"
+    },
+    {
+      "_id": "6a30cab727a7d2dab04c2aba",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:01:59.855000"
+    },
+    {
+      "_id": "6a30caf327a7d2dab04c2d0f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:02:59.245000"
+    },
+    {
+      "_id": "6a30caf427a7d2dab04c2d22",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T04:03:00.578000"
+    },
+    {
+      "_id": "6a30caf527a7d2dab04c2d2b",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T04:03:01.016000"
+    },
+    {
+      "_id": "6a30cb7f27a7d2dab04c2e12",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:05:19.874000"
+    },
+    {
+      "_id": "6a30cb8027a7d2dab04c2e1f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:05:20.491000"
+    },
+    {
+      "_id": "6a30cb8127a7d2dab04c2e29",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:05:21.053000"
+    },
+    {
+      "_id": "6a30cb8127a7d2dab04c2e33",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:05:21.592000"
+    },
+    {
+      "_id": "6a30cb8227a7d2dab04c2e39",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:05:22.147000"
+    },
+    {
+      "_id": "6a30cb8227a7d2dab04c2e43",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:05:22.640000"
+    },
+    {
+      "_id": "6a30cb8327a7d2dab04c2e4f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:05:23.239000"
+    },
+    {
+      "_id": "6a30cbce27a7d2dab04c2ee8",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:06:38.257000"
+    },
+    {
+      "_id": "6a30cbcf27a7d2dab04c2efb",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T04:06:39.561000"
+    },
+    {
+      "_id": "6a30cbcf27a7d2dab04c2f04",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T04:06:39.929000"
+    },
+    {
+      "_id": "6a30cf94662f3c3f86f1d652",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:22:44.909000"
+    },
+    {
+      "_id": "6a30cf96662f3c3f86f1d665",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T04:22:46.304000"
+    },
+    {
+      "_id": "6a30cf96662f3c3f86f1d66e",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T04:22:46.704000"
+    },
+    {
+      "_id": "6a30cfb37da84bb1a1abd5f9",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-16T04:23:15.819000"
+    },
+    {
+      "_id": "6a30cfb57da84bb1a1abd60c",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T04:23:17.322000"
+    },
+    {
+      "_id": "6a30cfb57da84bb1a1abd615",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-16T04:23:17.975000"
+    },
+    {
+      "_id": "6a32278260d942fbd42cea47",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T04:50:10.856000"
+    },
+    {
+      "_id": "6a32278460d942fbd42cea5a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-17T04:50:12.352000"
+    },
+    {
+      "_id": "6a32278460d942fbd42cea63",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-17T04:50:12.783000"
+    },
+    {
+      "_id": "6a3227aa1b0d3d1e8803488d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T04:50:50.885000"
+    },
+    {
+      "_id": "6a3227ac1b0d3d1e880348a0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-17T04:50:52.455000"
+    },
+    {
+      "_id": "6a3227ac1b0d3d1e880348a9",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-17T04:50:52.947000"
+    },
+    {
+      "_id": "6a32c1c1689fa91df4542900",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:48:17.587000"
+    },
+    {
+      "_id": "6a32c200689fa91df4542b55",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:49:20.109000"
+    },
+    {
+      "_id": "6a32c201689fa91df4542b68",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-17T15:49:21.507000"
+    },
+    {
+      "_id": "6a32c201689fa91df4542b71",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-17T15:49:21.908000"
+    },
+    {
+      "_id": "6a32c2c4689fa91df4542c59",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:52:36.042000"
+    },
+    {
+      "_id": "6a32c2c4689fa91df4542c66",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:52:36.718000"
+    },
+    {
+      "_id": "6a32c2c5689fa91df4542c70",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:52:37.271000"
+    },
+    {
+      "_id": "6a32c2c5689fa91df4542c7a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:52:37.783000"
+    },
+    {
+      "_id": "6a32c2c6689fa91df4542c80",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:52:38.368000"
+    },
+    {
+      "_id": "6a32c2c6689fa91df4542c8a",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:52:38.980000"
+    },
+    {
+      "_id": "6a32c2c7689fa91df4542c96",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:52:39.576000"
+    },
+    {
+      "_id": "6a32c2f4689fa91df4542d28",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:53:24.718000"
+    },
+    {
+      "_id": "6a32c335689fa91df4542f81",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-17T15:54:29.894000"
+    },
+    {
+      "_id": "6a32c337689fa91df4542f94",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-17T15:54:31.316000"
+    },
+    {
+      "_id": "6a32c337689fa91df4542f9d",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-17T15:54:31.717000"
+    },
+    {
+      "_id": "6a334a6c9173c289e0d24eff",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:31:24.194000"
+    },
+    {
+      "_id": "6a334b199173c289e0d25169",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-18T01:34:17.507000"
+    },
+    {
+      "_id": "6a334b1a9173c289e0d25172",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-18T01:34:18.048000"
+    },
+    {
+      "_id": "6a334b9c9173c289e0d251bb",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:36:28.781000"
+    },
+    {
+      "_id": "6a334bfe9173c289e0d254a8",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:38:06.862000"
+    },
+    {
+      "_id": "6a334bff9173c289e0d254b5",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:38:07.745000"
+    },
+    {
+      "_id": "6a334c009173c289e0d254c0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:38:08.483000"
+    },
+    {
+      "_id": "6a334c019173c289e0d254ca",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:38:09.281000"
+    },
+    {
+      "_id": "6a334c029173c289e0d254d0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:38:10.119000"
+    },
+    {
+      "_id": "6a334c039173c289e0d254da",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:38:11.079000"
+    },
+    {
+      "_id": "6a334c039173c289e0d254e6",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:38:11.958000"
+    },
+    {
+      "_id": "6a334c269173c289e0d25516",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-18T01:38:46.956000"
+    },
+    {
+      "_id": "6a334c279173c289e0d2551f",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-18T01:38:47.375000"
+    },
+    {
+      "_id": "6a334cce9173c289e0d25683",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:41:34.894000"
+    },
+    {
+      "_id": "6a334d099173c289e0d258c6",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:42:33.104000"
+    },
+    {
+      "_id": "6a334d099173c289e0d258d6",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:42:33.813000"
+    },
+    {
+      "_id": "6a334d0a9173c289e0d258e1",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:42:34.313000"
+    },
+    {
+      "_id": "6a334d0b9173c289e0d258ec",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:42:35.074000"
+    },
+    {
+      "_id": "6a334d0b9173c289e0d258f2",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:42:35.660000"
+    },
+    {
+      "_id": "6a334d0c9173c289e0d258fc",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:42:36.394000"
+    },
+    {
+      "_id": "6a334d0d9173c289e0d25908",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-18T01:42:37.012000"
+    },
+    {
+      "_id": "6a3753d524195a6c91c58992",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "message": "Trade executed: Zarek's Frozen \u2194 Ice Breakers",
+      "created_at": "2026-06-21T03:00:37.115000"
+    },
+    {
+      "_id": "6a37541624195a6c91c58bf6",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-21T03:01:42.324000"
+    },
+    {
+      "_id": "6a37541624195a6c91c58bff",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-21T03:01:42.715000"
+    },
+    {
+      "_id": "6a3761d9e78105a925cabdaa",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-21T04:00:25.203000"
+    },
+    {
+      "_id": "6a3761d9e78105a925cabdb3",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-21T04:00:25.630000"
+    },
+    {
+      "_id": "6a3761f0e78105a925cabde0",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-21T04:00:48.156000"
+    },
+    {
+      "_id": "6a3761f0e78105a925cabde9",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-21T04:00:48.544000"
+    },
+    {
+      "_id": "6a376f1c2444f59971b5dbe8",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-21T04:57:00.693000"
+    },
+    {
+      "_id": "6a376f1d2444f59971b5dbf1",
+      "league_id": "69e46af167999bfb85c39628",
+      "event_type": "trade_executed",
+      "description": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "message": "Trade executed: Ice Breakers \u2194 Crease Crashers",
+      "created_at": "2026-06-21T04:57:01.150000"
+    }
+  ],
+  "traded_picks": []
+}

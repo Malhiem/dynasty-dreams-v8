@@ -1,0 +1,593 @@
+@import url('https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;900&family=Manrope:wght@400;500;600;700&family=Bebas+Neue&family=Inter:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* ── Brand palette (single source of truth — emergent + lovable unified) ── */
+  /* Primitive (hex) tokens — referenced by emergent pages with bg-[#hex] */
+  --background-hex: #0A0A0A;
+  --surface: #141414;
+  --surface-elevated: #1A1A1A;
+  --text-primary: #FFFFFF;
+  --text-secondary: #A1A1AA;
+  --text-disabled: #52525B;
+  --brand-primary: #00D2FF;
+  --brand-primary-hover: #33DBFF;
+  --brand-accent: #FFB020;          /* unified gold accent */
+  --brand-accent-hover: #FFC957;
+  --success: 135 60% 50%;           /* #34C759 — HSL components so `hsl(var(--success))` resolves correctly (iter 110) */
+  --warning: 33 100% 53%;           /* #FF9F0A */
+  --danger: 4 100% 59%;             /* #FF3B30 */
+  --info: 192 100% 50%;             /* #00D2FF */
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-focus: #00D2FF;
+
+  /* HSL semantic tokens (consumed by Tailwind/shadcn via globals.css) — these
+     intentionally MIRROR the hex tokens above so emergent pages (using literal
+     hex) and lovable pages (using bg-card / text-primary / etc.) render the
+     SAME color. Do NOT redeclare these elsewhere. */
+  --background: 0 0% 4%;             /* #0A0A0A */
+  --foreground: 0 0% 100%;           /* #FFFFFF */
+  --card: 0 0% 8%;                   /* #141414 */
+  --card-foreground: 0 0% 100%;
+  --popover: 0 0% 8%;
+  --popover-foreground: 0 0% 100%;
+  --primary: 192 100% 50%;           /* #00D2FF */
+  --primary-foreground: 0 0% 0%;
+  --secondary: 0 0% 10%;             /* #1A1A1A */
+  --secondary-foreground: 0 0% 100%;
+  --muted: 0 0% 10%;                 /* #1A1A1A */
+  --muted-foreground: 0 0% 63%;      /* #A1A1A1 ≈ #A1A1AA */
+  --accent: 39 100% 56%;             /* #FFB020 unified gold */
+  --accent-foreground: 0 0% 0%;
+  --destructive: 4 100% 59%;         /* #FF3B30 */
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 14.9%;              /* matches rgba(255,255,255,.10) at #141414 */
+  --input: 0 0% 10%;
+  --ring: 192 100% 50%;
+  --radius: 0.5rem;
+
+  /* Sidebar (used by Lovable AppLayout) — match the unified surface palette */
+  --sidebar-background: 0 0% 4%;
+  --sidebar-foreground: 0 0% 100%;
+  --sidebar-primary: 192 100% 50%;
+  --sidebar-primary-foreground: 0 0% 0%;
+  --sidebar-accent: 0 0% 10%;
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 0 0% 14.9%;
+  --sidebar-ring: 192 100% 50%;
+
+  /* Specialty design tokens (lovable / motion) */
+  --ice-glow: 192 100% 50%;
+  --ice-subtle: 192 60% 25%;
+  --gold: 39 100% 56%;
+  --gradient-ice: linear-gradient(135deg, hsl(192 100% 50% / 0.20), hsl(192 100% 50% / 0.05));
+  --gradient-card: linear-gradient(180deg, hsl(0 0% 10%), hsl(0 0% 8%));
+  --gradient-hero: linear-gradient(135deg, hsl(0 0% 8%), hsl(0 0% 4%));
+  --shadow-glow: 0 0 30px hsl(192 100% 50% / 0.18);
+  --shadow-card: 0 4px 24px hsl(0 0% 0% / 0.5);
+}
+
+/* ── Light mode ──────────────────────────────────────────────
+   Activated by adding `class="light"` to <html>. Hex tokens
+   (--background-hex, --surface, …) flip too so emergent pages
+   that hard-code bg-[#hex] still adapt. */
+html.light {
+  /* Hex tokens for emergent pages */
+  --background-hex: #FFFFFF;
+  --surface: #F8FAFC;          /* slate-50 */
+  --surface-elevated: #FFFFFF;
+  --text-primary: #0F172A;     /* slate-900 */
+  --text-secondary: #475569;   /* slate-600 */
+  --text-disabled: #94A3B8;    /* slate-400 */
+  --border-default: rgba(15, 23, 42, 0.10);
+  --border-focus: #0284C7;     /* darker cyan for AA contrast */
+  --brand-primary: #0284C7;    /* sky-600: WCAG-friendly on white */
+  --brand-primary-hover: #0369A1;
+  --brand-accent: #D97706;     /* amber-600: contrast on white */
+  --brand-accent-hover: #B45309;
+  --success: 142 76% 36%;           /* #16A34A — HSL components (iter 110) */
+  --warning: 32 95% 44%;            /* #D97706 */
+  --danger: 0 84% 60%;              /* #DC2626 */
+  --info: 199 89% 39%;              /* #0284C7 */
+
+  /* HSL semantic tokens */
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+  --card: 210 40% 98%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --primary: 199 89% 39%;          /* #0284C7 */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 40% 96%;
+  --secondary-foreground: 222 47% 11%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 32 95% 44%;             /* #D97706 */
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 199 89% 39%;
+
+  --sidebar-background: 210 40% 98%;
+  --sidebar-foreground: 222 47% 11%;
+  --sidebar-primary: 199 89% 39%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 210 40% 94%;
+  --sidebar-accent-foreground: 222 47% 11%;
+  --sidebar-border: 214 32% 91%;
+  --sidebar-ring: 199 89% 39%;
+
+  --ice-glow: 199 89% 39%;
+  --ice-subtle: 199 30% 80%;
+  --gold: 32 95% 44%;
+  --gradient-ice: linear-gradient(135deg, hsl(199 89% 39% / 0.10), hsl(199 89% 39% / 0.02));
+  --gradient-card: linear-gradient(180deg, hsl(0 0% 100%), hsl(210 40% 98%));
+  --gradient-hero: linear-gradient(135deg, hsl(210 40% 98%), hsl(0 0% 100%));
+  --shadow-glow: 0 0 30px hsl(199 89% 39% / 0.12);
+  --shadow-card: 0 4px 24px hsl(222 47% 11% / 0.08);
+}
+
+/* Lovable utility classes used by ported pages */
+.gradient-ice { background: var(--gradient-ice); }
+.gradient-card { background: var(--gradient-card); }
+.gradient-hero { background: var(--gradient-hero); }
+.glow-ice { box-shadow: var(--shadow-glow); }
+.text-gradient-ice {
+  background: linear-gradient(135deg, hsl(192 82% 65%), hsl(192 82% 45%));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.border-glow { border: 1px solid hsl(192 82% 55% / 0.3); }
+.font-display { font-family: 'Bebas Neue', 'Barlow Condensed', sans-serif; }
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Manrope', sans-serif;
+  background-color: hsl(var(--background));
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  /* Iter 231as — Respect the iOS notch + Android cutout when launched
+     in PWA standalone mode (manifest `display: standalone` +
+     `viewport-fit=cover`). Without these insets the WELCOME header
+     drew under the status bar and hid the user's clock / battery /
+     signal. `env(safe-area-inset-*)` resolves to 0 in regular
+     browser tabs, so non-PWA users see no visual change. */
+  padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  /* Match the safe-area edges to the app surface so the iOS status
+     bar tray blends into the dark background — looks intentional
+     instead of a black bar pasted on top. */
+  background-color: hsl(var(--background));
+}
+@supports (padding: env(safe-area-inset-top)) {
+  /* Keep `100vh` measurement honest under standalone mode: the
+     browser still reports 100vh = full window, so we subtract the
+     safe-area insets so `min-h-screen` matchups don't push under
+     the status bar. */
+  html, body {
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.font-heading {
+  font-family: 'Barlow Condensed', sans-serif;
+}
+
+.font-body {
+  font-family: 'Manrope', sans-serif;
+}
+
+/* Label styling */
+.label-overline {
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--text-secondary);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-disabled);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
+/* Card surfaces */
+.surface {
+  background-color: var(--surface);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+}
+
+.surface-elevated {
+  background-color: var(--surface-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+}
+
+/* Buttons */
+.btn-primary {
+  background-color: var(--brand-primary);
+  color: #000;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.btn-primary:hover {
+  background-color: var(--brand-primary-hover);
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-accent {
+  background-color: var(--brand-accent);
+  color: #fff;
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.btn-accent:hover {
+  background-color: var(--brand-accent-hover);
+}
+
+.btn-secondary {
+  background-color: transparent;
+  color: var(--text-primary);
+  font-weight: 600;
+  padding: 0.75rem 1.5rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-default);
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.btn-secondary:hover {
+  border-color: var(--brand-primary);
+  background-color: rgba(0, 210, 255, 0.1);
+}
+
+/* Focus states */
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--border-focus);
+}
+
+/* Stat cards */
+.stat-value {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 900;
+  font-size: 2.5rem;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.stat-label {
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: var(--text-secondary);
+}
+
+/* Table styles */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table th {
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-secondary);
+  text-align: left;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.data-table td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-default);
+  color: var(--text-primary);
+}
+
+.data-table tr:hover {
+  background-color: var(--surface-elevated);
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease forwards;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Iter 232d — Mobile-nav Chat-tab bubble pulse.
+ *
+ * Fires for ~3s when the online-count increases (a league member
+ * just came online). Two-layered feel:
+ *   1. A ring "halo" that scales out + fades to signal arrival.
+ *   2. A gentle 1.0 → 1.15 → 1.0 scale on the bubble itself so
+ *      users feel the arrival in peripheral vision without a
+ *      distracting flash.
+ * `prefers-reduced-motion` collapses to a static ring so users on
+ * reduced-motion OS settings still see acknowledgement of the
+ * event, just without animation.
+ */
+@keyframes mobileNavChatPulseRing {
+  0%   { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0.55); }
+  70%  { box-shadow: 0 0 0 10px rgba(52, 199, 89, 0);  }
+  100% { box-shadow: 0 0 0 0 rgba(52, 199, 89, 0);     }
+}
+@keyframes mobileNavChatPulseScale {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.15); }
+}
+.mobile-nav-chat-pulse {
+  animation:
+    mobileNavChatPulseRing 1.2s ease-out 0s 3,
+    mobileNavChatPulseScale 1.2s ease-in-out 0s 3;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mobile-nav-chat-pulse {
+    animation: none;
+    box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.5);
+  }
+}
+
+/* Iter 232l — Draft-tab countdown pulse.
+ *
+ * Fires continuously (2s cycle) whenever the countdown pill enters
+ * the <1h window OR when the draft is live. Layered on top of the
+ * tone class (amber/green) so the underlying colour still telegraphs
+ * proximity while the pulse conveys urgency. Uses `box-shadow` so it
+ * doesn't affect layout / neighbours. Cyan→green tween emphasises
+ * the transition from "getting close" to "happening now".
+ */
+@keyframes draftCountdownPulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 0 rgba(0, 210, 255, 0.35),
+      0 0 6px 0 rgba(0, 210, 255, 0.15);
+  }
+  50% {
+    box-shadow:
+      0 0 0 4px rgba(52, 199, 89, 0.30),
+      0 0 12px 2px rgba(52, 199, 89, 0.35);
+  }
+}
+.draft-countdown-pulse {
+  animation: draftCountdownPulse 2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .draft-countdown-pulse {
+    animation: none;
+    box-shadow: 0 0 0 2px rgba(52, 199, 89, 0.5);
+  }
+}
+
+/* Status badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.badge-success {
+  background-color: rgba(52, 199, 89, 0.2);
+  color: hsl(var(--success));
+}
+
+.badge-warning {
+  background-color: rgba(255, 159, 10, 0.2);
+  color: hsl(var(--warning));
+}
+
+.badge-danger {
+  background-color: rgba(255, 59, 48, 0.2);
+  color: hsl(var(--danger));
+}
+
+.badge-info {
+  background-color: rgba(0, 210, 255, 0.2);
+  color: hsl(var(--info));
+}
+
+/* Responsive grid */
+.control-room-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 768px) {
+  .control-room-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .control-room-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* Shadcn dark layer — base sets border/background defaults */
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+
+/* ── Light-mode utility overrides ─────────────────────────────
+   Dynasty Dreams was originally a dark-only app with many hardcoded
+   color classes (text-white, bg-[#0A0A0A], etc.) sprinkled across
+   components. Rather than refactor every component to use semantic
+   tokens, we override the highest-traffic offenders here so toggling
+   light mode produces a readable, AA-contrast surface. New components
+   should prefer `text-foreground`, `bg-card`, `border-border`, etc. */
+
+html.light body {
+  background-color: #FFFFFF;
+  color: #0F172A;
+}
+
+/* Text colors — anything that hardcoded white text now reads dark on white. */
+html.light .text-white,
+html.light .text-zinc-50,
+html.light .text-zinc-100,
+html.light .text-zinc-200 { color: #0F172A !important; }
+
+html.light .text-zinc-300,
+html.light .text-zinc-400,
+html.light .text-\[\#A1A1AA\] { color: #475569 !important; }
+
+html.light .text-zinc-500,
+html.light .text-\[\#71717A\],
+html.light .text-\[\#52525B\] { color: #64748B !important; }
+
+/* Dynasty brand cyan stays bright but darkens slightly for contrast on white */
+html.light .text-\[\#00D2FF\] { color: #0284C7 !important; }
+html.light .text-cyan-400,
+html.light .text-cyan-300 { color: #0369A1 !important; }
+
+/* Backgrounds — the dark hex palette flips to clean light surfaces. */
+html.light .bg-\[\#0A0A0A\],
+html.light .bg-\[\#0a0a0a\],
+html.light .bg-\[\#000\],
+html.light .bg-black { background-color: #FFFFFF !important; }
+
+html.light .bg-\[\#141414\],
+html.light .bg-\[\#1A1A1A\],
+html.light .bg-\[\#1a1a1a\],
+html.light .bg-zinc-900,
+html.light .bg-zinc-800 { background-color: #F8FAFC !important; }
+
+html.light .bg-\[\#0A0A0A\]\/50,
+html.light .bg-\[\#141414\]\/50,
+html.light .bg-\[\#141414\]\/80,
+html.light .bg-\[\#141414\]\/90 { background-color: rgba(248, 250, 252, 0.85) !important; }
+
+/* Subtle white-tint overlays flip to subtle dark tints. */
+html.light .bg-white\/5 { background-color: rgba(15, 23, 42, 0.04) !important; }
+html.light .bg-white\/10 { background-color: rgba(15, 23, 42, 0.06) !important; }
+html.light .bg-white\/20 { background-color: rgba(15, 23, 42, 0.10) !important; }
+
+html.light .hover\:bg-white\/5:hover { background-color: rgba(15, 23, 42, 0.05) !important; }
+html.light .hover\:bg-white\/10:hover { background-color: rgba(15, 23, 42, 0.08) !important; }
+
+/* Borders */
+html.light .border-white\/5 { border-color: rgba(15, 23, 42, 0.06) !important; }
+html.light .border-white\/10 { border-color: rgba(15, 23, 42, 0.10) !important; }
+html.light .border-white\/20 { border-color: rgba(15, 23, 42, 0.14) !important; }
+
+/* Surface helper class used across emergent pages. */
+html.light .surface,
+html.light .glass {
+  background-color: #FFFFFF !important;
+  border-color: rgba(15, 23, 42, 0.10) !important;
+}
+
+/* Dynasty Dreams brand-mark stays cyan but slightly darker for contrast.
+   The brand uses `text-[#00D2FF]` for "DREAMS"; we already mapped above. */
+
+/* ── Recharts chart contrast ─────────────────────────────────
+   recharts inlines colors into SVG attributes (stroke, fill), so we
+   can't override them via Tailwind utilities. Instead, target the
+   gridlines + tick text + tooltip skin so charts remain readable on
+   the light background. The series colors themselves keep their
+   brand identity (cyan, amber, red), which all have acceptable
+   contrast on white. */
+html.light .recharts-cartesian-grid line,
+html.light .recharts-cartesian-grid-horizontal line,
+html.light .recharts-cartesian-grid-vertical line {
+  stroke: rgba(15, 23, 42, 0.12) !important;
+}
+html.light .recharts-cartesian-axis-line { stroke: rgba(15, 23, 42, 0.30) !important; }
+html.light .recharts-cartesian-axis-tick-line { stroke: rgba(15, 23, 42, 0.30) !important; }
+html.light .recharts-cartesian-axis-tick-value,
+html.light .recharts-text { fill: #475569 !important; }
+html.light .recharts-legend-item-text { color: #0F172A !important; }
+html.light .recharts-default-tooltip {
+  background-color: #FFFFFF !important;
+  border-color: rgba(15, 23, 42, 0.14) !important;
+  color: #0F172A !important;
+}
+html.light .recharts-tooltip-label,
+html.light .recharts-tooltip-item { color: #0F172A !important; }
+
+/* Where chart series rely on `--ice-glow`, the light-mode HSL block at
+   the top of this file already redefines that token, so the gradient
+   strokes stay sensible (cyan-on-white). */

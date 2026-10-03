@@ -1,0 +1,109 @@
+"""Iter 151 — live HTTP checks against the preview env for the new
+roster-truncated response shape (scoring categories + per-player buckets)."""
+import os
+import pytest
+import requests
+
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+ICE_BREAKERS_TEAM_ID = "69e59b33cbd3fea02a914c7b"
+DEMO_LEAGUE_ID = "69e46af167999bfb85c39629"
+
+
+@pytest.fixture(scope="module")
+def session():
+    s = requests.Session()
+    s.headers.update({"Content-Type": "application/json"})
+    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    assert r.status_code == 200, f"login failed: {r.status_code} {r.text[:300]}"
+    token = r.json().get("access_token") or r.json().get("token")
+    if token:
+        s.headers["Authorization"] = f"Bearer {token}"
+    return s
+
+
+@pytest.fixture(scope="module", autouse=True)
+def scoring_bucket_inputs():
+    from pymongo import MongoClient
+    from bson import ObjectId
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    mongo = MongoClient(os.environ["MONGO_URL"])
+    db = mongo[os.environ["DB_NAME"]]
+    team = db.teams.find_one({"_id": ObjectId(ICE_BREAKERS_TEAM_ID)})
+    player_ids = [ObjectId(pid) for pid in team["roster"]]
+    config = {"league_id": DEMO_LEAGUE_ID,
+        "skater_scoring": {"goals": 3, "assists": 2, "plus_minus": 1, "penalty_minutes": 0.2, "power_play_points": 1, "shots": 0.1},
+        "goalie_scoring": {"wins": 3, "losses": -1, "saves": 0.1, "goals_against": -1, "shutouts": 3}}
+    db.scoring_configs.update_one({"league_id": DEMO_LEAGUE_ID}, {"$set": config}, upsert=True)
+    for pid in player_ids:
+        db.players.update_one({"_id": pid}, {"$set": {"stats": {
+            bucket: {"goals": 2*n, "assists": n, "shots": 5*n, "games_played": n}
+            for n, bucket in enumerate(["season", "regular", "playoffs", "l30", "l7"], 1)}}})
+    yield
+    db.players.update_many({"_id": {"$in": player_ids}}, {"$unset": {"stats": ""}})
+    db.scoring_configs.delete_one({"league_id": DEMO_LEAGUE_ID})
+    mongo.close()
+
+
+def test_roster_truncated_returns_scoring_arrays(session):
+    r = session.get(f"{BASE_URL}/api/teams/{ICE_BREAKERS_TEAM_ID}/roster-truncated", params={"stat_filter": "regular"})
+    assert r.status_code == 200, r.text[:300]
+    body = r.json()
+    assert body["team_id"] == ICE_BREAKERS_TEAM_ID
+    assert body["stat_filter"] == "regular"
+    assert "players" in body and isinstance(body["players"], list) and len(body["players"]) > 0
+    # NEW: scoring categories as lists of stat keys
+    assert "scoring" in body, "missing scoring block"
+    sc = body["scoring"]
+    assert isinstance(sc.get("skater"), list), f"skater not a list: {sc.get('skater')!r}"
+    assert isinstance(sc.get("goalie"), list), f"goalie not a list: {sc.get('goalie')!r}"
+    # Expected demo league skater + goalie cats
+    expected_skater = {"goals", "assists", "plus_minus", "penalty_minutes", "power_play_points", "shots"}
+    expected_goalie = {"wins", "losses", "saves", "goals_against", "shutouts"}
+    assert expected_skater.issubset(set(sc["skater"])), f"skater missing keys: got {sc['skater']}"
+    assert expected_goalie.issubset(set(sc["goalie"])), f"goalie missing keys: got {sc['goalie']}"
+
+
+def test_roster_truncated_players_have_stats_bucket(session):
+    r = session.get(f"{BASE_URL}/api/teams/{ICE_BREAKERS_TEAM_ID}/roster-truncated", params={"stat_filter": "regular"})
+    assert r.status_code == 200
+    players = r.json()["players"]
+    # Every player should have a stats dict with at least one of the skater keys (or goalie keys)
+    for p in players:
+        assert "stats" in p, f"player missing stats: {p.get('name')}"
+        assert isinstance(p["stats"], dict)
+    # At least one player has goals
+    assert any("goals" in p["stats"] for p in players if p.get("position") != "G"), "no skater had goals stat"
+
+
+def test_goalie_present_on_ice_breakers(session):
+    r = session.get(f"{BASE_URL}/api/teams/{ICE_BREAKERS_TEAM_ID}/roster-truncated", params={"stat_filter": "regular"})
+    assert r.status_code == 200
+    players = r.json()["players"]
+    goalies = [p for p in players if p.get("position") == "G"]
+    assert len(goalies) >= 1, f"Ice Breakers should have at least 1 goalie, got {len(goalies)}"
+
+
+def test_stat_buckets_produce_different_values(session):
+    """Switching stat_filter must change FP for the same player across at least 3 of the 5 buckets."""
+    buckets = ["season", "regular", "playoffs", "l30", "l7"]
+    fp_by_player = {}
+    for b in buckets:
+        r = session.get(f"{BASE_URL}/api/teams/{ICE_BREAKERS_TEAM_ID}/roster-truncated", params={"stat_filter": b})
+        assert r.status_code == 200, f"{b}: {r.status_code}"
+        for p in r.json()["players"]:
+            fp_by_player.setdefault(p["id"], {})[b] = p.get("fantasy_points")
+    # Pick a player who isn't a goalie with the most distinct values
+    best_distinct = 0
+    for pid, fps in fp_by_player.items():
+        distinct = len(set(fps.values()))
+        best_distinct = max(best_distinct, distinct)
+    assert best_distinct >= 3, f"No player had >=3 distinct FP across buckets. Sample: {list(fp_by_player.items())[:2]}"
+
+
+def test_all_five_stat_filters_accepted(session):
+    for b in ["season", "regular", "playoffs", "l30", "l7"]:
+        r = session.get(f"{BASE_URL}/api/teams/{ICE_BREAKERS_TEAM_ID}/roster-truncated", params={"stat_filter": b})
+        assert r.status_code == 200, f"{b} returned {r.status_code}"
+        assert r.json()["stat_filter"] == b

@@ -1,0 +1,394 @@
+import { useState, useEffect, useCallback } from "react";
+import { Bell, X, RotateCcw, Mail, Smartphone, Megaphone, Moon, VolumeX, ShieldAlert, EyeOff, Eye } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Badge } from "@/components/ui/badge";
+import api from "@/lib/api";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+
+/**
+ * Iter 230 — Notification Settings modal.
+ *
+ * Reads `/api/notifications/preferences` (returns events + categories +
+ * current user prefs). Renders one row per event with three channel
+ * toggles: In-App / Push / Email. Push + Email are saved as preferences
+ * for future Expo/SendGrid delivery — only In-App fires today.
+ *
+ * Each toggle PUTs `/api/notifications/preferences` with a single
+ * event_id + channel update so we don't ship the entire blob on every
+ * click. A "Reset to defaults" button calls POST /preferences/reset.
+ *
+ * Iter 230e — A 4th column (Critical) lets users opt-in to events that
+ * bypass Quiet Hours. The backend defaults this to True for the
+ * highest-stakes events (e.g. draft_your_turn, lineup_lock_reminder).
+ */
+
+const CHANNEL_META = {
+  in_app:   { label: "In-App",   icon: Megaphone,   color: "text-cyan-300" },
+  push:     { label: "Push",     icon: Smartphone,  color: "text-violet-300" },
+  email:    { label: "Email",    icon: Mail,        color: "text-emerald-300" },
+  critical: { label: "Critical", icon: ShieldAlert, color: "text-amber-300" },
+};
+
+export default function NotificationSettings({ open, onOpenChange }) {
+  const [loading, setLoading] = useState(true);
+  const [events, setEvents] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [prefs, setPrefs] = useState({});
+  const [quietHours, setQuietHours] = useState({ enabled: false, start: "22:00", end: "07:00", timezone_offset_minutes: 0 });
+  const [mutedLeagueIds, setMutedLeagueIds] = useState([]);
+  const [hiddenLeagueIds, setHiddenLeagueIds] = useState([]);
+  const [myLeagues, setMyLeagues] = useState([]);
+  // Iter 230h — Track ALL of the user's leagues (including hidden) so the
+  // unhide UI can render rows for leagues that the /leagues endpoint
+  // omits because they're currently hidden.
+  const [allLeagues, setAllLeagues] = useState([]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [{ data }, leaguesRes, allLeaguesRes] = await Promise.all([
+        api.get("/notifications/preferences"),
+        api.get("/leagues?my_leagues=true").catch(() => ({ data: [] })),
+        // include_hidden=true returns the user's leagues regardless of
+        // the hidden filter so the unhide UI can list everything.
+        api.get("/leagues?my_leagues=true&include_hidden=true").catch(() => ({ data: [] })),
+      ]);
+      setEvents(data.events || []);
+      setCategories(data.categories || []);
+      setPrefs(data.preferences || {});
+      setQuietHours(data.quiet_hours || { enabled: false, start: "22:00", end: "07:00", timezone_offset_minutes: 0 });
+      setMutedLeagueIds(data.muted_league_ids || []);
+      setHiddenLeagueIds(data.hidden_league_ids || []);
+      setMyLeagues(leaguesRes.data || []);
+      setAllLeagues(allLeaguesRes.data?.length ? allLeaguesRes.data : leaguesRes.data || []);
+    } catch (e) {
+      toast.error("Couldn't load notification preferences");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  const handleToggle = async (eventId, channel, value) => {
+    // Optimistic UI; revert if the PUT fails.
+    const prev = prefs[eventId] || { in_app: false, push: false, email: false };
+    setPrefs((p) => ({ ...p, [eventId]: { ...prev, [channel]: value } }));
+    try {
+      await api.put("/notifications/preferences", { event_id: eventId, [channel]: value });
+    } catch (e) {
+      setPrefs((p) => ({ ...p, [eventId]: prev }));
+      toast.error("Couldn't save that change");
+    }
+  };
+
+  const handleReset = async () => {
+    try {
+      const { data } = await api.post("/notifications/preferences/reset");
+      setPrefs(data.preferences || {});
+      toast.success("Notification settings reset to defaults");
+    } catch (e) {
+      toast.error("Reset failed");
+    }
+  };
+
+  // Iter 230d — Quiet Hours handlers
+  const saveQuietHours = async (next) => {
+    const prev = quietHours;
+    setQuietHours(next);
+    try {
+      // Always send the client's current UTC offset so the server can do
+      // local-time comparisons without storing user timezones.
+      const tz = -new Date().getTimezoneOffset();
+      await api.put("/notifications/preferences/quiet-hours", {
+        enabled: !!next.enabled,
+        start: next.start,
+        end: next.end,
+        timezone_offset_minutes: tz,
+      });
+    } catch (e) {
+      setQuietHours(prev);
+      toast.error(e?.response?.data?.detail || "Couldn't save Quiet Hours");
+    }
+  };
+
+  // Iter 230d — Per-league mute handler
+  const toggleLeagueMute = async (leagueId, muted) => {
+    const prev = mutedLeagueIds;
+    const next = muted
+      ? Array.from(new Set([...prev, leagueId]))
+      : prev.filter((id) => id !== leagueId);
+    setMutedLeagueIds(next);
+    try {
+      const { data } = await api.put("/notifications/preferences/league-mute", { league_id: leagueId, muted });
+      setMutedLeagueIds(data.muted_league_ids || next);
+    } catch (e) {
+      setMutedLeagueIds(prev);
+      toast.error("Couldn't update league mute");
+    }
+  };
+
+  // Iter 230h — Per-league HIDE handler (different from mute — actually
+  // removes the league from the dashboard surface area).
+  const toggleLeagueHide = async (leagueId, hidden) => {
+    const prev = hiddenLeagueIds;
+    const next = hidden
+      ? Array.from(new Set([...prev, leagueId]))
+      : prev.filter((id) => id !== leagueId);
+    setHiddenLeagueIds(next);
+    try {
+      const { data } = await api.put("/notifications/preferences/league-hide", { league_id: leagueId, hidden });
+      setHiddenLeagueIds(data.hidden_league_ids || next);
+      toast.success(hidden ? "League hidden from dashboard" : "League restored to dashboard");
+    } catch (e) {
+      setHiddenLeagueIds(prev);
+      toast.error("Couldn't update league visibility");
+    }
+  };
+
+  const eventsByCategory = categories.map((c) => ({
+    ...c,
+    events: events.filter((e) => e.category === c.id),
+  }));
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="max-w-3xl bg-[#0e0e10] border-white/10 text-white p-0 overflow-hidden"
+        data-testid="notification-settings-modal"
+      >
+        <DialogHeader className="p-6 pb-3 border-b border-white/10 flex flex-row items-center justify-between space-y-0">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-lg bg-cyan-500/15 flex items-center justify-center">
+              <Bell className="h-5 w-5 text-cyan-300" />
+            </div>
+            <div>
+              <DialogTitle className="text-lg">Notification Settings</DialogTitle>
+              <DialogDescription className="text-xs text-[#A1A1AA]">
+                Choose how you&apos;d like to hear from us. In-App fires today; Push & Email are saved for future delivery.
+              </DialogDescription>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={handleReset}
+            className="text-[#A1A1AA] hover:text-white"
+            data-testid="notification-settings-reset-btn"
+          >
+            <RotateCcw className="h-3.5 w-3.5 mr-1" />
+            Reset defaults
+          </Button>
+        </DialogHeader>
+
+        <div className="px-6 pt-3 pb-2 grid grid-cols-[1fr_repeat(4,68px)] gap-2 text-[10px] uppercase tracking-wider text-[#71717A] border-b border-white/5">
+          <span>Event</span>
+          {Object.entries(CHANNEL_META).map(([key, meta]) => {
+            const Icon = meta.icon;
+            return (
+              <span key={key} className="flex items-center justify-center gap-1" title={key === "critical" ? "Bypass Quiet Hours for this event" : undefined}>
+                <Icon className={cn("h-3 w-3", meta.color)} />
+                {meta.label}
+              </span>
+            );
+          })}
+        </div>
+
+        <ScrollArea className="max-h-[60vh]">
+          {loading ? (
+            <div className="p-8 text-center text-sm text-[#A1A1AA]">Loading…</div>
+          ) : (
+            <div className="px-6 py-4 space-y-6">
+              {/* Iter 230d — Quiet Hours */}
+              <section
+                className="rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3"
+                data-testid="notif-quiet-hours-card"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-indigo-500/15 flex items-center justify-center">
+                      <Moon className="h-4 w-4 text-indigo-300" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">Quiet Hours</h4>
+                      <p className="text-[11px] text-[#71717A]">
+                        Silence in-app + push notifications during a daily window. Email still arrives.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={!!quietHours.enabled}
+                    onCheckedChange={(v) => saveQuietHours({ ...quietHours, enabled: v })}
+                    data-testid="notif-quiet-hours-enabled"
+                  />
+                </div>
+                {quietHours.enabled && (
+                  <div className="flex items-center gap-3 pl-12">
+                    <label className="flex items-center gap-2 text-xs text-[#A1A1AA]">
+                      Start
+                      <Input
+                        type="time"
+                        value={quietHours.start || "22:00"}
+                        onChange={(e) => setQuietHours({ ...quietHours, start: e.target.value })}
+                        onBlur={() => saveQuietHours(quietHours)}
+                        className="h-8 w-28 bg-white/5 border-white/10 text-white"
+                        data-testid="notif-quiet-hours-start"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 text-xs text-[#A1A1AA]">
+                      End
+                      <Input
+                        type="time"
+                        value={quietHours.end || "07:00"}
+                        onChange={(e) => setQuietHours({ ...quietHours, end: e.target.value })}
+                        onBlur={() => saveQuietHours(quietHours)}
+                        className="h-8 w-28 bg-white/5 border-white/10 text-white"
+                        data-testid="notif-quiet-hours-end"
+                      />
+                    </label>
+                  </div>
+                )}
+              </section>
+
+              {/* Iter 230d — Per-league mute */}
+              {myLeagues.length > 0 && (
+                <section
+                  className="rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3"
+                  data-testid="notif-league-mute-card"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-rose-500/15 flex items-center justify-center">
+                      <VolumeX className="h-4 w-4 text-rose-300" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">Mute leagues</h4>
+                      <p className="text-[11px] text-[#71717A]">
+                        Silence every notification for a specific league. They still appear in the bell dropdown.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pl-12">
+                    {myLeagues.map((lg) => {
+                      const muted = mutedLeagueIds.includes(lg.id);
+                      return (
+                        <div
+                          key={lg.id}
+                          className="flex items-center justify-between gap-3 p-2 rounded border border-white/5 hover:border-white/10 transition-colors"
+                          data-testid={`notif-league-mute-row-${lg.id}`}
+                        >
+                          <span className="text-sm text-white truncate">{lg.name}</span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Switch
+                              checked={muted}
+                              onCheckedChange={(v) => toggleLeagueMute(lg.id, v)}
+                              data-testid={`notif-league-mute-toggle-${lg.id}`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => toggleLeagueHide(lg.id, true)}
+                              title="Hide this league from your dashboard"
+                              className="h-7 w-7 rounded-md text-[#71717A] hover:text-rose-300 hover:bg-rose-500/10 flex items-center justify-center transition-colors"
+                              data-testid={`notif-league-hide-btn-${lg.id}`}
+                            >
+                              <EyeOff className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {/* Iter 230h — Hidden leagues, with an unhide affordance. */}
+              {hiddenLeagueIds.length > 0 && (
+                <section
+                  className="rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3"
+                  data-testid="notif-hidden-leagues-card"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-lg bg-amber-500/15 flex items-center justify-center">
+                      <Eye className="h-4 w-4 text-amber-300" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-white">Hidden leagues ({hiddenLeagueIds.length})</h4>
+                      <p className="text-[11px] text-[#71717A]">
+                        These leagues are hidden from your dashboard + sidebar. Restore them any time.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2 pl-12">
+                    {hiddenLeagueIds.map((id) => {
+                      const lg = allLeagues.find((x) => x.id === id) || { id, name: `League ${id.slice(-6)}` };
+                      return (
+                        <div
+                          key={id}
+                          className="flex items-center justify-between gap-3 p-2 rounded border border-amber-500/20 bg-amber-500/[0.03]"
+                          data-testid={`notif-hidden-league-row-${id}`}
+                        >
+                          <span className="text-sm text-white truncate">{lg.name}</span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => toggleLeagueHide(id, false)}
+                            data-testid={`notif-league-unhide-btn-${id}`}
+                            className="h-7 text-[11px] border-amber-500/30 text-amber-200 hover:bg-amber-500/10"
+                          >
+                            <Eye className="h-3 w-3 mr-1" />
+                            Unhide
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {eventsByCategory.map((cat) => (
+                <section key={cat.id} data-testid={`notif-cat-${cat.id}`}>
+                  <h3 className="text-sm font-semibold text-cyan-300 mb-2 uppercase tracking-wider">
+                    {cat.label}
+                    <Badge variant="outline" className="ml-2 text-[10px] border-white/10 text-[#A1A1AA]">
+                      {cat.events.length}
+                    </Badge>
+                  </h3>
+                  <div className="divide-y divide-white/5">
+                    {cat.events.map((ev) => {
+                      const p = prefs[ev.id] || { in_app: false, push: false, email: false, critical: false };
+                      return (
+                        <div
+                          key={ev.id}
+                          className="grid grid-cols-[1fr_repeat(4,68px)] gap-2 items-center py-2.5"
+                          data-testid={`notif-row-${ev.id}`}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-sm text-white truncate">{ev.label}</p>
+                            <p className="text-[11px] text-[#71717A] truncate">{ev.description}</p>
+                          </div>
+                          {["in_app", "push", "email", "critical"].map((ch) => (
+                            <div key={ch} className="flex justify-center">
+                              <Switch
+                                checked={!!p[ch]}
+                                onCheckedChange={(v) => handleToggle(ev.id, ch, v)}
+                                data-testid={`notif-toggle-${ev.id}-${ch}`}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
+  );
+}
