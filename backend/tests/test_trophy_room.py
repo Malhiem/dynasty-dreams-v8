@@ -5,8 +5,8 @@ import pytest
 import requests
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-COMMISH_EMAIL = "admin@dynastydreams.com"
-COMMISH_PASS = "Admin123!"
+COMMISH_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+COMMISH_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 def _login(email: str, password: str):
@@ -34,7 +34,7 @@ def test_league_trophy_room_shape():
     # Ensure at least one snapshot exists
     s.post(f"{BASE_URL}/api/leagues/{lid}/complete-season", json={"season_year": 2017})
 
-    r = requests.get(f"{BASE_URL}/api/leagues/{lid}/trophy-room")
+    r = s.get(f"{BASE_URL}/api/leagues/{lid}/trophy-room")
     assert r.status_code == 200, r.text
     data = r.json()
     for key in ("league_id", "seasons", "team_banners", "hall_of_fame"):
@@ -47,7 +47,7 @@ def test_league_trophy_room_shape():
 def test_season_trophy_card_shape():
     s = _login(COMMISH_EMAIL, COMMISH_PASS)
     lid = _pick_commish_league(s)
-    r = requests.get(f"{BASE_URL}/api/leagues/{lid}/trophy-room")
+    r = s.get(f"{BASE_URL}/api/leagues/{lid}/trophy-room")
     data = r.json()
     if not data["seasons"]:
         pytest.skip("No seasons snapshotted yet")
@@ -63,7 +63,7 @@ def test_season_trophy_card_shape():
 def test_team_banners_grouped_by_team():
     s = _login(COMMISH_EMAIL, COMMISH_PASS)
     lid = _pick_commish_league(s)
-    r = requests.get(f"{BASE_URL}/api/leagues/{lid}/trophy-room")
+    r = s.get(f"{BASE_URL}/api/leagues/{lid}/trophy-room")
     data = r.json()
     for tb in data["team_banners"]:
         assert "team_id" in tb
@@ -81,7 +81,7 @@ def test_team_trophy_room_shape():
     if not teams:
         pytest.skip("No teams")
     tid = teams[0]["id"]
-    r = requests.get(f"{BASE_URL}/api/teams/{tid}/trophy-room")
+    r = s.get(f"{BASE_URL}/api/teams/{tid}/trophy-room")
     assert r.status_code == 200
     data = r.json()
     for key in ("team_id", "team_name", "league_id", "seasons_played", "banners", "individual_awards"):
@@ -89,20 +89,22 @@ def test_team_trophy_room_shape():
 
 
 def test_team_trophy_room_invalid_id():
-    r = requests.get(f"{BASE_URL}/api/teams/notavalidid/trophy-room")
+    s = _login(COMMISH_EMAIL, COMMISH_PASS)
+    r = s.get(f"{BASE_URL}/api/teams/notavalidid/trophy-room")
     assert r.status_code == 400
 
 
 def test_team_trophy_room_404():
     """Valid ObjectId format but no such team."""
-    r = requests.get(f"{BASE_URL}/api/teams/000000000000000000000000/trophy-room")
+    s = _login(COMMISH_EMAIL, COMMISH_PASS)
+    r = s.get(f"{BASE_URL}/api/teams/000000000000000000000000/trophy-room")
     assert r.status_code == 404
 
 
 def test_hall_of_fame_top_8():
     s = _login(COMMISH_EMAIL, COMMISH_PASS)
     lid = _pick_commish_league(s)
-    r = requests.get(f"{BASE_URL}/api/leagues/{lid}/trophy-room")
+    r = s.get(f"{BASE_URL}/api/leagues/{lid}/trophy-room")
     data = r.json()
     assert len(data["hall_of_fame"]) <= 8
     for legend in data["hall_of_fame"]:

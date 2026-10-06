@@ -23,7 +23,7 @@ API_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 
 
 def _db():
-    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 # ---------- shared helpers ----------------------------------------------------

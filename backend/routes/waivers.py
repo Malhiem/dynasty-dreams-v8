@@ -348,7 +348,7 @@ async def precheck_waiver_claim(
     # ── Roster space ──
     roster_ids = team.get("roster", []) or []
     lineup = team.get("lineup") or {}
-    max_roster_size = int(league.get("roster_size") or 23)
+    max_roster_size = int(league.get("roster_spots") or 20)
     # taxi/IR slot sizes are read but not yet enforced as blockers here —
     # we only segment counts so the modal can show the breakdown.
 
@@ -362,33 +362,15 @@ async def precheck_waiver_claim(
     ir_count = _section_count("ir")
     ir_plus_count = _section_count("ir_plus")
     active_count = len(roster_ids) - taxi_count - ir_count - ir_plus_count
-    has_room = active_count < max_roster_size
+    has_room = len(roster_ids) < max_roster_size
 
     # ── Cap space ──
     cap_enabled = bool(league.get("salary_cap_enabled"))
     cap_total = float(league.get("salary_cap") or 0)
-    cap_used = float(team.get("salary_used") or 0)
-    # Synthesize the incoming player's salary the same way the roster page
-    # does, so the precheck is consistent with what the user sees.
-    p_points = int(player.get("points") or 0)
-    p_fp = float(player.get("fantasy_points") or 0)
-    is_g = (player.get("player_type") == "goalie") or (player.get("position") == "G")
-    if is_g:
-        addition = 9_500_000 if p_fp >= 300 else (
-            6_000_000 if p_fp >= 180 else (3_500_000 if p_fp >= 100 else 1_200_000)
-        )
-    elif p_points >= 100:
-        addition = 11_000_000 + min(2_500_000, (p_points - 100) * 70_000)
-    elif p_points >= 60:
-        addition = 6_000_000 + (p_points - 60) * 100_000
-    elif p_points >= 30:
-        addition = 3_000_000 + (p_points - 30) * 90_000
-    elif p_points >= 10:
-        addition = 1_500_000 + (p_points - 10) * 75_000
-    else:
-        addition = 950_000 + p_points * 40_000
-    addition = int(min(13_500_000, max(775_000, addition)))
-    cap_would_be = cap_used + addition
+    from services.salary_policy import payroll
+    cap_used = (await payroll(db, team, league))["used"]
+    cap_would_be = (await payroll(db, team, league, roster=roster_ids + [player_id]))["used"]
+    addition = cap_would_be - cap_used
     cap_fits = (not cap_enabled) or (cap_would_be <= cap_total)
 
     # ── Roster legality scan ──
@@ -428,7 +410,7 @@ async def precheck_waiver_claim(
             "code": "no_roster_space",
             "severity": "error",
             "message": (
-                f"Active roster is at {active_count}/{max_roster_size}. "
+                f"Roster full ({len(roster_ids)}/{max_roster_size}). "
                 "You must drop a player before this claim can succeed."
             ),
             "suggested_action": "drop",
@@ -479,7 +461,7 @@ async def precheck_waiver_claim(
         "can_claim": can_claim,
         "requires_drop": requires_drop,
         "roster": {
-            "current": active_count,
+            "current": len(roster_ids),
             "max": max_roster_size,
             "has_room": has_room,
             "taxi_count": taxi_count,
@@ -558,7 +540,11 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     drop_doc = None
     if input.drop_player_id:
         drop_doc = await db.players.find_one({"_id": ObjectId(input.drop_player_id)})
-    breach, projected, cap_total = _claim_would_breach_cap(league, team, player, drop_doc)
+    from services.salary_policy import payroll
+    roster = [p for p in team.get("roster") or [] if p != input.drop_player_id] + [input.player_id]
+    projected = (await payroll(db, team, league, roster=roster))["used"]
+    cap_total = float(league.get("salary_cap") or 0)
+    breach = bool(league.get("salary_cap_enabled") and projected > cap_total)
     if breach:
         raise HTTPException(
             status_code=422,
@@ -770,7 +756,7 @@ async def get_waiver_order(league_id: str):
             "rank": i + 1,
             "team_id": str(team["_id"]),
             "team_name": team["name"],
-            "owner_name": team["owner_name"],
+            "owner_name": team.get("owner_name") or "",
             "wins": team.get("wins", 0),
             "losses": team.get("losses", 0),
         })

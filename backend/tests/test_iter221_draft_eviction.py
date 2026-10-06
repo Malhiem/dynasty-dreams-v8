@@ -18,11 +18,11 @@ from bson import ObjectId
 from pymongo import MongoClient
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
-_mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
-_db_name = os.environ.get("DB_NAME", "test_database")
+_mongo_url = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
+_db_name = os.environ.get("DB_NAME", os.environ["DB_NAME"])
 _client = MongoClient(_mongo_url)
 _db = _client[_db_name]
 

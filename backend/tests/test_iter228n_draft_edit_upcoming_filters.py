@@ -15,7 +15,7 @@ API_URL = os.environ["REACT_APP_BACKEND_URL"]
 
 
 def _db():
-    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 def _register(prefix="i228n"):

@@ -5,6 +5,7 @@ import { useSocket } from '@/hooks/use-socket';
 
 const STORAGE_KEY = 'dd_active_league_id';
 const ORDER_KEY = 'dd_league_order_v1';
+const EMPTY_TEAMS = [];
 
 // Iter 230al + 230am — Apply the user's saved league order so every
 // consumer of `myLeagues` renders in the same sequence. Server-side
@@ -78,7 +79,7 @@ export function useActiveLeague() {
         }
         const ordered = _applyOrder(data || [], effectiveOrder);
         setMyLeagues(ordered);
-        let id = leagueId;
+        let id = localStorage.getItem(STORAGE_KEY) || leagueId;
         if (!id || !(ordered || []).some(l => l.id === id)) {
           id = ordered?.[0]?.id || null;
           if (id) {
@@ -94,16 +95,10 @@ export function useActiveLeague() {
           const meIdResolved = meRes.data?.id;
           if (!cancelled && meIdResolved) setMeId(meIdResolved);
           if (meIdResolved && Array.isArray(data) && data.length > 0) {
-            const teamResults = await Promise.all(
-              data.map(l =>
-                api.get(`/teams?league_id=${l.id}`)
-                  .then(r => [l.id, (r.data || []).find(t => t.owner_id === meIdResolved) || null])
-                  .catch(() => [l.id, null]),
-              ),
-            );
+            const { data: ownedTeams } = await api.get('/teams/mine/summaries');
             if (!cancelled) {
               const map = {};
-              for (const [lid, t] of teamResults) map[lid] = t;
+              for (const team of ownedTeams || []) map[team.league_id] = team;
               setMyTeamsByLeague(map);
             }
           }
@@ -144,7 +139,19 @@ export function useActiveLeague() {
   const switchLeague = (id) => {
     try { localStorage.setItem(STORAGE_KEY, id); } catch (e) { /* noop */ }
     setLeagueId(id);
+    window.dispatchEvent(new CustomEvent("dd:active-league-changed", {detail: {leagueId: id}}));
   };
+
+  useEffect(() => {
+    const onSelection = (event) => setLeagueId(event.detail.leagueId);
+    const onStorage = (event) => { if (event.key === STORAGE_KEY) setLeagueId(event.newValue); };
+    window.addEventListener("dd:active-league-changed", onSelection);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("dd:active-league-changed", onSelection);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
 
   const reloadTeams = () => setTeamsReloadKey(k => k + 1);
   const reloadLeague = () => setTeamsReloadKey(k => k + 1);
@@ -303,5 +310,6 @@ export function useActiveLeague() {
     }
   };
 
-  return { loading, myLeagues, myTeamsByLeague, leagueId, league, leagueTeams, myTeam, switchLeague, reloadTeams, reloadLeague, reloadMyLeagues, reorderLeagues, hideLeague };
+  const current = league?.id === leagueId;
+  return { loading, myLeagues, myTeamsByLeague, leagueId, league: current ? league : null, leagueTeams: current ? leagueTeams : EMPTY_TEAMS, myTeam: current ? myTeam : null, switchLeague, reloadTeams, reloadLeague, reloadMyLeagues, reorderLeagues, hideLeague };
 }

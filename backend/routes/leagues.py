@@ -5,7 +5,7 @@ playoff bracket + division management (commissioner-only) + Iter 109: League CRU
 import secrets
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from utils.roster_rules import check_position_breakdown_within_caps
 from routes.league_guards import require_league_member, verify_team_in_league
+from services.financial_lock import serialize_finances
 
 router = APIRouter()
 _deps: dict = {}
@@ -85,6 +86,9 @@ class LeagueCreate(BaseModel):
 
 
 class LeagueResponse(BaseModel):
+    salary_adherence_mode: Optional[Literal["strict", "informal"]] = None
+    ir_salary_charge_pct: Optional[int] = Field(None, ge=0, le=100)
+    draft_roster_target: Optional[int] = Field(None, ge=1, le=200)
     id: str
     name: str
     sport: str = "nhl"
@@ -135,6 +139,15 @@ class LeagueResponse(BaseModel):
     salary_retention_enabled: Optional[bool] = None
     salary_retention_max_pct: Optional[int] = None
     salary_retention_slots: Optional[int] = None
+    retention_forgiveness_policy: Literal["receiver_pays", "league_waives"] = "receiver_pays"
+    current_season_year: Optional[int] = None
+    current_season_status: Optional[str] = None
+    cap_floor_year_plus_2_tentative: Optional[bool] = None
+    cap_floor_year_plus_1_tentative: Optional[bool] = None
+    cap_floor_year_plus_2: Optional[int] = None
+    cap_floor_year_plus_1: Optional[int] = None
+    cap_floor: Optional[int] = None
+    cap_floor_enabled: Optional[bool] = None
     season_start_date: Optional[str] = None
     season_end_date: Optional[str] = None
     matchup_length_days: Optional[int] = None
@@ -195,8 +208,8 @@ class LeagueResponse(BaseModel):
     goalie_gp_limit: Optional[int] = None
     goalie_gp_count_method: Optional[str] = None
     # Iter 111 — Future-year salary caps + Contract Buyouts toggle
-    salary_cap_year_plus_1: Optional[int] = None
-    salary_cap_year_plus_2: Optional[int] = None
+    salary_cap_year_plus_1: Optional[int] = Field(None, ge=0, strict=True)
+    salary_cap_year_plus_2: Optional[int] = Field(None, ge=0, strict=True)
     salary_cap_year_plus_1_tentative: Optional[bool] = None
     salary_cap_year_plus_2_tentative: Optional[bool] = None
     contract_buyouts_enabled: Optional[bool] = None
@@ -274,6 +287,7 @@ async def create_league(input: LeagueCreate, request: Request):
         "league_id": league_id,
         "owner_id": user["_id"],
         "name": f"{user['name']}'s Team",
+        "owner_name": user["name"],
         "roster": [],
         "lineup": {},
         "is_commissioner_team": True,
@@ -359,6 +373,15 @@ def _league_to_response(league: dict) -> LeagueResponse:
         salary_retention_enabled=league.get("salary_retention_enabled"),
         salary_retention_max_pct=league.get("salary_retention_max_pct"),
         salary_retention_slots=league.get("salary_retention_slots"),
+        retention_forgiveness_policy=league.get("retention_forgiveness_policy", "receiver_pays"),
+        current_season_year=league.get("current_season_year"),
+        current_season_status=league.get("current_season_status"),
+        cap_floor_year_plus_2_tentative=league.get("cap_floor_year_plus_2_tentative"),
+        cap_floor_year_plus_1_tentative=league.get("cap_floor_year_plus_1_tentative"),
+        cap_floor_year_plus_2=league.get("cap_floor_year_plus_2"),
+        cap_floor_year_plus_1=league.get("cap_floor_year_plus_1"),
+        cap_floor=league.get("cap_floor"),
+        cap_floor_enabled=league.get("cap_floor_enabled"),
         season_start_date=league.get("season_start_date"),
         season_end_date=league.get("season_end_date"),
         matchup_length_days=league.get("matchup_length_days"),
@@ -420,6 +443,9 @@ def _league_to_response(league: dict) -> LeagueResponse:
         contract_buyouts_enabled=league.get("contract_buyouts_enabled"),
         week_overrides=league.get("week_overrides"),
         # Iter 232N.62 — draft-cap-view league settings
+        salary_adherence_mode=league.get("salary_adherence_mode", "informal"),
+        ir_salary_charge_pct=league.get("ir_salary_charge_pct", 100),
+        draft_roster_target=league.get("draft_roster_target"),
         default_rookie_aav=league.get("default_rookie_aav"),
         minors_cap_treatment=league.get("minors_cap_treatment"),
     )
@@ -1344,6 +1370,9 @@ async def get_playoff_bracket(league_id: str, request: Request):
     user = await _deps["get_current_user"](request)
     league = await require_league_member(db, user, league_id)
 
+    if league.get("playoffs_enabled") is False:
+        return {"rounds": [], "playoff_teams": [], "bye_teams": [], "status": "disabled"}
+
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
     total = len(teams)
     if total < 2:
@@ -1440,17 +1469,15 @@ async def get_playoff_bracket(league_id: str, request: Request):
         # labelling pass below stamps "Winner of X vs Y" onto the TBD slots.
         for rnd_idx in range(1, total_rounds + 1):
             expected = 2 ** (total_rounds - rnd_idx)
-            cur = by_round.get(rnd_idx, [])
-            while len(cur) < expected:
-                cur.append({
-                    "league_id": league_id,
-                    "bracket_round": rnd_idx,
-                    "home_team_tbd": True,
-                    "away_team_tbd": True,
-                    "home_team_id": None,
-                    "away_team_id": None,
-                    "status": "scheduled",
-                    "_synthetic": True,
+            stored = sorted(by_round.get(rnd_idx, []), key=lambda row: str(row.get("_id", "")))
+            slots = {int(row.get("bracket_index", i)): row for i, row in enumerate(stored)}
+            cur = []
+            for index in range(max(expected, max(slots, default=-1) + 1)):
+                cur.append(slots.get(index) or {
+                    "league_id": league_id, "bracket_round": rnd_idx, "bracket_index": index,
+                    "home_team_tbd": True, "away_team_tbd": True,
+                    "home_team_id": None, "away_team_id": None,
+                    "status": "scheduled", "_synthetic": True,
                 })
             by_round[rnd_idx] = cur
 
@@ -1682,24 +1709,28 @@ async def get_playoff_bracket(league_id: str, request: Request):
 
 # ─── Premium feature settings (salary cap, minors) + 14-day trial clock ───
 class CapSettingsUpdate(BaseModel):
+    salary_adherence_mode: Optional[Literal["strict", "informal"]] = None
+    ir_salary_charge_pct: Optional[int] = Field(None, ge=0, le=100)
+    draft_roster_target: Optional[int] = Field(None, ge=1, le=200)
     salary_cap_enabled: Optional[bool] = None
-    salary_cap: Optional[int] = None
+    salary_cap: Optional[int] = Field(None, ge=0, strict=True)
     # Iter 111 — future-year caps + "tentative" flags, consumed by the
     # Depth-Chart / Salary-Cap / Analytics pages for multi-year planning.
-    salary_cap_year_plus_1: Optional[int] = None
-    salary_cap_year_plus_2: Optional[int] = None
+    salary_cap_year_plus_1: Optional[int] = Field(None, ge=0, strict=True)
+    salary_cap_year_plus_2: Optional[int] = Field(None, ge=0, strict=True)
     salary_cap_year_plus_1_tentative: Optional[bool] = None
     salary_cap_year_plus_2_tentative: Optional[bool] = None
     # Iter 111 — Contract Buyouts toggle (Transactions section). When enabled,
     # buyouts may create dead-cap charges over subsequent seasons.
     contract_buyouts_enabled: Optional[bool] = None
-    salary_retention_slots: Optional[int] = Field(None, ge=0, le=10)
+    salary_retention_slots: Optional[int] = Field(None, ge=0, le=3, strict=True)
+    retention_forgiveness_policy: Literal["receiver_pays", "league_waives"] = None
     minors_enabled: Optional[bool] = None  # if your league offers a minor-league/prospects pool
     # Iter 120 — Salary cap FLOOR (mirrors the ceiling shape)
     cap_floor_enabled: Optional[bool] = None
-    cap_floor: Optional[int] = None
-    cap_floor_year_plus_1: Optional[int] = None
-    cap_floor_year_plus_2: Optional[int] = None
+    cap_floor: Optional[int] = Field(None, ge=0, strict=True)
+    cap_floor_year_plus_1: Optional[int] = Field(None, ge=0, strict=True)
+    cap_floor_year_plus_2: Optional[int] = Field(None, ge=0, strict=True)
     cap_floor_year_plus_1_tentative: Optional[bool] = None
     cap_floor_year_plus_2_tentative: Optional[bool] = None
     # Iter 232N.62 — Draft-room cap view support.
@@ -1777,6 +1808,7 @@ def _premium_status(league: dict) -> dict:
 
 
 @router.put("/leagues/{league_id}/admin/cap-settings")
+@serialize_finances(lambda: _deps["db"])
 async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, request: Request):
     """Commissioner toggles salary cap / minors premium features.
 
@@ -1822,6 +1854,8 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
             updates["salary_cap"] = int(payload.salary_cap)
     elif payload.salary_cap is not None:
         updates["salary_cap"] = int(payload.salary_cap)
+    if payload.retention_forgiveness_policy is not None:
+        updates["retention_forgiveness_policy"] = payload.retention_forgiveness_policy
     if payload.salary_retention_slots is not None:
         updates["salary_retention_slots"] = int(payload.salary_retention_slots)
     if payload.minors_enabled is not None:
@@ -1838,15 +1872,17 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
     if payload.contract_buyouts_enabled is not None:
         updates["contract_buyouts_enabled"] = bool(payload.contract_buyouts_enabled)
     # Iter 232N.62 — draft-cap-view rollup settings
+    for field in ("salary_adherence_mode", "ir_salary_charge_pct", "draft_roster_target"):
+        value = getattr(payload, field)
+        if value is not None:
+            updates[field] = value
     if payload.default_rookie_aav is not None:
         updates["default_rookie_aav"] = int(payload.default_rookie_aav)
     if payload.minors_cap_treatment is not None:
         updates["minors_cap_treatment"] = str(payload.minors_cap_treatment)
 
     # ── Iter 120 — Salary cap FLOOR (parallels the ceiling) ────────
-    # Floor is only meaningful when the ceiling is enabled. When the
-    # ceiling flips off, floor goes off + values clear (same defensive
-    # pattern as the iter-117 ceiling-orphan fix).
+    # The floor can be explicitly enabled independently of the ceiling.
     if payload.cap_floor_enabled is not None:
         updates["cap_floor_enabled"] = bool(payload.cap_floor_enabled)
         if not payload.cap_floor_enabled:
@@ -1868,16 +1904,40 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
     if payload.cap_floor_year_plus_2_tentative is not None:
         updates["cap_floor_year_plus_2_tentative"] = bool(payload.cap_floor_year_plus_2_tentative)
 
-    # If the ceiling is being disabled in this same call, also clear the
-    # floor — keeping the floor while the ceiling is off would be
-    # ambiguous and re-introduces the same orphan class we fixed in 117.
-    if payload.salary_cap_enabled is False:
+    # Preserve legacy disable-both behavior unless floor-only is explicit.
+    if payload.salary_cap_enabled is False and payload.cap_floor_enabled is not True:
         updates["cap_floor_enabled"] = False
         updates["cap_floor"] = None
         updates["cap_floor_year_plus_1"] = None
         updates["cap_floor_year_plus_2"] = None
         updates["cap_floor_year_plus_1_tentative"] = False
         updates["cap_floor_year_plus_2_tentative"] = False
+
+    if payload.salary_cap_enabled is False:
+        for field in ("salary_cap", "salary_cap_year_plus_1", "salary_cap_year_plus_2"):
+            updates[field] = None
+        updates["salary_cap_year_plus_1_tentative"] = False
+        updates["salary_cap_year_plus_2_tentative"] = False
+    merged = {**league, **updates}
+    if merged.get("cap_floor_enabled") and merged.get("cap_floor") is None:
+        raise HTTPException(400, "Enabled salary floor requires an amount")
+    if merged.get("salary_cap_enabled"):
+        if merged.get("salary_cap") is None:
+            raise HTTPException(400, "Enabled salary cap requires an amount")
+        for suffix in ("", "_year_plus_1", "_year_plus_2"):
+            floor, ceiling = merged.get("cap_floor" + suffix), merged.get("salary_cap" + suffix)
+            if floor is not None and ceiling is not None and floor > ceiling:
+                raise HTTPException(400, "Salary floor cannot exceed its ceiling")
+
+    from services.draft_salary import capacities
+    capacity = sum(n for s, n in capacities(merged).items() if s != "IR")
+    if merged.get("draft_roster_target", capacity) > capacity:
+        raise HTTPException(400, "Draft roster target exceeds roster capacity")
+    active_capacity = sum(n for s, n in capacities(merged).items() if s not in ("BN", "MIN", "IR"))
+    if merged.get("salary_adherence_mode") == "strict" and int(merged.get("draft_roster_target") or 0) < active_capacity:
+        raise HTTPException(400, "Strict draft roster target must cover all required active positions")
+    if merged.get("salary_adherence_mode") == "strict" and not merged.get("draft_roster_target"):
+        raise HTTPException(400, "Strict draft adherence requires an explicit roster target")
 
     # Start the trial clock the first time any premium feature is enabled
     # AND the league hasn't paid yet. Iter 225 — STICKY once started: we no
@@ -1894,6 +1954,11 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
 
     if updates:
         await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$set": updates})
+    if any(f in updates for f in ("salary_adherence_mode", "ir_salary_charge_pct", "draft_roster_target", "salary_cap", "cap_floor")):
+        await db.drafts.update_many({"league_id": league_id, "status": "active"}, {"$set": {"salary_blocked": False}})
+    changed = {f: {"before": league.get(f), "after": updates[f]} for f in ("salary_adherence_mode", "ir_salary_charge_pct", "draft_roster_target") if f in updates and updates[f] != league.get(f)}
+    if changed:
+        await db.league_audit.insert_one({"league_id": league_id, "actor_id": str(user["_id"]), "action": "draft_salary_settings", "changes": changed, "created_at": datetime.now(timezone.utc)})
     fresh = await db.leagues.find_one({"_id": ObjectId(league_id)})
     return {
         "salary_cap_enabled": bool(fresh.get("salary_cap_enabled")),
@@ -1903,6 +1968,9 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
         "salary_cap_year_plus_1_tentative": bool(fresh.get("salary_cap_year_plus_1_tentative")),
         "salary_cap_year_plus_2_tentative": bool(fresh.get("salary_cap_year_plus_2_tentative")),
         "contract_buyouts_enabled": bool(fresh.get("contract_buyouts_enabled")),
+        "salary_adherence_mode": fresh.get("salary_adherence_mode", "informal"),
+        "ir_salary_charge_pct": fresh.get("ir_salary_charge_pct", 100),
+        "draft_roster_target": fresh.get("draft_roster_target"),
         "cap_floor_enabled": bool(fresh.get("cap_floor_enabled")),
         "cap_floor": fresh.get("cap_floor"),
         "cap_floor_year_plus_1": fresh.get("cap_floor_year_plus_1"),
@@ -1910,6 +1978,7 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
         "cap_floor_year_plus_1_tentative": bool(fresh.get("cap_floor_year_plus_1_tentative")),
         "cap_floor_year_plus_2_tentative": bool(fresh.get("cap_floor_year_plus_2_tentative")),
         "salary_retention_slots": fresh.get("salary_retention_slots"),
+        "retention_forgiveness_policy": fresh.get("retention_forgiveness_policy", "receiver_pays"),
         "minors_enabled": bool(fresh.get("minors_enabled")),
         "premium_status": _premium_status(fresh),
     }
@@ -1986,7 +2055,8 @@ class LeagueUpdate(BaseModel):
     # Salary retention controls
     salary_retention_enabled: Optional[bool] = None
     salary_retention_max_pct: Optional[int] = Field(default=None, ge=0, le=100)
-    salary_retention_slots: Optional[int] = Field(default=None, ge=0, le=10)
+    salary_retention_slots: Optional[int] = Field(default=None, ge=0, le=3, strict=True)
+    retention_forgiveness_policy: Literal["receiver_pays", "league_waives"] = None
     # Schedule shape (calendar-based)
     season_start_date: Optional[str] = Field(default=None, max_length=20)
     season_end_date: Optional[str] = Field(default=None, max_length=20)
@@ -2097,7 +2167,7 @@ _LEAGUE_UPDATE_ALLOWED = {
     "playoff_teams", "playoff_start_week", "playoff_rounds", "playoff_end_week",
     "playoffs_enabled",
     "regular_season_weeks",
-    "salary_retention_enabled", "salary_retention_max_pct", "salary_retention_slots",
+    "salary_retention_enabled", "salary_retention_max_pct", "salary_retention_slots", "retention_forgiveness_policy",
     "season_start_date", "season_end_date",
     "matchup_length_days", "opponents_per_matchup_period",
     "consolation_enabled", "consolation_start_week", "consolation_end_week",
@@ -2135,6 +2205,7 @@ _LEAGUE_UPDATE_ALLOWED = {
 
 
 @router.put("/leagues/{league_id}")
+@serialize_finances(lambda: _deps["db"])
 async def update_league(league_id: str, payload: LeagueUpdate, request: Request):
     """Commissioner / co-commissioner only: update mutable league settings.
 
@@ -2437,12 +2508,13 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
 # Moved out of `server.py` (iter 82) so all `/leagues/...` mutators live in a
 # single router. Same URL, body shape, and response — pure refactor.
 @router.put("/leagues/{league_id}/salary-retention-slots")
+@serialize_finances(lambda: _deps["db"])
 async def set_salary_retention_slots(league_id: str, payload: dict, request: Request):
     """Commissioner-only setter for the per-team salary retention slot cap.
 
-    Body: ``{"salary_retention_slots": int}``  (0–10)
+    Body: ``{"salary_retention_slots": int}``  (0–3)
     Default value is 3 (mirrors the NHL CBA). `0` disables retention trades
-    entirely; higher values let teams stack more retained contracts.
+    entirely; three is the hard maximum.
 
     Audited via `db.audit_log` with `{from, to}` diff so co-commissioners can
     see who changed it and when.
@@ -2463,18 +2535,9 @@ async def set_salary_retention_slots(league_id: str, payload: dict, request: Req
             detail="Only commissioners can update league settings",
         )
 
-    try:
-        new_val = int(payload.get("salary_retention_slots", 3))
-    except (TypeError, ValueError):
-        raise HTTPException(
-            status_code=400,
-            detail="salary_retention_slots must be an integer",
-        )
-    if new_val < 0 or new_val > 10:
-        raise HTTPException(
-            status_code=400,
-            detail="salary_retention_slots must be between 0 and 10",
-        )
+    new_val = payload.get("salary_retention_slots", 3)
+    if type(new_val) is not int or not 0 <= new_val <= 3:
+        raise HTTPException(400, "salary_retention_slots must be an integer between 0 and 3")
 
     old_val = int(league.get("salary_retention_slots", 3))
     if new_val != old_val:

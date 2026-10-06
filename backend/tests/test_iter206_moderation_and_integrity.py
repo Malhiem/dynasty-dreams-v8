@@ -211,7 +211,7 @@ async def test_appeal_workflow_with_auto_unban():
 
 
 @pytest.mark.asyncio
-async def test_stripe_chargeback_webhook_flags_user():
+async def test_stripe_chargeback_webhook_flags_user(monkeypatch):
     """POST /api/webhook/stripe with a `charge.dispute.created` payload
     pushes a chargeback_flag entry onto the matching user (matched by
     stripe_customer_id)."""
@@ -219,6 +219,8 @@ async def test_stripe_chargeback_webhook_flags_user():
     from httpx import AsyncClient, ASGITransport
     from fastapi import FastAPI
     from routes import payments as pmt
+    # Exercise the local ASGI webhook without enabling payment calls on the E2E server.
+    monkeypatch.setattr(pmt, "PAYMENTS_DISABLED", False)
 
     user_id = ObjectId()
     customer_id = f"cus_iter207_{ObjectId()}"
@@ -396,6 +398,8 @@ async def test_stripe_webhook_rejects_invalid_signature_when_secret_set(monkeypa
     from httpx import AsyncClient, ASGITransport
     from fastapi import FastAPI
     from routes import payments as pmt
+    # Exercise the local ASGI webhook without enabling payment calls on the E2E server.
+    monkeypatch.setattr(pmt, "PAYMENTS_DISABLED", False)
 
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_iter208_test_secret_value")
 

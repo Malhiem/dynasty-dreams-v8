@@ -6,8 +6,8 @@ import requests
 API_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com")
 LEAGUE_ID = "69e46af167999bfb85c39628"  # Ice Kings Head-to-Head (Chris Zarek's league)
 
-ADMIN_EMAIL = "chriszarek@gmail.com"
-ADMIN_PASSWORD = "Chris2026!"
+ADMIN_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 def _token():

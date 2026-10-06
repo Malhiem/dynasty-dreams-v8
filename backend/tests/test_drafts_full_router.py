@@ -86,6 +86,7 @@ async def _seed_player(db, *, name="P", position="C", team="EDM", points=50, **e
         "points": points, "goals": int(points * 0.4),
         "assists": int(points * 0.6),
         "games_played": 40,
+        "salary": 950000,
     }
     doc.update(extra)
     res = await db.players.insert_one(doc)
@@ -118,6 +119,13 @@ async def _seed_draft(db, *, league_id, team_abbrs=None, status="scheduled",
         doc["auction_budgets"] = auction_budgets
     if salary_cap is not None:
         doc["salary_cap"] = salary_cap
+    teams = await db.teams.find({"league_id": league_id}).to_list(100)
+    for abbr in doc["team_abbrs"]:
+        team = next((t for t in teams if t.get("name", "").upper().startswith(abbr[:3])), None)
+        if not team:
+            result = await db.teams.insert_one({"league_id": league_id, "name": abbr, "owner_id": "another_owner", "roster": []})
+            team = {"_id": result.inserted_id, "name": abbr}
+        doc["team_map"][abbr] = {"id": str(team["_id"]), "name": team["name"]}
     res = await db.drafts.insert_one(doc)
     return str(res.inserted_id)
 

@@ -17,8 +17,8 @@ import pytest
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
 ICE_KINGS_LID = "69e46af167999bfb85c39628"
 
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 @pytest.fixture(scope="module")
@@ -38,6 +38,12 @@ def session():
 # ── (3) Waivers payload carries minor_eligible + player_type ────────
 
 def test_waivers_available_carries_minor_eligible_and_player_type(session):
+    from pymongo import MongoClient
+    from bson import ObjectId
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as mongo:
+        mongo[os.environ["DB_NAME"]].leagues.update_one({"_id": ObjectId(ICE_KINGS_LID)}, {"$set": {
+            "minors_enabled": True, "prospect_max_age": 23, "prospect_max_career_games": 80}})
     r = session.get(f"{BASE_URL}/api/waivers/available", params={"league_id": ICE_KINGS_LID}, timeout=30)
     assert r.status_code == 200, f"unexpected status {r.status_code}: {r.text[:300]}"
     payload = r.json()
@@ -52,7 +58,10 @@ def test_waivers_available_carries_minor_eligible_and_player_type(session):
 
     # Spot-check: at least one prospect with minor_eligible=true should
     # exist in the available pool (per review request McKenna/Misa).
-    prospects = [p for p in players if p.get("player_type") == "prospect" and p.get("minor_eligible") is True]
+    prospect_response = session.get(f"{BASE_URL}/api/waivers/available",
+        params={"league_id": ICE_KINGS_LID, "search": "McKenna"}, timeout=30)
+    assert prospect_response.status_code == 200
+    prospects = [p for p in prospect_response.json()["players"] if p.get("player_type") == "prospect" and p.get("minor_eligible") is True]
     assert len(prospects) >= 1, "expected at least one minor-eligible prospect in /waivers/available"
 
 

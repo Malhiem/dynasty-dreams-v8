@@ -14,10 +14,10 @@ API = f"{BASE_URL}/api"
 MONGO_URL = os.environ.get("MONGO_URL")
 DB_NAME = os.environ.get("DB_NAME")
 
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PASS = "Chris2026!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 # ─── Fixtures ──────────────────────────────────────────────
@@ -79,7 +79,7 @@ class TestLeagueTransactions:
     def test_transactions_only_supported_types(self, admin_session, ice_kings_id):
         r = admin_session.get(f"{API}/leagues/{ice_kings_id}/transactions?limit=100")
         assert r.status_code == 200
-        allowed = {"roster_add", "roster_drop", "waiver_won", "trade_executed"}
+        allowed = {"roster_add", "roster_drop", "waiver_won", "trade_executed", "lineup_change"}
         for tx in r.json()["transactions"]:
             assert tx["type"] in allowed, f"unexpected type {tx['type']}"
             # required keys
@@ -303,7 +303,12 @@ class TestWaiverWonProcessing:
 
         try:
             # Call process
-            r = admin_session.post(f"{API}/waivers/process?league_id={ice_kings_id}")
+            commissioner_login = requests.post(f"{API}/auth/login", json={
+                "email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"),
+                "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")})
+            assert commissioner_login.status_code == 200, commissioner_login.text
+            r = requests.post(f"{API}/waivers/process?league_id={ice_kings_id}&force=true",
+                headers={"Authorization": f"Bearer {commissioner_login.json()['access_token']}"})
             assert r.status_code == 200, r.text
             time.sleep(0.5)
 

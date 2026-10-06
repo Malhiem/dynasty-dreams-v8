@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from routes import roster as roster_routes  # noqa: E402
 
-from tests.router_test_utils import isolated_router_app  # noqa: E402
+from tests.router_test_utils import isolated_router_app, seed_league  # noqa: E402
 
 
 def _stub_calc(player, _config=None):
@@ -128,7 +128,7 @@ async def test_get_roster_empty_when_team_has_no_roster():
     async with isolated_router_app(roster_routes) as ctx:
         roster_routes._deps["calculate_fantasy_points"] = _stub_calc
         team_res = await ctx.db.teams.insert_one({
-            "league_id": "any",
+            "league_id": await seed_league(ctx.db),
             "owner_id": "test_user_0001",
             "owner_name": "Owner",
             "name": "Empty",

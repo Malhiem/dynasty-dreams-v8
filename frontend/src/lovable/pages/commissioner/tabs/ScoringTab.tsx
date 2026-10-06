@@ -34,8 +34,8 @@ interface ScoringTabProps {
   scoringSettings: Record<string, ScoringSetting>;
   toggleScoringCategory: (id: string) => void;
   updateScoringPoints: (id: string, pts: number) => void;
-  onReset?: () => void;
-  onSave?: () => void;
+  onReset: () => void;
+  onSave: () => void;
   GoalieScoringCard?: React.ComponentType<any>;
   activeLeague?: any;
   reloadLeague?: () => void;

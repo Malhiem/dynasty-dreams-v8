@@ -18,6 +18,7 @@ Coverage
 4. InfoHint renders the lucide Info icon (cyan/300) and uses Tooltip
    from the shadcn UI primitive for accessible keyboard / mobile reveal.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -28,7 +29,7 @@ RULES_TAB = REPO / "frontend/src/lovable/pages/commissioner/RulesScheduleTab.tsx
 
 def test_info_hint_component_present():
     assert INFO_HINT.exists(), "info-hint.jsx must exist"
-    src = INFO_HINT.read_text()
+    src = read_source(INFO_HINT)
     assert "from \"lucide-react\"" in src, "InfoHint should import lucide Info icon"
     assert "Info" in src, "InfoHint must use lucide Info icon"
     assert "TooltipProvider" in src, "InfoHint must use shadcn Tooltip primitive"
@@ -38,7 +39,7 @@ def test_info_hint_component_present():
 
 
 def test_transactions_config_wires_info_hints():
-    src = TX_CARDS.read_text()
+    src = read_source(TX_CARDS)
     assert 'import InfoHint from "@/components/ui/info-hint"' in src, (
         "TransactionsConfigCards must import InfoHint"
     )
@@ -64,7 +65,7 @@ def test_transactions_config_wires_info_hints():
 
 
 def test_rules_schedule_tab_wires_info_hints():
-    src = RULES_TAB.read_text()
+    src = read_source(RULES_TAB)
     assert 'import InfoHint from "@/components/ui/info-hint"' in src, (
         "RulesScheduleTab must import InfoHint"
     )

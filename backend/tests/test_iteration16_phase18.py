@@ -9,10 +9,10 @@ BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/") if "REACT_APP_BACKEND
 ICE_KINGS_ID = "69e46af167999bfb85c39628"
 CHRISZAREK_USER_ID = "69e43c4ddba209f1da22660c"
 
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PASSWORD = "Chris2026!"
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 def _login(session: requests.Session, email: str, password: str) -> bool:
@@ -25,6 +25,8 @@ def chris_client():
     s = requests.Session()
     if not _login(s, CHRIS_EMAIL, CHRIS_PASSWORD):
         pytest.skip("Could not log in as chriszarek")
+    global CHRISZAREK_USER_ID
+    CHRISZAREK_USER_ID = s.get(f"{BASE_URL}/api/auth/me").json()["id"]
     return s
 
 

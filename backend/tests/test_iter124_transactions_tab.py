@@ -26,8 +26,8 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 
 def _login(email, password):

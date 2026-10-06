@@ -3,7 +3,7 @@ Iter 162 - Schedule Config Max 20 Bug Fix Tests
 
 Tests that the schedule-config endpoint accepts values up to 20 for:
 - intra_division_games
-- intra_conference_games  
+- intra_conference_games
 - inter_conference_games
 
 Previously capped at 10, now raised to 20.
@@ -16,8 +16,8 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 ROTO_LEAGUE_ID = "69e46af167999bfb85c39629"  # Existing roto league for testing
 
 # Test credentials
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 @pytest.fixture(scope="module")

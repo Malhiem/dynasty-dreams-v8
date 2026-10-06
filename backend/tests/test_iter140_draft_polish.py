@@ -18,6 +18,7 @@ Coverage
    active, surfaces a per-pick trade button (`draft-board-pick-trade-…`)
    wired into the existing TradeBuilder context.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -32,7 +33,7 @@ DRAFT_BOARD = REPO / "frontend/src/lovable/pages/DraftBoard.tsx"
 
 # ── 1. League Admin → Draft tab now renders "Create a Draft" ───
 def test_admin_renames_to_create_a_draft():
-    block = DRAFT_TAB.read_text()
+    block = read_source(DRAFT_TAB)
     assert "<CardTitle>Create a Draft</CardTitle>" in block, "Title must be 'Create a Draft'"
     # DraftOrderConfigCard is inside the Create a Draft card AFTER the Draft Type select
     type_pos = block.find("First-Time Team Draft")  # inside the Select
@@ -45,7 +46,7 @@ def test_admin_renames_to_create_a_draft():
 
 # ── 2. Card supports embedded mode ─────────────────────────────
 def test_config_card_embedded_mode():
-    src = CARD.read_text()
+    src = read_source(CARD)
     assert "embedded?: boolean" in src, "Embedded prop type missing"
     assert "if (embedded)" in src, "Embedded short-circuit missing"
     assert "Draft Order &amp; Schedule" in src, "Inner Label still rendered"
@@ -53,7 +54,7 @@ def test_config_card_embedded_mode():
 
 # ── 3. Backend emits presence_state + user_left ────────────────
 def test_backend_presence_events():
-    src = SERVER.read_text()
+    src = read_source(SERVER)
     assert "'presence_state'" in src, "presence_state emit missing"
     assert "'user_left'" in src, "user_left emit missing"
     # presence_state goes ONLY to the joining sid
@@ -62,7 +63,7 @@ def test_backend_presence_events():
 
 # ── 4. useDraftSocket exposes onlineUserIds ────────────────────
 def test_use_draft_socket_presence():
-    src = SOCKET.read_text()
+    src = read_source(SOCKET)
     assert "onlineUserIds" in src, "Presence Set missing"
     assert "presence_state" in src, "Handler missing"
     assert "user_left" in src, "user_left handler missing"
@@ -70,7 +71,7 @@ def test_use_draft_socket_presence():
 
 # ── 5. DraftRoom paints green online outline + gold on-clock ───
 def test_draft_room_online_outline():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     assert "onlineUserIds" in src, "Online presence not consumed in DraftRoom"
     assert "ownerOnline" in src, "Per-team online flag missing"
     # Green outline class
@@ -84,7 +85,7 @@ def test_draft_room_online_outline():
 
 # ── 6. DraftBoard trade toggle + per-pick trade buttons ────────
 def test_draft_board_trade_toggle_and_buttons():
-    src = DRAFT_BOARD.read_text()
+    src = read_source(DRAFT_BOARD)
     assert 'data-testid="draft-board-trade-toggle"' in src, "Trade toggle button missing"
     assert "tradeMode" in src, "Trade-mode state missing"
     assert "handleAddPickToTrade" in src, "Trade handler missing"

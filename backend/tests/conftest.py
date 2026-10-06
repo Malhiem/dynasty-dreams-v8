@@ -21,8 +21,8 @@ This conftest does two things:
      KeyError when CI hasn't exported it. Existing exports win — we
      only fill in gaps.
 
-  2. **Session-level pollution sweep** (`_global_pollution_sweep`
-     auto-use fixture) — before AND after every test, scrub any
+  2. **Module-level pollution sweep** (`_global_pollution_sweep`
+     auto-use fixture) — before AND after every module, scrub any
      documents that match the canonical pollution patterns:
 
        • players with `_test_seed: True` flag (canonical marker) OR
@@ -34,9 +34,9 @@ This conftest does two things:
          team_invites (referential cleanup).
 
      Best-effort — never blocks the test run on a sweep failure.
-     Tests that need the data they seeded can override the sweep by
-     NOT tagging their docs with `_test_seed: True` and using non-
-     matching names (true integration tests against fixed seed data).
+     Module-scoped fixtures survive until their module finishes. The
+     disposable-suite baseline is guarded by explicit isolation settings
+     and survives sweeps so legacy HTTP tests have deterministic inputs.
 
 NEW test files should tag every seeded doc with `_test_seed: True`
 so this sweep finds it automatically. Pattern:
@@ -294,13 +294,27 @@ def _sweep_polluted_artefacts() -> None:
         print(f"[conftest] global pollution sweep skipped: {e}")
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture(autouse=True, scope="module")
 def _global_pollution_sweep():
-    """Sweep polluted artefacts BEFORE AND AFTER every test.
+    """Sweep before/after each module, preserving module/class-scoped fixtures.
 
     Each side of the sweep is independent + best-effort — a failure
     on one side doesn't block the other or the test itself.
     """
+    from tests.isolated_seed import seed_disposable_suite
+    seed_disposable_suite(reset=True)
     _sweep_polluted_artefacts()
     yield
     _sweep_polluted_artefacts()
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _disposable_suite_baseline():
+    from tests.isolated_seed import seed_disposable_suite
+    seed_disposable_suite()
+
+
+def pytest_assertrepr_compare(op, left, right):
+    """Keep legacy source-string assertion failures useful without dumping files."""
+    if op in ("in", "not in") and isinstance(left, str) and isinstance(right, str) and len(right) > 4000:
+        return [f"Expected source check: {left!r} {op} source", f"Source length: {len(right)} characters"]

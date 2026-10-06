@@ -24,7 +24,7 @@ BASE = _backend_url()
 
 def _db_sync():
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    return client[os.environ.get("DB_NAME", "test_database")]
+    return client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 async def _login(client, email, password):
@@ -36,7 +36,7 @@ async def _login(client, email, password):
 @pytest.mark.asyncio
 async def test_quiet_hours_set_and_validation():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
         # 1. Enable + set window.
         r = await client.put(
@@ -80,7 +80,7 @@ async def test_quiet_hours_set_and_validation():
 @pytest.mark.asyncio
 async def test_per_league_mute_toggle():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         # Find a league chris is in.
         r = await client.get("/api/leagues?my_leagues=true", headers={"Authorization": f"Bearer {token}"})
         leagues = r.json()
@@ -126,7 +126,7 @@ async def test_quiet_hours_blocks_in_app_via_helper():
     # Motor client bound to the active event loop.
     np_mod._deps["db"] = db
 
-    user = await db.users.find_one({"email": "chriszarek@gmail.com"})
+    user = await db.users.find_one({"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")})
     assert user
     user_id = str(user["_id"])
 
@@ -178,7 +178,7 @@ async def test_muted_league_blocks_all_channels():
 
     db = _db_sync()
     np_mod._deps["db"] = db
-    user = await db.users.find_one({"email": "chriszarek@gmail.com"})
+    user = await db.users.find_one({"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")})
     user_id = str(user["_id"])
     league = await db.leagues.find_one({})
     league_id = str(league["_id"])
@@ -315,7 +315,7 @@ async def test_admin_diff_sync_endpoint():
     """Admin-only POST /api/admin/players/{id}/diff-sync — wraps the
     dispatcher and returns its summary."""
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        admin_token = await _login(client, "admin@dynastydreams.com", "Admin123!")
+        admin_token = await _login(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         db = _db_sync()
         team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
         player_id = team["roster"][0]
@@ -337,7 +337,7 @@ async def test_admin_diff_sync_endpoint():
             assert body["notifications_sent"] >= 1
 
             # Non-admin → 403.
-            chris_token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+            chris_token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
             r = await client.post(
                 f"/api/admin/players/{player_id}/diff-sync",
                 headers={"Authorization": f"Bearer {chris_token}"},

@@ -22,7 +22,7 @@ from services.notification_worker import run_once
 
 def _db_sync():
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    return client[os.environ.get("DB_NAME", "test_database")]
+    return client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 async def _make_recorder():

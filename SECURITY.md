@@ -160,11 +160,19 @@ On successful `POST /api/auth/reset-password` the user doc receives
 incoming refresh token's `iat` against `password_changed_at`; any
 older token returns `401 Session revoked — please sign in again` and
 the cookies are cleared. This stops a stolen 7-day refresh token from
-outliving a password reset.
+outliving a password reset. New tokens retain fractional epoch seconds and
+new password-change timestamps retain ISO microseconds, avoiding false
+revocation of a login issued later in the same second. Legacy integer-token
+and Mongo datetime records remain supported; missing issue times are
+rejected after a password change.
 
-### 4.4 Impersonation = read-only
+### 4.4 Impersonation modes
 When an admin starts impersonation (`POST /api/auth/impersonate-start`)
-the resulting token carries `type=impersonation, mode=read_only`.
+the current sandbox endpoint permits only `is_test_account=true` targets and
+issues `type=impersonation, mode=sandbox` tokens that allow writes. Ordinary
+users cannot start impersonation, and real accounts cannot be targets.
+Separately, tokens carrying `type=impersonation, mode=read_only` remain
+strictly read-only.
 `get_current_user` in `server.py` blocks any HTTP method outside
 `GET/HEAD/OPTIONS` while that mode is active, returning
 `403 Impersonation session is read-only — writes are blocked.` This
@@ -196,3 +204,14 @@ The security invariants are guarded by:
 Both files are part of the standard pytest suite. **CI must run them
 on every PR.** If any test in those files fails, treat it as a release
 blocker — the audit findings have regressed.
+
+
+### Running the HTTP security regressions locally
+
+Use a dedicated disposable API/Mongo stack, never the shared preview or a
+database used concurrently by browser tests. Set `SECURITY_TEST_ISOLATED=1`,
+`MONGO_URL`, `DB_NAME`, and `REACT_APP_BACKEND_URL` explicitly. The Mongo
+settings must match the running API; fixtures verify this by registering a
+fresh user and finding it in that database. Provide the isolated stack's
+`ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `JWT_SECRET` for sandbox and token-mode
+checks. Fixtures create and clean up their own accounts and leagues.

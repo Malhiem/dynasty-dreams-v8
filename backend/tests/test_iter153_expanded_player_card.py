@@ -1,4 +1,5 @@
 """Iter 153 — Expanded player card via PlayerCardModal + layout fixes."""
+from tests.source_tree import read_source
 from pathlib import Path
 FRONTEND = Path("/app/frontend/src")
 
@@ -18,9 +19,9 @@ def _read(rel: str) -> str:
         ):
             fp = FRONTEND / sub
             if fp.exists():
-                parts.append(fp.read_text(encoding='utf-8'))
+                parts.append(read_source(fp, encoding='utf-8'))
         return chr(10).join(parts)
-    return (FRONTEND / rel).read_text(encoding='utf-8')
+    return read_source(FRONTEND / rel, encoding='utf-8')
 
 
 def test_player_card_modal_has_open_full_page_link():
@@ -59,7 +60,9 @@ def test_selected_card_layout_is_constrained_and_taller():
     src = _read("lovable/pages/DraftRoom.tsx")
     # SelectedPlayerCard mounted inside the left flex item, not as a
     # standalone full-width row above the Draft Board.
-    assert "Iter 153 — SelectedPlayerCard sits *inside* the left flex item" in src
+    parent = _read("lovable/pages/DraftRoom.tsx")
+    assert parent.index("<DraftPreviewPanel") < parent.index("<DraftLiveTile")
+    assert "<SelectedPlayerCard" in _read("lovable/pages/draftroom/DraftPreviewPanel.tsx")
     # The old standalone placement above the Draft Board is gone
     assert "Iter 152 — Selected Player Card (above Draft Board)" not in src
     # Component itself has h-full + min-h-[200px]

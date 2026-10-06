@@ -10,7 +10,7 @@ BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.
 def sess():
     s = requests.Session()
     r = s.post(f"{BASE}/api/auth/login",
-               json={"email": "chriszarek@gmail.com", "password": "Chris2026!"},
+               json={"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")},
                timeout=30)
     assert r.status_code == 200, r.text
     tok = r.json().get("token") or r.json().get("access_token")
@@ -29,7 +29,7 @@ def test_feed_scope_user(sess):
 
 def test_feed_scope_league(sess):
     r = sess.get(f"{BASE}/api/player-status/feed",
-                 params={"scope": "league", "league_id": "6a3a0781a842ea2f7bcdc7cb", "days": 14},
+                 params={"scope": "league", "league_id": "69e46af167999bfb85c39629", "days": 14},
                  timeout=30)
     assert r.status_code == 200, r.text
     data = r.json()

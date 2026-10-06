@@ -542,22 +542,23 @@ async def mark_playoff_winner(league_id: str, body: MarkWinnerBody, request: Req
         "league_id": league_id, "is_playoff": True, "bracket_round": cur_round,
     }).sort("_id", 1).to_list(50)
     try:
-        cur_idx = [str(x["_id"]) for x in sibs].index(str(mu["_id"]))
-    except ValueError:
+        cur_idx = next(int(row.get("bracket_index", i)) for i, row in enumerate(sibs) if str(row["_id"]) == str(mu["_id"]))
+    except (ValueError, StopIteration):
         cur_idx = -1
     target_idx = cur_idx // 2 if cur_idx >= 0 else -1
 
-    if target_idx >= 0:
-        target = next_matchups[target_idx] if target_idx < len(next_matchups) else None
+    import math
+    total_rounds = int(league.get("playoff_rounds") or math.ceil(math.log2(max(2, int(league.get("playoff_teams") or 2)))))
+    if target_idx >= 0 and cur_round < total_rounds:
+        target = next((row for i, row in enumerate(next_matchups)
+                       if int(row.get("bracket_index", i)) == target_idx), None)
         if target:
-            # Existing target — fill the next empty slot (home first, then away).
-            set_fields: dict = {}
-            if not target.get("home_team_id"):
-                set_fields = {"home_team_id": body.winner_team_id, "home_team_tbd": False}
-            elif not target.get("away_team_id"):
-                set_fields = {"away_team_id": body.winner_team_id, "away_team_tbd": False}
-            if set_fields:
-                await db.matchups.update_one({"_id": target["_id"]}, {"$set": set_fields})
+            # Each parent owns one fixed slot, including repeat winner edits.
+            side = "home" if cur_idx % 2 == 0 else "away"
+            await db.matchups.update_one({"_id": target["_id"]}, {"$set": {
+                f"{side}_team_id": body.winner_team_id, f"{side}_team_tbd": False,
+                "bracket_index": target_idx,
+            }})
         else:
             # Iter 199 — the bracket synthesizer pads non-final rounds with
             # in-memory TBD matchups (no DB row). When a winner needs to
@@ -573,11 +574,12 @@ async def mark_playoff_winner(league_id: str, body: MarkWinnerBody, request: Req
             new_doc = {
                 "league_id": league_id,
                 "bracket_round": next_round,
+                "bracket_index": target_idx,
                 "is_playoff": True,
-                "home_team_id": body.winner_team_id,
-                "home_team_tbd": False,
-                "away_team_id": None,
-                "away_team_tbd": True,
+                "home_team_id": body.winner_team_id if cur_idx % 2 == 0 else None,
+                "home_team_tbd": cur_idx % 2 != 0,
+                "away_team_id": body.winner_team_id if cur_idx % 2 else None,
+                "away_team_tbd": cur_idx % 2 == 0,
                 "status": "scheduled",
                 "home_score": 0,
                 "away_score": 0,

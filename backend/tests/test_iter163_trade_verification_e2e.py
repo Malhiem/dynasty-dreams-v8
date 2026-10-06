@@ -44,12 +44,12 @@ def _backend_url():
 
 
 BASE = _backend_url()
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 # Commissioner + owner of team A — needed because /execute and
 # /withdraw require participant-or-commissioner authorization.
-COMMISH_EMAIL = "chriszarek@gmail.com"
-COMMISH_PASSWORD = "Chris2026!"
+COMMISH_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+COMMISH_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 LID = "69e46af167999bfb85c39628"
 
 
@@ -185,7 +185,9 @@ async def test_league_veto_via_votes_threshold():
         # Read league veto threshold
         r = await client.get(f"/api/leagues/{LID}", headers=headers)
         league = r.json()
-        pct = league.get("trade_veto_threshold_pct", 50)
+        pct = league.get("trade_veto_threshold_pct")
+        if pct is None:
+            pct = (league.get("transactions_config") or {}).get("trades", {}).get("veto_threshold_pct", 50)
         total = league.get("current_teams") or 12
         teams_required = max(1, -(-total * pct // 100))
 

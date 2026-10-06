@@ -254,10 +254,12 @@ export const shouldShowOpenSlotForSection = (
   onMoveToSection?: (section: RosterSection) => void,
   sectionCounts?: Record<RosterSection, number>,
   highlightedPlayer?: Player | null,
+  sections = sectionConfig,
 ): boolean => {
   if (!highlightedPlayerId || !onMoveToSection || !sectionCounts) return false;
-  if (section === "starting" || section === "minors") return false;
-  if (sectionCounts[section] >= sectionConfig[section].maxSlots) return false;
+  if (section === "starting") return false;
+  if ((section === "minors" || section === "goalies_minors") && !(highlightedPlayer as any)?.minor_eligible) return false;
+  if (sectionCounts[section] >= sections[section].maxSlots) return false;
   if (section === "ir" && highlightedPlayer) {
     const hasRecentStats = highlightedPlayer.statsByPeriod["7d"] > 0 || highlightedPlayer.statsByPeriod["1d"] > 0;
     if (hasRecentStats) return false;
@@ -282,6 +284,8 @@ export const getContractTypeColor = (type: any) => {
 
 export const getRosterViolations = (
   playerList: Player[],
+  rosterSlots = LEAGUE_ROSTER_SLOTS,
+  sections = sectionConfig,
 ): { player: Player; reason: string }[] => {
   const violations: { player: Player; reason: string }[] = [];
   playerList.forEach((p) => {
@@ -295,29 +299,29 @@ export const getRosterViolations = (
     starting: 0, bench: 0, ir: 0, minors: 0, goalies: 0, goalies_minors: 0,
   };
   playerList.forEach((p) => { sectionCounts[p.rosterSection]++; });
-  if (sectionCounts.bench > sectionConfig.bench.maxSlots) {
+  if (sectionCounts.bench > sections.bench.maxSlots) {
     violations.push({
       player: playerList.find((p) => p.rosterSection === "bench")!,
-      reason: `Bench over limit (${sectionCounts.bench}/${sectionConfig.bench.maxSlots})`,
+      reason: `Bench over limit (${sectionCounts.bench}/${sections.bench.maxSlots})`,
     });
   }
-  if (sectionCounts.ir > sectionConfig.ir.maxSlots) {
+  if (sectionCounts.ir > sections.ir.maxSlots) {
     violations.push({
       player: playerList.find((p) => p.rosterSection === "ir")!,
-      reason: `IR over limit (${sectionCounts.ir}/${sectionConfig.ir.maxSlots})`,
+      reason: `IR over limit (${sectionCounts.ir}/${sections.ir.maxSlots})`,
     });
   }
-  if (sectionCounts.minors > sectionConfig.minors.maxSlots) {
+  if (sectionCounts.minors > sections.minors.maxSlots) {
     violations.push({
       player: playerList.find((p) => p.rosterSection === "minors")!,
-      reason: `Minors over limit (${sectionCounts.minors}/${sectionConfig.minors.maxSlots})`,
+      reason: `Minors over limit (${sectionCounts.minors}/${sections.minors.maxSlots})`,
     });
   }
   // Check for empty starting roster slots
   const filledSlotIds = new Set(
     playerList.filter((p) => p.rosterSection === "starting" && p.rosterSlotId).map((p) => p.rosterSlotId),
   );
-  LEAGUE_ROSTER_SLOTS.forEach((slot) => {
+  rosterSlots.forEach((slot) => {
     if (!filledSlotIds.has(slot.id)) {
       const anyPlayer = playerList[0];
       if (anyPlayer) {

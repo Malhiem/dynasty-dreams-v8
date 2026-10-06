@@ -79,6 +79,8 @@ class CreateDraftRequest(BaseModel):
 
 class MakeDraftPickRequest(BaseModel):
     player_id: str
+    destination: Optional[str] = None
+    expected_pick: Optional[int] = None
 
 
 class DraftChatRequest(BaseModel):

@@ -1,6 +1,6 @@
 """Tests for the salary retention slots commissioner endpoint.
 
-- PUT /api/leagues/{id}/salary-retention-slots validates range [0-10]
+- PUT /api/leagues/{id}/salary-retention-slots validates range [0-3]
 - Only commissioner / co-commissioner can modify
 - Value is reflected in /teams/{id}/compliance.salary_retention_slots_total
 - Audit log entry is written on change
@@ -23,8 +23,8 @@ def _backend_url():
 
 
 BASE = _backend_url()
-COMMISSIONER_EMAIL = "chriszarek@gmail.com"
-COMMISSIONER_PASSWORD = "Chris2026!"
+COMMISSIONER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+COMMISSIONER_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 TEAM_ID = "69e59b30cbd3fea02a914c61"   # Zarek's Frozen (commissioner's own team)
 LEAGUE_ID = "69e46af167999bfb85c39628"  # Ice Kings (Zarek is commissioner)
 
@@ -56,18 +56,18 @@ async def test_retention_slots_updates_compliance():
         h = {"Authorization": f"Bearer {token}"}
         r = await client.put(
             f"/api/leagues/{LEAGUE_ID}/salary-retention-slots",
-            headers=h, json={"salary_retention_slots": 7},
+            headers=h, json={"salary_retention_slots": 2},
         )
         assert r.status_code == 200, r.text
-        assert r.json()["salary_retention_slots"] == 7
+        assert r.json()["salary_retention_slots"] == 2
 
         # Compliance should reflect the new cap immediately
         compliance = await client.get(f"/api/teams/{TEAM_ID}/compliance", headers=h)
         body = compliance.json()
-        assert body["salary_retention_slots_total"] == 7
-        # No retentions have been added, so used = 0 and remaining = 7
+        assert body["salary_retention_slots_total"] == 2
+        # No retentions have been added, so used = 0 and remaining = 2
         assert body["salary_retention_slots_used"] == 0
-        assert body["salary_retention_slots_remaining"] == 7
+        assert body["salary_retention_slots_remaining"] == 2
 
         # Clean up — restore to 3
         await client.put(
@@ -87,7 +87,7 @@ async def test_retention_slots_range_validation():
             headers=h, json={"salary_retention_slots": 15},
         )
         assert r.status_code == 400
-        assert "between 0 and 10" in r.json()["detail"]
+        assert "between 0 and 3" in r.json()["detail"]
         # Under-range
         r = await client.put(
             f"/api/leagues/{LEAGUE_ID}/salary-retention-slots",
@@ -104,21 +104,13 @@ async def test_retention_slots_range_validation():
 
 @pytest.mark.asyncio
 async def test_retention_slots_non_commissioner_blocked():
-    """A user who isn't a commissioner of the league gets 403."""
+    from uuid import uuid4
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        # admin@dynastydreams.com isn't the commissioner of Ice Kings
-        # but he IS a superadmin. Our endpoint checks commissioner_id +
-        # co_commissioners only — admin role alone isn't enough. So we
-        # expect a 403.
-        admin_token = await _login(client, "admin@dynastydreams.com", "Admin123!")
-        # Find a league where admin is NOT commissioner — use one the seeded
-        # admin didn't create. We'll just try Ice Kings (chriszarek's league):
-        r = await client.put(
-            f"/api/leagues/{LEAGUE_ID}/salary-retention-slots",
-            headers={"Authorization": f"Bearer {admin_token}"},
-            json={"salary_retention_slots": 4},
-        )
-        # If admin happens to also be commissioner of the test league this
-        # will be 200; that's also a valid production outcome. We accept
-        # 200 or 403 — but the commissioner semantics must be enforced.
-        assert r.status_code in (200, 403), r.text
+        unique = uuid4().hex[:16]
+        registered = await client.post("/api/auth/register", json={
+            "email": f"retention-{unique}@example.com", "username": f"retain_{unique}", "password": "FixturePass123!"})
+        assert registered.status_code == 200, registered.text
+        token = registered.json()["access_token"]
+        response = await client.put(f"/api/leagues/{LEAGUE_ID}/salary-retention-slots",
+            headers={"Authorization": f"Bearer {token}"}, json={"salary_retention_slots": 2})
+        assert response.status_code == 403, response.text

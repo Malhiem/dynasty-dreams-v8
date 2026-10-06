@@ -12,6 +12,7 @@ Verifies:
   (6) Extracted /api/leagues/{id}/invite + /api/public-leagues + /api/leagues/{id}/recalculate-stats
       respond under the new routes/league_invites.py module.
 """
+import os
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -29,7 +30,7 @@ from routes import league_invites as league_invites_routes
 @pytest.fixture
 def isolated_app():
     import os
-    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+    mongo_url = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
     db_name = f"dd_test_iter112_{ObjectId()}"
     client = AsyncIOMotorClient(mongo_url, maxPoolSize=1, retryReads=True, retryWrites=True)
     db = client[db_name]

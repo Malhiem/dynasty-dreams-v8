@@ -26,14 +26,14 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
-ADMIN_PW = os.environ.get("ADMIN_PASSWORD", "Admin123!")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"))
+ADMIN_PW = os.environ.get("ADMIN_PASSWORD", os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
 # `chriszarek` owns teams across the demo leagues — useful for the
 # enforcement test which needs a real owner. They are NOT a commissioner of
 # the admin's leagues, so admin credentials remain the source of truth for
 # config CRUD.
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 
 def _login(email, password):

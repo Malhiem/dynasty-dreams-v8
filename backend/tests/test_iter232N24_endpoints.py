@@ -4,10 +4,10 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
 
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PW = "Admin123!"
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PW = "Chris2026!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PW = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PW = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 CHRIS_LAYOUT = [
     "pending-trades",

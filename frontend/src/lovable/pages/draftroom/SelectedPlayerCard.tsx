@@ -205,7 +205,7 @@ export default function SelectedPlayerCard({
             <Button
               size="sm"
               className="h-8 gap-1.5 bg-primary hover:bg-primary/90 flex-1"
-              disabled={!isOnTheClock}
+              disabled={!isOnTheClock || player.salary_validation?.allowed === false}
               onClick={() => onDraftPlayer?.(player)}
               data-testid="draft-room-selected-card-draft-btn"
             >

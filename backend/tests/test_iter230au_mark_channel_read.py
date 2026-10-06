@@ -39,7 +39,7 @@ def _h(t): return {"Authorization": f"Bearer {t}"}
 @pytest.mark.asyncio
 async def test_mark_channel_read_zeros_unread():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     sender = _register_login()
     reader = _register_login()
@@ -108,7 +108,7 @@ async def test_mark_channel_read_404_when_missing():
 async def test_mark_channel_read_dm_participant_check():
     """Non-participants can't mark a DM channel as read."""
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     alice = _register_login()
     bob = _register_login()

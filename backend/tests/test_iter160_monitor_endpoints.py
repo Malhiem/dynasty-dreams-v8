@@ -12,6 +12,7 @@ Also validates:
   - The frontend data module now accepts `leagueId` on both tables.
   - MonitorTabs forwards `leagueId` through to the tables.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -29,8 +30,8 @@ def _backend_url():
 
 
 BASE = _backend_url()
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 LID = "69e46af167999bfb85c39628"  # Ice Kings Head-to-Head
 
 
@@ -112,7 +113,7 @@ FRONTEND = Path("/app/frontend/src")
 
 
 def _read(rel: str) -> str:
-    return (FRONTEND / rel).read_text(encoding="utf-8")
+    return read_source(FRONTEND / rel, encoding="utf-8")
 
 
 def test_data_module_supports_league_id_prop():
@@ -146,7 +147,7 @@ def test_parent_passes_active_league_id():
 
 
 def test_backend_router_wired():
-    server_src = Path("/app/backend/server.py").read_text()
+    server_src = read_source(Path("/app/backend/server.py"))
     assert "monitors as monitors_routes" in server_src
     assert "monitors_routes.setup" in server_src
     assert "api_router.include_router(monitors_routes.router)" in server_src

@@ -10,6 +10,7 @@ Iter 169 — Two paired UX improvements.
     Tank Monitor week-range filter now accrues real historical data
     without anyone calling `/backfill`.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -38,7 +39,7 @@ async def _tok(client, email, password):
 
 
 def test_team_draft_picks_marks_conditional_protection():
-    src = Path("/app/frontend/src/lovable/components/dashboard/TeamDraftPicks.tsx").read_text()
+    src = read_source(Path("/app/frontend/src/lovable/components/dashboard/TeamDraftPicks.tsx"))
     # Hydrated DraftPick carries a _isConditional flag from pending_protections
     assert "_isConditional: (p.pending_protections || []).length > 0" in src
     # Asterisk rendered with the tooltip explaining the clause
@@ -50,7 +51,7 @@ def test_team_draft_picks_marks_conditional_protection():
 
 
 def test_live_scoring_worker_hooks_weekly_tank_snapshots():
-    src = Path("/app/backend/live_scoring_worker.py").read_text()
+    src = read_source(Path("/app/backend/live_scoring_worker.py"))
     # Helper exists
     assert "async def _take_weekly_tank_snapshots(db) -> int" in src
     # 7-day gate
@@ -68,13 +69,37 @@ async def test_auto_snapshot_visible_via_weekly_aggregate_endpoint():
     """Sanity check that the auto-captured rows surface through the
     `/tank-monitor?from_week=1&to_week=1` aggregation API — confirming
     the worker writes to the same collection the endpoint reads from."""
-    async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _tok(client, "admin@dynastydreams.com", "Admin123!")
-        h = {"Authorization": f"Bearer {token}"}
-        # The worker should have populated week 1 on startup
-        r = await client.get(f"/api/leagues/{LID}/tank-monitor?from_week=1&to_week=1", headers=h)
-        assert r.status_code == 200
-        d = r.json()
-        assert d["mode"] == "weekly_aggregate"
-        assert d["weeks_available"] >= 1, "Auto-snapshot worker should have populated week 1"
-        assert len(d["teams"]) > 0
+    from motor.motor_asyncio import AsyncIOMotorClient
+    from routes import monitors, roster
+    from server import calculate_fantasy_points
+    from live_scoring_worker import _take_weekly_tank_snapshots
+    mongo = AsyncIOMotorClient(os.environ["MONGO_URL"])
+    db = mongo[os.environ["DB_NAME"]]
+    old_deps = dict(monitors._deps)
+    old_roster_deps = dict(roster._deps)
+    try:
+        # The E2E server disables worker loops; exercise this worker step explicitly.
+        monitors.setup({"db": db})
+        roster.setup({"db": db, "calculate_fantasy_points": calculate_fantasy_points})
+        await db.tank_monitor_weekly.delete_many({"league_id": LID})
+        assert await _take_weekly_tank_snapshots(db) >= 1
+        snapshot = await db.tank_monitor_weekly.find_one({"league_id": LID, "week": 1})
+        assert snapshot["auto_captured"] is True
+        # A repeat tick within seven days must not append another snapshot.
+        await _take_weekly_tank_snapshots(db)
+        assert await db.tank_monitor_weekly.count_documents({"league_id": LID}) == 1
+        async with AsyncClient(base_url=BASE, timeout=30) as client:
+            token = await _tok(client, os.environ["ADMIN_EMAIL"], os.environ["ADMIN_PASSWORD"])
+            response = await client.get(f"/api/leagues/{LID}/tank-monitor?from_week=1&to_week=1",
+                headers={"Authorization": f"Bearer {token}"})
+            assert response.status_code == 200
+            data = response.json()
+            assert data["mode"] == "weekly_aggregate"
+            assert data["weeks_available"] >= 1 and len(data["teams"]) > 0
+    finally:
+        roster._deps.clear()
+        roster._deps.update(old_roster_deps)
+        monitors._deps.clear()
+        monitors._deps.update(old_deps)
+        await db.tank_monitor_weekly.delete_many({"league_id": LID})
+        mongo.close()

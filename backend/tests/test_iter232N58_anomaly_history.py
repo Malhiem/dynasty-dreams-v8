@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -277,8 +277,8 @@ async def test_detect_all_persists_and_enriches():
 
 @pytest.mark.asyncio
 async def test_anomaly_streaks_endpoint_rejects_non_admin():
-    from routes.draft_ops import read_anomaly_streaks
-    from routes import draft_ops as m
+    from routes.admin_metrics import read_anomaly_streaks
+    from routes import admin_metrics as m
     db = _db()
     caller = await _seed_user(db, role="user")
 
@@ -297,8 +297,8 @@ async def test_anomaly_streaks_endpoint_rejects_non_admin():
 
 @pytest.mark.asyncio
 async def test_anomaly_streaks_endpoint_returns_shape():
-    from routes.draft_ops import read_anomaly_streaks
-    from routes import draft_ops as m
+    from routes.admin_metrics import read_anomaly_streaks
+    from routes import admin_metrics as m
     db = _db()
     admin = await _seed_user(db, role="admin")
 

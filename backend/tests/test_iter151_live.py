@@ -5,8 +5,8 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 ICE_BREAKERS_TEAM_ID = "69e59b33cbd3fea02a914c7b"
 DEMO_LEAGUE_ID = "69e46af167999bfb85c39629"
 
@@ -21,6 +21,29 @@ def session():
     if token:
         s.headers["Authorization"] = f"Bearer {token}"
     return s
+
+
+@pytest.fixture(scope="module", autouse=True)
+def scoring_bucket_inputs():
+    from pymongo import MongoClient
+    from bson import ObjectId
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    mongo = MongoClient(os.environ["MONGO_URL"])
+    db = mongo[os.environ["DB_NAME"]]
+    team = db.teams.find_one({"_id": ObjectId(ICE_BREAKERS_TEAM_ID)})
+    player_ids = [ObjectId(pid) for pid in team["roster"]]
+    config = {"league_id": DEMO_LEAGUE_ID,
+        "skater_scoring": {"goals": 3, "assists": 2, "plus_minus": 1, "penalty_minutes": 0.2, "power_play_points": 1, "shots": 0.1},
+        "goalie_scoring": {"wins": 3, "losses": -1, "saves": 0.1, "goals_against": -1, "shutouts": 3}}
+    db.scoring_configs.update_one({"league_id": DEMO_LEAGUE_ID}, {"$set": config}, upsert=True)
+    for pid in player_ids:
+        db.players.update_one({"_id": pid}, {"$set": {"stats": {
+            bucket: {"goals": 2*n, "assists": n, "shots": 5*n, "games_played": n}
+            for n, bucket in enumerate(["season", "regular", "playoffs", "l30", "l7"], 1)}}})
+    yield
+    db.players.update_many({"_id": {"$in": player_ids}}, {"$unset": {"stats": ""}})
+    db.scoring_configs.delete_one({"league_id": DEMO_LEAGUE_ID})
+    mongo.close()
 
 
 def test_roster_truncated_returns_scoring_arrays(session):

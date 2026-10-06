@@ -52,8 +52,8 @@ async def _set_pro(client, admin_token, user_id, is_pro):
 async def test_smart_drop_suggest_open_to_non_pro():
     """Paywall removed — non-Pro users now receive 200 + suggestions."""
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
-        admin = await _login(client, "admin@dynastydreams.com", "Admin123!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
+        admin = await _login(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         uid = await _user_id(client, token)
         await _set_pro(client, admin, uid, False)
         league = await _league_id(client, token)
@@ -72,8 +72,8 @@ async def test_smart_drop_suggest_open_to_non_pro():
 @pytest.mark.asyncio
 async def test_smart_drop_suggest_works_for_pro():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
-        admin = await _login(client, "admin@dynastydreams.com", "Admin123!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
+        admin = await _login(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         uid = await _user_id(client, token)
         await _set_pro(client, admin, uid, True)
         try:

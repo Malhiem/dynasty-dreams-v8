@@ -130,9 +130,11 @@ async def test_week_at_a_glance_empty_when_user_has_no_teams():
 @pytest.mark.asyncio
 async def test_week_at_a_glance_fans_out_per_team():
     async with isolated_router_app(users_routes) as ctx:
+        leagues = await ctx.db.leagues.insert_many([{"name": "League A", "status": "active"}, {"name": "League B", "status": "active"}])
+        lid1, lid2 = map(str, leagues.inserted_ids)
         await ctx.db.teams.insert_many([
-            {"league_id": "L1", "owner_id": "test_user_0001", "name": "A"},
-            {"league_id": "L2", "owner_id": "test_user_0001", "name": "B"},
+            {"league_id": lid1, "owner_id": "test_user_0001", "name": "A"},
+            {"league_id": lid2, "owner_id": "test_user_0001", "name": "B"},
         ])
         call_log = []
         async def fake_summary(team_id, request):

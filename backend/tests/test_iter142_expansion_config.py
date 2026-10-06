@@ -14,6 +14,7 @@ Backend:
   4. Enum validation rejects bad values across all sub-sections.
   5. Round-trip save + read persists every group + the picks array.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -22,8 +23,8 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 REPO = Path(__file__).resolve().parents[2]
 CARD = REPO / "frontend/src/lovable/pages/commissioner/ExpansionDraftSettingsCard.tsx"
@@ -58,7 +59,7 @@ def owner_league(owner_token):
 
 def test_card_has_all_fields():
     assert CARD.exists()
-    src = CARD.read_text()
+    src = read_source(CARD)
     for tid in (
         "expansion-settings-card",
         "expansion-num-keepers-input",
@@ -92,14 +93,14 @@ def test_card_has_all_fields():
 
 
 def test_admin_gates_expansion_card():
-    draft_tab = (REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx").read_text()
+    draft_tab = read_source(REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx")
     assert 'import ExpansionDraftSettingsCard from "@/lovable/pages/commissioner/ExpansionDraftSettingsCard"' in draft_tab
     assert 'draftType === "expansion"' in draft_tab, "Render gate missing"
     assert "<ExpansionDraftSettingsCard" in draft_tab, "Card not mounted"
 
 
 def test_backend_routes_exist():
-    src = DRAFTS.read_text()
+    src = read_source(DRAFTS)
     assert '"/leagues/{league_id}/expansion-config"' in src
     assert "async def get_expansion_config" in src
     assert "async def update_expansion_config" in src

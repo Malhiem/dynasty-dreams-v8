@@ -48,7 +48,7 @@ def _parse_iso(s: str) -> datetime:
 @pytest.mark.asyncio
 async def test_start_draft_sets_current_pick_started_at():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     async with httpx.AsyncClient(timeout=30.0) as client:
         commish = await _register(client, "commish")
@@ -98,7 +98,7 @@ async def test_make_pick_advances_current_pick_started_at():
     """Each pick should reset the per-pick anchor so the next manager
     gets the full time-per-pick window."""
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     async with httpx.AsyncClient(timeout=30.0) as client:
         commish = await _register(client, "commish")

@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -54,7 +54,7 @@ async def _seed_admin(db):
     await db.users.insert_one({
         "_id": uid, "email": f"n59admin_{str(uid)[:6]}@iter.test",
         "name": "N59 Admin", "role": "admin",
-        "password_hash": _fake_hash("Admin123!"),
+        "password_hash": _fake_hash(os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")),
     })
     return str(uid)
 

@@ -7,6 +7,7 @@ Verifies:
   (2) Mixed buyout + retention sources yield aggregated `total` per year and
       separate `entries` with the right `source` discriminator + player names.
 """
+import os
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ from routes import teams as teams_routes
 @pytest.fixture
 def isolated_app():
     import os
-    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+    mongo_url = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
     db_name = f"dd_test_iter113_{ObjectId()}"
     client = AsyncIOMotorClient(mongo_url, maxPoolSize=1, retryReads=True, retryWrites=True)
     db = client[db_name]

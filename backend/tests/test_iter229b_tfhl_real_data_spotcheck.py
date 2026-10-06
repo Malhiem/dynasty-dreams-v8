@@ -14,7 +14,7 @@ API_URL = os.environ["REACT_APP_BACKEND_URL"]
 
 
 def _db():
-    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 def test_tfhl_picks_all_carry_draft_id_and_draft_name():
@@ -22,7 +22,7 @@ def test_tfhl_picks_all_carry_draft_id_and_draft_name():
     TFHL; assert every pick has draft_id + draft_name and that two
     picks at the same (year, round) come from different drafts."""
     r = requests.post(f"{API_URL}/api/auth/login", json={
-        "email": "chriszarek@gmail.com", "password": "Chris2026!"})
+        "email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")})
     if r.status_code != 200:
         import pytest
         pytest.skip(f"TFHL commissioner login failed: {r.status_code}")

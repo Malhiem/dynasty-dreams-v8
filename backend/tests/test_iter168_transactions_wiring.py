@@ -22,6 +22,7 @@ Also smoke-tests the 4 trade scenarios the user requested:
   - Pick ↔ Conditional Pick
   - Re-trade of a previously traded pick
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -52,7 +53,7 @@ async def _tok(client, email, password):
 @pytest.mark.asyncio
 async def test_league_trades_endpoint_returns_full_history():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _tok(client, "admin@dynastydreams.com", "Admin123!")
+        token = await _tok(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         h = {"Authorization": f"Bearer {token}"}
         r = await client.get(f"/api/leagues/{LID}/trades", headers=h)
         assert r.status_code == 200, r.text
@@ -65,7 +66,7 @@ async def test_league_trades_endpoint_returns_full_history():
 @pytest.mark.asyncio
 async def test_league_trades_endpoint_status_filter():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _tok(client, "admin@dynastydreams.com", "Admin123!")
+        token = await _tok(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         h = {"Authorization": f"Bearer {token}"}
         r = await client.get(f"/api/leagues/{LID}/trades?status=executed", headers=h)
         assert r.status_code == 200
@@ -85,7 +86,7 @@ FRONT = Path("/app/frontend/src")
 
 
 def test_draft_board_open_draft_room_link_fixed():
-    src = (FRONT / "lovable/pages/DraftBoard.tsx").read_text()
+    src = read_source(FRONT / "lovable/pages/DraftBoard.tsx", include_imports=False)
     # The dead /drafts link is gone; /draft-room is in place
     assert 'primaryHref="/drafts"\n            primaryLabel="Open Draft Room"' not in src
     assert 'primaryHref="/draft-room"' in src
@@ -93,7 +94,7 @@ def test_draft_board_open_draft_room_link_fixed():
 
 
 def test_transactions_status_config_covers_backend_statuses():
-    src = (FRONT / "lovable/pages/Transactions.tsx").read_text()
+    src = read_source(FRONT / "lovable/pages/Transactions.tsx")
     # Every backend canonical status has a config entry
     for status in ("pending", "accepted", "vetoed", "executed", "voting",
                    "conditional", "withdrawn", "rejected"):

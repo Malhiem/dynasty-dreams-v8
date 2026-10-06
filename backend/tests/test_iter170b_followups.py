@@ -8,6 +8,7 @@
 (c) Roster limits endpoint + Settings card persisting `roster_limits`
     on the league document.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 DRAFT_ROOM_PATH = Path("/app/frontend/src/lovable/pages/DraftRoom.tsx")
@@ -31,7 +32,7 @@ LEAGUES_ROUTE = Path("/app/backend/routes/leagues.py")
 def test_draftroom_renames_mock_constants():
     """Module-level mock array is renamed; the in-component `leagueTeams`
     binding from `useActiveLeague()` is the only live one."""
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM, include_imports=False)
     assert "const mockLeagueTeams = [" in src, "mock data must be renamed so live `liveTeams` is unambiguous"
     # The legacy module-level `const leagueTeams = [` must be gone.
     assert "\nconst leagueTeams = [" not in src
@@ -39,7 +40,7 @@ def test_draftroom_renames_mock_constants():
 
 
 def test_draftroom_derives_board_from_live_teams():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # The new derivation uses liveTeams when present, falls back to
     # mockLeagueTeams otherwise.
     assert "const boardTeams = useMemo" in src
@@ -51,7 +52,7 @@ def test_draftroom_derives_board_from_live_teams():
 
 
 def test_draftroom_counter_prefers_id_match():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # Iter 231 — the picks-until-my-turn lookup lives in the
     # use-draft-picks-until-my-turn hook now; just confirm the
     # id-match line is present anywhere in the draft-room family.
@@ -62,14 +63,14 @@ def test_draftroom_counter_prefers_id_match():
 
 
 def test_transactions_filter_state_present():
-    src = TRANSACTIONS.read_text()
-    assert "selectedTeamIds" in src and "useState<Set<string>>(new Set())" in src
-    assert 'const [dateFrom, setDateFrom] = useState<string>("")' in src
-    assert 'const [dateTo, setDateTo] = useState<string>("")' in src
+    src = read_source(TRANSACTIONS)
+    assert "selectedTeamIds" in src and "useState(new Set())" in src
+    assert 'const [dateFrom, setDateFrom] = useState("")' in src
+    assert 'const [dateTo, setDateTo] = useState("")' in src
 
 
 def test_transactions_filter_ui_present():
-    src = TRANSACTIONS.read_text()
+    src = read_source(TRANSACTIONS)
     assert 'data-testid="transactions-filters"' in src
     assert 'data-testid="transactions-team-chips"' in src
     assert 'data-testid="transactions-date-from"' in src
@@ -79,7 +80,7 @@ def test_transactions_filter_ui_present():
 
 
 def test_transactions_filters_applied_to_rows():
-    src = TRANSACTIONS.read_text()
+    src = read_source(TRANSACTIONS)
     # The all-trades memo must consume the filter state.
     assert "if (selectedTeamIds.size > 0)" in src
     assert "if (dateFrom || dateTo)" in src
@@ -100,7 +101,7 @@ def test_transactions_filters_applied_to_rows():
 
 
 def test_backend_roster_limits_endpoints_defined():
-    src = LEAGUES_ROUTE.read_text()
+    src = read_source(LEAGUES_ROUTE)
     assert '@router.get("/leagues/{league_id}/roster-limits")' in src
     assert '@router.put("/leagues/{league_id}/roster-limits")' in src
     # Validation rules: 0..50 + integer coercion.

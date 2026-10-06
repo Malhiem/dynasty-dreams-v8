@@ -55,7 +55,7 @@ def _db():
     # Direct mongo access for setup
     from pymongo import MongoClient
     mongo_url = os.environ.get("MONGO_URL")
-    db_name = os.environ.get("DB_NAME", "test_database")
+    db_name = os.environ.get("DB_NAME", os.environ["DB_NAME"])
     return MongoClient(mongo_url)[db_name]
 
 
@@ -268,7 +268,7 @@ def test_engine_faab_highest_bid_wins():
 
     # Use the same DB as the app
     mongo_url = os.environ.get("MONGO_URL")
-    db_name = os.environ.get("DB_NAME", "test_database")
+    db_name = os.environ.get("DB_NAME", os.environ["DB_NAME"])
     db_sync = _db()
 
     # Setup: create league via API, 2 teams
@@ -336,7 +336,7 @@ def test_engine_skips_un_due_claims():
     from services.waiver_engine import process_pending_claims
 
     mongo_url = os.environ.get("MONGO_URL")
-    db_name = os.environ.get("DB_NAME", "test_database")
+    db_name = os.environ.get("DB_NAME", os.environ["DB_NAME"])
     db_sync = _db()
 
     tok_email, tok = _register("iter228future")

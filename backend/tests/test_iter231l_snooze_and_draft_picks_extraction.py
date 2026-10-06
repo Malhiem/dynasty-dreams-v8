@@ -107,8 +107,8 @@ async def _setup_league(client):
     assert r.status_code == 200, r.text
     league_id = r.json()["id"]
 
-    mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
-    db = mongo[os.environ.get("DB_NAME", "test_database")]
+    mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", os.environ["MONGO_URL"]))
+    db = mongo[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     teams = await db.teams.find({"league_id": league_id}).to_list(20)
     team_a_id = str(teams[0]["_id"])
     team_b_id = str(ObjectId())
@@ -292,8 +292,8 @@ async def test_expired_snooze_resurfaces_trade():
 
         # Direct-DB poke a past-dated snooze for B.
         past_iso = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
-        mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
-        db = mongo[os.environ.get("DB_NAME", "test_database")]
+        mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", os.environ["MONGO_URL"]))
+        db = mongo[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
         await db.trades.update_one(
             {"_id": ObjectId(trade_id)},
             {"$set": {f"snoozed_until_by.{setup['uid_b']}": past_iso}},

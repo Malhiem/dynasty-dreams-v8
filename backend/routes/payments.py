@@ -10,17 +10,26 @@ These were previously inline in server.py. Wiring uses the standard
 """
 from __future__ import annotations
 
+import importlib
 import os
 from datetime import datetime, timezone
 
-from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
-from typing import Optional
+from bson import ObjectId  # type: ignore[reportMissingImports]
+from fastapi import APIRouter, HTTPException, Request  # type: ignore[reportMissingImports]
+from pydantic import BaseModel  # type: ignore[reportMissingImports]
+from typing import Any, Optional, cast
 
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout, CheckoutSessionRequest,
-)
+PAYMENTS_DISABLED = os.environ.get("E2E_MODE", "").lower() in ("true", "1", "yes")
+
+StripeCheckout: Any = cast(Any, None)
+CheckoutSessionRequest: Any = cast(Any, None)
+
+if not PAYMENTS_DISABLED:
+    checkout_module = importlib.import_module(
+        "emergentintegrations.payments.stripe.checkout"
+    )
+    StripeCheckout = checkout_module.StripeCheckout
+    CheckoutSessionRequest = checkout_module.CheckoutSessionRequest
 
 
 router = APIRouter()
@@ -72,10 +81,11 @@ LEAGUE_PREMIUM_FEATURES = [
 ]
 
 
-def _stripe_client(request: Request) -> StripeCheckout:
-    """Build a configured StripeCheckout for this request. The webhook URL is
-    derived from the request's `base_url` so it works in preview + production
-    without env-specific config."""
+def _stripe_client(request: Request) -> Any:
+    """Build a configured Stripe client unless payments are disabled for E2E."""
+    if PAYMENTS_DISABLED or StripeCheckout is None:
+        raise HTTPException(status_code=503, detail="Payments are disabled in E2E mode")
+
     api_key = os.environ.get("STRIPE_API_KEY")
     webhook_url = f"{str(request.base_url).rstrip('/')}/api/webhook/stripe"
     return StripeCheckout(api_key=api_key, webhook_url=webhook_url)
@@ -255,6 +265,9 @@ async def get_payment_status(session_id: str, request: Request):
 
 @router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
+    if PAYMENTS_DISABLED:
+        raise HTTPException(status_code=503, detail="Payments are disabled in E2E mode")
+
     db = _db()
     body = await request.body()
     signature = request.headers.get("Stripe-Signature")
@@ -265,9 +278,9 @@ async def stripe_webhook(request: Request):
     webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
     if webhook_secret:
         try:
-            import stripe as _stripe
-            _stripe.api_key = os.environ.get("STRIPE_API_KEY") or ""
-            _stripe.Webhook.construct_event(body, signature or "", webhook_secret)
+            stripe_sdk = cast(Any, importlib.import_module("stripe"))
+            stripe_sdk.api_key = os.environ.get("STRIPE_API_KEY") or ""
+            stripe_sdk.Webhook.construct_event(body, signature or "", webhook_secret)
         except Exception as e:
             try:
                 _logger().warning(f"Stripe webhook signature verification failed: {e}")

@@ -15,6 +15,7 @@ Coverage:
   • Validation: no entry_fee, empty team_ids without `full=true`, etc.
 """
 from __future__ import annotations
+from tests.source_tree import read_source
 
 import os
 import sys
@@ -30,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -84,7 +85,7 @@ async def _cleanup(db, league_id, comm_id, team_ids):
 
 def test_payments_routes_handle_team_fee_kind_in_status_poll():
     from pathlib import Path
-    src = Path("/app/backend/routes/payments.py").read_text()
+    src = read_source(Path("/app/backend/routes/payments.py"))
     # Status-poll grants league_team_fee.
     assert 'transaction.get("kind") == "league_team_fee"' in src
     # Webhook handler grants league_team_fee.
@@ -94,7 +95,7 @@ def test_payments_routes_handle_team_fee_kind_in_status_poll():
 
 def test_team_fee_intent_accepts_origin_url():
     from pathlib import Path
-    src = Path("/app/backend/routes/payments.py").read_text()
+    src = read_source(Path("/app/backend/routes/payments.py"))
     # The Pydantic model has an optional origin_url field.
     assert "origin_url: Optional[str] = None" in src
     # The intent endpoint dispatches to Stripe when origin_url is set.
@@ -105,7 +106,7 @@ def test_team_fee_intent_accepts_origin_url():
 
 def test_frontend_redirects_to_stripe_checkout():
     from pathlib import Path
-    src = Path("/app/frontend/src/pages/PaymentSetupPage.jsx").read_text()
+    src = read_source(Path("/app/frontend/src/pages/PaymentSetupPage.jsx"))
     # Sends origin_url to the backend.
     assert "origin_url: window.location.origin" in src
     # Redirects to checkout_url when present.
@@ -139,69 +140,44 @@ def _register_via_api(email_prefix: str):
 
 
 @pytest.mark.asyncio
-async def test_intent_with_origin_url_creates_pending_stripe_transaction():
-    """Real Stripe path: returns checkout_url + session_id, persists a
-    pending transaction with the team_ids list, and does NOT flip teams
-    to paid synchronously."""
-    import requests
-    db = _db()
-
-    user_id, token = _register_via_api("comm_real")
-
-    # Patch the league so this user is the commissioner.
-    league_id_obj = ObjectId()
-    league_id = str(league_id_obj)
-    await db.leagues.insert_one({
-        "_id": league_id_obj,
-        "name": f"Iter231s Real {league_id}",
-        "commissioner_id": user_id,
-        "status": "active",
-        "entry_fee": 25.0,
-    })
-    t_ids = []
-    for i in range(2):
-        t_id = ObjectId()
-        await db.teams.insert_one({
-            "_id": t_id, "name": f"Real Team {i+1}",
-            "league_id": league_id, "owner_id": user_id,
-            "roster": [], "payment_status": "unpaid",
-        })
-        t_ids.append(str(t_id))
-
-    try:
-        r = requests.post(
-            f"{_api_url()}/api/payments/league/{league_id}/intent",
-            json={"full": True, "origin_url": "https://example.test"},
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=15,
-        )
-        assert r.status_code == 200, r.text
-        body = r.json()
-        assert body["ok"] is True
-        assert body["mocked"] is False
-        assert body["covered_count"] == 2
-        assert body["amount_total"] == 50.0  # 25 * 2
-        assert "checkout_url" in body and body["checkout_url"].startswith("http")
-        assert "session_id" in body
-
-        # Transaction persisted with team_ids + kind=league_team_fee + pending.
-        tx = await db.payment_transactions.find_one({"session_id": body["session_id"]})
-        assert tx is not None
-        assert tx["kind"] == "league_team_fee"
-        assert tx["payment_status"] == "pending"
-        assert sorted(tx["team_ids"]) == sorted(t_ids)
-        assert tx["league_id"] == league_id
-
-        # Teams are NOT paid yet — real flow waits for Stripe webhook /
-        # status poll.
-        for tid in t_ids:
-            t = await db.teams.find_one({"_id": ObjectId(tid)})
-            assert (t.get("payment_status") or "unpaid") != "paid"
-    finally:
-        await db.leagues.delete_one({"_id": league_id_obj})
-        await db.teams.delete_many({"league_id": league_id})
-        await db.users.delete_one({"_id": ObjectId(user_id)})
-        await db.payment_transactions.delete_many({"league_id": league_id})
+async def test_intent_with_origin_url_creates_pending_stripe_transaction(monkeypatch):
+    """Route creates an unpaid pending transaction using an isolated provider stub."""
+    from types import SimpleNamespace
+    from routes import payments
+    from tests.router_test_utils import isolated_router_app
+    captured = []
+    class Checkout:
+        def __init__(self, **kwargs):
+            pass
+        async def create_checkout_session(self, request):
+            captured.append(request)
+            return SimpleNamespace(session_id="cs_fixture_fee", url="https://checkout.example.test/fee")
+    monkeypatch.setattr(payments, "PAYMENTS_DISABLED", False)
+    monkeypatch.setattr(payments, "StripeCheckout", Checkout)
+    monkeypatch.setattr(payments, "CheckoutSessionRequest", SimpleNamespace)
+    user = {"_id": str(ObjectId()), "email": "fixture-fee@example.test"}
+    async with isolated_router_app(payments, user=user) as ctx:
+        lid = ObjectId()
+        await ctx.db.leagues.insert_one({"_id": lid, "commissioner_id": user["_id"], "entry_fee": 25.0})
+        tids = [ObjectId(), ObjectId()]
+        await ctx.db.teams.insert_many([{"_id": tid, "league_id": str(lid), "payment_status": "unpaid"} for tid in tids])
+        response = await ctx.client.post(f"/api/payments/league/{lid}/intent",
+            json={"full": True, "origin_url": "https://example.test"})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] and body["mocked"] is False
+        assert body["covered_count"] == 2 and body["amount_total"] == 50.0
+        assert body["checkout_url"] == "https://checkout.example.test/fee"
+        assert len(captured) == 1 and captured[0].amount == 50.0
+        assert captured[0].currency == "usd"
+        assert captured[0].metadata["team_count"] == "2"
+        tx = await ctx.db.payment_transactions.find_one({"session_id": body["session_id"]})
+        assert tx["kind"] == "league_team_fee" and tx["payment_status"] == "pending"
+        assert sorted(tx["team_ids"]) == sorted(map(str, tids))
+        assert tx["league_id"] == str(lid)
+        for tid in tids:
+            team = await ctx.db.teams.find_one({"_id": tid})
+            assert team["payment_status"] == "unpaid"
 
 
 @pytest.mark.asyncio

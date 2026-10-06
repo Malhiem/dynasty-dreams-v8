@@ -14,15 +14,13 @@ import asyncio
 import os
 import pytest
 import requests
-from dotenv import dotenv_values
 from motor.motor_asyncio import AsyncIOMotorClient
 from passlib.context import CryptContext
 
-ENV = dotenv_values("/app/backend/.env")
-FRONTEND_ENV = dotenv_values("/app/frontend/.env")
-API_URL = (FRONTEND_ENV.get("REACT_APP_BACKEND_URL") or "").rstrip("/") + "/api"
-MONGO_URL = ENV["MONGO_URL"]
-DB_NAME = ENV["DB_NAME"]
+assert os.environ.get("TEST_SUITE_ISOLATED") == "1", "Disposable suite required"
+API_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/") + "/api"
+MONGO_URL = os.environ["MONGO_URL"]
+DB_NAME = os.environ["DB_NAME"]
 PWD_CTX = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -178,26 +176,26 @@ async def test_multi_party_trade_full_flow():
     trade = r.json()
     assert trade["is_multi_party"] is True
     assert len(trade["parties"]) == 3
-    assert trade["status"] == "pending"
+    assert trade["status"] == "proposed"
     # Proposer auto-accepted
     proposer_idx = trade["proposer_party_index"]
     assert trade["parties"][proposer_idx]["accepted"] is True
     trade_id = trade["_id"]
 
-    # ── 2. B accepts; trade still pending (C hasn't responded)
+    # ── 2. B accepts; trade stays proposed until all parties agree
     r = requests.post(
         f"{API_URL}/trades/{trade_id}/party-respond",
         json={"action": "accept"}, headers=_h(B["token"]), timeout=10,
     )
     assert r.status_code == 200, r.text
-    assert r.json()["status"] == "pending"
+    assert r.json()["status"] == "proposed"
     assert r.json()["all_accepted"] is False
 
     # ── 3. Non-party user cannot respond
     # Login admin and try
     admin_login = requests.post(
         f"{API_URL}/auth/login",
-        json={"email": ENV["ADMIN_EMAIL"], "password": ENV["ADMIN_PASSWORD"]},
+        json={"email": os.environ["ADMIN_EMAIL"], "password": os.environ["ADMIN_PASSWORD"]},
         timeout=10,
     )
     assert admin_login.status_code == 200
@@ -240,7 +238,7 @@ async def test_multi_party_trade_full_flow():
             continue
         n = await db.notifications.find_one({
             "user_id": owner_id,
-            "type": "trade_accepted",
+            "type": __import__("routes.trades", fromlist=["NT_TRADE_ACCEPTED"]).NT_TRADE_ACCEPTED,
             "title": {"$regex": "3-team trade accepted"},
         })
         if n:

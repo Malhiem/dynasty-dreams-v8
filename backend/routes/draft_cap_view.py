@@ -43,6 +43,8 @@ logger = logging.getLogger(__name__)
 
 def setup(deps: dict) -> None:
     _deps.update(deps)
+    from routes import draft_roster
+    draft_roster.setup(deps)
 
 
 def _db():
@@ -76,6 +78,9 @@ def _resolve_player_aav(player: dict, default_rookie_aav: int) -> int:
     return int(default_rookie_aav)
 
 
+from routes.draft_roster import router as roster_router
+router.include_router(roster_router)
+
 @router.get("/drafts/{draft_id}/cap-status")
 async def get_draft_cap_status(draft_id: str, request: Request):
     """Iter 232N.62 — Per-team cap usage for the draft's active league.
@@ -106,6 +111,8 @@ async def get_draft_cap_status(draft_id: str, request: Request):
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
 
+    from routes.league_guards import require_league_member
+    await require_league_member(db, user, league_id)
     salary_cap_enabled = bool(league.get("salary_cap_enabled"))
     salary_cap = int(league.get("salary_cap") or 0)
     # 232N.62 — league admin can set a fallback AAV for unpriced
@@ -182,7 +189,10 @@ async def get_draft_cap_status(draft_id: str, request: Request):
             "picks_count": t["picks_count"],
         }
 
-    decorated = [_decorate(t) for t in teams.values()]
+    from services.draft_salary import team_summary
+    decorated = []
+    async for team in db.teams.find({"league_id": league_id}):
+        decorated.append(await team_summary(db, draft, team, league))
     decorated.sort(key=lambda x: (-x["percent_used"], x["name"] or ""))
 
     return {

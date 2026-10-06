@@ -1,0 +1,2 @@
+import {test,expect} from "@playwright/test";import {rosterFixture} from "../support/roster-gaps";import {RosterPage} from "../pages/roster-gaps/roster-gaps.page";
+test("ROS-33 drop action has an accessible name",async({page})=>{const f=await rosterFixture(page),r=new RosterPage(page);try{await r.open(f.league.id,String(f.team._id));await expect(r.ui.row(String(f.players[0]._id))).toBeVisible();await expect(r.ui.drop(String(f.players[0]._id))).toHaveAccessibleName(/drop/i);}finally{await f.cleanup();}});

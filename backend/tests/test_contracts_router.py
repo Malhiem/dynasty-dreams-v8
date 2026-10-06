@@ -24,7 +24,8 @@ from tests.router_test_utils import (  # noqa: E402
 @pytest.mark.asyncio
 async def test_get_contracts_empty_returns_empty_list():
     async with isolated_router_app(contracts_routes) as ctx:
-        r = await ctx.client.get("/api/contracts?league_id=anything")
+        league_id = await seed_league(ctx.db)
+        r = await ctx.client.get(f"/api/contracts?league_id={league_id}")
         assert r.status_code == 200
         assert r.json() == []
 
@@ -125,9 +126,11 @@ async def test_salary_cap_overview_sums_active_contracts():
     async with isolated_router_app(contracts_routes) as ctx:
         league_id = await seed_league(ctx.db, salary_cap_enabled=True, salary_cap=80_000_000)
         team_id = await seed_team(ctx.db, league_id=league_id)
+        p1 = await seed_player(ctx.db)
+        p2 = await seed_player(ctx.db)
         await ctx.db.contracts.insert_many([
-            {"league_id": league_id, "team_id": team_id, "aav": 5_000_000, "status": "active", "player_status": "rfa"},
-            {"league_id": league_id, "team_id": team_id, "aav": 8_000_000, "status": "active", "player_status": "ufa"},
+            {"player_id": p1, "league_id": league_id, "team_id": team_id, "aav": 5_000_000, "status": "active", "player_status": "rfa"},
+            {"player_id": p2, "league_id": league_id, "team_id": team_id, "aav": 8_000_000, "status": "active", "player_status": "ufa"},
             # Expired rows must NOT count toward cap usage.
             {"league_id": league_id, "team_id": team_id, "aav": 99_000_000, "status": "expired"},
         ])

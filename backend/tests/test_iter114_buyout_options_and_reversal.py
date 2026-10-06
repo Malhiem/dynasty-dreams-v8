@@ -1,6 +1,7 @@
 """Iter 114 — Buyout length-option presets + commissioner reversal endpoints +
 retention double-count prevention.
 """
+import os
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ from routes import teams as teams_routes
 @pytest.fixture
 def isolated_app():
     import os
-    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+    mongo_url = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
     db_name = f"dd_test_iter114_{ObjectId()}"
     client = AsyncIOMotorClient(mongo_url, maxPoolSize=1, retryReads=True, retryWrites=True)
     db = client[db_name]

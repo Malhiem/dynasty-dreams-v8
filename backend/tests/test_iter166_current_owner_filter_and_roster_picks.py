@@ -15,6 +15,7 @@ Part B:
     `↔` `ArrowRightLeft` chip + the `<PickProvenance>` tooltip body on
     traded-in picks.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -34,7 +35,7 @@ def _iter171_draftroom_concat() -> str:
         _P("/app/frontend/src/lovable/pages/draftroom/PlayerSearchPanel.tsx"),
         _P("/app/frontend/src/lovable/pages/draftroom/draftConstants.ts"),
     ]
-    return chr(10).join(p.read_text() for p in paths if p.exists())
+    return chr(10).join(read_source(p) for p in paths if p.exists())
 
 
 class _Iter171DraftRoomShim:
@@ -57,7 +58,7 @@ def _backend_url():
 
 
 BASE = _backend_url()
-ADMIN = ("admin@dynastydreams.com", "Admin123!")
+ADMIN = (os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
 LID = "69e46af167999bfb85c39628"
 
 
@@ -122,7 +123,7 @@ def test_draft_room_filter_uses_current_owner():
 
 
 def test_team_draft_picks_fetches_live_data_for_object_id():
-    src = (FRONT / "lovable/components/dashboard/TeamDraftPicks.tsx").read_text()
+    src = read_source(FRONT / "lovable/components/dashboard/TeamDraftPicks.tsx")
     # Object-ID regex check
     assert "/^[a-f0-9]{24}$/.test(teamId)" in src
     # Fetch endpoint

@@ -14,7 +14,10 @@ import { Settings, Users, Trophy, Shield, Target, LayoutGrid, AlertTriangle, Cli
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { useActiveLeague } from "@/hooks/use-active-league";
+import { useDraftSettings } from "./commissioner/useDraftSettings";
+import CommissionerTabNavigation from "./commissioner/CommissionerTabNavigation";
+import UnsavedScoringDialog from "./commissioner/UnsavedScoringDialog";
+import CommissionerAccess from "./commissioner/CommissionerAccess";
 import api from "@/lib/api";
 import DivisionsTab from "@/lovable/pages/commissioner/DivisionsTab";
 import RulesScheduleTab, { RosterLockCard } from "@/lovable/pages/commissioner/RulesScheduleTab";
@@ -34,7 +37,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import DraftTab from "@/lovable/pages/commissioner/tabs/DraftTab";
 import PlayerPoolTab from "@/lovable/pages/commissioner/tabs/PlayerPoolTab";
-import ScoringTab from "@/lovable/pages/commissioner/tabs/ScoringTab";
+import PersistedScoringTab from "@/lovable/pages/commissioner/tabs/PersistedScoringTab";
 import { TankMonitorTab, RosterMonitorTab } from "@/lovable/pages/commissioner/tabs/MonitorTabs";
 import SalaryCapContractsTab from "@/lovable/pages/commissioner/tabs/SalaryCapContractsTab";
 import LeagueAdminTab from "@/lovable/pages/commissioner/tabs/LeagueAdminTab";
@@ -43,8 +46,6 @@ import LeagueHealthCard from "@/lovable/components/admin/LeagueHealthCard";
 
 import {
   nhlTeams,
-  scoringCategories,
-  type ScoringCategory,
   type AuditLogEntry,
   generateMockAuditLog,
   TankMonitorTable,
@@ -52,26 +53,7 @@ import {
 } from "@/lovable/pages/commissioner/data/commissionerData";
 
 
-// Iter 231an — Single source of truth for the Commissioner Settings
-// tab strip. Used by both the desktop `TabsList` and the mobile
-// `<Select>` dropdown so labels + icons + ordering stay in sync.
-const COMMISSIONER_TABS = [
-  { value: "league-setup", label: "League Setup", icon: Trophy },
-  { value: "player-pool", label: "Player Pool", icon: Users },
-  { value: "rosters", label: "Rosters", icon: Shield },
-  { value: "divisions", label: "League Structure", icon: Trophy },
-  { value: "rules-schedule", label: "Transactions", icon: Sliders },
-  { value: "salary-cap-contracts", label: "Salary Cap & Contracts", icon: DollarSign },
-  { value: "scoring", label: "Scoring", icon: Target },
-  { value: "draft", label: "Draft", icon: LayoutGrid },
-  { value: "tanking", label: "Tank Monitor", icon: AlertTriangle },
-  { value: "roster-monitor", label: "Roster Monitor", icon: ClipboardCheck },
-  { value: "admin", label: "League Administration", icon: UserCog },
-  { value: "audit-log", label: "Audit Log", icon: ScrollText },
-] as const;
-
-
-const CommissionerSettings = () => {
+const CommissionerSettings = ({ leagueContext }) => {
 
   // Iter 231an — Controlled active tab so the mobile <Select> dropdown
   // can mirror clicks on the desktop tab strip (and vice-versa) and
@@ -134,43 +116,19 @@ const CommissionerSettings = () => {
   const [playoffsEnabled, setPlayoffsEnabledLocal] = useState(true);
   const [savingPlayoffsEnabled, setSavingPlayoffsEnabled] = useState(false);
   // Iter 141 — controlled draft type so we can conditionally render the Keeper settings card
-  const [draftType, setDraftType] = useState<string>("startup");
   // Iter 143 — first-time draft gating + persistence (effects defined below `activeLeague`)
-  const [firstDraftCompleted, setFirstDraftCompleted] = useState<boolean>(false);
-  const [customInjuries, setCustomInjuries] = useState<{ type: string; timeline: string; irEligible: boolean }[]>([]);
-  const [newInjuryType, setNewInjuryType] = useState("Upper Body");
-  const [newInjuryTimeline, setNewInjuryTimeline] = useState("Day-to-Day");
-  const [scoringSettings, setScoringSettings] = useState<Record<string, { enabled: boolean; points: number }>>(
-    Object.fromEntries(scoringCategories.map(cat => [cat.id, { enabled: cat.defaultPoints !== 0, points: cat.defaultPoints }]))
-  );
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(generateMockAuditLog());
   const [auditFilterCategory, setAuditFilterCategory] = useState<string>("all");
-  const { league: activeLeague, leagueTeams, reloadLeague } = useActiveLeague();
-
-  // Iter 143 — first-time draft gating + persistence (moved here so it
-  // can reference `activeLeague` after its declaration)
-  useEffect(() => {
-    if (!activeLeague?.id) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await api.get(`/leagues/${activeLeague.id}`);
-        if (cancelled) return;
-        if (data?.first_draft_completed) setFirstDraftCompleted(true);
-        if (data?.next_draft_type) setDraftType(data.next_draft_type);
-        else if (!data?.first_draft_completed) setDraftType("startup");
-        else setDraftType("redraft");
-      } catch {/* noop */}
-    })();
-    return () => { cancelled = true; };
-  }, [activeLeague?.id]);
-  const persistDraftType = (v: string) => {
-    setDraftType(v);
-    if (activeLeague?.id) {
-      api.put(`/leagues/${activeLeague.id}/next-draft-type`, { draft_type: v })
-        .catch((e) => toast.error(e?.response?.data?.detail || "Failed to save draft type"));
-    }
-  };
+  const { league: activeLeague, leagueTeams, reloadLeague } = leagueContext;
+  const {
+    draftType, firstDraftCompleted, persistDraftType, selectedPlayerCriteria,
+    setSelectedPlayerCriteria, draftRounds, setDraftRounds, roundTimes,
+    setRoundTimes, expandedDraft, setExpandedDraft, expandedDraftResults,
+    setExpandedDraftResults, createDraftPickTrading, setCreateDraftPickTrading, draftClockEnabled,
+    setDraftClockEnabled, draftClockStart, setDraftClockStart, draftClockEnd,
+    setDraftClockEnd, completedDraftResults, scheduledDrafts, reloadScheduledDrafts,
+    playerCriteriaOptions
+  } = useDraftSettings(activeLeague);
 
   // ─── Setup Wizard (manual trigger only) ─────────────────────────
   // Iter 232N.82 — Previously auto-opened when `setup_wizard_complete=false`,
@@ -505,130 +463,13 @@ const CommissionerSettings = () => {
   const [leagueLogoName, setLeagueLogoName] = useState<string | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
   const [requireMinGamesMissed, setRequireMinGamesMissed] = useState(false);
-  const [selectedPlayerCriteria, setSelectedPlayerCriteria] = useState<string[]>(["all"]);
-  const [draftRounds, setDraftRounds] = useState(5);
-  const [roundTimes, setRoundTimes] = useState<Record<number, string>>({});
-  const [expandedDraft, setExpandedDraft] = useState<string | null>(null);
-  const [expandedDraftResults, setExpandedDraftResults] = useState<string | null>(null);
   const [adminSubTab, setAdminSubTab] = useState("teams");
-  const [createDraftPickTrading, setCreateDraftPickTrading] = useState(true);
-  const [draftClockEnabled, setDraftClockEnabled] = useState(true);
-  const [draftClockStart, setDraftClockStart] = useState("09:00");
-  const [draftClockEnd, setDraftClockEnd] = useState("23:00");
 
   // Roster Lock & Goalie Scoring state
   const [rosterLockType, setRosterLockType] = useState("daily");
   const [scoringPeriodStartDay, setScoringPeriodStartDay] = useState("monday");
   const [semiWeeklyEnabled, setSemiWeeklyEnabled] = useState(false);
   const [semiWeeklySplitDay, setSemiWeeklySplitDay] = useState("friday");
-
-  const completedDraftResults = [
-    { draftId: "draft-3", pick: 1, round: 1, team: "Ice Crushers", player: "Connor Bedard", position: "C" },
-    { draftId: "draft-3", pick: 2, round: 1, team: "Glacier Kings", player: "Matvei Michkov", position: "RW" },
-    { draftId: "draft-3", pick: 3, round: 1, team: "Northern Lights", player: "Adam Fantilli", position: "C" },
-    { draftId: "draft-3", pick: 4, round: 1, team: "Blizzard", player: "Leo Carlsson", position: "C" },
-    { draftId: "draft-3", pick: 5, round: 1, team: "Tundra Kings", player: "Will Smith", position: "C" },
-    { draftId: "draft-3", pick: 6, round: 2, team: "Tundra Kings", player: "Zach Benson", position: "LW" },
-    { draftId: "draft-3", pick: 7, round: 2, team: "Blizzard", player: "Ryan Leonard", position: "RW" },
-    { draftId: "draft-3", pick: 8, round: 2, team: "Northern Lights", player: "Dalibor Dvorsky", position: "C" },
-    { draftId: "draft-3", pick: 9, round: 2, team: "Glacier Kings", player: "Nate Danielson", position: "C" },
-    { draftId: "draft-3", pick: 10, round: 2, team: "Ice Crushers", player: "Oliver Moore", position: "C" },
-  ];
-
-  // Iter 227 — Replace the previous hardcoded `scheduledDrafts` mock with a
-  // live fetch from `/api/drafts?league_id=...`. New leagues start empty
-  // (the TFHL "3 saved drafts" bug). Re-fetched after the Create Draft
-  // wire-up below persists a new draft.
-  const [scheduledDrafts, setScheduledDrafts] = useState([]);
-
-  const reloadScheduledDrafts = async () => {
-    if (!activeLeague?.id) {
-      setScheduledDrafts([]);
-      return;
-    }
-    try {
-      const { data } = await api.get(`/drafts`, { params: { league_id: activeLeague.id } });
-      // Iter 228d — Normalize draft rows for display:
-      //   • formatSeconds: turn raw seconds (e.g. 7200) into "2 hr" / "30 min"
-      //   • titleCase: capitalize "all" → "All", "auto-select" → "Auto-select"
-      //   • split scheduled_time ISO into separate date + time strings
-      const formatSeconds = (s) => {
-        const n = parseInt(s, 10);
-        if (!Number.isFinite(n) || n <= 0) return "—";
-        if (n >= 3600 && n % 3600 === 0) return `${n / 3600} hr`;
-        if (n >= 3600) return `${(n / 3600).toFixed(1)} hr`;
-        if (n >= 60) return `${Math.round(n / 60)} min`;
-        return `${n} sec`;
-      };
-      const titleCase = (v) => {
-        if (Array.isArray(v)) return v.map(titleCase).join(", ");
-        if (!v) return v;
-        const s = String(v).replace(/-/g, " ").replace(/_/g, " ");
-        return s.charAt(0).toUpperCase() + s.slice(1);
-      };
-      const splitDateTime = (iso) => {
-        if (!iso) return { date: "—", time: "—" };
-        try {
-          const dt = new Date(iso);
-          if (isNaN(dt.getTime())) return { date: String(iso), time: "—" };
-          return {
-            date: dt.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }),
-            time: dt.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
-          };
-        } catch { return { date: String(iso), time: "—" }; }
-      };
-      const rows = (Array.isArray(data) ? data : data?.drafts || []).map((d) => {
-        const { date, time } = splitDateTime(d.scheduled_time || d.scheduled_date);
-        return {
-          id: d.id || d._id,
-          name: d.name || d.title || "Untitled draft",
-          type: titleCase(d.type || d.draft_type || "snake draft"),
-          format: d.format || (d.snake_draft ? "Snake Draft" : "Linear Draft"),
-          rounds: d.rounds || d.total_rounds || 0,
-          timePerPick: formatSeconds(d.time_per_pick || d.timePerPick),
-          // Iter 228n — Raw fields so the Edit Draft dialog can
-          // pre-fill date pickers + numeric inputs without re-parsing.
-          scheduledISO: d.scheduled_time || d.scheduled_date || null,
-          timePerPickSeconds: Number(d.time_per_pick || d.timePerPick || 3600),
-          excludePreviouslyDrafted: !!d.exclude_previously_drafted,
-          minorsEligibilityRequired: !!d.minors_eligibility_required,
-          // Iter 228o — Raw fields for the expanded Edit Draft dialog.
-          draftType: d.draft_type || d.type || "entry",
-          snakeDraft: d.snake_draft !== undefined ? !!d.snake_draft : true,
-          // Backend stores player_criteria as a list (modern) or string (legacy).
-          playerCriteriaRaw: d.player_criteria,
-          missedPickActionKey: d.missed_pick_action || "auto-select",
-          deferUserOptions: Array.isArray(d.defer_user_options)
-            ? d.defer_user_options
-            : ["auto-best", "auto-queue", "pick-anytime"],
-          roundTimeOverrides: Array.isArray(d.round_time_overrides) ? d.round_time_overrides : [],
-          playerCriteria: titleCase(d.player_criteria || "all"),
-          missedPickAction: titleCase(d.missed_pick_action || "auto-select best available"),
-          scheduledDate: date,
-          scheduledTime: time,
-          status: (d.status || "scheduled"),
-          completedDate: d.completed_at || d.completedDate || null,
-          pickTradingEnabled: !!d.pick_trading_enabled,
-          tradingWindowOpens: d.trading_window_opens || null,
-        };
-      });
-      setScheduledDrafts(rows);
-    } catch {
-      setScheduledDrafts([]);
-    }
-  };
-
-  useEffect(() => {
-    reloadScheduledDrafts();
-  }, [activeLeague?.id]);
-
-  const playerCriteriaOptions = [
-    { value: "all", label: "All Players" },
-    { value: "rookies", label: "Rookies Only" },
-    { value: "prospects", label: "Prospects Only" },
-    { value: "nhl", label: "NHL Rostered Only" },
-    { value: "unsigned", label: "Unsigned / Draft Eligible" },
-  ];
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -664,40 +505,6 @@ const CommissionerSettings = () => {
     );
   };
 
-  const addCustomInjury = () => {
-    // Prevent duplicate type+timeline combinations
-    const exists = customInjuries.some(
-      (i) => i.type === newInjuryType && i.timeline === newInjuryTimeline
-    );
-    if (exists) {
-      toast.error(
-        `${newInjuryType} · ${newInjuryTimeline} is already in the list. Remove the existing entry to re-add it.`
-      );
-      return;
-    }
-    setCustomInjuries(prev => [...prev, { type: newInjuryType, timeline: newInjuryTimeline, irEligible: true }]);
-  };
-
-  const removeCustomInjury = (index: number) => {
-    setCustomInjuries(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const toggleScoringCategory = (id: string) => {
-    setScoringSettings(prev => ({
-      ...prev,
-      [id]: { ...prev[id], enabled: !prev[id].enabled }
-    }));
-  };
-
-  const updateScoringPoints = (id: string, points: number) => {
-    setScoringSettings(prev => ({
-      ...prev,
-      [id]: { ...prev[id], points }
-    }));
-  };
-
-  const skaterCategories = scoringCategories.filter(cat => cat.type === "skater" || cat.type === "both");
-  const goalieCategories = scoringCategories.filter(cat => cat.type === "goalie" || cat.type === "both");
 
   return (
     <AppLayout>
@@ -751,86 +558,7 @@ const CommissionerSettings = () => {
             controlled state the Select would be a parallel UI that
             never reflects clicks on the (hidden) desktop tabs. */}
         <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-          {/* Mobile-only tab selector. Below md the 13-item tab strip
-              required heavy horizontal scrolling; a native-feeling
-              dropdown gives one-tap access to every section. */}
-          <div className="md:hidden">
-            <Select value={activeTab} onValueChange={handleTabChange}>
-              <SelectTrigger
-                className="w-full bg-secondary border border-border h-11"
-                data-testid="commissioner-settings-mobile-tab-select"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {COMMISSIONER_TABS.map(({ value, icon: Icon, label }) => (
-                  <SelectItem
-                    key={value}
-                    value={value}
-                    data-testid={`commissioner-settings-mobile-tab-${value}`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Icon className="h-4 w-4" />
-                      {label}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Desktop tab strip — hidden on mobile to reclaim the
-              horizontal real-estate for the Select above. */}
-          <TabsList className="hidden md:flex flex-wrap h-auto bg-secondary border border-border">
-            <TabsTrigger value="league-setup" className="data-[state=active]:bg-primary/20">
-              <Trophy className="h-4 w-4 mr-2" />
-              League Setup
-            </TabsTrigger>
-            <TabsTrigger value="player-pool" className="data-[state=active]:bg-primary/20">
-              <Users className="h-4 w-4 mr-2" />
-              Player Pool
-            </TabsTrigger>
-            <TabsTrigger value="rosters" className="data-[state=active]:bg-primary/20">
-              <Shield className="h-4 w-4 mr-2" />
-              Rosters
-            </TabsTrigger>
-            <TabsTrigger value="divisions" className="data-[state=active]:bg-primary/20" data-testid="tab-divisions">
-              <Trophy className="h-4 w-4 mr-2" />
-              League Structure
-            </TabsTrigger>
-            <TabsTrigger value="rules-schedule" className="data-[state=active]:bg-primary/20" data-testid="tab-rules-schedule">
-              <Sliders className="h-4 w-4 mr-2" />
-              Transactions
-            </TabsTrigger>
-            <TabsTrigger value="salary-cap-contracts" className="data-[state=active]:bg-primary/20" data-testid="tab-salary-cap-contracts">
-              <DollarSign className="h-4 w-4 mr-2" />
-              Salary Cap & Contracts
-            </TabsTrigger>
-            <TabsTrigger value="scoring" className="data-[state=active]:bg-primary/20">
-              <Target className="h-4 w-4 mr-2" />
-              Scoring
-            </TabsTrigger>
-            <TabsTrigger value="draft" className="data-[state=active]:bg-primary/20">
-              <LayoutGrid className="h-4 w-4 mr-2" />
-              Draft
-            </TabsTrigger>
-            <TabsTrigger value="tanking" className="data-[state=active]:bg-primary/20">
-              <AlertTriangle className="h-4 w-4 mr-2" />
-              Tank Monitor
-            </TabsTrigger>
-            <TabsTrigger value="roster-monitor" className="data-[state=active]:bg-primary/20">
-              <ClipboardCheck className="h-4 w-4 mr-2" />
-              Roster Monitor
-            </TabsTrigger>
-            <TabsTrigger value="admin" className="data-[state=active]:bg-primary/20">
-              <UserCog className="h-4 w-4 mr-2" />
-              League Administration
-            </TabsTrigger>
-            <TabsTrigger value="audit-log" className="data-[state=active]:bg-primary/20">
-              <ScrollText className="h-4 w-4 mr-2" />
-              Audit Log
-            </TabsTrigger>
-          </TabsList>
+          <CommissionerTabNavigation activeTab={activeTab} onTabChange={handleTabChange} />
 
           {/* League Setup Tab */}
           <TabsContent value="league-setup" className="space-y-6">
@@ -903,12 +631,7 @@ const CommissionerSettings = () => {
 
           {/* Scoring Tab */}
           <TabsContent value="scoring" className="space-y-6">
-            <ScoringTab
-              skaterCategories={skaterCategories}
-              goalieCategories={goalieCategories}
-              scoringSettings={scoringSettings}
-              toggleScoringCategory={toggleScoringCategory}
-              updateScoringPoints={updateScoringPoints}
+            <PersistedScoringTab
               GoalieScoringCard={GoalieScoringCard}
               activeLeague={activeLeague}
               reloadLeague={reloadLeague}
@@ -963,42 +686,13 @@ const CommissionerSettings = () => {
           </TabsContent>
         </Tabs>
 
-        {/* Unsaved scoring format — navigation guard dialog */}
-        <AlertDialog open={showUnsavedDialog} onOpenChange={(open) => { if (!open) handleDialogCancel(); }}>
-          <AlertDialogContent data-testid="unsaved-changes-dialog">
-            <AlertDialogHeader>
-              <AlertDialogTitle>Unsaved Changes</AlertDialogTitle>
-              <AlertDialogDescription>
-                Your scoring format change hasn't been saved yet. Would you like to save before leaving?
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter className="gap-2 sm:gap-0">
-              <AlertDialogCancel
-                onClick={handleDialogCancel}
-                data-testid="unsaved-changes-cancel-btn"
-              >
-                Stay
-              </AlertDialogCancel>
-              <Button
-                variant="outline"
-                onClick={handleDialogDiscard}
-                data-testid="unsaved-changes-discard-btn"
-              >
-                Discard & Leave
-              </Button>
-              <AlertDialogAction
-                onClick={handleDialogSave}
-                disabled={savingScoringFormat}
-                data-testid="unsaved-changes-save-btn"
-              >
-                {savingScoringFormat ? "Saving…" : "Save & Leave"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <UnsavedScoringDialog open={showUnsavedDialog} saving={savingScoringFormat}
+          onCancel={handleDialogCancel} onDiscard={handleDialogDiscard} onSave={handleDialogSave} />
       </div>
     </AppLayout>
   );
 };
 
-export default CommissionerSettings;
+export default function CommissionerSettingsPage() {
+  return <CommissionerAccess component={CommissionerSettings} />;
+}

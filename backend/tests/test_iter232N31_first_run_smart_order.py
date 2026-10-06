@@ -22,7 +22,7 @@ def token():
     email = f"lh_31_{ObjectId()}@example.com"
     reg = httpx.post(
         f"{BASE}/api/auth/register",
-        json={"email": email, "password": "Passw0rd!", "username": f"lh31_{ObjectId()}"[:20]},
+        json={"email": email, "password": "Passw0rd!", "username": f"lh31_{str(ObjectId())[-12:]}"[:20]},
         timeout=30.0,
     )
     assert reg.status_code in (200, 201), reg.text

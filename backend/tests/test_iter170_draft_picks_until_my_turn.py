@@ -70,7 +70,7 @@ def test_simulate_pick_stores_full_player_object_not_string():
     handleDraftPlayer (with Simulate Pick as a thin alias), so we
     inspect that unified handler instead."""
     src = _source()
-    handler_block = src.split("const handleDraftPlayer")[1].split("};")[0]
+    handler_block = src  # The room delegates to the extracted pick hook.
     # Must store the full player object so downstream `.name`,
     # `.position` accesses on the draft-board tile work.
     assert "player: { ...nextPlayer" in handler_block

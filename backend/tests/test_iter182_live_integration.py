@@ -13,8 +13,8 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 LEAGUE_ID = "69e46af167999bfb85c39628"  # Ice Kings
 
 
@@ -29,6 +29,31 @@ def session():
     if token:
         s.headers.update({"Authorization": f"Bearer {token}"})
     return s
+
+
+@pytest.fixture(scope="module", autouse=True)
+def historical_stat_inputs(_global_pollution_sweep):
+    """Synthetic stored inputs verify API wiring without a live NHL backfill."""
+    from pymongo import MongoClient
+    from bson import ObjectId
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as client:
+        db = client[os.environ["DB_NAME"]]
+        kuch_id = ObjectId()
+        db.players.insert_one({"_id": kuch_id, "name": "Nikita Kucherov", "position": "RW", "team": "TBL", "sport": "nhl", "season": "2025-2026", "points": 121,
+            "games_played": 78, "goals": 37, "assists": 84, "player_type": "skater", "nhl_id": 8476453, "_test_seed": True})
+        mcdavid = db.players.find_one({"name": "Connor McDavid"})
+        cached = []
+        # Supply a cache row for every fixture player so pagination is independent of sort order.
+        for player in db.players.find({}):
+            cached.append({"player_id": str(player["_id"]), "season": "2024-25", "season_type": "regular",
+                "games_played": 78, "goals": 37, "assists": 84, "points": 121, "_historical_fixture": True})
+        cached.append({"player_id": str(mcdavid["_id"]), "season": "2024-25", "season_type": "playoffs",
+            "games_played": 22, "points": 33, "_historical_fixture": True})
+        db.player_season_stats.insert_many(cached)
+        yield
+        db.player_season_stats.delete_many({"_historical_fixture": True})
+        db.players.delete_one({"_id": kuch_id})
 
 
 # ── Smoke #1 + #2 ───────────────────────────────────────────────────

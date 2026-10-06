@@ -21,6 +21,7 @@ Frontend changes:
       connected managers (no polling).
   (6) Commissioner-only "Undo Last Pick" button in the Draft Live tile.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 # Iter 231 — drafts.py decomposed; use the family shim.
@@ -41,7 +42,7 @@ ROSTER_PANEL = Path("/app/frontend/src/lovable/pages/draftroom/TruncatedRosterPa
 
 
 def test_undo_endpoint_present_with_validation():
-    src = DRAFTS_ROUTE.read_text()
+    src = read_source(DRAFTS_ROUTE)
     assert '@router.post("/drafts/{draft_id}/undo")' in src
     assert "class UndoDraftPicksRequest(BaseModel):" in src
     # count: 1..50
@@ -49,7 +50,7 @@ def test_undo_endpoint_present_with_validation():
 
 
 def test_undo_commissioner_only_and_pulls_roster():
-    src = DRAFTS_ROUTE.read_text()
+    src = read_source(DRAFTS_ROUTE)
     block = src.split("async def undo_draft_picks")[1].split("class SwapPickPlayerRequest")[0]
     # Commissioner gate
     assert 'league["commissioner_id"] != user["_id"]' in block
@@ -61,11 +62,11 @@ def test_undo_commissioner_only_and_pulls_roster():
 
 
 def test_swap_pick_endpoint_present_and_pulls_old_adds_new():
-    src = DRAFTS_ROUTE.read_text()
+    src = read_source(DRAFTS_ROUTE)
     assert '@router.patch("/drafts/{draft_id}/picks/{overall}")' in src
     block = src.split("async def swap_pick_player")[1].split("async def pause_draft")[0]
     # Commissioner gate
-    assert 'league["commissioner_id"] != user["_id"]' in block
+    assert "is_league_admin(user, league)" in block
     # Reject if the replacement is already drafted elsewhere.
     assert "already drafted on another pick" in block
     # Pull old + add new on the roster.
@@ -80,7 +81,7 @@ def test_swap_pick_endpoint_present_and_pulls_old_adds_new():
 
 
 def test_draftroom_uses_socket_for_live_updates():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     assert 'import { useSocket } from "@/hooks/use-socket";' in src
     # Subscribes to the `draft_{id}` room when a draft exists.
     assert "const draftRoomId = currentDraft?._id ? `draft_${currentDraft._id}` : null;" in src
@@ -90,7 +91,7 @@ def test_draftroom_uses_socket_for_live_updates():
 
 
 def test_draftroom_refresh_helper_bumps_roster_tick():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     block = src.split("const refreshDraftState =")[1].split("// Iter 170h — Subscribe")[0]
     # Refetch GETs the canonical draft + bumps the roster reload tick.
     assert "api.get(`/drafts/${currentDraft._id}`)" in block
@@ -98,7 +99,7 @@ def test_draftroom_refresh_helper_bumps_roster_tick():
 
 
 def test_draftroom_passes_canpick_and_roster_tick():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # SelectedPlayerCard receives canPick.
     assert "canPick={canPickForCurrentTurn}" in src
     # TruncatedRosterPanel receives reloadTrigger.
@@ -108,7 +109,7 @@ def test_draftroom_passes_canpick_and_roster_tick():
 
 
 def test_undo_button_renders_and_calls_handler():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     assert 'data-testid="draft-room-undo-pick"' in src
     # Iter 170i — handler is invoked with the user-chosen count, not a
     # hardcoded 1.
@@ -120,7 +121,7 @@ def test_undo_button_renders_and_calls_handler():
 
 
 def test_selected_card_canpick_gate():
-    src = SELECTED_CARD.read_text()
+    src = read_source(SELECTED_CARD)
     # New prop with default true (Storybook backward compat).
     assert "canPick = true," in src
     # Button is gated by canPick.
@@ -128,7 +129,7 @@ def test_selected_card_canpick_gate():
 
 
 def test_truncated_roster_panel_supports_reload_trigger():
-    src = ROSTER_PANEL.read_text()
+    src = read_source(ROSTER_PANEL)
     assert "reloadTrigger = 0" in src
     # Dep array of the fetch effect must include reloadTrigger.
     assert "}, [selectedTeamId, statFilter, reloadTrigger]);" in src

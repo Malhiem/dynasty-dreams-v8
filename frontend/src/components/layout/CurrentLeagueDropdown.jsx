@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowDown,
   ArrowUp,
@@ -34,6 +34,7 @@ import { toast } from "sonner";
  */
 export default function CurrentLeagueDropdown({ collapsed = false }) {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const {
     myLeagues,
     myTeamsByLeague,
@@ -54,6 +55,8 @@ export default function CurrentLeagueDropdown({ collapsed = false }) {
 
   const handlePick = (id) => {
     if (id !== leagueId) switchLeague(id);
+    if (pathname === "/league-history" || pathname === "/trophy-room") return;
+    if (pathname.startsWith("/trophy-room/team/")) { navigate("/trophy-room"); return; }
     navigate(`/leagues/${id}`);
   };
 

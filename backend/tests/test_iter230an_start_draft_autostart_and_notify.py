@@ -61,7 +61,7 @@ async def test_start_draft_is_idempotent_when_already_active():
     """Second POST /drafts/{id}/start on an active draft returns
     success (`already_active: true`) instead of 400."""
     db_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    db = db_client[os.environ.get("DB_NAME", "test_database")]
+    db = db_client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     async with httpx.AsyncClient(timeout=30.0) as client:
         commish = await _register(client, "commish")
 
@@ -115,7 +115,7 @@ async def test_non_commish_can_auto_start_after_scheduled_time_elapsed():
     draft's scheduled_time has passed (auto-start path used by the
     frontend countdown hook)."""
     db_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    db = db_client[os.environ.get("DB_NAME", "test_database")]
+    db = db_client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     async with httpx.AsyncClient(timeout=30.0) as client:
         commish = await _register(client, "commish")
         teammate = await _register(client, "teammate")
@@ -165,7 +165,7 @@ async def test_non_commish_cannot_auto_start_before_scheduled_time():
     """A non-commissioner CANNOT trigger /start while the
     scheduled_time is still in the future — only after it elapses."""
     db_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    db = db_client[os.environ.get("DB_NAME", "test_database")]
+    db = db_client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     async with httpx.AsyncClient(timeout=30.0) as client:
         commish = await _register(client, "commish")
         teammate = await _register(client, "teammate")
@@ -210,7 +210,7 @@ async def test_start_draft_refreshes_stale_team_abbrs():
     (team_abbrs missing the late joiners), start_draft now refreshes
     the abbr list from the current set of league teams."""
     db_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    db = db_client[os.environ.get("DB_NAME", "test_database")]
+    db = db_client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     async with httpx.AsyncClient(timeout=30.0) as client:
         commish = await _register(client, "commish")
 
@@ -271,7 +271,7 @@ async def test_start_draft_notifies_pick_one_and_two_even_without_early_start():
     `draft_your_turn` (pick #1) and `draft_on_deck` (pick #2)
     notifications. Previously this was gated behind `if early_start:`."""
     db_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    db = db_client[os.environ.get("DB_NAME", "test_database")]
+    db = db_client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     async with httpx.AsyncClient(timeout=30.0) as client:
         commish = await _register(client, "commish")
         teammate = await _register(client, "teammate")

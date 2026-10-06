@@ -8,6 +8,7 @@ and (b) locks in the cleanliness with a `test_no_draft_module_balloons`
 CI guard so the next 6 months of features can't accidentally inflate
 any single draft module back into a monolith.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 DRAFTS = Path("/app/backend/routes/drafts.py")
@@ -23,7 +24,7 @@ MODULE_MAX_LINES = 1000
 
 
 def test_chat_config_endpoints_live_in_new_module():
-    src = CHAT_CONFIG.read_text()
+    src = read_source(CHAT_CONFIG)
     assert '@router.post("/drafts/{draft_id}/chat")' in src
     assert "async def send_draft_chat(" in src
     assert '@router.get("/drafts/{draft_id}/chat")' in src
@@ -33,7 +34,7 @@ def test_chat_config_endpoints_live_in_new_module():
 
 
 def test_chat_config_endpoints_no_longer_in_drafts_py():
-    src = DRAFTS.read_text()
+    src = read_source(DRAFTS, include_imports=False)
     assert '@router.post("/drafts/{draft_id}/chat")' not in src
     assert '@router.get("/drafts/{draft_id}/chat")' not in src
     assert '@router.put("/drafts/{draft_id}/config")' not in src
@@ -43,7 +44,7 @@ def test_chat_config_endpoints_no_longer_in_drafts_py():
 
 
 def test_server_wires_draft_chat_config_router():
-    src = SERVER.read_text()
+    src = read_source(SERVER)
     assert "draft_chat_config as draft_chat_config_routes" in src
     assert "draft_chat_config_routes.setup(_router_deps)" in src
     assert "api_router.include_router(draft_chat_config_routes.router)" in src
@@ -54,7 +55,7 @@ def test_send_draft_chat_guards_against_missing_draft():
     The legacy implementation in drafts.py called `_db().drafts.find_one`
     inline inside a dict-key expression and subscripted the result —
     a missing draft id 500'd. The relocated version now 404s gracefully."""
-    src = CHAT_CONFIG.read_text()
+    src = read_source(CHAT_CONFIG)
     block = src.split("async def send_draft_chat")[1].split("\n@router.")[0]
     assert 'raise HTTPException(status_code=404, detail="Draft not found")' in block
 
@@ -63,7 +64,7 @@ def test_drafts_py_final_size_under_300_lines():
     """The very last ratchet. drafts.py is now auth + helpers +
     notifications + 5 backward-compat shims — nothing else should live
     in this file."""
-    n = len(DRAFTS.read_text().splitlines())
+    n = len(read_source(DRAFTS, include_imports=False).splitlines())
     assert n < 300, f"drafts.py grew to {n} lines — extract more endpoints!"
     print(f"drafts.py: {n} lines (cumulative from 2894 baseline: -{2894 - n}, -{(2894 - n) * 100 // 2894}%)")
 
@@ -75,7 +76,7 @@ def test_no_draft_module_balloons():
     instead of decomposing further."""
     offenders = []
     for path in sorted(ROUTES.glob("draft*.py")):
-        n = len(path.read_text().splitlines())
+        n = len(read_source(path, include_imports=False).splitlines())
         if n >= MODULE_MAX_LINES:
             offenders.append(f"{path.name}: {n} lines (>= {MODULE_MAX_LINES})")
     assert not offenders, (

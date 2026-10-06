@@ -4,13 +4,13 @@ import requests
 import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
-TFHL = "6a3a0781a842ea2f7bcdc7cb"
+TFHL = "69e46af167999bfb85c39629"
 
 
 @pytest.fixture(scope="module")
 def auth_session():
     s = requests.Session()
-    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": "chriszarek@gmail.com", "password": "Chris2026!"})
+    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")})
     assert r.status_code == 200, f"Login failed: {r.status_code} {r.text[:200]}"
     return s
 
@@ -39,6 +39,18 @@ def test_waivers_limit_zero_defaults(auth_session):
 
 
 # ---- 232N.7: player trends ----
+@pytest.fixture(scope="module", autouse=True)
+def stored_trend_inputs(_global_pollution_sweep):
+    from pymongo import MongoClient
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as client:
+        db = client[os.environ["DB_NAME"]]
+        mcdavid = db.players.find_one({"name": "Connor McDavid"})
+        inserted = db.player_trends.insert_one({"player_id": str(mcdavid["_id"]), "trend": "traded", "trades_7d": 3,
+            "adds_7d": 0, "drops_7d": 0, "distinct_leagues_7d": 3, "total_events_7d": 3})
+        yield
+        db.player_trends.delete_one({"_id": inserted.inserted_id})
+
 def test_leaderboard_traded_returns_mcdavid(auth_session):
     r = auth_session.get(f"{BASE_URL}/api/player-trends/leaderboard", params={"movers": "traded", "limit": 5})
     assert r.status_code == 200, r.text[:300]

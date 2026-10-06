@@ -7,15 +7,16 @@ Covers:
   - GET /api/teams/{team_id} regression (unknown/malformed)
   - Auth regression for admin + chriszarek seeded user
 """
+import uuid
 import os
 import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PASSWORD = "Chris2026!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 ALLOWED_TITLES = {
     "Bench Warmer", "Rink Regular", "Line Captain",
@@ -81,7 +82,7 @@ def test_level_new_user_bench_warmer():
     email = f"test_level_{uuid.uuid4().hex[:8]}@example.com"
     reg = requests.post(
         f"{BASE_URL}/api/auth/register",
-        json={"email": email, "password": "TempPass123!", "name": "Level Tester"},
+        json={"username": "fixture_" + uuid.uuid4().hex[:16], "email": email, "password": "TempPass123!", "name": "Level Tester"},
         timeout=20,
     )
     assert reg.status_code in (200, 201), f"register failed {reg.status_code} {reg.text[:200]}"
@@ -117,7 +118,7 @@ def test_week_at_a_glance_empty_for_new_user():
     email = f"test_empty_{uuid.uuid4().hex[:8]}@example.com"
     reg = requests.post(
         f"{BASE_URL}/api/auth/register",
-        json={"email": email, "password": "TempPass123!", "name": "Empty Week"},
+        json={"username": "fixture_" + uuid.uuid4().hex[:16], "email": email, "password": "TempPass123!", "name": "Empty Week"},
         timeout=20,
     )
     assert reg.status_code in (200, 201)

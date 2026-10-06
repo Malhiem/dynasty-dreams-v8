@@ -9,8 +9,8 @@ import requests
 from routes.trade_fairness import compute_fairness, compute_side_value, ALERT_THRESHOLD  # noqa: E402
 
 API_URL = os.environ.get("REACT_APP_BACKEND_URL", "")
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 def _admin_token():
@@ -185,7 +185,7 @@ def test_all_new_endpoints_require_admin():
     # Non-admin user
     user_token = requests.post(
         f"{API_URL}/api/auth/login",
-        json={"email": "chriszarek@gmail.com", "password": "Chris2026!"},
+        json={"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")},
     ).json()["access_token"]
     headers = {"Authorization": f"Bearer {user_token}"}
     for path in [

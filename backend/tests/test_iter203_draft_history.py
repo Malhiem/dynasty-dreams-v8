@@ -39,7 +39,8 @@ async def test_get_drafts_filters_by_league_and_surfaces_status():
     league, each carrying a `status` field the Draft History page
     can filter on. We test via the underlying helper directly so the
     test stays hermetic + doesn't depend on auth wiring."""
-    from routes.drafts import setup as drafts_setup, get_drafts
+    from routes.draft_inspection import setup as drafts_setup
+    from routes.draft_inspection import get_drafts
 
     # Wire deps so the route helpers can read `_db`.
     drafts_setup({
@@ -87,7 +88,8 @@ async def test_make_draft_pick_flips_status_to_completed_on_final_pick():
     the recorded pick is the FINAL pick (overall == total_rounds * teams).
     This is what powers the Draft History page's `status==completed`
     filter."""
-    from routes.drafts import setup as drafts_setup, make_draft_pick
+    from routes.draft_pick_actions import setup as drafts_setup
+    from routes.draft_pick_actions import make_draft_pick
 
     # 2 teams × 1 round = 2 total picks. Seed at current_pick=2 with 1
     # pick already in, so the next pick is the final.
@@ -194,7 +196,8 @@ async def test_related_trades_endpoint_surfaces_player_and_pick_trades():
        - executed PLAYER trades whose asset references a drafted player
        - all in_draft_pick trades for the league (regardless of status)
     and skips unrelated trades."""
-    from routes.drafts import setup as drafts_setup, get_draft_related_trades
+    from routes.draft_inspection import setup as drafts_setup
+    from routes.draft_inspection import get_draft_related_trades
 
     drafts_setup({
         "db": _db(),

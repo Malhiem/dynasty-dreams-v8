@@ -1,14 +1,15 @@
 """Iter 232N.27 — E2E API tests for /api/drafts/{id}/leaderboard against the live backend."""
 from __future__ import annotations
 
+from tests.legacy_draft_fixture import legacy_draft_inputs
 import os
 import pytest
 import requests
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
 DRAFT_ID = "6a408dbdd93ed14d3a8fb393"  # completed draft (10 auto picks)
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 @pytest.fixture(scope="module")

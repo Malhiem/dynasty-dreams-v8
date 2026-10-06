@@ -96,7 +96,7 @@ async def _isolated_app():
         return None
 
     async def get_user_admin(_request):
-        return {"_id": "user_admin", "email": "admin@dynastydreams.com", "role": "admin"}
+        return {"_id": "user_admin", "email": os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), "role": "admin"}
 
     async def get_user_regular(_request):
         return {"_id": "user_reg", "email": "owner@example.com"}

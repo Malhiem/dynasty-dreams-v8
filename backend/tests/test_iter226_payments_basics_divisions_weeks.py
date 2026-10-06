@@ -16,8 +16,8 @@ import requests
 from pymongo import MongoClient
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-_db = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[
-    os.environ.get("DB_NAME", "test_database")
+_db = MongoClient(os.environ.get("MONGO_URL", os.environ["MONGO_URL"]))[
+    os.environ.get("DB_NAME", os.environ["DB_NAME"])
 ]
 
 

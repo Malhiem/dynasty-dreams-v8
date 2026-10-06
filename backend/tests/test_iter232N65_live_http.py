@@ -16,8 +16,8 @@ BASE_URL = os.environ.get(
     "https://dynasty-preview.preview.emergentagent.com",
 ).rstrip("/")
 
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 @pytest.fixture(scope="module")
@@ -50,43 +50,33 @@ def test_admin_players_audit(admin_session):
 
 
 # ── 232N.65: NHL dry-run + selective apply ──────────────────────────
-def test_nhl_sync_dry_run_and_apply(admin_session):
-    r = admin_session.post(
-        f"{BASE_URL}/api/admin/players/sync",
-        json={"dry_run": True, "team_codes": ["TOR", "MTL"]},
-        timeout=60,
-    )
-    assert r.status_code == 200, r.text[:400]
-    body = r.json()
-    assert body["ok"] is True
-    assert body["dry_run"] is True
-    token = body["sync_token"]
-    assert isinstance(token, str) and len(token) >= 16
-    counts = body["diff"]["counts"]
-    for k in ("new_players", "age_changes", "team_changes",
-              "position_changes", "prospect_changes", "removed"):
-        assert k in counts and isinstance(counts[k], int)
-
-    # Apply nothing (empty selections) — must succeed but write zero rows.
-    apply_r = admin_session.post(
-        f"{BASE_URL}/api/admin/players/sync/apply",
-        json={"sync_token": token},
-        timeout=60,
-    )
-    assert apply_r.status_code == 200, apply_r.text[:400]
-    ares = apply_r.json()
-    assert ares["ok"] is True
-    assert ares["inserted"] == 0
-    assert ares["updated_age"] == 0
-    assert ares["deleted"] == 0
-
-    # Re-submit the same token → 410 (single-use).
-    replay = admin_session.post(
-        f"{BASE_URL}/api/admin/players/sync/apply",
-        json={"sync_token": token},
-        timeout=30,
-    )
-    assert replay.status_code == 410
+@pytest.mark.asyncio
+async def test_nhl_sync_dry_run_and_apply(monkeypatch):
+    from routes import admin_players
+    from tests.router_test_utils import isolated_router_app
+    calls = []
+    async def fetch(team_codes):
+        calls.append(team_codes)
+        return [{"nhl_id": "9000001", "name": "Fixture NHL Player", "position": "C", "team": "TOR", "age": 25, "is_prospect": False}], []
+    monkeypatch.setattr(admin_players.nhl_sync, "fetch_all_players", fetch)
+    user = {"_id": "fixture-admin", "role": "admin", "email": os.environ["ADMIN_EMAIL"]}
+    async with isolated_router_app(admin_players, user=user) as ctx:
+        response = await ctx.client.post("/api/admin/players/sync", json={"dry_run": True, "team_codes": ["TOR", "MTL"]})
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] and body["dry_run"]
+        assert calls == [["TOR", "MTL"]]
+        token = body["sync_token"]
+        assert isinstance(token, str) and len(token) >= 16
+        assert body["diff"]["counts"]["new_players"] == 1
+        assert await ctx.db.players.count_documents({}) == 0
+        applied = await ctx.client.post("/api/admin/players/sync/apply", json={"sync_token": token})
+        assert applied.status_code == 200, applied.text
+        result = applied.json()
+        assert result["ok"] and result["inserted"] == result["updated_age"] == result["deleted"] == 0
+        assert await ctx.db.players.count_documents({}) == 0
+        replay = await ctx.client.post("/api/admin/players/sync/apply", json={"sync_token": token})
+        assert replay.status_code == 410
 
 
 def test_nhl_sync_apply_unknown_token(admin_session):

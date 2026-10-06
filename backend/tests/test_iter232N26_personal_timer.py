@@ -32,6 +32,7 @@ async def db():
 async def seeded_draft(db):
     """Create a minimal active draft, 2 teams, 2 players. Returns ids."""
     league_id = str(ObjectId())
+    await db.leagues.insert_one({"_id": ObjectId(league_id), "name": "Personal timer fixture", "roster_spots": 20, "default_rookie_aav": 950000})
     team_a = ObjectId()
     team_b = ObjectId()
     player_top = ObjectId()

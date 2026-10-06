@@ -14,6 +14,7 @@ Coverage
 7. Frontend RulesScheduleTab wires the datetime-local input and clear
    button.
 """
+from tests.source_tree import read_source
 import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -23,8 +24,8 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 REPO = Path(__file__).resolve().parents[2]
 RULES_TAB = REPO / "frontend/src/lovable/pages/commissioner/RulesScheduleTab.tsx"
@@ -216,7 +217,7 @@ def test_malformed_deadline_at_is_silently_ignored(owner_token, owner_league):
 
 
 def test_frontend_rules_tab_has_datetime_picker():
-    src = RULES_TAB.read_text()
+    src = read_source(RULES_TAB)
     assert "rules-schedule-trade-deadline-at-input" in src, "Datetime input testid missing"
     assert "rules-schedule-trade-deadline-at-clear" in src, "Clear button testid missing"
     assert 'type="datetime-local"' in src, "Input should be datetime-local"

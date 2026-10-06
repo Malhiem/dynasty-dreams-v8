@@ -8,8 +8,8 @@ import uuid
 import requests
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 def _login(email, password) -> str:

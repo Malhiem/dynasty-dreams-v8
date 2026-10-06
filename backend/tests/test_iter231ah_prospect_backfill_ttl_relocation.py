@@ -12,6 +12,7 @@ Coverage:
      `restarted_at_ts`, and `restart_draft` writes that field.
 """
 from __future__ import annotations
+from tests.source_tree import read_source
 
 import os
 import sys
@@ -26,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -84,7 +85,7 @@ def test_normalize_pick_schema():
 
 
 def test_prospect_routes_exist():
-    src = Path("/app/backend/routes/teams_admin.py").read_text()
+    src = read_source(Path("/app/backend/routes/teams_admin.py"))
     assert "/admin/prospects/backfill" in src
     assert "/admin/prospects/stats" in src
     assert "_is_platform_admin" in src
@@ -93,7 +94,7 @@ def test_prospect_routes_exist():
 
 
 def test_teams_admin_wired_in_server():
-    src = Path("/app/backend/server.py").read_text()
+    src = read_source(Path("/app/backend/server.py"))
     assert "teams_admin as teams_admin_routes" in src
     assert "teams_admin_routes.setup(_router_deps)" in src
     assert "api_router.include_router(teams_admin_routes.router)" in src
@@ -106,8 +107,8 @@ def test_admin_managed_relocated():
     """The endpoint must now live in `teams_admin.py` and the OLD
     `team_invites.py` must NO LONGER define it (only a docstring
     pointer to the new location)."""
-    new_src = Path("/app/backend/routes/teams_admin.py").read_text()
-    old_src = Path("/app/backend/routes/team_invites.py").read_text()
+    new_src = read_source(Path("/app/backend/routes/teams_admin.py"), include_imports=False)
+    old_src = read_source(Path("/app/backend/routes/team_invites.py"), include_imports=False)
     # New file has it.
     assert "/leagues/{league_id}/teams/{team_id}/admin-managed" in new_src
     assert "async def set_team_admin_managed" in new_src
@@ -122,7 +123,7 @@ def test_admin_managed_relocated():
 
 
 def test_ttl_index_declared_in_server():
-    src = Path("/app/backend/server.py").read_text()
+    src = read_source(Path("/app/backend/server.py"))
     assert "draft_restart_log.create_index" in src
     assert "expireAfterSeconds" in src
     # 90 days = 90 * 24 * 60 * 60 seconds.
@@ -133,7 +134,7 @@ def test_ttl_index_declared_in_server():
 def test_restart_draft_writes_ttl_field():
     """The TTL field `restarted_at_ts` must be a BSON Date (not an ISO
     string) for Mongo's TTL monitor to honour the expiry."""
-    src = Path("/app/backend/routes/draft_admin.py").read_text()
+    src = read_source(Path("/app/backend/routes/draft_admin.py"))
     assert '"restarted_at_ts": now_dt' in src
     # Must be a datetime, not a string. Look for the datetime.now(...) ref.
     assert "now_dt = datetime.now(timezone.utc)" in src

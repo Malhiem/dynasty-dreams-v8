@@ -1,4 +1,5 @@
 """Iter 150 — Queue tab + Truncated Roster panel + roster-truncated endpoint."""
+from tests.source_tree import read_source
 from pathlib import Path
 
 FRONTEND = Path("/app/frontend/src")
@@ -20,9 +21,9 @@ def _read(rel_under_frontend: str) -> str:
         ):
             fp = FRONTEND / sub
             if fp.exists():
-                parts.append(fp.read_text(encoding="utf-8"))
+                parts.append(read_source(fp, encoding="utf-8"))
         return chr(10).join(parts)
-    return (FRONTEND / rel_under_frontend).read_text(encoding="utf-8")
+    return read_source(FRONTEND / rel_under_frontend, encoding="utf-8")
 
 
 def test_queue_tab_in_draft_room():
@@ -88,7 +89,7 @@ def test_roster_truncated_reads_canonical_team_roster_field():
     """Iter 150 bug-fix — endpoint must read from `team.roster` (same as
     /api/roster/{team_id}) instead of the secondary `db.rosters` collection
     so the Draft Room panel stays in lock-step with the Rosters page."""
-    src = (BACKEND / "routes/teams.py").read_text(encoding="utf-8")
+    src = read_source(BACKEND / "routes/teams.py", encoding="utf-8")
     # 1) Reads canonical team.roster first
     assert 'team.get("roster")' in src
     # 2) Falls back to legacy team.player_ids
@@ -121,7 +122,7 @@ def test_draft_board_uses_megaphone_for_on_block_picks():
 
 
 def test_roster_truncated_backend_logic():
-    src = (BACKEND / "routes/teams.py").read_text(encoding="utf-8")
+    src = read_source(BACKEND / "routes/teams.py", encoding="utf-8")
     assert "/teams/{team_id}/roster-truncated" in src
     # Stat-filter bucketed lookups
     assert "stat_filter" in src

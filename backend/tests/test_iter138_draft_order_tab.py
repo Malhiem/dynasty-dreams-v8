@@ -19,6 +19,7 @@ Backend (live API):
      scheduled_at, gated on commissioner role.
   7. `PUT /api/admin/draft-lottery-date` rejects non-admins with 403.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -27,8 +28,8 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 REPO = Path(__file__).resolve().parents[2]
 DRAFT = REPO / "frontend/src/lovable/pages/DraftBoard.tsx"
@@ -63,7 +64,7 @@ def owner_league(owner_token):
 
 # ── Frontend tests ─────────────────────────────────────────────
 def test_status_banner_present():
-    src = DRAFT.read_text()
+    src = read_source(DRAFT)
     assert 'data-testid="draft-order-status-banner"' in src
     assert 'data-testid="draft-order-status-headline"' in src
     assert 'data-testid="draft-order-status-method"' in src
@@ -73,7 +74,7 @@ def test_status_banner_present():
 
 
 def test_tabs_wrapper_added():
-    src = DRAFT.read_text()
+    src = read_source(DRAFT)
     assert 'data-testid="draft-board-tabs"' in src
     assert 'data-testid="draft-board-tab-board"' in src
     assert 'data-testid="draft-board-tab-order"' in src
@@ -83,7 +84,7 @@ def test_tabs_wrapper_added():
 
 
 def test_method_meta_strings():
-    src = DRAFT.read_text()
+    src = read_source(DRAFT)
     # The card-level meta lives in DraftOrderConfigCard now; DraftBoard's
     # read-only summary just references METHOD_META labels.
     assert '"NHL team draft lottery"' in src, "User-spec label missing"
@@ -154,7 +155,7 @@ def test_invalid_method_rejected(owner_token, owner_league):
 
 # ── Backend file-content sanity ────────────────────────────────
 def test_backend_has_new_routes():
-    src = DRAFTS_ROUTE.read_text() + DRAFT_CONFIG_ROUTE.read_text()
+    src = read_source(REPO / "backend/routes/draft_order.py") + read_source(DRAFT_CONFIG_ROUTE)
     assert '"/leagues/{league_id}/draft-order/config"' in src
     assert '"/admin/draft-lottery-date"' in src
     assert "DRAFT_ORDER_METHODS" in src

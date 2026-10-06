@@ -26,6 +26,7 @@ import { useActiveLeague } from "@/hooks/use-active-league";
 const formatSalary = (salary) => `$${((salary || 0) / 1_000_000).toFixed(1)}M`;
 
 function PartnerSection({ partner, isProposer, ownAssets, ownPicks, partners, onNavigate, builder }) {
+  const { league } = useActiveLeague();
   const others = partners.filter((p) => p.id !== partner.id);
   return (
     <div
@@ -118,6 +119,7 @@ function PartnerSection({ partner, isProposer, ownAssets, ownPicks, partners, on
                     <Checkbox
                       id={`tb-retain-${a.player.id}`}
                       checked={a.retainSalary}
+                      disabled={!league?.salary_retention_enabled || league?.salary_retention_slots === 0}
                       onCheckedChange={() => builder.toggleRetain(a.player.id)}
                       className="h-3 w-3"
                     />
@@ -132,7 +134,7 @@ function PartnerSection({ partner, isProposer, ownAssets, ownPicks, partners, on
                         <Slider
                           value={[a.retainedPercentage]}
                           onValueChange={(v) => builder.updateRetention(a.player.id, v[0])}
-                          max={50} step={5}
+                          max={league?.salary_retention_max_pct ?? 50} step={1}
                           className="flex-1"
                         />
                         <span className="text-[10px] font-semibold text-destructive w-10 text-right">

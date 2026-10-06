@@ -272,11 +272,13 @@ export default function PlayerSearchPanel({
                     "flex items-center gap-2 p-2 rounded-md hover:bg-secondary/40 transition-colors group cursor-pointer",
                     isOnBlock && "ring-1 ring-amber-400/40 bg-amber-500/5",
                     String(selectedPlayerId) === String(player.id) && "bg-primary/10 ring-1 ring-primary/40",
-                    wouldExceedCap && "opacity-50",
+                    (wouldExceedCap || player.salary_validation?.allowed === false) && "opacity-50",
                   )}
                   onClick={() => setSelectedPlayerId(String(player.id))}
                   data-testid={isOnBlock ? `draft-room-eligible-block-${player.id}` : `draft-room-eligible-row-${player.id}`}
                   data-over-cap={wouldExceedCap ? "true" : undefined}
+                  data-salary-blocked={player.salary_validation?.allowed === false ? "true" : undefined}
+                  title={player.salary_validation?.message || undefined}
                 >
                   <span className="text-[10px] font-mono text-muted-foreground w-5 text-right shrink-0">
                     {player.ranking}
@@ -378,6 +380,7 @@ export default function PlayerSearchPanel({
                         </>
                       )}
                     </p>
+                    {player.salary_validation?.message && <p className="text-[10px] text-amber-400 truncate" title={player.salary_validation.message}>{player.salary_validation.message}</p>}
                   </div>
                   <Tooltip>
                     <TooltipTrigger asChild>

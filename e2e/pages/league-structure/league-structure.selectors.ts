@@ -1,0 +1,18 @@
+export const leagueStructureSelectors = {
+  scheduleMixIntraDivision: "schedule-mix-intra-div-input",
+  scheduleMixIntraConference: "schedule-mix-intra-conf-input",
+  scheduleMixInterConference: "schedule-mix-inter-conf-input",
+  scheduleMixSave: "schedule-mix-save-btn",
+  regularSeasonWeeks: "rs-regular-season-weeks",
+  matchupLength: "rs-matchup-length",
+  opponentsPerPeriod: "rs-opponents-per-period",
+  statsStart: "rs-stats-start",
+  statsEnd: "rs-stats-end",
+  regularSeasonSave: "rs-save-btn",
+  playoffTeams: "po-teams",
+  playoffStartWeek: "po-start-week",
+  playoffEndWeek: "po-end-week",
+  playoffRounds: "po-rounds",
+  playoffFormat: "po-format",
+  playoffsSave: "po-save-btn",
+} as const;

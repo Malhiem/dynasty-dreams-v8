@@ -25,8 +25,8 @@ from bson import ObjectId
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 ROTO_LEAGUE_ID = "69e46af167999bfb85c39629"
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 TEST_YEAR = 2097
 
 
@@ -45,8 +45,8 @@ def auth_headers():
 
 @pytest.fixture(scope="module")
 def db():
-    client = MongoClient("mongodb://localhost:27017")
-    yield client["test_database"]
+    client = MongoClient(os.environ["MONGO_URL"])
+    yield client[os.environ["DB_NAME"]]
     client.close()
 
 

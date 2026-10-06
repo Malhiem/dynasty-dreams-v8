@@ -1,3 +1,4 @@
+from services.financial_lock import serialize_finances
 """Trade engine helpers — extracted from server.py (iter 93).
 
 These were previously module-globals in server.py and depended on the
@@ -601,7 +602,7 @@ async def _apply_pick_upgrades(trade: dict, *, final_eval: bool = False) -> dict
     return {"applied": applied, "failed": failed, "results": results}
 
 
-async def _execute_multi_party_trade(trade: dict) -> dict:
+async def _execute_multi_party_trade_impl(trade: dict) -> dict:
     """Execute a trade with 3+ parties.
     Each party's `sends` are removed from their roster; the engine then routes
     each sent asset to the receiving party. Routing rules:
@@ -722,42 +723,10 @@ async def _execute_multi_party_trade(trade: dict) -> dict:
     for tid, roster in rosters.items():
         await _db().teams.update_one({"_id": ObjectId(tid)}, {"$set": {"roster": roster}})
 
-    for r in retentions:
-        retention_doc = {
-            **r,
-            "league_id": league_id,
-            "trade_id": str(trade["_id"]),
-            "created_at": datetime.now(timezone.utc),
-        }
-        await _db().salary_retentions.update_one(
-            {"league_id": league_id, "player_id": r["player_id"], "retainer_team_id": r["retainer_team_id"]},
-            {"$set": retention_doc},
-            upsert=True,
-        )
-        # Iter 113 — Mirror retention into team.dead_cap_schedule so the
-        # schedule endpoint is the single source of truth for both
-        # buyouts AND retention (also picked up by the on-the-fly merge
-        # in routes/teams.get_dead_cap_schedule for legacy rows).
-        try:
-            player = await _db().players.find_one({"_id": ObjectId(r["player_id"])})
-        except Exception:
-            player = None
-        if player:
-            yrs = int((player.get("contract") or {}).get("yearsRemaining") or 1)
-            cur_year = datetime.now(timezone.utc).year
-            schedule_entries = [{
-                "year": cur_year + i,
-                "amount": int(round(float(r.get("amount") or 0))),
-                "source": "retention",
-                "player_id": r["player_id"],
-                "player_name": player.get("name") or "Retained player",
-                "trade_id": str(trade["_id"]),
-                "created_at": datetime.now(timezone.utc),
-            } for i in range(max(1, yrs))]
-            await _db().teams.update_one(
-                {"_id": ObjectId(r["retainer_team_id"])},
-                {"$push": {"dead_cap_schedule": {"$each": schedule_entries}}},
-            )
+    await _record_scoring_moves(trade, moves)
+
+    from services.salary_policy import persist_trade_finances
+    await persist_trade_finances(_db(), trade, trade.get("_financial_retentions") or [])
 
     await _db().trades.update_one(
         {"_id": trade["_id"]},
@@ -846,7 +815,11 @@ async def _execute_multi_party_trade(trade: dict) -> dict:
     return {"executed": True, "moves": moves, "parties": [p["team_name"] for p in parties]}
 
 
-async def _execute_trade(trade: dict) -> dict:
+async def _execute_trade_impl(trade: dict) -> dict:
+    force_execute = trade.get("force_execute", False)
+    trade = await _db().trades.find_one({"_id": trade["_id"]}) or trade
+    if force_execute:
+        trade["force_execute"] = True
     if trade.get("status") == "executed":
         return {"already_executed": True}
 
@@ -894,10 +867,13 @@ async def _execute_trade(trade: dict) -> dict:
                     }},
                 )
 
+    from services.salary_policy import validate_trade
+    trade["_financial_retentions"] = await validate_trade(_db(), trade)
+
     # ── Multi-party (3+ teams) execution path ────────────────
     parties = trade.get("parties") or []
     if parties and trade.get("is_multi_party"):
-        return await _execute_multi_party_trade(trade)
+        return await _execute_multi_party_trade_impl(trade)
 
     league_id = trade["league_id"]
     proposer_tid = trade["proposer_team_id"]
@@ -1045,13 +1021,11 @@ async def _execute_trade(trade: dict) -> dict:
     await _db().teams.update_one({"_id": proposer["_id"]}, {"$set": {"roster": proposer_roster}})
     await _db().teams.update_one({"_id": target["_id"]}, {"$set": {"roster": target_roster}})
 
-    for r in moves["retained"]:
-        await _db().salary_retentions.update_one(
-            {"league_id": league_id, "player_id": r["player_id"], "retainer_team_id": r["retainer_team_id"]},
-            {"$set": {**r, "league_id": league_id, "trade_id": str(trade["_id"]),
-                      "created_at": datetime.now(timezone.utc)}},
-            upsert=True,
-        )
+    await _record_scoring_moves(trade, moves["players_out"] + moves["players_in"])
+
+    from services.salary_policy import persist_trade_finances
+    await persist_trade_finances(_db(), trade, trade.get("_financial_retentions") or [])
+    moves["retained"] = trade.get("_financial_retentions") or []
 
     await _db().trades.update_one(
         {"_id": trade["_id"]},
@@ -1176,3 +1150,34 @@ async def _execute_trade(trade: dict) -> dict:
         _logger().debug(f"xp_awarded emit skipped (two-team): {e}")
 
     return {"executed": True, "moves": moves}
+
+
+async def _record_scoring_moves(trade, moves):
+    """Use one effective instant for every ownership transition in a trade."""
+    from utils.scoring_roster import log_roster_change
+
+    effective_at = datetime.now(timezone.utc)
+    for move in moves:
+        if not move.get("player_id"):
+            continue
+        for action, team_id in (("remove", move["from"]), ("add", move["to"])):
+            await log_roster_change(
+                _db(), team_id=team_id, league_id=trade["league_id"],
+                player_id=move["player_id"], action=action, source="trade",
+                timestamp=effective_at, metadata={"trade_id": str(trade["_id"])},
+            )
+
+
+@serialize_finances(_db)
+async def _execute_trade(trade: dict) -> dict:
+    from services.trade_recovery import recoverable_execution
+    current = await _db().trades.find_one({"_id": trade["_id"]}) or trade
+    if trade.get("force_execute"):
+        current["force_execute"] = True
+    if current.get("status") == "executed":
+        return {"already_executed": True}
+    return await recoverable_execution(_db(), current, _execute_trade_impl)
+
+
+async def _execute_multi_party_trade(trade: dict) -> dict:
+    return await _execute_trade(trade)

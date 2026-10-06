@@ -118,6 +118,9 @@ import PickProvenance from "@/lovable/pages/draftroom/PickProvenance";
 // Iter 194c — floating "Pick Trade Pending" review pill.
 import PickTradeReviewPill from "@/lovable/pages/draftroom/PickTradeReviewPill";
 import api from "@/lib/api";
+import DraftRosterOverview from "@/lovable/pages/draftroom/DraftRosterOverview";
+import DraftSalarySelection from "@/lovable/pages/draftroom/DraftSalarySelection";
+import useDraftSalaryState from "@/lovable/pages/draftroom/useDraftSalaryState";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 // Iter 229 — extracted to draftroom/types.ts for reuse + import discipline.
@@ -555,7 +558,9 @@ export default function DraftRoom() {
 
   // Iter 229h — `handleDraftPlayer` extracted into `useDraftPickHandler`.
   // Located here (post-state-init) so all setters are defined.
-  const { handleDraftPlayer, handleSimulatePick } = useDraftPickHandler({
+  const [salaryPlayer, setSalaryPlayer] = useState(null);
+  const salaryState = useDraftSalaryState(currentDraft?._id, players, currentDraft?.current_pick);
+  const { handleDraftPlayer: commitDraftPlayer, handleSimulatePick } = useDraftPickHandler({
     currentDraft,
     isDraftActive,
     draftConfig,
@@ -573,6 +578,8 @@ export default function DraftRoom() {
     setSelectedPlayerId,
     setRosterReloadTick,
   });
+  const handleDraftPlayer = (player) => currentDraft?._id ? setSalaryPlayer(player) : commitDraftPlayer(player);
+  const salaryPlayers = players.map(p => ({...p, salary_validation: salaryState.eligibility[p.id]}));
   // Iter 153 — Window-within-window expanded player card (PlayerCardModal)
   const [expandedPlayer, setExpandedPlayer] = useState<any>(null);
   // Iter 164 — Draft Board team-ownership filter chips. When ≥1 team is
@@ -814,7 +821,7 @@ export default function DraftRoom() {
 
             {/* Iter 153 / 170f — Player preview tile. Iter 230c — extracted. */}
             <DraftPreviewPanel
-              players={players}
+              players={salaryPlayers}
               selectedPlayerId={selectedPlayerId}
               setSelectedPlayerId={setSelectedPlayerId}
               lastPickedPlayerId={lastPickedPlayerId}
@@ -877,6 +884,8 @@ export default function DraftRoom() {
           </div>
 
           {/* ── Draft Board (Iter 171 extracted) ────────────────────────── */}
+          {currentDraft?._id && <DraftRosterOverview draftId={currentDraft._id} status={salaryState.status} error={salaryState.error} refresh={salaryState.refresh} />}
+          <DraftSalarySelection draftId={currentDraft?._id} player={salaryPlayer} onClose={() => setSalaryPlayer(null)} onConfirm={async (player, destination) => { const committed = await commitDraftPlayer(player, destination); await salaryState.refresh(); return committed; }} />
           <DraftBoard
             boardTeams={boardTeams}
             boardTeamAbbrs={boardTeamAbbrs}
@@ -907,7 +916,7 @@ export default function DraftRoom() {
           {/* ── Bottom section: PlayerSearch · TruncatedRoster · DraftChat ──
               Iter 229j — extracted to DraftRoomBottomGrid. */}
           <DraftRoomBottomGrid
-            filteredPlayers={filteredPlayers}
+            filteredPlayers={filteredPlayers.map(p => ({...p, salary_validation: salaryState.eligibility[p.id]}))}
             searchQuery={searchQuery}
             setSearchQuery={setSearchQuery}
             positionFilter={positionFilter}

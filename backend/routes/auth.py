@@ -6,10 +6,12 @@ create_refresh_token, get_current_user, JWT secret, cookie config) are
 injected through `_deps`.
 """
 import secrets
+from utils.refresh_tokens import predates_password_change
 from datetime import datetime, timedelta, timezone
 
 import jwt
 from bson import ObjectId
+from pydantic import ValidationError
 from fastapi import APIRouter, HTTPException, Request, Response
 
 router = APIRouter()
@@ -29,7 +31,11 @@ def _models(): return _deps["auth_models"]  # dict: UserRegister/Login/Response/
 async def register(request: Request, response: Response):
     M = _models()
     body = await request.json()
-    input = M["UserRegister"](**body)
+    try:
+        input = M["UserRegister"](**body)
+    except ValidationError as exc:
+        raise HTTPException(422, detail=[{"loc": error["loc"], "msg": error["msg"], "type": error["type"]}
+                                         for error in exc.errors()]) from exc
     db = _db()
     hash_password = _deps["hash_password"]
     create_access_token = _deps["create_access_token"]
@@ -105,7 +111,11 @@ async def register(request: Request, response: Response):
 async def login(request: Request, response: Response):
     M = _models()
     body = await request.json()
-    input = M["UserLogin"](**body)
+    try:
+        input = M["UserLogin"](**body)
+    except ValidationError as exc:
+        raise HTTPException(422, detail=[{"loc": error["loc"], "msg": error["msg"], "type": error["type"]}
+                                         for error in exc.errors()]) from exc
     db = _db()
     verify_password = _deps["verify_password"]
     create_access_token = _deps["create_access_token"]
@@ -382,28 +392,10 @@ async def refresh_token_endpoint(request: Request, response: Response):
         # recent password change. Stops a stolen 7-day refresh token
         # from outliving a password reset.
         changed_at = user.get("password_changed_at")
-        token_iat = payload.get("iat")
-        if changed_at and token_iat:
-            # PyJWT exposes iat as int (epoch seconds).
-            if isinstance(token_iat, (int, float)):
-                token_iat_dt = datetime.fromtimestamp(int(token_iat), tz=timezone.utc)
-            else:
-                token_iat_dt = token_iat
-            if isinstance(changed_at, str):
-                try:
-                    changed_at = datetime.fromisoformat(changed_at)
-                except Exception:
-                    changed_at = None
-            # Mongo returns naive UTC; coerce to aware before compare.
-            if changed_at and getattr(changed_at, "tzinfo", None) is None:
-                changed_at = changed_at.replace(tzinfo=timezone.utc)
-            if changed_at and token_iat_dt < changed_at:
-                # Clear the stale cookies so the client re-authenticates.
-                response.delete_cookie("access_token", path="/")
-                response.delete_cookie("refresh_token", path="/")
-                raise HTTPException(
-                    status_code=401, detail="Session revoked — please sign in again",
-                )
+        if predates_password_change(payload.get("iat"), changed_at):
+            response.delete_cookie("access_token", path="/")
+            response.delete_cookie("refresh_token", path="/")
+            raise HTTPException(status_code=401, detail="Session revoked — please sign in again")
 
         user_id = str(user["_id"])
         access_token = create_access_token(user_id, user["email"])
@@ -505,7 +497,7 @@ async def reset_password(request: Request, response: Response):
         {"_id": ObjectId(token_doc["user_id"])},
         {"$set": {
             "password_hash": hash_password(input.new_password),
-            "password_changed_at": now,
+            "password_changed_at": now.isoformat(),
         }},
     )
     await db.password_reset_tokens.update_one({"token": input.token}, {"$set": {"used": True}})

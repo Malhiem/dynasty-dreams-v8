@@ -76,7 +76,7 @@ async def test_no_named_pollution_in_player_pool():
     polluting players. If this fails, run the iter231af cleanup
     script (in PRD changelog)."""
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     pattern = re.compile(
         r"^(NHL Veteran Forward|Minor Eligible Forward|Repeat Pick|"
@@ -95,7 +95,7 @@ async def test_no_example_com_users_in_live_db():
     """Live preview DB must contain ZERO @example.com user accounts.
     @example.com is the RFC-reserved test domain."""
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     count = await db.users.count_documents({
         "email": {"$regex": "@example\\.com$", "$options": "i"}
@@ -109,7 +109,7 @@ async def test_no_example_com_users_in_live_db():
 @pytest.mark.asyncio
 async def test_no_ephemeral_iter228n_leagues():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     count = await db.leagues.count_documents({"name": {"$regex": "^i228n-", "$options": "i"}})
     assert count == 0

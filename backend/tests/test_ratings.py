@@ -88,8 +88,8 @@ async def test_team_rating_default_value():
     """A team that hasn't played any matchups returns rating=1500 + tier=Veteran."""
     async with AsyncClient(base_url=BASE, timeout=20) as client:
         r = await client.post("/api/auth/login",
-                              json={"email": "chriszarek@gmail.com",
-                                    "password": "Chris2026!"})
+                              json={"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"),
+                                    "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")})
         token = r.json()["access_token"]
         teams = await client.get(
             "/api/teams",
@@ -109,10 +109,10 @@ async def test_team_rating_default_value():
 @pytest.mark.asyncio
 async def test_user_and_league_rating_endpoints():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        r = await client.get("/api/u/chriszarek/rating")
+        r = await client.get("/api/u/suite_owner/rating")
         assert r.status_code == 200
         body = r.json()
-        assert body["username"] == "chriszarek"
+        assert body["username"] == "suite_owner"
         assert body["teams_count"] >= 1
         assert body["rating"] >= 0
         assert "tier" in body
@@ -137,7 +137,7 @@ async def test_username_rating_404():
 @pytest.mark.asyncio
 async def test_profile_has_active_leagues_and_split_trophies():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        r = await client.get("/api/u/chriszarek")
+        r = await client.get("/api/u/suite_owner")
         assert r.status_code == 200
         body = r.json()
         # New fields present

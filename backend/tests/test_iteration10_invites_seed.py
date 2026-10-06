@@ -16,11 +16,11 @@ from pymongo import MongoClient
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
 # For DB verification
-MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
-DB_NAME = os.environ.get("DB_NAME", "test_database")
+MONGO_URL = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
+DB_NAME = os.environ.get("DB_NAME", os.environ["DB_NAME"])
 
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 # ─── Fixtures ──────────────────────────────
@@ -47,7 +47,7 @@ def regular_user_session():
     s = requests.Session()
     email = f"TEST_user_{uuid.uuid4().hex[:8]}@example.com"
     pwd = "TestPass123!"
-    r = s.post(f"{BASE_URL}/api/auth/register", json={"email": email, "password": pwd, "name": "TEST User"}, timeout=30)
+    r = s.post(f"{BASE_URL}/api/auth/register", json={"username": "fixture_" + uuid.uuid4().hex[:16], "email": email, "password": pwd, "name": "TEST User"}, timeout=30)
     if r.status_code not in (200, 201):
         pytest.skip(f"Could not register regular user: {r.status_code} {r.text}")
     return s, email
@@ -233,7 +233,7 @@ class TestRegressions:
         s = requests.Session()
         email = f"TEST_reg_{uuid.uuid4().hex[:8]}@example.com"
         r = s.post(f"{BASE_URL}/api/auth/register",
-                   json={"email": email, "password": "Abcdef1!", "name": "TEST Reg"}, timeout=30)
+                   json={"username": "fixture_" + uuid.uuid4().hex[:16], "email": email, "password": "Abcdef1!", "name": "TEST Reg"}, timeout=30)
         assert r.status_code in (200, 201), r.text
         assert "access_token" in s.cookies
 

@@ -38,7 +38,7 @@ def event_loop():
 @pytest.fixture()
 async def db():
     client = AsyncIOMotorClient(os.environ.get("MONGO_URL"))
-    db = client[os.environ.get("DB_NAME", "test_database")]
+    db = client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     yield db
     client.close()
 

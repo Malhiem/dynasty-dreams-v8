@@ -9,12 +9,12 @@ import uuid
 import requests
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"))
 
 
 def _admin_token():
     r = requests.post(f"{API_URL}/api/auth/login",
-                      json={"email": ADMIN_EMAIL, "password": "Admin123!"})
+                      json={"email": ADMIN_EMAIL, "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")})
     r.raise_for_status()
     return r.json()["access_token"]
 
@@ -54,7 +54,7 @@ def test_archived_endpoints_block_non_admin():
 # ── Admin player create: synthetic 9xx nhl_id range ────────────────
 
 
-def test_admin_player_create_yields_synthetic_9xx_nhl_id():
+def test_admin_player_create_yields_namespaced_synthetic_id():
     Ha = {"Authorization": f"Bearer {_admin_token()}"}
     name = f"E2E AHL {uuid.uuid4().hex[:6]}"
     r = requests.post(f"{API_URL}/api/admin/players", headers=Ha, json={
@@ -64,14 +64,10 @@ def test_admin_player_create_yields_synthetic_9xx_nhl_id():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["id"]
-    # nhl_id should be in synthetic 9xx range (9000000+ range)
-    if "nhl_id" in body:
-        try:
-            nhl_id_int = int(body["nhl_id"])
-            assert nhl_id_int >= 9000000, f"Expected 9xxxxxx synthetic id, got {nhl_id_int}"
-        except (TypeError, ValueError):
-            # If nhl_id isn't returned as integer, just ensure it starts with '9'
-            assert str(body["nhl_id"]).startswith("9"), body
+    # Admin identifiers use a separate namespace from real NHL numeric IDs.
+    assert str(body["nhl_id"]).startswith("admin_")
+    from bson import ObjectId
+    assert ObjectId.is_valid(body["nhl_id"].removeprefix("admin_"))
 
 
 # ── Filter combinations on /api/admin/players/verify ───────────────

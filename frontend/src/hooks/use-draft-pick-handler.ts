@@ -55,11 +55,11 @@ export function useDraftPickHandler(deps: DraftPickHandlerDeps) {
     setLastPickedPlayerId, setSelectedPlayerId, setRosterReloadTick,
   } = deps;
 
-  const handleDraftPlayer = useCallback(async (chosen?: DraftEligiblePlayer | null) => {
+  const handleDraftPlayer = useCallback(async (chosen?: DraftEligiblePlayer | null, destination?: string) => {
     const totalPicks = totalTeams * draftConfig.totalRounds;
     if (draftConfig.currentPick > totalPicks) {
       toast.info("Draft is complete.");
-      return;
+      return false;
     }
     const teamAbbr = getTeamForPick(draftConfig.currentPick);
     const teamFull = boardTeams.find((t) => t.abbr === teamAbbr);
@@ -68,7 +68,7 @@ export function useDraftPickHandler(deps: DraftPickHandlerDeps) {
       : players.find((p) => !p.drafted);
     if (!nextPlayer) {
       toast.warning("No eligible players left to draft.");
-      return;
+      return false;
     }
     const round = Math.ceil(draftConfig.currentPick / totalTeams);
     const pickInRound = ((draftConfig.currentPick - 1) % totalTeams) + 1;
@@ -79,7 +79,8 @@ export function useDraftPickHandler(deps: DraftPickHandlerDeps) {
         // Stamp the self-action so our own Socket.IO echo doesn't
         // double-toast (Iter 170i).
         lastSelfPickRef.current = `${draftConfig.currentPick}-${nextPlayer.id}`;
-        await api.post(`/drafts/${currentDraft._id}/pick`, { player_id: nextPlayer.id });
+        const pickResponse = await api.post(`/drafts/${currentDraft._id}/pick`, { player_id: nextPlayer.id, destination, expected_pick: draftConfig.currentPick });
+        if (pickResponse.data.salary_validation?.feasible === false) toast.warning(pickResponse.data.salary_validation.message);
         const { data } = await api.get(`/drafts/${currentDraft._id}`);
         setCurrentDraft(data);
         setPicks(() => (data.picks || []).map((p: any) => ({
@@ -95,10 +96,10 @@ export function useDraftPickHandler(deps: DraftPickHandlerDeps) {
         setSelectedPlayerId(null);
         setRosterReloadTick((t) => t + 1);
         toast.success(`${teamFull?.name || teamAbbr} drafted ${nextPlayer.name}`);
-        return;
+        return true;
       } catch (e: any) {
-        toast.error("Pick failed", { description: e?.response?.data?.detail || e?.message });
-        return;
+        toast.error("Pick failed", { description: e?.response?.data?.detail?.message || e?.response?.data?.detail || e?.message });
+        return false;
       }
     }
 
@@ -133,6 +134,7 @@ export function useDraftPickHandler(deps: DraftPickHandlerDeps) {
     setLastPickedPlayerId(String(nextPlayer.id));
     setSelectedPlayerId(null);
     setDraftConfig((prev) => ({ ...prev, currentPick: prev.currentPick + 1 }));
+    return true;
   }, [
     currentDraft, isDraftActive, draftConfig, totalTeams, players, boardTeams,
     getTeamForPick, lastSelfPickRef,

@@ -1,8 +1,10 @@
+from tests.http_test_auth import test_admin_headers
 """Live regression for iter232N.2 shared status_flags + undrafted_only filter."""
+from tests.legacy_draft_fixture import legacy_draft_inputs
 import os, requests
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
-LEAGUE = "6a3a0781a842ea2f7bcdc7cb"  # TFHL
+LEAGUE = "69e46af167999bfb85c39629"  # TFHL
 DRAFT = "6a3c00447f735c0f8adc92f8"    # Summer Entry
 
 
@@ -47,11 +49,11 @@ def test_draft_eligible_undrafted_only_shrinks():
 
 def test_roster_stamps_status_flags():
     # Find a TFHL team
-    teams = _ok(requests.get(f"{BASE}/api/leagues/{LEAGUE}/teams"))
+    teams = _ok(requests.get(f"{BASE}/api/teams?league_id={LEAGUE}", headers=test_admin_headers()))
     t_list = teams if isinstance(teams, list) else teams.get("teams", [])
     assert t_list, "no teams"
     team_id = t_list[0].get("id") or t_list[0].get("_id") or t_list[0].get("team_id")
-    r = _ok(requests.get(f"{BASE}/api/roster/{team_id}"))
+    r = _ok(requests.get(f"{BASE}/api/roster/{team_id}", headers=test_admin_headers()))
     players = r if isinstance(r, list) else r.get("players", r.get("roster", []))
     print(f"roster team={team_id} players={len(players)}")
     assert players, "empty roster"

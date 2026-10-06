@@ -29,7 +29,7 @@ async def test_waiver_lost_and_competing_claims_in_transactions():
     async with AsyncClient(base_url=BASE, timeout=30) as c:
         # login as chris (commissioner of Ice Kings)
         r = await c.post("/api/auth/login",
-                         json={"email": "chriszarek@gmail.com", "password": "Chris2026!"})
+                         json={"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")})
         tok = r.json()["access_token"]
         h = {"Authorization": f"Bearer {tok}"}
 

@@ -54,7 +54,7 @@ async def test_make_draft_pick_fires_on_deck_to_pick_2_owner():
     """After pick #1 is made, pick #2's owner MUST receive the
     `draft_on_deck` notification (previously swallowed by NameError)."""
     db_client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    db = db_client[os.environ.get("DB_NAME", "test_database")]
+    db = db_client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         commish = await _register(client, "commish")

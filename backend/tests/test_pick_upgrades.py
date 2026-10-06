@@ -59,12 +59,22 @@ async def _login(client, email, password):
     return r.json()["access_token"]
 
 
+async def _accept_fixture_trade(db, trade_id):
+    trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
+    target = await db.users.find_one({"_id": ObjectId(trade["target_owner_id"])})
+    password = os.environ["ADMIN_PASSWORD"] if target["email"] == os.environ["ADMIN_EMAIL"] else "e2e-member-password"
+    async with AsyncClient(base_url=BASE, timeout=30) as recipient:
+        token = await _login(recipient, target["email"], password)
+        response = await recipient.post(f"/api/trades/{trade_id}/respond", json={"action": "accept"}, headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 200, response.text
+
+
 @pytest.mark.asyncio
 async def test_pick_upgrade_applies_when_championship_unlocks():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         h = {"Authorization": f"Bearer {tok}"}
 
         leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
@@ -72,8 +82,9 @@ async def test_pick_upgrade_applies_when_championship_unlocks():
         league = leagues[0]
         lid = league["id"]
 
+        me = (await c.get("/api/auth/me", headers=h)).json()
         teams = await db.teams.find({"league_id": lid}).to_list(20)
-        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        my = next(t for t in teams if str(t.get("owner_id")) == str(me["id"]))
         partner = next(t for t in teams if t["_id"] != my["_id"])
 
         # Use a pick the PARTNER currently owns — they'll send it to me; if I
@@ -126,6 +137,7 @@ async def test_pick_upgrade_applies_when_championship_unlocks():
         assert trade_id
 
         # Force-execute as co-comm (chris is co-comm in seed data)
+        await _accept_fixture_trade(db, trade_id)
         r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
         assert r.status_code == 200, r.text
 
@@ -208,13 +220,14 @@ async def test_pick_upgrade_with_player_condition_fires_on_threshold():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         h = {"Authorization": f"Bearer {tok}"}
         leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
         lid = leagues[0]["id"]
 
+        me = (await c.get("/api/auth/me", headers=h)).json()
         teams = await db.teams.find({"league_id": lid}).to_list(20)
-        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        my = next(t for t in teams if str(t.get("owner_id")) == str(me["id"]))
         partner = next(t for t in teams if t["_id"] != my["_id"])
 
         # 2nd-rounder owned by partner — they send it to me
@@ -264,6 +277,7 @@ async def test_pick_upgrade_with_player_condition_fires_on_threshold():
         trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
 
         try:
+            await _accept_fixture_trade(db, trade_id)
             r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
             assert r.status_code == 200, r.text
             # Player-condition triggers immediately during _apply_pick_upgrades
@@ -287,13 +301,14 @@ async def test_pick_protection_fires_when_pick_lands_top_n():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         h = {"Authorization": f"Bearer {tok}"}
         leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
         lid = leagues[0]["id"]
 
+        me = (await c.get("/api/auth/me", headers=h)).json()
         teams = await db.teams.find({"league_id": lid}).to_list(20)
-        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        my = next(t for t in teams if str(t.get("owner_id")) == str(me["id"]))
 
         # Find any R1 pick currently owned by ANY non-me team — the test data
         # gets shuffled by earlier runs, so don't pin to a specific partner.
@@ -348,6 +363,7 @@ async def test_pick_protection_fires_when_pick_lands_top_n():
         trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
         assert trade_id, f"No trade id in response: {body}"
         try:
+            await _accept_fixture_trade(db, trade_id)
             r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
             assert r.status_code == 200
             pick = await db.draft_picks.find_one({"_id": ObjectId(partner_pick_id)})
@@ -377,12 +393,13 @@ async def test_won_draft_lottery_team_metric_evaluates():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         h = {"Authorization": f"Bearer {tok}"}
         leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
         lid = leagues[0]["id"]
+        me = (await c.get("/api/auth/me", headers=h)).json()
         teams = await db.teams.find({"league_id": lid}).to_list(20)
-        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        my = next(t for t in teams if str(t.get("owner_id")) == str(me["id"]))
         partner_pick = await db.draft_picks.find_one({
             "league_id": lid, "round": 2,
             "current_team_id": {"$ne": str(my["_id"])},
@@ -426,6 +443,7 @@ async def test_won_draft_lottery_team_metric_evaluates():
         trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
         assert trade_id, f"No trade id in response: {body}"
         try:
+            await _accept_fixture_trade(db, trade_id)
             await c.post(f"/api/trades/{trade_id}/execute", headers=h)
             # Pre-lottery: pick stays as 2nd
             pick = await db.draft_picks.find_one({"_id": ObjectId(partner_pick_id)})
@@ -437,10 +455,16 @@ async def test_won_draft_lottery_team_metric_evaluates():
                 {"$set": {"draft_lottery_won_at": datetime.now(timezone.utc)}},
             )
 
-            # Re-trigger eval
-            from server import _apply_pick_upgrades  # noqa: WPS433
-            t = await db.trades.find_one({"_id": ObjectId(trade_id)})
-            res = await _apply_pick_upgrades(t, final_eval=False)
+            # Bind the direct evaluator to this test's live disposable DB.
+            from services import trade_engine
+            previous_deps = dict(trade_engine._deps)
+            trade_engine.setup({"db": db})
+            try:
+                t = await db.trades.find_one({"_id": ObjectId(trade_id)})
+                res = await trade_engine._apply_pick_upgrades(t, final_eval=False)
+            finally:
+                trade_engine._deps.clear()
+                trade_engine._deps.update(previous_deps)
             assert res["applied"] >= 1, res
             pick = await db.draft_picks.find_one({"_id": ObjectId(partner_pick_id)})
             assert pick["round"] == 1, f"Lottery win should upgrade pick to R1, got R{pick['round']}"
@@ -463,14 +487,15 @@ async def test_pick_downgrade_clause_supported():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         h = {"Authorization": f"Bearer {tok}"}
         leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
         me = (await c.get("/api/auth/me", headers=h)).json()
         lid = leagues[0]["id"]
 
+        me = (await c.get("/api/auth/me", headers=h)).json()
         teams = await db.teams.find({"league_id": lid}).to_list(20)
-        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        my = next(t for t in teams if str(t.get("owner_id")) == str(me["id"]))
         partner = next(t for t in teams if t["_id"] != my["_id"])
 
         # Find a 1st-round pick the partner owns — receiver = me, downgrade fires
@@ -515,6 +540,7 @@ async def test_pick_downgrade_clause_supported():
         body = r.json()
         trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
         try:
+            await _accept_fixture_trade(db, trade_id)
             r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
             assert r.status_code == 200
 
@@ -540,15 +566,16 @@ async def test_pick_upgrade_action_add_transfers_ownership_on_trigger():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         h = {"Authorization": f"Bearer {tok}"}
 
         leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
         league = leagues[0]
         lid = league["id"]
 
+        me = (await c.get("/api/auth/me", headers=h)).json()
         teams = await db.teams.find({"league_id": lid}).to_list(20)
-        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        my = next(t for t in teams if str(t.get("owner_id")) == str(me["id"]))
         partner = next(t for t in teams if t["_id"] != my["_id"])
 
         # Pick that the partner currently owns and that is NOT going to be
@@ -604,6 +631,7 @@ async def test_pick_upgrade_action_add_transfers_ownership_on_trigger():
             pytest.skip(f"trade response missing id: {body}")
         assert trade_id
 
+        await _accept_fixture_trade(db, trade_id)
         r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
         assert r.status_code == 200, r.text
 
@@ -665,15 +693,16 @@ async def test_pick_upgrade_action_remove_reverts_ownership_on_trigger():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         h = {"Authorization": f"Bearer {tok}"}
 
         leagues = (await c.get("/api/leagues?my_leagues=true", headers=h)).json()
         league = leagues[0]
         lid = league["id"]
 
+        me = (await c.get("/api/auth/me", headers=h)).json()
         teams = await db.teams.find({"league_id": lid}).to_list(20)
-        my = next(t for t in teams if t.get("name") == "Zarek's Frozen")
+        my = next(t for t in teams if str(t.get("owner_id")) == str(me["id"]))
         partner = next(t for t in teams if t["_id"] != my["_id"])
 
         # Pick that the partner sends to me as part of this trade. If
@@ -726,6 +755,7 @@ async def test_pick_upgrade_action_remove_reverts_ownership_on_trigger():
             pytest.skip(f"trade response missing id: {body}")
         assert trade_id
 
+        await _accept_fixture_trade(db, trade_id)
         r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
         assert r.status_code == 200, r.text
 
@@ -775,3 +805,12 @@ async def test_pick_upgrade_action_remove_reverts_ownership_on_trigger():
                     "current_team_name": partner.get("name"),
                 }},
             )
+
+@pytest.fixture(scope="module", autouse=True)
+def conditional_trade_inputs(_global_pollution_sweep):
+    from pymongo import MongoClient
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as client:
+        db = client[os.environ["DB_NAME"]]
+        for league in db.leagues.find({"_suite_baseline": True}):
+            db.leagues.update_one({"_id": league["_id"]}, {"$set": {"transactions_config.trades.conditional_trades_enabled": True}})

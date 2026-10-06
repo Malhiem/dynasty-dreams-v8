@@ -13,10 +13,10 @@ import os
 import requests
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
-USER_EMAIL = "chriszarek@gmail.com"
-USER_PASS = "Chris2026!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+USER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+USER_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 def _login(email, password) -> str:

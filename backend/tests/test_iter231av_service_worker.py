@@ -20,6 +20,7 @@ Artefacts:
   • `src/index.js` — calls `registerServiceWorker()` after first
     render.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 import json
 
@@ -30,7 +31,7 @@ INDEX_JS = Path("/app/frontend/src/index.js")
 
 
 def test_service_worker_versions_its_caches():
-    src = SW.read_text()
+    src = read_source(SW)
     # Single source of truth for the version number — referenced by
     # both cache names AND the activate-time pruning step so a new
     # build never accidentally serves yesterday's assets.
@@ -44,14 +45,14 @@ def test_service_worker_versions_its_caches():
 
 
 def test_service_worker_writes_are_network_only():
-    src = SW.read_text()
+    src = read_source(SW)
     # Bail out for every non-GET so trade proposals + roster moves
     # always hit the live backend.
     assert 'if (request.method !== "GET") return;' in src
 
 
 def test_service_worker_auth_admin_websocket_are_never_cached():
-    src = SW.read_text()
+    src = read_source(SW)
     # Auth + admin endpoints must never be cached (security + RBAC).
     # Socket.IO upgrades also need to bypass the SW. Patterns are
     # regex literals in the source so the slashes are escaped.
@@ -65,7 +66,7 @@ def test_service_worker_auth_admin_websocket_are_never_cached():
 
 
 def test_service_worker_swr_covers_matchups_and_standings():
-    src = SW.read_text()
+    src = read_source(SW)
     # The two endpoints the user called out explicitly + the three
     # next-most-pulled (teams, players, week-at-a-glance) all go
     # through stale-while-revalidate. Patterns are regex literals.
@@ -75,16 +76,18 @@ def test_service_worker_swr_covers_matchups_and_standings():
         r"/^\/api\/leagues\/[^/]+\/teams/",
         r"/^\/api\/teams\/[^/]+$/",
         r"/^\/api\/players(\?|$)/",
-        r"/^\/api\/users\/me\/week-at-a-glance/",
     ):
         assert pattern in src
+    # Personalized user data must bypass cache, including week-at-a-glance.
+    assert r"/^\/api\/users\/me(\/|$|\?)/" in src
+    assert "week-at-a-glance" not in src.split("const SWR")[1].split("];", 1)[0]
     # The strategy itself must return the cached copy immediately and
     # fire the network refresh in the background.
     assert "return cached || network" in src
 
 
 def test_service_worker_app_shell_is_cache_first_with_offline_fallback():
-    src = SW.read_text()
+    src = read_source(SW)
     assert "async function cacheFirst" in src
     # When the network is unreachable we serve the cached `/` so the
     # SPA renders its offline-aware shell instead of the browser's
@@ -100,12 +103,12 @@ def test_service_worker_honours_nocache_opt_out():
     """The pull-to-refresh hook (iter 231at/au) — or any caller that
     needs guaranteed-fresh data — can append `?nocache=1` to bypass
     the SW entirely. The SW must NOT intercept those requests."""
-    src = SW.read_text()
+    src = read_source(SW)
     assert 'url.searchParams.has("nocache")' in src
 
 
 def test_register_helper_skips_development():
-    src = REGISTER.read_text()
+    src = read_source(REGISTER)
     # No SW in dev — HMR/hot-reload would fight a stale cache.
     assert 'env.NODE_ENV === "development"' in src
     # Registers under the root scope so /api/ + /static/ + / all
@@ -120,7 +123,7 @@ def test_register_helper_skips_development():
 
 
 def test_index_js_calls_register_after_render():
-    src = INDEX_JS.read_text()
+    src = read_source(INDEX_JS)
     assert 'import registerServiceWorker from "@/lib/registerServiceWorker";' in src
     # The call must come AFTER `root.render` so the SW install +
     # cache warm-up doesn't fight the initial paint.
@@ -133,6 +136,6 @@ def test_index_js_calls_register_after_render():
 def test_manifest_still_serves_under_sw_scope():
     """Manifest.json must remain reachable so the OS install banner
     keeps working after the SW is live."""
-    data = json.loads(Path("/app/frontend/public/manifest.json").read_text())
+    data = json.loads(read_source(Path("/app/frontend/public/manifest.json")))
     assert data["scope"] == "/"
     assert data["start_url"] == "/"

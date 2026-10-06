@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from bson import ObjectId
+from services.financial_lock import serialize_finances
+from services.season_history import capture_players, capture_standings, champions, historical_rank, tied_leaders
+from services.fantasy_scoring import DEFAULT_SKATER_SCORING, DEFAULT_GOALIE_SCORING, calculate_fantasy_points
+from routes.league_guards import require_league_member
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
@@ -57,6 +61,14 @@ async def _ensure_commish(request: Request, league: dict):
     if not is_commish:
         raise HTTPException(status_code=403, detail="Commissioner only")
     return user
+
+
+async def _snapshot_scoring_config(db, league_id):
+    config = await db.scoring_configs.find_one({"league_id": league_id}) or {}
+    return {
+        "skater_scoring": config.get("skater_scoring", DEFAULT_SKATER_SCORING),
+        "goalie_scoring": config.get("goalie_scoring", DEFAULT_GOALIE_SCORING),
+    }
 
 
 # ─── Health Score ────────────────────────────────────────────
@@ -230,7 +242,7 @@ async def mark_setup_progress(league_id: str, request: Request):
 
 
 @router.get("/leagues/{league_id}/seasons")
-async def list_seasons(league_id: str, include_team_stats: bool = False):
+async def list_seasons(league_id: str, request: Request, include_team_stats: bool = False):
     """List all completed seasons for a league (for History/Trophy Room).
 
     When `include_team_stats=true`, each returned season also includes a
@@ -240,8 +252,9 @@ async def list_seasons(league_id: str, include_team_stats: bool = False):
     records correctly across every completed season instead of relying on
     just the LIVE current-season totals.
     """
+    user = await _deps["get_current_user"](request)
     db = _deps["db"]
-    await _league_or_404(league_id)
+    await require_league_member(db, user, league_id)
     projection = {
         "_id": 1, "season_year": 1, "status": 1, "snapshot_at": 1,
         "champion_team_name": 1, "completed_by": 1,
@@ -273,10 +286,11 @@ async def list_seasons(league_id: str, include_team_stats: bool = False):
 
 
 @router.get("/leagues/{league_id}/seasons/{season_year}")
-async def get_season(league_id: str, season_year: int):
+async def get_season(league_id: str, season_year: int, request: Request):
     """Full snapshot of a specific past season."""
+    user = await _deps["get_current_user"](request)
     db = _deps["db"]
-    await _league_or_404(league_id)
+    await require_league_member(db, user, league_id)
     season = await db.league_seasons.find_one({
         "league_id": league_id, "season_year": season_year,
     })
@@ -287,6 +301,7 @@ async def get_season(league_id: str, season_year: int):
 
 
 @router.post("/leagues/{league_id}/complete-season")
+@serialize_finances(lambda: _deps["db"])
 async def complete_season(league_id: str, payload: CompleteSeasonInput, request: Request):
     """Snapshot the current season's records, awards, rosters → league_seasons.
 
@@ -304,6 +319,21 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
     now = datetime.now(timezone.utc)
 
     teams = await db.teams.find({"league_id": league_id}).to_list(200)
+    player_snapshot = await capture_players(db, teams)
+
+    from services.salary_policy import payroll, obligations
+    prior = await db.league_seasons.find_one({"league_id": league_id, "season_year": season_year})
+    previous_finances = {t["team_id"]: t for t in (prior or {}).get("teams", [])}
+    for team in teams:
+        state = await payroll(db, team, league)
+        team["salary_used"] = state["used"]
+        team["retention_history"] = [{k: v for k, v in row.items() if k != "_id"}
+                                     for row in await obligations(db, league, team, include_history=True)]
+        if league.get("current_season_status") == "complete" and str(team["_id"]) in previous_finances:
+            saved = previous_finances[str(team["_id"])]
+            team["salary_used"] = saved.get("salary_used", team["salary_used"])
+            team["retention_history"] = saved.get("retention_history", team["retention_history"])
+
 
     # Snapshot teams' end-of-season records + roster + awards
     teams_snapshot = []
@@ -330,6 +360,7 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
             "division": t.get("division"),
             "conference": t.get("conference"),
             "salary_used": float(t.get("salary_used", 0.0) or 0.0),
+            "retention_history": t.get("retention_history", []),
             "roster": list(t.get("roster") or []),
             "awards": {
                 "championship_won_at": t.get("championship_won_at"),
@@ -343,29 +374,11 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
             champion = ts["team_name"]
         teams_snapshot.append(ts)
 
-    # ── Rotisserie champion: highest total roto points ────────────
-    if not champion and league.get("scoring_format") == "rotisserie":
-        try:
-            from routes.roto import compute_season as _roto_season
-            roto = await _roto_season(db, league_id)
-            if roto.get("totals"):
-                leader_tid, leader = max(
-                    roto["totals"].items(),
-                    key=lambda x: x[1].get("total_points", 0),
-                )
-                champion = leader.get("team_name")
-                # Stamp the winning team so trophy room picks it up
-                await db.teams.update_one(
-                    {"_id": ObjectId(leader_tid)},
-                    {"$set": {"championship_won_at": now.isoformat()}},
-                )
-                # Update the snapshot entry too
-                for ts in teams_snapshot:
-                    if ts["team_id"] == leader_tid:
-                        ts["awards"]["championship_won_at"] = now.isoformat()
-                        break
-        except Exception:
-            pass  # Roto computation failure shouldn't block season completion
+    champion_ids = await capture_standings(db, league, teams_snapshot)
+    champion = next((t['team_name'] for t in teams_snapshot if t['team_id'] in champion_ids), None)
+    for ts in teams_snapshot:
+        if ts['team_id'] in champion_ids:
+            ts['awards']['championship_won_at'] = ts['awards'].get('championship_won_at') or now.isoformat()
 
     # Awards / activity_feed entries from this season
     activity_cursor = db.activity_feed.find({
@@ -383,28 +396,10 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
             "created_at": a.get("created_at"),
         })
 
-    # Player ownership snapshot (so player profiles can show "X% owned by Y team in 2026")
-    player_ids = list({pid for t in teams for pid in (t.get("roster") or [])})
-    player_snapshot = []
-    if player_ids:
-        try:
-            oids = [ObjectId(p) for p in player_ids if ObjectId.is_valid(p)]
-            async for p in db.players.find(
-                {"_id": {"$in": oids}},
-                {"name": 1, "position": 1, "team": 1, "season_stats": 1},
-            ):
-                player_snapshot.append({
-                    "player_id": str(p["_id"]),
-                    "name": p.get("name"),
-                    "team": p.get("team"),
-                    "position": p.get("position"),
-                    "season_stats": p.get("season_stats"),
-                })
-        except Exception:
-            pass
-
     # Capture league config for "use last year's settings" pre-fill
+    scoring_config = await _snapshot_scoring_config(db, league_id)
     snapshot_doc = {
+        "scoring_config": scoring_config,
         "league_id": league_id,
         "season_year": season_year,
         "status": "complete",
@@ -412,6 +407,8 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
         "completed_by": user.get("email"),
         "completed_by_name": user.get("name"),
         "champion_team_name": champion,
+        "champion_team_id": champion_ids[0] if len(champion_ids) == 1 else None,
+        "champion_team_ids": champion_ids,
         "salary_cap_config": {
             "enabled": bool(league.get("salary_cap_enabled")),
             "amount": league.get("salary_cap"),
@@ -439,6 +436,9 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
         upsert=True,
     )
 
+    if champion_ids:
+        await db.teams.update_many({'_id': {'$in': [ObjectId(tid) for tid in champion_ids]}, '$or': [{'championship_won_at': None}, {'championship_won_at': ''}]}, {'$set': {'championship_won_at': now.isoformat()}})
+
     # Mark league
     await db.leagues.update_one(
         {"_id": ObjectId(league_id)},
@@ -464,6 +464,7 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
 
 
 @router.post("/leagues/{league_id}/renew-season")
+@serialize_finances(lambda: _deps["db"])
 async def renew_season(league_id: str, payload: RenewSeasonInput, request: Request):
     """Start a new season after the previous one has been marked complete.
 
@@ -574,8 +575,10 @@ async def get_setup_suggestions(league_id: str):
 
 
 # ─── Trophy Room ────────────────────────────────────────────
-def _player_points(p: dict) -> float:
-    """Best-effort fantasy point proxy from a player's season_stats."""
+def _player_points(p: dict, scoring_config=None) -> float:
+    """Use frozen season weights; preserve estimates for legacy snapshots."""
+    if scoring_config is not None:
+        return calculate_fantasy_points({**(p.get("season_stats") or {}), "position": (p.get("position") or "").upper()}, scoring_config)
     ss = p.get("season_stats") or {}
     pos = (p.get("position") or "").upper()
     if pos == "G":
@@ -595,27 +598,27 @@ def _build_season_trophies(snapshot: dict) -> dict:
     players = snapshot.get("players") or []
 
     # Team-level trophies
-    champion = None
-    if snapshot.get("champion_team_name"):
-        champion = next((t for t in teams if t.get("team_name") == snapshot["champion_team_name"]), None)
-
-    # President's Trophy = best regular-season points_for
-    presidents = max(teams, key=lambda t: float(t.get("points_for", 0)), default=None) if teams else None
+    season_champions = champions(snapshot)
+    champion = season_champions[0] if season_champions else None
+    president_winners = tied_leaders(teams, lambda t:float(t.get('points_for') or 0), 'team_id')
+    presidents = president_winners[0] if president_winners else None
 
     division_winners = [t for t in teams if (t.get("awards") or {}).get("division_winner_at")]
     conference_winners = [t for t in teams if (t.get("awards") or {}).get("conference_winner_at")]
     consolation = next((t for t in teams if (t.get("awards") or {}).get("consolation_won_at")), None)
 
     # Player-level trophies
-    if players:
-        skaters = [p for p in players if (p.get("position") or "").upper() != "G"]
-        goalies = [p for p in players if (p.get("position") or "").upper() == "G"]
-        defensemen = [p for p in skaters if (p.get("position") or "").upper() == "D"]
-        season_mvp = max(skaters, key=_player_points, default=None) if skaters else None
-        best_goalie = max(goalies, key=_player_points, default=None) if goalies else None
-        best_defender = max(defensemen, key=_player_points, default=None) if defensemen else None
-    else:
-        season_mvp = best_goalie = best_defender = None
+    scoring_config = snapshot.get("scoring_config")
+    score = lambda p: _player_points(p, scoring_config)
+    skaters = [p for p in players if (p.get('position') or '').upper() != 'G']
+    goalies = [p for p in players if (p.get('position') or '').upper() == 'G']
+    defenders = [p for p in skaters if (p.get('position') or '').upper() == 'D']
+    mvps = tied_leaders(skaters, score, 'player_id')
+    goalie_winners = tied_leaders(goalies, score, 'player_id')
+    defense_winners = tied_leaders(defenders, score, 'player_id')
+    season_mvp = mvps[0] if mvps else None
+    best_goalie = goalie_winners[0] if goalie_winners else None
+    best_defender = defense_winners[0] if defense_winners else None
 
     # Owner lookup so each player trophy can attribute to their team
     player_to_team = {}
@@ -637,12 +640,17 @@ def _build_season_trophies(snapshot: dict) -> dict:
             "position": p.get("position"),
             "team": p.get("team"),
             "season_stats": p.get("season_stats") or {},
-            "points": round(_player_points(p), 2),
+            "points": round(score(p), 2),
+            "scoring_basis": "season_weights" if scoring_config is not None else "legacy_estimate",
             "owner_team_id": owner.get("team_id"),
             "owner_team_name": owner.get("team_name"),
         }
 
     return {
+        "champions": [{"team_id":t['team_id'],"team_name":t['team_name'],"logo_url":t.get('logo_url')} for t in season_champions],
+        "champion_status": "resolved" if season_champions else "ambiguous" if snapshot.get('champion_team_name') else "none",
+        "presidents_trophies": [{"team_id":t['team_id'],"team_name":t['team_name'],"logo_url":t.get('logo_url'),"points_for":t.get('points_for')} for t in president_winners],
+        "player_awards": [_player_card(p,label) for rows,label in [(mvps,'Season MVP'),(goalie_winners,'Best Goalie'),(defense_winners,'Best Defenseman')] for p in rows],
         "season_year": snapshot.get("season_year"),
         "champion": (
             {"team_id": champion["team_id"], "team_name": champion["team_name"], "logo_url": champion.get("logo_url")}
@@ -671,10 +679,11 @@ def _build_season_trophies(snapshot: dict) -> dict:
 
 
 @router.get("/leagues/{league_id}/trophy-room")
-async def get_league_trophy_room(league_id: str):
+async def get_league_trophy_room(league_id: str, request: Request):
     """Return all-time trophies + hall of fame for the league."""
+    user = await _deps["get_current_user"](request)
     db = _deps["db"]
-    await _league_or_404(league_id)
+    await require_league_member(db, user, league_id)
 
     cursor = db.league_seasons.find({"league_id": league_id}).sort("season_year", -1)
     season_trophies: list = []
@@ -700,13 +709,13 @@ async def get_league_trophy_room(league_id: str):
     hof_counter: dict = {}
     for s in season_trophies:
         yr = s["season_year"]
-        if s["champion"]: _add_banner(s["champion"], "championship", yr)
-        if s["presidents_trophy"]: _add_banner(s["presidents_trophy"], "presidents_trophy", yr)
+        for winner in s["champions"]: _add_banner(winner, "championship", yr)
+        for winner in s["presidents_trophies"]: _add_banner(winner, "presidents_trophy", yr)
         for d in s["division_winners"]: _add_banner(d, "division", yr, {"division": d.get("division")})
         for c in s["conference_winners"]: _add_banner(c, "conference", yr, {"conference": c.get("conference")})
         if s["consolation_winner"]: _add_banner(s["consolation_winner"], "consolation", yr)
 
-        for ptrophy in (s["season_mvp"], s["best_goalie"], s["best_defenseman"]):
+        for ptrophy in s["player_awards"]:
             if not ptrophy or not ptrophy.get("player_id"):
                 continue
             pid = ptrophy["player_id"]
@@ -739,11 +748,12 @@ async def get_league_trophy_room(league_id: str):
 
 
 @router.get("/players/{player_id}/dynasty-career")
-async def get_player_dynasty_career(player_id: str):
+async def get_player_dynasty_career(player_id: str, request: Request):
     """Return a player's dynasty-league career: every league_seasons snapshot
     where this player was rostered, with the team that owned them + any
     individual awards (Season MVP / Best Goalie / Best Defenseman) won that year.
     """
+    user = await _deps["get_current_user"](request)
     db = _deps["db"]
     cursor = db.league_seasons.find(
         {"players.player_id": player_id},
@@ -751,8 +761,20 @@ async def get_player_dynasty_career(player_id: str):
 
     history: list = []
     league_ids: set = set()
+    access = {}
     async for snap in cursor:
-        league_ids.add(snap["league_id"])
+        lid = snap["league_id"]
+        if lid not in access:
+            try:
+                await require_league_member(db, user, lid)
+                access[lid] = True
+            except HTTPException as exc:
+                if exc.status_code not in (400, 403, 404):
+                    raise
+                access[lid] = False
+        if not access[lid]:
+            continue
+        league_ids.add(lid)
         # Locate this player's snapshot row
         prow = next((p for p in (snap.get("players") or []) if p.get("player_id") == player_id), None)
         if not prow:
@@ -766,8 +788,7 @@ async def get_player_dynasty_career(player_id: str):
         # Award detection: did this player win a per-season trophy?
         awards = []
         season_card = _build_season_trophies(snap)
-        for key in ("season_mvp", "best_goalie", "best_defenseman"):
-            ptrophy = season_card.get(key)
+        for ptrophy in season_card["player_awards"]:
             if ptrophy and ptrophy.get("player_id") == player_id:
                 awards.append({"label": ptrophy["label"], "year": snap.get("season_year")})
 
@@ -775,11 +796,12 @@ async def get_player_dynasty_career(player_id: str):
             "league_id": snap["league_id"],
             "season_year": snap.get("season_year"),
             "season_stats": prow.get("season_stats") or {},
-            "fantasy_points": round(_player_points(prow), 2),
+            "fantasy_points": round(_player_points(prow, snap.get("scoring_config")), 2),
+            "scoring_basis": "season_weights" if snap.get("scoring_config") is not None else "legacy_estimate",
             "owner_team_id": (owner_team or {}).get("team_id"),
             "owner_team_name": (owner_team or {}).get("team_name"),
             "awards": awards,
-            "champion": (snap.get("champion_team_name") and (owner_team or {}).get("team_name") == snap.get("champion_team_name")),
+            "champion": any(t["team_id"] == (owner_team or {}).get("team_id") for t in champions(snap)),
         })
 
     # Resolve league names
@@ -810,6 +832,7 @@ async def get_player_dynasty_career(player_id: str):
 
 
 # ─── Auto-snapshot trigger (called from matchups.simulate_week) ─────────
+@serialize_finances(lambda: _deps["db"])
 async def _maybe_auto_snapshot_season(league_id: str):
     """Internal helper: when a league's last playoff matchup transitions
     to completed/final, automatically run complete-season.
@@ -850,6 +873,13 @@ async def _maybe_auto_snapshot_season(league_id: str):
     season_year = league.get("current_season_year") or datetime.now(timezone.utc).year
     now = datetime.now(timezone.utc)
     teams = await db.teams.find({"league_id": league_id}).to_list(200)
+    player_snapshot = await capture_players(db, teams)
+
+    from services.salary_policy import payroll, obligations
+    for team in teams:
+        team["salary_used"] = (await payroll(db, team, league))["used"]
+        team["retention_history"] = [{k: v for k, v in row.items() if k != "_id"}
+                                     for row in await obligations(db, league, team, include_history=True)]
 
     teams_snapshot = []
     champion = None
@@ -875,6 +905,7 @@ async def _maybe_auto_snapshot_season(league_id: str):
             "division": t.get("division"),
             "conference": t.get("conference"),
             "salary_used": float(t.get("salary_used", 0.0) or 0.0),
+            "retention_history": t.get("retention_history", []),
             "roster": list(t.get("roster") or []),
             "awards": {
                 "championship_won_at": t.get("championship_won_at"),
@@ -888,27 +919,11 @@ async def _maybe_auto_snapshot_season(league_id: str):
             champion = ts["team_name"]
         teams_snapshot.append(ts)
 
-    # ── Rotisserie champion: highest total roto points ────────────
-    if not champion and league.get("scoring_format") == "rotisserie":
-        try:
-            from routes.roto import compute_season as _roto_season
-            roto = await _roto_season(db, league_id)
-            if roto.get("totals"):
-                leader_tid, leader = max(
-                    roto["totals"].items(),
-                    key=lambda x: x[1].get("total_points", 0),
-                )
-                champion = leader.get("team_name")
-                await db.teams.update_one(
-                    {"_id": ObjectId(leader_tid)},
-                    {"$set": {"championship_won_at": now.isoformat()}},
-                )
-                for ts in teams_snapshot:
-                    if ts["team_id"] == leader_tid:
-                        ts["awards"]["championship_won_at"] = now.isoformat()
-                        break
-        except Exception:
-            pass
+    champion_ids = await capture_standings(db, league, teams_snapshot)
+    champion = next((t['team_name'] for t in teams_snapshot if t['team_id'] in champion_ids), None)
+    for ts in teams_snapshot:
+        if ts['team_id'] in champion_ids:
+            ts['awards']['championship_won_at'] = ts['awards'].get('championship_won_at') or now.isoformat()
 
     # Awards
     activity_cursor = db.activity_feed.find({
@@ -926,27 +941,9 @@ async def _maybe_auto_snapshot_season(league_id: str):
             "created_at": a.get("created_at"),
         })
 
-    # Players
-    player_ids = list({pid for t in teams for pid in (t.get("roster") or [])})
-    player_snapshot = []
-    if player_ids:
-        try:
-            oids = [ObjectId(p) for p in player_ids if ObjectId.is_valid(p)]
-            async for p in db.players.find(
-                {"_id": {"$in": oids}},
-                {"name": 1, "position": 1, "team": 1, "season_stats": 1},
-            ):
-                player_snapshot.append({
-                    "player_id": str(p["_id"]),
-                    "name": p.get("name"),
-                    "team": p.get("team"),
-                    "position": p.get("position"),
-                    "season_stats": p.get("season_stats"),
-                })
-        except Exception:
-            pass
-
+    scoring_config = await _snapshot_scoring_config(db, league_id)
     snapshot_doc = {
+        "scoring_config": scoring_config,
         "league_id": league_id,
         "season_year": season_year,
         "status": "complete",
@@ -954,6 +951,8 @@ async def _maybe_auto_snapshot_season(league_id: str):
         "completed_by": "system",
         "completed_by_name": "System (auto-snapshot)",
         "champion_team_name": champion,
+        "champion_team_id": champion_ids[0] if len(champion_ids) == 1 else None,
+        "champion_team_ids": champion_ids,
         "salary_cap_config": {
             "enabled": bool(league.get("salary_cap_enabled")),
             "amount": league.get("salary_cap"),
@@ -979,6 +978,8 @@ async def _maybe_auto_snapshot_season(league_id: str):
         {"$set": snapshot_doc},
         upsert=True,
     )
+    if champion_ids:
+        await db.teams.update_many({'_id': {'$in': [ObjectId(tid) for tid in champion_ids]}, '$or': [{'championship_won_at': None}, {'championship_won_at': ''}]}, {'$set': {'championship_won_at': now.isoformat()}})
     await db.leagues.update_one(
         {"_id": ObjectId(league_id)},
         {"$set": {
@@ -1014,8 +1015,9 @@ async def _maybe_auto_snapshot_season(league_id: str):
 
 
 @router.get("/teams/{team_id}/trophy-room")
-async def get_team_trophy_room(team_id: str):
+async def get_team_trophy_room(team_id: str, request: Request):
     """Return all-time trophies for a single team."""
+    user = await _deps["get_current_user"](request)
     db = _deps["db"]
     try:
         toid = ObjectId(team_id)
@@ -1023,10 +1025,17 @@ async def get_team_trophy_room(team_id: str):
         raise HTTPException(status_code=400, detail="Invalid team id")
 
     team = await db.teams.find_one({"_id": toid})
+    historical = False
     if not team:
-        raise HTTPException(status_code=404, detail="Team not found")
+        snap = await db.league_seasons.find_one({'teams.team_id':team_id}, sort=[('season_year',-1)])
+        if not snap:
+            raise HTTPException(status_code=404, detail="Team not found")
+        saved = next(t for t in snap['teams'] if t['team_id'] == team_id)
+        team = {'name':saved.get('team_name'),'league_id':snap['league_id'],'logo_url':saved.get('logo_url'),'logo_abbr':saved.get('logo_abbr')}
+        historical = True
 
     league_id = team["league_id"]
+    await require_league_member(db, user, league_id)
     cursor = db.league_seasons.find({"league_id": league_id}).sort("season_year", -1)
     banners: list = []
     individual_awards: list = []
@@ -1037,23 +1046,22 @@ async def get_team_trophy_room(team_id: str):
         my_team = next((t for t in (snap.get("teams") or []) if t.get("team_id") == team_id), None)
         if not my_team:
             continue
+        rank, rank_basis = historical_rank(snap, my_team)
         seasons_played.append({
             "year": yr,
             "wins": my_team.get("wins"),
             "losses": my_team.get("losses"),
             "ties": my_team.get("ties"),
             "points_for": my_team.get("points_for"),
-            "rank": None,  # could be computed if needed
+            "rank": rank,
+            "rank_basis": rank_basis,
         })
         awards = my_team.get("awards") or {}
-        if awards.get("championship_won_at"):
+        season_card = _build_season_trophies(snap)
+        if any(t['team_id'] == team_id for t in season_card['champions']):
             banners.append({"type": "championship", "year": yr})
-        # President's Trophy: did this team have the highest points_for that year?
-        teams_in_season = snap.get("teams") or []
-        if teams_in_season:
-            top_pf_team = max(teams_in_season, key=lambda t: float(t.get("points_for", 0)))
-            if top_pf_team.get("team_id") == team_id:
-                banners.append({"type": "presidents_trophy", "year": yr})
+        if any(t['team_id'] == team_id for t in season_card['presidents_trophies']):
+            banners.append({"type": "presidents_trophy", "year": yr})
         if awards.get("division_winner_at"):
             banners.append({"type": "division", "year": yr, "division": my_team.get("division")})
         if awards.get("conference_winner_at"):
@@ -1064,11 +1072,11 @@ async def get_team_trophy_room(team_id: str):
         # Individual: which of MY rostered players won league-wide trophies that year?
         my_pids = set(map(str, my_team.get("roster") or []))
         season_card = _build_season_trophies(snap)
-        for ptrophy_key in ("season_mvp", "best_goalie", "best_defenseman"):
-            ptrophy = season_card.get(ptrophy_key)
+        for ptrophy in season_card["player_awards"]:
             if ptrophy and ptrophy.get("player_id") in my_pids:
                 individual_awards.append({
                     "label": ptrophy["label"],
+                    "scoring_basis": ptrophy.get("scoring_basis"),
                     "year": yr,
                     "player_id": ptrophy["player_id"],
                     "player_name": ptrophy["player_name"],
@@ -1079,6 +1087,7 @@ async def get_team_trophy_room(team_id: str):
     return {
         "team_id": team_id,
         "team_name": team.get("name"),
+        "historical_franchise": historical,
         "logo_url": team.get("logo_url"),
         "logo_abbr": team.get("logo_abbr"),
         "league_id": league_id,

@@ -233,6 +233,9 @@ async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
             counts["skipped"] += 1
             continue
 
+        if draft.get("salary_blocked"):
+            counts["skipped"] += 1
+            continue
         # Iter 231ad — Guard against zombie drafts with empty `team_abbrs`.
         # `get_team_for_pick` does `pick % len(team_abbrs)` which raises
         # ZeroDivisionError on empty arrays. Found 18 such drafts in the

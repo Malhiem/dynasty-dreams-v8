@@ -8,8 +8,8 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
 
-OWNER_EMAIL = "chriszarek@gmail.com"
-OWNER_PASSWORD = "Chris2026!"
+OWNER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+OWNER_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 @pytest.fixture(scope="module")
@@ -30,6 +30,27 @@ def ice_kings_league_id(owner_session):
         if "ice king" in (L.get("name") or "").lower():
             return L["id"]
     pytest.skip("Ice Kings league not found")
+
+
+@pytest.fixture(scope="module", autouse=True)
+def legacy_trade_block_inputs(_global_pollution_sweep):
+    from pymongo import MongoClient
+    from bson import ObjectId
+    from datetime import datetime, timezone
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as client:
+        db = client[os.environ["DB_NAME"]]
+        lid = "69e46af167999bfb85c39628"
+        teams = list(db.teams.find({"league_id": lid}).limit(2))
+        entries = []
+        for team in teams:
+            player = db.players.find_one({"_id": ObjectId(team["roster"][0])})
+            entries.append({"league_id": lid, "owner_id": team["owner_id"], "item_type": "player",
+                "player_id": str(player["_id"]), "name": player["name"], "position": player["position"],
+                "created_at": datetime.now(timezone.utc).isoformat(), "_legacy_block_fixture": True})
+        db.trade_block.insert_many(entries)
+        yield
+        db.trade_block.delete_many({"_legacy_block_fixture": True})
 
 
 class TestFix1Backfill:

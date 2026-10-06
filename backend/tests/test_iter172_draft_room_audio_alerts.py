@@ -12,6 +12,7 @@ Static guards for the "next up" + "on the clock" audio cues:
   • The hook persists the enabled flag via localStorage so a muted
     manager stays muted across reloads.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 HOOK = Path("/app/frontend/src/hooks/use-draft-sounds.ts")
@@ -21,7 +22,7 @@ LIVE_TILE = Path("/app/frontend/src/lovable/pages/draftroom/DraftLiveTile.tsx")
 
 def test_hook_file_exists_and_exports_api():
     assert HOOK.exists(), "use-draft-sounds.ts hook is missing"
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     assert "export default function useDraftSounds" in src
     assert "export function useTabTitleAlert" in src
     # Public API surface used by DraftRoom.tsx.
@@ -30,7 +31,7 @@ def test_hook_file_exists_and_exports_api():
 
 
 def test_hook_synthesizes_two_distinct_patterns():
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     # Both tone tables should be defined as module-level constants so the
     # patterns are stable across renders.
     assert "NEXT_UP_TONES" in src
@@ -47,7 +48,7 @@ def test_hook_uses_web_audio_api_lazily():
     """Autoplay policies require a user gesture before audio plays. The
     hook must create the AudioContext lazily (not on import) and call
     resume() to satisfy Chrome / Safari."""
-    src = HOOK.read_text()
+    src = read_source(HOOK, include_imports=False)
     assert "ensureContext" in src
     assert ".resume()" in src
     # No <audio> element / asset URL — we want zero-asset deployment.
@@ -57,7 +58,7 @@ def test_hook_uses_web_audio_api_lazily():
 
 
 def test_hook_persists_enabled_flag():
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     assert "localStorage" in src
     assert "draftroom.sounds.enabled.v1" in src
     # Default ON so a fresh manager hears the alarm.
@@ -65,15 +66,15 @@ def test_hook_persists_enabled_flag():
 
 
 def test_tab_title_alert_only_flashes_when_hidden():
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     assert "document.hidden" in src
     # Restores original title on cleanup so we don't leak the prefix.
     assert "document.title = original" in src
 
 
 def test_draftroom_imports_and_wires_hook():
-    src = DRAFT_ROOM.read_text()
-    assert 'from "@/hooks/use-draft-sounds"' in src
+    src = read_source(DRAFT_ROOM)
+    assert "from '@/hooks/use-draft-sounds'" in src
     assert "useDraftSounds()" in src
     # Edge-detection: previous vs current picksUntilMyTurn.
     assert "prevPicksUntilRef" in src
@@ -90,14 +91,14 @@ def test_draftroom_transitions_only_fire_on_real_edges():
     """Guard against regressions where every render fires the chime —
     the comparison must use the ref + the new value AND ensure the new
     value differs from the previous one."""
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     assert "prev !== curr" in src
     assert "curr === 1 && prev > 1" in src
     assert "curr === 0 && prev > 0" in src
 
 
 def test_live_tile_renders_sound_toggle():
-    src = LIVE_TILE.read_text()
+    src = read_source(LIVE_TILE)
     assert 'data-testid="draft-room-sounds-toggle"' in src
     # When enabled, a preview button surfaces so managers can audition
     # the on-the-clock alert.
@@ -113,7 +114,7 @@ def test_live_tile_toggle_primes_audio_context_via_preview():
     """On toggle ON, we play the next-up chime inside the click handler
     so the AudioContext is unlocked under a user gesture. Otherwise the
     later "on the clock" alert never fires when the tab is hidden."""
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # Toggle handler should preview NextUp on enable and surface a toast.
     assert "draftSounds.playNextUp()" in src
     assert "Draft alerts enabled" in src or "alerts enabled" in src.lower()

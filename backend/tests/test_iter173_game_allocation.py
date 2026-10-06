@@ -18,8 +18,8 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 
 # Test credentials
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 LEAGUE_ID = "69e46af167999bfb85c39629"
 TEAM_ID = "69e59b33cbd3fea02a914c7b"
 
@@ -218,8 +218,10 @@ class TestRosterAddDropOwnership:
     def test_roster_add_creates_ownership_period(self, auth_headers):
         """POST /api/roster/{team_id}/add creates player_ownership_periods record."""
         # Use a free agent player
-        free_agent_id = "69e43d98b80cbdcecf495248"  # Nathan MacKinnon (free agent)
-        
+        catalog = requests.get(f"{BASE_URL}/api/players", params={"limit": 1038}, headers=auth_headers).json()
+        rows = catalog if isinstance(catalog, list) else catalog.get("players", [])
+        free_agent_id = rows[-1].get("_id") or rows[-1].get("id")
+
         # First check if player is already on roster
         team_response = requests.get(
             f"{BASE_URL}/api/teams/{TEAM_ID}",
@@ -245,7 +247,7 @@ class TestRosterAddDropOwnership:
         )
         # Accept 200 (success) or 400 (already on roster)
         assert response.status_code in [200, 400], f"Expected 200 or 400, got {response.status_code}: {response.text}"
-        
+
         if response.status_code == 200:
             # Verify ownership period was created
             ownership_response = requests.get(
@@ -265,14 +267,14 @@ class TestRosterAddDropOwnership:
     def test_roster_drop_closes_ownership_period(self, auth_headers):
         """POST /api/roster/{team_id}/drop closes ownership period (sets released_at)."""
         free_agent_id = "69e43d98b80cbdcecf495248"  # Nathan MacKinnon
-        
+
         # First ensure player is on roster
         add_response = requests.post(
             f"{BASE_URL}/api/roster/{TEAM_ID}/add",
             json={"player_id": free_agent_id},
             headers=auth_headers
         )
-        
+
         # Drop player
         response = requests.post(
             f"{BASE_URL}/api/roster/{TEAM_ID}/drop",
@@ -281,7 +283,7 @@ class TestRosterAddDropOwnership:
         )
         # Accept 200 (success) or 400 (not on roster)
         assert response.status_code in [200, 400], f"Expected 200 or 400, got {response.status_code}: {response.text}"
-        
+
         if response.status_code == 200:
             # Verify ownership period was closed
             ownership_response = requests.get(

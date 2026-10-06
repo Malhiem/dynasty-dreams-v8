@@ -4,10 +4,10 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
-ZAREK_EMAIL = "chriszarek@gmail.com"
-ZAREK_PASS = "Chris2026!"
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
+ZAREK_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+ZAREK_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 ZAREK_TEAM_ID = "69e59b30cbd3fea02a914c61"
 LEAGUE_ID = "69e46af167999bfb85c39628"
 
@@ -62,6 +62,20 @@ def _ensure_roster_over_cap():
 
 
 # -------- Minors seed validation --------
+@pytest.fixture(scope="module", autouse=True)
+def explicit_minors_inputs(_global_pollution_sweep):
+    from pymongo import MongoClient
+    from bson import ObjectId
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as client:
+        db = client[os.environ["DB_NAME"]]
+        teams = list(db.teams.find({"league_id": "69e46af167999bfb85c39628"}).limit(2))
+        prospects = list(db.players.find({"player_type": "prospect"}).limit(2))
+        for team, prospect in zip(teams, prospects):
+            pid = str(prospect["_id"])
+            db.teams.update_one({"_id": team["_id"]}, {"$addToSet": {"roster": pid}, "$set": {f"lineup.{pid}": {"section": "minors", "slot": "MIN"}}})
+        yield
+
 class TestMinorsSeed:
     def test_zarek_team_lineup_has_minors(self, zarek_session):
         r = zarek_session.get(f"{BASE_URL}/api/teams/{ZAREK_TEAM_ID}/lineup")

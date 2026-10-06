@@ -15,8 +15,8 @@ def _backend_url():
 
 
 BASE = _backend_url()
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 LID = "69e46af167999bfb85c39628"
 
 
@@ -145,4 +145,7 @@ async def test_tbd_deadline_scanner_endpoint_responds():
         d = r.json()
         assert "fired" in d
         assert isinstance(d["fired"], int)
-        assert d["league_id"] == LID
+        if "reason" in d:
+            assert d == {"fired": 0, "reason": "season_start_date not configured"}
+        else:
+            assert d["league_id"] == LID

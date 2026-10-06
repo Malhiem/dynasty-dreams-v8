@@ -1,0 +1,75 @@
+services:
+  backend:
+    build:
+      args:
+        E2E_MODE: 'true'
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+    - mongo
+    environment:
+      ADMIN_EMAIL: admin@e2e.dynastydreams.com
+      ADMIN_PASSWORD: e2e-admin-password
+      COOKIE_SAMESITE: lax
+      COOKIE_SECURE: 'false'
+      DB_NAME: dynasty_dreams_e2e
+      E2E_MODE: 'true'
+      FRONTEND_URL: http://web
+      JWT_SECRET: e2e-only-jwt-secret
+      MONGO_URL: mongodb://mongo:27017
+      SOCKET_CORS_ORIGINS: http://web,http://localhost:3000
+    healthcheck:
+      interval: 5s
+      retries: 20
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')
+      timeout: 3s
+  e2e:
+    build:
+      context: .
+      dockerfile: e2e/Dockerfile
+    depends_on:
+    - web
+    - backend
+    environment:
+      E2E_ADMIN_EMAIL: admin@e2e.dynastydreams.com
+      E2E_ADMIN_PASSWORD: e2e-admin-password
+      E2E_BASE_URL: http://web
+      H2H_ISOLATED: '1'
+      PLAYWRIGHT_JSON_OUTPUT_FILE: /work/results.json
+  mongo:
+    environment:
+      MONGO_INITDB_DATABASE: dynasty_dreams_e2e
+    healthcheck:
+      interval: 5s
+      retries: 20
+      test:
+      - CMD
+      - mongosh
+      - --quiet
+      - --eval
+      - 'db.runCommand({ ping: 1 }).ok'
+      timeout: 3s
+    image: docker.io/library/mongo:7.0
+    volumes:
+    - mongo-e2e-data:/data/db
+  web:
+    build:
+      args:
+        REACT_APP_BACKEND_URL: ''
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+    - backend
+    healthcheck:
+      interval: 5s
+      retries: 20
+      test:
+      - CMD-SHELL
+      - wget -q -O - http://localhost/health >/dev/null
+      timeout: 3s
+volumes:
+  mongo-e2e-data: null

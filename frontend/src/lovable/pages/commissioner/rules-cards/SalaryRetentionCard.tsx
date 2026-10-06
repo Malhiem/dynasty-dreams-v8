@@ -15,29 +15,32 @@ export function SalaryRetentionCard({ league, reloadLeague }: any) {
   const [enabled, setEnabled] = useState(!!league?.salary_retention_enabled);
   const [slots, setSlots] = useState<string>(String(league?.salary_retention_slots ?? 3));
   const [maxPct, setMaxPct] = useState<string>(String(league?.salary_retention_max_pct ?? 50));
+  const [forgivenessPolicy, setForgivenessPolicy] = useState(league?.retention_forgiveness_policy ?? "receiver_pays");
   const [saving, setSaving] = useState(false);
   useEffect(() => {
+    setForgivenessPolicy(league?.retention_forgiveness_policy ?? "receiver_pays");
     setEnabled(!!league?.salary_retention_enabled);
     setSlots(String(league?.salary_retention_slots ?? 3));
     setMaxPct(String(league?.salary_retention_max_pct ?? 50));
-  }, [league?.id, league?.salary_retention_enabled, league?.salary_retention_slots, league?.salary_retention_max_pct]);
+  }, [league?.id, league?.salary_retention_enabled, league?.salary_retention_slots, league?.salary_retention_max_pct, league?.retention_forgiveness_policy]);
 
   const save = async () => {
-    const slotsN = parseInt(slots, 10);
-    const pctN = parseInt(maxPct, 10);
+    const slotsN = Number(slots);
+    const pctN = Number(maxPct);
     if (enabled) {
-      if (Number.isNaN(slotsN) || slotsN < 1 || slotsN > 10) {
-        toast.error("Retention slots must be between 1 and 10");
+      if (!Number.isInteger(slotsN) || slotsN < 0 || slotsN > 3) {
+        toast.error("Retention slots must be an integer between 0 and 3");
         return;
       }
-      if (Number.isNaN(pctN) || pctN < 1 || pctN > 100) {
-        toast.error("Max retention % must be between 1 and 100");
+      if (!Number.isFinite(pctN) || pctN < 0 || pctN > 100) {
+        toast.error("Max retention % must be between 0 and 100");
         return;
       }
     }
     setSaving(true);
     try {
       await api.put(`/leagues/${league.id}`, {
+        retention_forgiveness_policy: forgivenessPolicy,
         salary_retention_enabled: enabled,
         salary_retention_slots: enabled ? slotsN : 0,
         salary_retention_max_pct: enabled ? pctN : 50,
@@ -92,21 +95,22 @@ export function SalaryRetentionCard({ league, reloadLeague }: any) {
         {enabled && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl">
             <div>
-              <Label className="text-xs">Retention slots per team (1–10)</Label>
+              <Label className="text-xs">Retention slots per team (0–3)</Label>
               <Input
                 type="number"
-                min={1}
-                max={10}
+                min={0}
+                max={3}
+                step={1}
                 value={slots}
                 onChange={(e) => setSlots(e.target.value)}
                 data-testid="rules-schedule-retention-slots-input"
               />
             </div>
             <div>
-              <Label className="text-xs">Max % of contract (1–100)</Label>
+              <Label className="text-xs">Max % of remaining salary (0–100)</Label>
               <Input
                 type="number"
-                min={1}
+                min={0}
                 max={100}
                 value={maxPct}
                 onChange={(e) => setMaxPct(e.target.value)}
@@ -120,6 +124,18 @@ export function SalaryRetentionCard({ league, reloadLeague }: any) {
             Retention is OFF — trades transfer the full contract value to the new team.
           </p>
         )}
+        <div className="space-y-2 max-w-xl">
+          <Label htmlFor="rs-retention-forgiveness">When a commissioner forgives retained salary</Label>
+          <select id="rs-retention-forgiveness" data-testid="rules-schedule-retention-forgiveness"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            value={forgivenessPolicy} onChange={(event) => setForgivenessPolicy(event.target.value)}>
+            <option value="receiver_pays">Receiving team resumes paying the share</option>
+            <option value="league_waives">League waives the share entirely</option>
+          </select>
+          <p className="text-xs text-muted-foreground">
+            Both options release the retaining team's charge and slot. A league waiver keeps the receiving team's discount until the fantasy season ends. Each forgiveness records the selected policy.
+          </p>
+        </div>
         <div className="flex justify-end">
           <Button size="sm" onClick={save} disabled={saving} data-testid="rules-schedule-retention-save">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}

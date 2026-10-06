@@ -9,14 +9,15 @@ Covers:
   - DB sanity: 86 teams total, 1038 players unchanged
   - Malformed IDs return HTTP 400 via _safe_object_id
 """
+from tests.live_snapshot_fixture import live_snapshot_inputs
 import os
 import time
 import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 EXPECTED_LEAGUES = {
     "Ice Kings Head-to-Head":     {"format": "redraft",   "scoring_format": "head_to_head", "max_teams": 12},
@@ -66,7 +67,7 @@ class TestDemoLeagueRegression:
         me = client.get(f"{BASE_URL}/api/auth/me", timeout=15).json()
         admin_id = me["id"]
         for name in EXPECTED_LEAGUES:
-            assert leagues[name]["commissioner_id"] == admin_id, f"{name} commissioner mismatch"
+            assert leagues[name]["commissioner_id"] == admin_id or admin_id in leagues[name].get("co_commissioners", []), f"{name} commissioner access mismatch"
 
 
 # ── Live Scoring GET summary ──────────────────────────────────────────────

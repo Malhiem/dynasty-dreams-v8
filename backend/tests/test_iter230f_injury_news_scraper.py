@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db_sync():
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    return client[os.environ.get("DB_NAME", "test_database")]
+    return client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 def _backend_url():

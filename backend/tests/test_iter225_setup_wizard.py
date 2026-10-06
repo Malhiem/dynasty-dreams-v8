@@ -22,10 +22,10 @@ from bson import ObjectId
 from pymongo import MongoClient
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
-_db = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))[
-    os.environ.get("DB_NAME", "test_database")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+_db = MongoClient(os.environ.get("MONGO_URL", os.environ["MONGO_URL"]))[
+    os.environ.get("DB_NAME", os.environ["DB_NAME"])
 ]
 
 

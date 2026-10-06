@@ -26,7 +26,7 @@ BASE = _backend_url()
 
 def _db_sync():
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    return client[os.environ.get("DB_NAME", "test_database")]
+    return client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 async def _login(client, email, password):
@@ -43,7 +43,7 @@ async def test_critical_default_set_includes_top_events():
     """The default preferences seed marks the highest-stakes events as
     critical=True so users get them through Quiet Hours out of the box."""
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         # Reset to factory defaults.
         await client.post("/api/notifications/preferences/reset", headers={"Authorization": f"Bearer {token}"})
         r = await client.get("/api/notifications/preferences", headers={"Authorization": f"Bearer {token}"})
@@ -60,7 +60,7 @@ async def test_critical_default_set_includes_top_events():
 @pytest.mark.asyncio
 async def test_critical_toggle_round_trips():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         # Toggle critical OFF for trade_proposed.
         r = await client.put(
             "/api/notifications/preferences",
@@ -87,7 +87,7 @@ async def test_critical_overrides_quiet_hours():
     db = _db_sync()
     np_mod._deps["db"] = db
 
-    user = await db.users.find_one({"email": "chriszarek@gmail.com"})
+    user = await db.users.find_one({"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")})
     user_id = str(user["_id"])
 
     # Set always-on quiet window AND mark trade_proposed critical=True,

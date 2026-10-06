@@ -88,13 +88,13 @@ async def _league_team_details(league_id: str):
     # Import the handler lazily; the roster module pulls a few side-effecty
     # workers at import time and we don't want them to load until the
     # endpoint is actually hit.
-    from routes.roster import get_roster_detail
+    from routes.roster import _load_roster_data, _build_roster_detail
 
     teams = await db.teams.find({"league_id": league_id}).to_list(200)
     out = []
     for team in teams:
         try:
-            detail = await get_roster_detail(str(team["_id"]))
+            detail = await _build_roster_detail(*await _load_roster_data(team))
         except HTTPException:
             continue
         out.append((team, detail))

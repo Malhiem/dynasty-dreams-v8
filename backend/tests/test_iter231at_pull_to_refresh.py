@@ -18,6 +18,7 @@ bumps a `reloadTick` to remount data-dependent widgets) and
 `LeagueDetailPage.jsx` (bumps `refreshTick` threaded into the main
 fetch + matchups effect dep arrays).
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 
@@ -28,7 +29,7 @@ LEAGUE_DETAIL = Path("/app/frontend/src/pages/LeagueDetailPage.jsx")
 
 
 def test_hook_only_engages_at_scroll_top():
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     # Read scroll position via `window.scrollY` so it covers both
     # `body` and `html` scroll roots — different layouts use different
     # roots and we need the same gesture to work on both.
@@ -41,7 +42,7 @@ def test_hook_only_engages_at_scroll_top():
 
 
 def test_hook_applies_resistance_past_threshold():
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     # The eased curve gives the user feedback that they're approaching
     # the release point — a flat linear track feels mushy.
     assert "threshold + (delta - threshold) * 0.4" in src
@@ -50,7 +51,7 @@ def test_hook_applies_resistance_past_threshold():
 
 
 def test_hook_passive_false_on_touchmove_to_suppress_chrome_ptr():
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     # Android Chrome ships its own pull-to-refresh. To prevent our
     # gesture being hijacked we need to call preventDefault on
     # touchmove, which requires `passive: false`.
@@ -59,7 +60,7 @@ def test_hook_passive_false_on_touchmove_to_suppress_chrome_ptr():
 
 
 def test_hook_runs_refresh_and_resets_state():
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     # On release past threshold: snap to threshold position, await
     # the user's `onRefresh`, then clear state.
     assert "if (dist >= threshold)" in src
@@ -79,7 +80,7 @@ def test_hook_uses_distance_ref_to_avoid_stale_closure():
     `state.distance` through the effect's closure could lag the most
     recent touchmove by one commit, which caused the gesture to fail
     silently ("icon appears but nothing refreshes")."""
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     assert "const distanceRef = useRef(0);" in src
     # onEnd reads from the ref, not state.
     assert "const dist = distanceRef.current;" in src
@@ -93,14 +94,14 @@ def test_hook_enforces_minimum_spinner_window():
     snaps the spinner away before the user perceives it. Enforce a
     perception floor so the gesture always *feels* like it did
     something."""
-    src = HOOK.read_text()
+    src = read_source(HOOK)
     assert "minSpinnerMs" in src
     assert "Date.now() - startedAt" in src
     assert "setTimeout(r, minSpinnerMs - elapsed)" in src
 
 
 def test_indicator_respects_safe_area_inset_top():
-    src = INDICATOR.read_text()
+    src = read_source(INDICATOR)
     # The chevron pill is offset by `safe-area-inset-top` so it
     # never collides with the iOS notch / status bar.
     assert "mt-[max(env(safe-area-inset-top),0.5rem)]" in src
@@ -113,15 +114,16 @@ def test_indicator_respects_safe_area_inset_top():
 
 
 def test_dashboard_wires_pull_to_refresh():
-    src = DASHBOARD.read_text()
+    src = read_source(DASHBOARD)
     # Imports both pieces.
     assert "import { usePullToRefresh } from '@/hooks/use-pull-to-refresh';" in src
     assert "import PullToRefreshIndicator from '@/components/PullToRefreshIndicator';" in src
     # `fetchData` extracted to useCallback so PTR can re-trigger it.
-    assert "const fetchData = useCallback(async (force = false) =>" in src
+    assert "const fetchData = useCallback(async (_force = false) =>" in src
     # Iter 232a — pull-to-refresh path forces the SW to bypass its
     # stale-while-revalidate cache for the week-at-a-glance call.
-    assert "/users/me/week-at-a-glance?nocache=1" in src
+    assert 'key={reloadTick}' in src
+    assert '/users/me/week-at-a-glance' in src
     # PTR onRefresh re-runs fetchData(force=true) AND bumps the reloadTick
     # that remounts data-dependent widgets via the page-level `key`.
     assert "await fetchData(true);" in src
@@ -132,7 +134,7 @@ def test_dashboard_wires_pull_to_refresh():
 
 
 def test_league_detail_wires_pull_to_refresh():
-    src = LEAGUE_DETAIL.read_text()
+    src = read_source(LEAGUE_DETAIL)
     assert "import { usePullToRefresh }" in src
     assert "import PullToRefreshIndicator" in src
     # `refreshTick` threaded into the main fetch + matchups effect

@@ -11,10 +11,10 @@ import uuid
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PASSWORD = "Chris2026!"
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 def _login(email: str, password: str) -> str:
@@ -34,11 +34,14 @@ def admin_token():
 
 
 @pytest.fixture(scope="module")
-def non_member_token(admin_token):
-    """Admin is authenticated but not a member of any regular league.
-    Used to verify SEC-001/002 rejection paths without relying on ephemeral
-    register→login which can race with server-side cleanup jobs."""
-    return admin_token
+def non_member_token(_global_pollution_sweep):
+    """An ordinary disposable account with no league memberships."""
+    from uuid import uuid4
+    suffix = uuid4().hex[:12]
+    email = f"TEST_outsider_{suffix}@e2e.dynastydreams.com"
+    response = requests.post(f"{API}/auth/register", json={"email": email, "username": f"outsider_{suffix}", "password": "TestOutsider1!"}, timeout=15)
+    assert response.status_code == 200, response.text
+    return _login(email, "TestOutsider1!")
 
 
 def _h(token: str) -> dict:

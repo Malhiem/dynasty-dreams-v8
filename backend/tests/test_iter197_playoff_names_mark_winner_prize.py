@@ -15,6 +15,8 @@ Coverage:
    amounts when the final round is completed.
 """
 from __future__ import annotations
+from tests.http_test_auth import test_admin_headers
+from tests.playoff_input_fixture import playoff_inputs
 
 import os
 import time
@@ -22,8 +24,8 @@ import requests
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
 LEAGUE_ID = "69e46af167999bfb85c39628"  # Ice Kings Head-to-Head
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 def _login() -> str:
@@ -33,7 +35,7 @@ def _login() -> str:
 
 
 def _bracket() -> dict:
-    r = requests.get(f"{API_URL}/api/leagues/{LEAGUE_ID}/playoff-bracket")
+    r = requests.get(f"{API_URL}/api/leagues/{LEAGUE_ID}/playoff-bracket", headers=test_admin_headers())
     r.raise_for_status()
     return r.json()
 

@@ -59,8 +59,8 @@ async def _setup_league(client):
     assert r.status_code == 200, r.text
     league_id = r.json()["id"]
 
-    mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
-    db = mongo[os.environ.get("DB_NAME", "test_database")]
+    mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", os.environ["MONGO_URL"]))
+    db = mongo[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     teams = await db.teams.find({"league_id": league_id}).to_list(20)
     team_a_id = str(teams[0]["_id"])
     team_b_id = str(ObjectId())
@@ -86,8 +86,8 @@ async def _setup_league(client):
 async def _set_trades_cfg(league_id, cfg_patch, *, status=None):
     """Direct-DB patch for the league's transactions_config.trades (+ optional
     league.status) so tests don't depend on the full Commissioner PUT flow."""
-    mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
-    db = mongo[os.environ.get("DB_NAME", "test_database")]
+    mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", os.environ["MONGO_URL"]))
+    db = mongo[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     update = {}
     for k, v in cfg_patch.items():
         update[f"transactions_config.trades.{k}"] = v

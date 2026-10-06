@@ -9,8 +9,9 @@ Covers:
   * Mobile auth contract : /auth/login + /auth/register return access_token + refresh_token in body
                            /auth/me with Bearer header (no cookies)
                            /auth/refresh with Bearer header
-  * Non-regression       : /api/u/chriszarek aggregate trophies payload
+  * Non-regression       : /api/u/suite_owner aggregate trophies payload
 """
+from tests.http_test_auth import test_admin_headers
 import os
 import uuid
 import requests
@@ -19,16 +20,18 @@ import pytest
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PASSWORD = "Chris2026!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 # ---- fixtures ---------------------------------------------------
 @pytest.fixture(scope="module")
 def bare_session():
-    return requests.Session()
+    session = requests.Session()
+    session.headers.update(test_admin_headers())
+    return session
 
 
 def _login_body(email, password):
@@ -184,7 +187,7 @@ class TestAwardsRouter:
 
     def test_get_consolation_prize_public(self, chris_league_team):
         league_id, _ = chris_league_team
-        r = requests.get(f"{API}/leagues/{league_id}/consolation-prize", timeout=30)
+        r = requests.get(f"{API}/leagues/{league_id}/consolation-prize", timeout=30, headers=test_admin_headers())
         assert r.status_code == 200
         assert r.json()["league_id"] == league_id
 
@@ -205,13 +208,13 @@ class TestAwardsRouter:
         assert r.json()["consolation_prize"]["lottery_boost_spots"] == 3
 
         # Read-back
-        r2 = requests.get(f"{API}/leagues/{league_id}/consolation-prize", timeout=30)
+        r2 = requests.get(f"{API}/leagues/{league_id}/consolation-prize", timeout=30, headers=test_admin_headers())
         assert r2.status_code == 200
         assert r2.json()["consolation_prize"]["lottery_boost_spots"] == 3
 
     def test_team_rewards_shape(self, chris_league_team):
         league_id, _ = chris_league_team
-        r = requests.get(f"{API}/leagues/{league_id}/team-rewards", timeout=30)
+        r = requests.get(f"{API}/leagues/{league_id}/team-rewards", timeout=30, headers=test_admin_headers())
         assert r.status_code == 200, r.text
         data = r.json()
         assert data["league_id"] == league_id
@@ -240,29 +243,29 @@ class TestDraftsRouter:
 class TestMatchupsRouter:
     def test_list_matchups(self, chris_league_team):
         league_id, _ = chris_league_team
-        r = requests.get(f"{API}/matchups/{league_id}", timeout=30)
+        r = requests.get(f"{API}/matchups/{league_id}", timeout=30, headers=test_admin_headers())
         assert r.status_code == 200, r.text
         assert isinstance(r.json(), list)
 
     def test_current_week(self, chris_league_team):
         league_id, _ = chris_league_team
-        r = requests.get(f"{API}/matchups/{league_id}/current-week", timeout=30)
+        r = requests.get(f"{API}/matchups/{league_id}/current-week", timeout=30, headers=test_admin_headers())
         assert r.status_code == 200, r.text
         data = r.json()
         assert "week" in data or "matchups" in data or isinstance(data, list)
 
     def test_results(self, chris_league_team):
         league_id, _ = chris_league_team
-        r = requests.get(f"{API}/matchups/{league_id}/results?week=1", timeout=30)
+        r = requests.get(f"{API}/matchups/{league_id}/results?week=1", timeout=30, headers=test_admin_headers())
         assert r.status_code == 200, r.text
 
 
 # =================================================================
-#  Non-regression: /api/u/chriszarek aggregate
+#  Non-regression: /api/u/suite_owner aggregate
 # =================================================================
 class TestUserProfileAggregate:
     def test_chriszarek_roll_up(self):
-        r = requests.get(f"{API}/u/chriszarek", timeout=30)
+        r = requests.get(f"{API}/u/suite_owner", timeout=30)
         assert r.status_code == 200, r.text
         data = r.json()
         stats = data.get("stats", {})

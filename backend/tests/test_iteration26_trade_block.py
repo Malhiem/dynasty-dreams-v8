@@ -19,10 +19,10 @@ BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 assert BASE_URL, "REACT_APP_BACKEND_URL not set"
 API = f"{BASE_URL}/api"
 
-OWNER_EMAIL = "chriszarek@gmail.com"
-OWNER_PASS = "Chris2026!"
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
+OWNER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+OWNER_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 def _login(email, password):

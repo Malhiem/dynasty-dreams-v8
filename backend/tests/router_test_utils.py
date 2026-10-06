@@ -26,14 +26,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 
 def _env(key: str) -> str:
-    """Pull a value from backend/.env without importing dotenv."""
-    path = os.path.join(os.path.dirname(__file__), "..", ".env")
-    with open(path) as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith(f"{key}="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
-    raise KeyError(key)
+    return os.environ[key]  # Explicit disposable configuration; never ambient .env.
 
 
 @dataclass
@@ -74,7 +67,7 @@ async def isolated_router_app(router_module, *, user: dict | None = None):
         retryReads=True,
         retryWrites=True,
     )
-    db_name = f"dynasty_test_router_{uuid.uuid4().hex[:8]}"
+    db_name = f"{os.environ["DB_NAME"]}_router_{uuid.uuid4().hex[:8]}"
     db = mongo[db_name]
 
     # ── Stubbed deps ──

@@ -1,5 +1,6 @@
 """Iter 154 — Expanded-player fetch enrichment + AuditLogTab extraction (first
 refactor of the monolithic CommissionerSettings.tsx)."""
+from tests.source_tree import read_source
 from pathlib import Path
 FRONTEND = Path("/app/frontend/src")
 
@@ -19,21 +20,22 @@ def _read(rel: str) -> str:
         ):
             fp = FRONTEND / sub
             if fp.exists():
-                parts.append(fp.read_text(encoding='utf-8'))
+                parts.append(read_source(fp, encoding='utf-8'))
         return chr(10).join(parts)
-    return (FRONTEND / rel).read_text(encoding='utf-8')
+    return read_source(FRONTEND / rel, include_imports=not rel.endswith("CommissionerSettings.tsx"), encoding='utf-8')
 
 
 def test_expanded_player_enriches_with_real_record():
-    src = _read("lovable/pages/DraftRoom.tsx")
+    src = _read("hooks/use-expanded-player-fetch.js")
     # Hook fetches /players/{id} when player.id is a 24-char hex ObjectId
-    assert "/^[0-9a-fA-F]{24}$/.test(String(expandedPlayer.id))" in src
-    assert "apiClient.get(`/players/" in src
+    assert "const OBJ_ID = /^[0-9a-fA-F]{24}$/" in src
+    assert "OBJ_ID.test(String(expandedPlayer.id))" in src
+    assert "api.get(`/players/" in src
     # Real data is merged into the modal-shaped player (preserves UI keys)
     assert "categoryBreakdown:" in src
     assert "statsByPeriod:" in src
     # League id passed when available so the backend enriches with contract info
-    assert "params = activeLeagueCtx?.id ? { league_id: activeLeagueCtx.id }" in src
+    assert "params = leagueId ? { league_id: leagueId }" in src
 
 
 def test_audit_log_tab_extracted():

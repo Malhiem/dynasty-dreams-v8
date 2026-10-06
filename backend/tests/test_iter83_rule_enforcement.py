@@ -32,14 +32,29 @@ def _env(key):
 
 
 BASE = _backend_url()
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 LID = "69e46af167999bfb85c39628"
 
 
 async def _login(client):
     r = await client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
     return r.json()["access_token"]
+
+
+@pytest.fixture(scope="module", autouse=True)
+def division_inputs(_global_pollution_sweep):
+    from pymongo import MongoClient
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as client:
+        db = client[os.environ["DB_NAME"]]
+        db.leagues.update_one({"_id": ObjectId(LID)}, {"$set": {"divisions_enabled": True, "conferences_enabled": True,
+            "division_conference_map": {"Atlantic": "Eastern", "Metropolitan": "Eastern", "South": "Eastern", "Central": "Western", "Pacific": "Western"}}})
+        for i, team in enumerate(db.teams.find({"league_id": LID})):
+            div = ["Atlantic", "Central", "Metropolitan", "Pacific", "South"][i % 5]
+            db.teams.update_one({"_id": team["_id"]}, {"$set": {"division": div,
+                "conference": "Western" if div in ("Central", "Pacific") else "Eastern"}})
+        yield
 
 
 @pytest.mark.asyncio
@@ -172,6 +187,7 @@ async def test_position_limit_blocks_add_player():
         orig_limits = before.get("position_limits")
         orig_enforce = before.get("enforce_position_maxes")
         orig_cap_enabled = before.get("salary_cap_enabled")
+        orig_roster_spots = before.get("roster_spots")
         # Force every position cap to 0 so any add MUST be blocked. Disable
         # the salary cap so the position-limit check is what actually fires
         # (salary cap is evaluated first when both are on).
@@ -180,7 +196,7 @@ async def test_position_limit_blocks_add_player():
             {"$set": {
                 "position_limits": {"C": 0, "LW": 0, "RW": 0, "D": 0, "G": 0},
                 "enforce_position_maxes": True,
-                "salary_cap_enabled": False,
+                "salary_cap_enabled": False, "roster_spots": 30,
             }},
         )
         try:
@@ -213,7 +229,7 @@ async def test_position_limit_blocks_add_player():
                 {"$set": {
                     "position_limits": orig_limits or {},
                     "enforce_position_maxes": bool(orig_enforce),
-                    "salary_cap_enabled": bool(orig_cap_enabled),
+                    "salary_cap_enabled": bool(orig_cap_enabled), "roster_spots": orig_roster_spots,
                 }},
             )
     finally:

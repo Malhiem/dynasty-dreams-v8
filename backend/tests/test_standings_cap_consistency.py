@@ -23,10 +23,23 @@ def _backend_url():
 
 
 BASE = _backend_url()
-USER_EMAIL = "chriszarek@gmail.com"
-USER_PASSWORD = "Chris2026!"
+USER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+USER_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 TEAM_ID = "69e59b30cbd3fea02a914c61"
 LEAGUE_ID = "69e46af167999bfb85c39628"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def configure_cap(_global_pollution_sweep):
+    from pymongo import MongoClient
+    from bson import ObjectId
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as mongo:
+        league = mongo[os.environ["DB_NAME"]].leagues
+        previous = league.find_one({"_id": ObjectId(LEAGUE_ID)})
+        league.update_one({"_id": ObjectId(LEAGUE_ID)}, {"$set": {"salary_cap_enabled": True, "salary_cap": 88_000_000}})
+        yield
+        league.update_one({"_id": ObjectId(LEAGUE_ID)}, {"$set": {"salary_cap_enabled": previous.get("salary_cap_enabled", False), "salary_cap": previous.get("salary_cap", 88_000_000)}})
 
 
 async def _login(client, email, password):
@@ -38,6 +51,7 @@ async def _login(client, email, password):
 @pytest.mark.asyncio
 async def test_standings_includes_cap_remaining_and_last_5():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
+        await _login(client, USER_EMAIL, USER_PASSWORD)
         r = await client.get(f"/api/leagues/{LEAGUE_ID}/standings")
         assert r.status_code == 200, r.text
         payload = r.json()

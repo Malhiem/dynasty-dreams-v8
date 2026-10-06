@@ -1,0 +1,26 @@
+import type { Page } from "@playwright/test";
+
+export const leagueScoringSelectors = {
+  setup: (page: Page) => page.getByTestId("commissioner-league-setup-tab"),
+  format: (page: Page, label: string) => page.getByTestId("commissioner-league-setup-tab").getByRole("button", { name: new RegExp(`^${label} `) }),
+  h2hRequired: (page: Page) => page.getByTestId("legacy-roster-lock-rules-card").getByText("Head-to-Head format required"),
+  structure: (page: Page) => page.getByTestId("divisions-tab"),
+  playoffToggle: (page: Page) => page.getByTestId("playoffs-enabled-toggle"),
+  playoffFormat: (page: Page) => page.getByTestId("po-format"),
+  condensedOption: (page: Page) => page.getByRole("option", { name: /rotisserie/i }),
+  playoffOptions: (page: Page) => page.getByRole("option"),
+  playoffTeams: (page: Page) => page.getByTestId("po-teams"),
+  playoffStart: (page: Page) => page.getByTestId("po-start-week"),
+  playoffEnd: (page: Page) => page.getByTestId("po-end-week"),
+  playoffRounds: (page: Page) => page.getByTestId("po-rounds"),
+  freshTotals: (page: Page) => page.getByTestId("roto-fresh-totals-toggle"),
+  seedBonus: (page: Page, seed: number) => page.getByTestId(`seed-bonus-input-${seed}`),
+  regularWeeks: (page: Page) => page.getByTestId("rs-regular-season-weeks"),
+  statsStart: (page: Page) => page.getByTestId("rs-stats-start"),
+  statsEnd: (page: Page) => page.getByTestId("rs-stats-end"),
+  scheduleSave: (page: Page) => page.getByTestId("rs-save-btn"),
+  categoryTeamRank: (page: Page, category: string, teamId: string) => page.getByTestId(`roto-rank-${category}-${teamId}`),
+  playoffSave: (page: Page) => page.getByTestId("po-save-btn"),
+  playoffTab: (page: Page) => page.getByRole("tab", { name: "Playoffs", exact: true }),
+  categoryRank: (page: Page, category: string) => page.getByRole("columnheader", { name: new RegExp(`${category}.*rank|rank.*${category}`, "i") }),
+};

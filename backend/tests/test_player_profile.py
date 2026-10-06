@@ -61,7 +61,7 @@ async def test_player_news_history():
 @pytest.mark.asyncio
 async def test_player_recent_games_with_league_scoring():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         pid = await _mcdavid_id(client)
         lid = await _league_id(client, token)
         r = await client.get(
@@ -80,7 +80,7 @@ async def test_player_recent_games_with_league_scoring():
 @pytest.mark.asyncio
 async def test_player_historical_stats_uses_league_scoring():
     async with AsyncClient(base_url=BASE, timeout=60) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         pid = await _mcdavid_id(client)
         lid = await _league_id(client, token)
         r = await client.get(
@@ -101,7 +101,7 @@ async def test_player_historical_stats_uses_league_scoring():
 @pytest.mark.asyncio
 async def test_player_recent_performance_windows():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         pid = await _mcdavid_id(client)
         lid = await _league_id(client, token)
         r = await client.get(
@@ -123,7 +123,7 @@ async def test_player_recent_performance_windows():
 @pytest.mark.asyncio
 async def test_cross_league_ownership_lists_user_leagues():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         pid = await _mcdavid_id(client)
         r = await client.get(
             f"/api/players/{pid}/cross-league-ownership",
@@ -145,7 +145,7 @@ async def test_cross_league_ownership_lists_user_leagues():
 @pytest.mark.asyncio
 async def test_player_transactions_filtered_by_league():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         pid = await _mcdavid_id(client)
         lid = await _league_id(client, token)
         r = await client.get(
@@ -163,7 +163,7 @@ async def test_player_transactions_filtered_by_league():
 @pytest.mark.asyncio
 async def test_player_usage_per_week():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         pid = await _mcdavid_id(client)
         lid = await _league_id(client, token)
         r = await client.get(

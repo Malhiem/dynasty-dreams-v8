@@ -17,8 +17,8 @@ import pytest
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN = {"email": "admin@dynastydreams.com", "password": "Admin123!"}
-USER  = {"email": "chriszarek@gmail.com",   "password": "Chris2026!"}
+ADMIN = {"email": os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")}
+USER  = {"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"),   "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")}
 
 
 # ---------- helpers / fixtures ----------

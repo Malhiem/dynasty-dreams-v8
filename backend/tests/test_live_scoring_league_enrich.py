@@ -7,6 +7,7 @@ Validates that /api/live-scoring/league/{id} now returns:
 - projected_rank_change (signed delta vs. pre-week rank, i.e. by points_for)
 - pre_rank + projected_rank
 """
+from tests.live_snapshot_fixture import live_snapshot_inputs
 import os
 import sys
 import pytest
@@ -25,8 +26,8 @@ def _backend_url():
 
 
 BASE = _backend_url()
-USER_EMAIL = "chriszarek@gmail.com"
-USER_PASSWORD = "Chris2026!"
+USER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+USER_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 LEAGUE_ID = "69e46af167999bfb85c39628"  # Ice Kings (H2H, 12 teams)
 
 

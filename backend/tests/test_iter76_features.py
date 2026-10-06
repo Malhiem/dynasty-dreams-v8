@@ -18,8 +18,8 @@ def _backend_url():
 
 
 BASE = _backend_url()
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 LID = "69e46af167999bfb85c39628"
 
 
@@ -141,11 +141,17 @@ async def test_profile_update_extended_fields():
 async def test_profile_username_uniqueness():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
         token = await _login(client)
-        # admin is taken; try to grab it
+        import uuid
+        taken = "taken_" + uuid.uuid4().hex[:12]
+        registered = await client.post("/api/auth/register", json={
+            "email": f"{taken}@example.com", "username": taken,
+            "password": "FixturePass123!", "name": "Username Fixture"})
+        assert registered.status_code in (200, 201), registered.text
+        # Another account's existing username must remain unavailable.
         r = await client.put(
             "/api/users/me/profile",
             headers={"Authorization": f"Bearer {token}"},
-            json={"username": "admin"},
+            json={"username": taken},
         )
         assert r.status_code == 409
 

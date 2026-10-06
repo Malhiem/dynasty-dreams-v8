@@ -25,7 +25,7 @@ async def test_picks_returns_empty_when_no_picks():
         r = await ctx.client.get("/api/drafts/no-such-league/picks")
         assert r.status_code == 200
         body = r.json()
-        assert body == {"league_id": "no-such-league", "year": None, "picks": []}
+        assert body == {"league_id": "no-such-league", "year": None, "draft_id": None, "picks": []}
 
 
 @pytest.mark.asyncio

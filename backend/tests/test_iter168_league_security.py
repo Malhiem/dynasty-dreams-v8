@@ -27,8 +27,8 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 
 # Test credentials from test_credentials.md
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 # League IDs from agent context (admin is commissioner of these)
 H2H_LEAGUE_ID = "69e46af167999bfb85c3962b"
@@ -217,13 +217,13 @@ class TestTeamLeagueMismatch:
         )
         if teams_response.status_code != 200:
             pytest.skip(f"Could not get teams: {teams_response.status_code}")
-        
+
         teams = teams_response.json()
         if not teams:
             pytest.skip("No teams found in H2H league")
-        
+
         h2h_team_id = teams[0].get("id") or str(teams[0].get("_id"))
-        
+
         # Now try to access daily scoring with H2H team but ROTO league
         response = requests.get(
             f"{BASE_URL}/api/matchups/{ROTO_LEAGUE_ID}/daily-scoring?team_id={h2h_team_id}",
@@ -241,13 +241,13 @@ class TestTeamLeagueMismatch:
         )
         if teams_response.status_code != 200:
             pytest.skip(f"Could not get teams: {teams_response.status_code}")
-        
+
         teams = teams_response.json()
         if not teams:
             pytest.skip("No teams found in H2H league")
-        
+
         team_id = teams[0].get("id") or str(teams[0].get("_id"))
-        
+
         # Admin should be able to access team live scoring (they're a member)
         response = requests.get(
             f"{BASE_URL}/api/live-scoring/team/{team_id}",
@@ -395,13 +395,13 @@ class TestLiveScoringTeamWeekEndpoint:
         )
         if teams_response.status_code != 200:
             pytest.skip(f"Could not get teams: {teams_response.status_code}")
-        
+
         teams = teams_response.json()
         if not teams:
             pytest.skip("No teams found")
-        
+
         team_id = teams[0].get("id") or str(teams[0].get("_id"))
-        
+
         # Now test without auth
         response = requests.get(f"{BASE_URL}/api/live-scoring/team/{team_id}/week")
         assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
@@ -415,13 +415,13 @@ class TestLiveScoringTeamWeekEndpoint:
         )
         if teams_response.status_code != 200:
             pytest.skip(f"Could not get teams: {teams_response.status_code}")
-        
+
         teams = teams_response.json()
         if not teams:
             pytest.skip("No teams found")
-        
+
         team_id = teams[0].get("id") or str(teams[0].get("_id"))
-        
+
         response = requests.get(
             f"{BASE_URL}/api/live-scoring/team/{team_id}/week",
             headers=auth_headers,

@@ -14,6 +14,7 @@ Backend:
   4. PUT validates `cost_method` enum and rejects unknown values.
   5. Commissioner can persist + read back the config.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -22,8 +23,8 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 REPO = Path(__file__).resolve().parents[2]
 KEEPER_CARD = REPO / "frontend/src/lovable/pages/commissioner/KeeperSettingsCard.tsx"
@@ -59,7 +60,7 @@ def owner_league(owner_token):
 # ── 1. Card has all the fields + info copy ─────────────────────
 def test_keeper_card_fields_and_info():
     assert KEEPER_CARD.exists(), "KeeperSettingsCard.tsx must exist"
-    src = KEEPER_CARD.read_text()
+    src = read_source(KEEPER_CARD)
     for tid in (
         "keeper-settings-card",
         "keeper-num-input",
@@ -89,8 +90,8 @@ def test_keeper_card_fields_and_info():
 
 # ── 2. League Admin gates the card on draft_type === "keeper" ──
 def test_admin_keeper_card_gated_on_draft_type():
-    admin_src = ADMIN.read_text()
-    draft_tab_src = (REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx").read_text()
+    admin_src = read_source(ADMIN)
+    draft_tab_src = read_source(REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx")
     # Parent still mounts DraftTab and Keeper option lives in the extracted file
     assert 'import KeeperSettingsCard from "@/lovable/pages/commissioner/KeeperSettingsCard"' in draft_tab_src
     # Keeper Draft option in the Select
@@ -107,7 +108,7 @@ def test_admin_keeper_card_gated_on_draft_type():
 
 # ── 3. Backend exposes GET + PUT keeper-config ─────────────────
 def test_backend_routes_defined():
-    src = DRAFTS_ROUTE.read_text()
+    src = read_source(DRAFTS_ROUTE)
     assert '"/leagues/{league_id}/keeper-config"' in src
     assert "async def get_keeper_config" in src
     assert "async def update_keeper_config" in src

@@ -40,20 +40,19 @@ async def require_league_member(db, user: dict, league_id: str) -> dict:
     uid_str = str(uid)
 
     # Platform admins always pass
-    if user.get("is_admin"):
+    if user.get("is_admin") or user.get("role") == "admin" or "admin" in (user.get("roles") or []):
         return league
 
     # Commissioner / co-commissioner (handle mixed ObjectId / str types)
-    comm_id = league.get("commissioner_id")
-    if comm_id is not None and str(comm_id) == uid_str:
+    if any(str(league.get(key)) == uid_str for key in ("commissioner_id", "owner_id")):
         return league
-    co_comms = league.get("co_commissioners") or []
+    co_comms = (league.get("co_commissioners") or []) + (league.get("admin_ids") or [])
     if any(str(c) == uid_str for c in co_comms):
         return league
 
     # Team owner inside this league (check both ObjectId and str owner_id)
     team = await db.teams.find_one(
-        {"league_id": league_id, "$or": [{"owner_id": uid}, {"owner_id": uid_str}]},
+        {"league_id": league_id, "$or": [{"owner_id": uid}, {"owner_id": uid_str}, {"co_owner_ids": uid}, {"co_owner_ids": uid_str}]},
         {"_id": 1},
     )
     if team:

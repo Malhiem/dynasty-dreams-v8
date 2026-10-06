@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -211,8 +211,8 @@ async def test_builtin_draft_picks_made_metric():
 
 @pytest.mark.asyncio
 async def test_daily_metrics_endpoint_rejects_non_admin():
-    from routes.draft_ops import read_daily_metrics
-    from routes import draft_ops as m
+    from routes.admin_metrics import read_daily_metrics
+    from routes import admin_metrics as m
     from fastapi import HTTPException
 
     db = _db()
@@ -234,8 +234,8 @@ async def test_daily_metrics_endpoint_rejects_non_admin():
 
 @pytest.mark.asyncio
 async def test_daily_metrics_endpoint_returns_leaderboard_and_trend():
-    from routes.draft_ops import read_daily_metrics
-    from routes import draft_ops as m
+    from routes.admin_metrics import read_daily_metrics
+    from routes import admin_metrics as m
 
     db = _db()
     admin = await _seed_user(db, "admin", role="admin")

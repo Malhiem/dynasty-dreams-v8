@@ -11,6 +11,7 @@ Coverage
 5. RulesScheduleTab no longer renders the standalone Waivers card —
    FAAB+clearing now live under TransactionsConfig.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -19,8 +20,8 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 REPO = Path(__file__).resolve().parents[2]
 TX_CARDS = REPO / "frontend/src/lovable/pages/commissioner/TransactionsConfigCards.tsx"
@@ -110,7 +111,7 @@ def test_faab_budget_validation_rejects_overlarge(owner_token, owner_league):
 
 
 def test_frontend_tx_cards_have_faab_block():
-    src = TX_CARDS.read_text()
+    src = read_source(TX_CARDS)
     assert "waiver-system-faab" in src, "FAAB system dropdown item missing"
     assert "waiver-faab-block" in src, "FAAB block testid missing"
     assert "waiver-faab-budget-input" in src, "FAAB budget input missing"
@@ -120,7 +121,7 @@ def test_frontend_tx_cards_have_faab_block():
 
 
 def test_rules_schedule_tab_no_longer_has_waivers_card():
-    src = RULES_TAB.read_text()
+    src = read_source(RULES_TAB, include_imports=False)
     assert "rules-schedule-waivers-card" not in src, (
         "Waivers card should be moved out of RulesScheduleTab"
     )

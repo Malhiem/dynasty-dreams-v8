@@ -11,8 +11,8 @@ import pytest
 import pymongo
 from bson import ObjectId
 
-MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
-DB_NAME = os.environ.get("DB_NAME", "test_database")
+MONGO_URL = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
+DB_NAME = os.environ.get("DB_NAME", os.environ["DB_NAME"])
 
 @pytest.fixture(scope="module")
 def db():
@@ -69,7 +69,7 @@ def test_standings_use_playoff_period_stats(db, league_id, team_and_player):
     import requests
     api = os.popen("grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d '=' -f2").read().strip()
     token = requests.post(f"{api}/api/auth/login", json={
-        "email": "admin@dynastydreams.com", "password": "Admin123!",
+        "email": os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"),
     }).json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 

@@ -3,7 +3,7 @@ import os
 import requests
 import pytest
 
-BASE_URL = "https://dynasty-preview.preview.emergentagent.com"
+BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 LEAGUE_ID = "69e46af167999bfb85c39629"
 TEAM_ID = "69e59b33cbd3fea02a914c7b"  # Ice Breakers
 ADMIN_USER_ID = "69dc63e232b1b7aac227c0a3"
@@ -14,7 +14,7 @@ def admin_session():
     s = requests.Session()
     r = s.post(
         f"{BASE_URL}/api/auth/login",
-        json={"email": "admin@dynastydreams.com", "password": "Admin123!"},
+        json={"email": os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")},
         timeout=20,
     )
     assert r.status_code == 200, f"Login failed: {r.status_code} {r.text[:200]}"
@@ -29,8 +29,9 @@ def test_admin_seeded_as_ice_breakers_owner(admin_session):
     assert isinstance(teams, list) and len(teams) > 0
     ice = next((t for t in teams if t.get("id") == TEAM_ID or t.get("_id") == TEAM_ID), None)
     assert ice is not None, f"Ice Breakers (team {TEAM_ID}) not found in league {LEAGUE_ID}"
-    assert ice.get("owner_id") == ADMIN_USER_ID, (
-        f"Ice Breakers owner_id is {ice.get('owner_id')}, expected {ADMIN_USER_ID}"
+    expected_admin_id = admin_session.get(f"{BASE_URL}/api/auth/me").json()["id"]
+    assert ice.get("owner_id") == expected_admin_id, (
+        f"Ice Breakers owner_id is {ice.get('owner_id')}, expected {expected_admin_id}"
     )
     assert "Ice Breakers" in (ice.get("name") or ""), f"Team name unexpected: {ice.get('name')}"
 

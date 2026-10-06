@@ -6,12 +6,12 @@ import uuid
 import requests
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"))
 
 
 def _login_admin():
     r = requests.post(f"{API_URL}/api/auth/login",
-                      json={"email": ADMIN_EMAIL, "password": "Admin123!"})
+                      json={"email": ADMIN_EMAIL, "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")})
     r.raise_for_status()
     return r.json()["access_token"]
 
@@ -215,7 +215,7 @@ def test_admin_purge_writes_audit_row():
     """Purging an archived draft writes an admin_user_actions audit row
     with the draft snapshot in metadata."""
     from pymongo import MongoClient
-    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
     _, tok = _register("aupg")
     league, draft = _create_league_and_draft(tok)
@@ -241,7 +241,7 @@ def test_admin_purge_writes_audit_row():
 
 def test_admin_restore_writes_audit_row():
     from pymongo import MongoClient
-    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
     _, tok = _register("aurs")
     _, draft = _create_league_and_draft(tok)

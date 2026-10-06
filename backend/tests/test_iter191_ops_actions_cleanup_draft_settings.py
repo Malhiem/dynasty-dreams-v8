@@ -5,6 +5,7 @@ review-window settings + Draft Board year-grouped "via X · date"
 trade subtitle).
 """
 from __future__ import annotations
+from tests.source_tree import read_source
 
 from pathlib import Path
 
@@ -18,7 +19,7 @@ CLEANUP = REPO / "backend/scripts/iter191_cleanup_ice_kings_trades.py"
 
 # ── Task 1 — Violations Sheet quick actions ─────────────────────
 def test_notify_owners_endpoint_exists():
-    src = OPS_PY.read_text()
+    src = read_source(OPS_PY)
     assert '@router.post("/leagues/{league_id}/ops-violations/notify")' in src
     # Uses the existing notification helper
     assert 'create_notification = _deps["create_notification"]' in src
@@ -28,7 +29,7 @@ def test_notify_owners_endpoint_exists():
 
 
 def test_force_fix_endpoint_exists():
-    src = OPS_PY.read_text()
+    src = read_source(OPS_PY)
     assert '@router.post("/leagues/{league_id}/ops-violations/force-fix")' in src
     # Only auto-fixes safe codes — cap_over is explicitly NOT auto-fixed
     # because resolving it requires owner trade activity.
@@ -40,7 +41,7 @@ def test_force_fix_endpoint_exists():
 
 
 def test_violations_sheet_renders_quick_action_buttons():
-    src = OPS_TSX.read_text()
+    src = read_source(OPS_TSX)
     assert 'data-testid="ops-violations-actions"' in src
     assert 'data-testid="ops-violations-notify-btn"' in src
     assert 'data-testid="ops-violations-force-fix-btn"' in src
@@ -54,7 +55,7 @@ def test_violations_sheet_renders_quick_action_buttons():
 # ── Task 2 — Ice Kings cleanup script ───────────────────────────
 def test_cleanup_script_exists_and_is_idempotent():
     assert CLEANUP.exists(), "Cleanup script must be created"
-    src = CLEANUP.read_text()
+    src = read_source(CLEANUP)
     # Targets the right league
     assert 'LEAGUE_NAME = "Ice Kings Head-to-Head"' in src
     # Writes a backup BEFORE destructive ops
@@ -70,7 +71,7 @@ def test_cleanup_script_exists_and_is_idempotent():
 
 # ── Task 3 — Draft Format settings + Board year-grouped subtitle ─
 def test_draft_format_has_review_window_dropdown():
-    src = DRAFT_TAB.read_text()
+    src = read_source(DRAFT_TAB)
     assert 'data-testid="draft-trade-review-section"' in src
     assert 'data-testid="draft-trade-review-minutes-select"' in src
     # Minute + hour options (no second-based values)
@@ -83,18 +84,19 @@ def test_draft_format_has_review_window_dropdown():
     assert "2 hours" in src
 
 
-def test_draft_format_has_post_delay_action_dropdown():
-    src = DRAFT_TAB.read_text()
-    assert 'data-testid="draft-trade-post-delay-action-select"' in src
+def test_draft_format_has_post_delay_action_checkboxes():
+    src = read_source(DRAFT_TAB)
+    assert 'data-testid="window-elapsed-actions"' in src
     # All 5 user-approved options must be present.
     for opt in ("auto_execute", "pause_draft", "extend_timer", "require_admin", "majority_vote"):
-        assert f'value="{opt}"' in src
+        assert f'v: "{opt}"' in src
+    assert "windowElapsedActions.includes(opt.v)" in src
 
 
 def test_draft_format_settings_state_seeded_from_league():
     """Defaults read from `activeLeague` so a future league-update
     PUT can persist the dropdown choices without re-wiring UI."""
-    src = DRAFT_TAB.read_text()
+    src = read_source(DRAFT_TAB)
     assert "draft_trade_review_minutes" in src
     assert "draft_trade_post_delay_action" in src
     assert "useState(" in src and "setDraftTradeReviewMinutes" in src
@@ -104,7 +106,7 @@ def test_draft_format_settings_state_seeded_from_league():
 def test_draft_board_renders_year_grouped_trade_summary():
     """User spec: 'via {original_team_name} {date}' with year
     grouping — same year shouldn't repeat the year label."""
-    src = DRAFT_BOARD.read_text()
+    src = read_source(DRAFT_BOARD)
     assert 'data-testid="pick-trade-grouped-summary"' in src
     # Building blocks of the helper
     assert "const byYear: Record<string, string[]> = {};" in src
@@ -117,12 +119,12 @@ def test_draft_board_renders_year_grouped_trade_summary():
 def test_draft_board_mock_trades_removed():
     """User asked to wipe the static mock 'Traded' picks for
     Ice Kings; verify the legacy hardcoded blocks are gone."""
-    src = DRAFT_BOARD.read_text()
+    src = read_source(DRAFT_BOARD, include_imports=False)
     for bad in (
         'data["2025"]["FRST"][1]',
         '"FRST traded 2025 1st to ICE',
         '"NTH traded 2027 1st to BLZ',
     ):
         assert bad not in src, f"Stale mock trade still present: {bad}"
-    # Replacement comment preserves the audit trail.
-    assert "Mock trade injections removed" in src
+    # Display derives the trade chain from persisted history.
+    assert "trade_history" in src

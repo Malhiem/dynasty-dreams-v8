@@ -30,6 +30,7 @@ Design notes:
   • `total_picks_in_draft(...)` accounts for bonus extras so the
     "draft complete" transition doesn't fire early.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 
@@ -46,7 +47,7 @@ FE_TAB = Path("/app/frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx")
 
 
 def test_engine_get_team_for_pick_accepts_bonus_picks():
-    src = ENGINE.read_text()
+    src = read_source(ENGINE)
     # New optional argument.
     assert "bonus_picks: Optional[list[dict]] = None" in src
     # Exact-match returns the bonus team directly.
@@ -57,7 +58,7 @@ def test_engine_get_team_for_pick_accepts_bonus_picks():
 
 
 def test_engine_total_picks_helper_exists():
-    src = ENGINE.read_text()
+    src = read_source(ENGINE)
     assert "def total_picks_in_draft(" in src
     # Bonuses add to the base.
     assert "extras = len(bonus_picks or [])" in src
@@ -69,16 +70,18 @@ def test_pick_actions_thread_bonus_picks_through_every_get_team_for_pick_call():
     must now pass `draft.get('bonus_picks')` so the engine can honour
     them. Any missed call site would silently under-report which team
     is on the clock during a bonus-heavy draft."""
-    src = PICK_ACTIONS.read_text()
-    # Count all invocations — the `from ...` import doesn't count.
-    lines = [l for l in src.splitlines() if "get_team_for_pick(" in l and "from " not in l]
-    assert len(lines) >= 6, f"expected >=6 call sites, got {len(lines)}"
-    for line in lines:
-        assert "bonus_picks" in line, f"missing bonus_picks in: {line.strip()}"
+    src = read_source(PICK_ACTIONS, include_imports=False)
+    import ast
+    calls = [n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.Call)
+             and isinstance(n.func, ast.Name) and n.func.id == "get_team_for_pick"]
+    assert len(calls) >= 6
+    for call in calls:
+        assert len(call.args) >= 4, ast.unparse(call)
+        assert "bonus_picks" in ast.unparse(call.args[3]), ast.unparse(call)
 
 
 def test_pick_actions_total_picks_accounts_for_bonuses():
-    src = PICK_ACTIONS.read_text()
+    src = read_source(PICK_ACTIONS)
     # Total-picks computation now adds bonus extras.
     assert 'total_picks = draft["total_rounds"] * total_teams + len(draft.get("bonus_picks") or [])' in src
 
@@ -87,7 +90,7 @@ def test_pick_actions_total_picks_accounts_for_bonuses():
 
 
 def test_router_registered_in_server():
-    src = SERVER.read_text()
+    src = read_source(SERVER)
     # Import.
     assert "draft_bonus_picks as draft_bonus_picks_routes" in src
     # Setup + include.
@@ -96,14 +99,14 @@ def test_router_registered_in_server():
 
 
 def test_router_exposes_get_post_delete_endpoints():
-    src = ROUTER.read_text()
+    src = read_source(ROUTER)
     assert '@router.get("/drafts/{draft_id}/bonus-picks")' in src
     assert '@router.post("/drafts/{draft_id}/bonus-picks")' in src
     assert '@router.delete("/drafts/{draft_id}/bonus-picks/{bonus_id}")' in src
 
 
 def test_router_authorizes_commissioner_only():
-    src = ROUTER.read_text()
+    src = read_source(ROUTER)
     # Both routes share `_load_draft_and_authorise`.
     assert "async def _load_draft_and_authorise(" in src
     assert 'league.get("commissioner_id") != user["_id"]' in src
@@ -111,7 +114,7 @@ def test_router_authorizes_commissioner_only():
 
 
 def test_router_validates_request_body_with_pydantic():
-    src = ROUTER.read_text()
+    src = read_source(ROUTER)
     assert 'Literal["compensation", "expansion"]' in src
     assert 'Literal["end_of_round", "overall"]' in src
     # Position-specific field validation raises 422 with clear detail.
@@ -123,14 +126,14 @@ def test_router_blocks_inserts_at_or_before_current_pick_in_active_drafts():
     """Guardrail — a commissioner can't insert a bonus pick at a
     position that's already passed. The server returns 409 with a
     clear message so the UI can show it in a toast."""
-    src = ROUTER.read_text()
+    src = read_source(ROUTER)
     assert 'if overall <= current_pick and draft.get("status") == "active":' in src
     assert "409" in src
     assert "already on pick" in src
 
 
 def test_router_shifts_existing_picks_when_inserting_or_removing():
-    src = ROUTER.read_text()
+    src = read_source(ROUTER)
     # Insert: existing bonuses at overall >= new pos shift up.
     assert "def _shift_bonus_and_picks(" in src
     assert 'bp2["overall"] = ov + 1' in src
@@ -143,7 +146,7 @@ def test_router_shifts_existing_picks_when_inserting_or_removing():
 
 
 def test_router_mirrors_tradeable_bonus_into_draft_picks_collection():
-    src = ROUTER.read_text()
+    src = read_source(ROUTER)
     assert 'trading_on = bool(draft.get("pick_trading_enabled"))' in src
     assert 'await _db().draft_picks.insert_one(' in src
     assert '"is_bonus": True' in src
@@ -153,7 +156,7 @@ def test_router_mirrors_tradeable_bonus_into_draft_picks_collection():
 
 
 def test_frontend_bonus_picks_section_supports_both_modes():
-    src = FE_SECTION.read_text()
+    src = read_source(FE_SECTION)
     # Both position modes are wired.
     assert 'data-testid="bonus-pick-mode-end-of-round"' in src
     assert 'data-testid="bonus-pick-mode-overall"' in src
@@ -163,19 +166,19 @@ def test_frontend_bonus_picks_section_supports_both_modes():
 
 
 def test_frontend_bonus_picks_section_supports_both_kinds():
-    src = FE_SECTION.read_text()
+    src = read_source(FE_SECTION)
     assert 'data-testid="bonus-pick-kind-compensation"' in src
     assert 'data-testid="bonus-pick-kind-expansion"' in src
 
 
 def test_frontend_bonus_picks_section_supports_admin_set_tradeability_and_note():
-    src = FE_SECTION.read_text()
+    src = read_source(FE_SECTION)
     assert 'data-testid="bonus-pick-tradeable-checkbox"' in src
     assert 'data-testid="bonus-pick-note-input"' in src
 
 
 def test_frontend_bonus_picks_section_hides_delete_for_used_picks():
-    src = FE_SECTION.read_text()
+    src = read_source(FE_SECTION)
     # "used" tag renders and the delete X is gated behind `!alreadyUsed`.
     assert "const alreadyUsed = draftStatus" in src
     assert "p.overall <= currentPick" in src
@@ -183,7 +186,7 @@ def test_frontend_bonus_picks_section_hides_delete_for_used_picks():
 
 
 def test_edit_draft_dialog_mounts_bonus_picks_section_when_context_supplied():
-    src = FE_DIALOG.read_text()
+    src = read_source(FE_DIALOG)
     assert 'import BonusPicksSection from "@/lovable/pages/commissioner/BonusPicksSection";' in src
     assert "<BonusPicksSection" in src
     # Section only renders when the parent wires the required context.
@@ -191,7 +194,7 @@ def test_edit_draft_dialog_mounts_bonus_picks_section_when_context_supplied():
 
 
 def test_draft_tab_wires_context_to_edit_dialog():
-    src = FE_TAB.read_text()
+    src = read_source(FE_TAB)
     # Editing meta state (current_pick + status) captured on open.
     assert "editingDraftMeta" in src
     # And passed to the dialog.

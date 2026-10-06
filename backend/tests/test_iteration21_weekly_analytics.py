@@ -18,11 +18,33 @@ load_dotenv("/app/backend/.env")
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 API = f"{BASE_URL}/api"
 
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PASS = "Chris2026!"
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 ICE_KINGS_LEAGUE_ID = "69e46af167999bfb85c39628"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def weekly_history_inputs(_global_pollution_sweep):
+    from pymongo import MongoClient
+    from datetime import datetime, timezone
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    now = datetime.now(timezone.utc)
+    current = f"{now.year}-{str(now.year + 1)[-2:]}" if now.month >= 10 else f"{now.year-1}-{str(now.year)[-2:]}"
+    seasons = {f"{year}-{str(year+1)[-2:]}" for year in range(now.year-5, now.year+1)} | {current, "2025-26"}
+    with MongoClient(os.environ["MONGO_URL"]) as client:
+        db = client[os.environ["DB_NAME"]]
+        teams = list(db.teams.find({"league_id": ICE_KINGS_LEAGUE_ID}))
+        rows = []
+        for season in seasons:
+            for week in range(1, 11):
+                for i, team in enumerate(teams):
+                    rows.append({"league_id": ICE_KINGS_LEAGUE_ID, "team_id": str(team["_id"]), "team_name": team["name"], "season": season, "week": week,
+                        "points_for": 200 + week + i, "points_against": 190 + week, "win": True, "loss": False, "tie": False, "_analytics_fixture": True})
+        db.week_summaries.insert_many(rows)
+        yield len(rows)
+        db.week_summaries.delete_many({"_analytics_fixture": True})
 
 
 # ─── Auth helpers ──────────────────────────────────────────
@@ -190,7 +212,7 @@ class TestBackfillIdempotency:
 
 # ─── Seed integrity (DB-level) ─────────────────────────────
 class TestSeedIntegrity:
-    def test_total_week_summaries_at_least_9000(self):
+    def test_total_week_summaries_matches_fixture(self, weekly_history_inputs):
         import asyncio
         import os as _os
         from motor.motor_asyncio import AsyncIOMotorClient
@@ -200,7 +222,7 @@ class TestSeedIntegrity:
             return await db.week_summaries.count_documents({})
 
         n = asyncio.run(_count())
-        assert n >= 9000, f"expected >=9000 week_summaries, got {n}"
+        assert n >= weekly_history_inputs, f"expected fixture rows {weekly_history_inputs}, got {n}"
 
     def test_chris_has_2025_26_rows_in_ice_kings(self, chris_session, chris_team_in_ice_kings):
         team_id = chris_team_in_ice_kings.get("id") or chris_team_in_ice_kings.get("_id")

@@ -29,7 +29,10 @@ def setup(deps: dict) -> None:
     _deps.update(deps)
 
 
+from services.financial_lock import serialize_finances
+
 @router.post("/teams/{team_id}/lineup")
+@serialize_finances(lambda: _deps["db"])
 async def save_team_lineup(team_id: str, payload: dict, request: Request):
     """Persist a team's active-lineup mapping.
 
@@ -47,7 +50,7 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
         raise HTTPException(status_code=404, detail="Team not found")
 
     league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
-    is_owner = team.get("owner_id") == user["_id"]
+    is_owner = team.get("owner_id") == user["_id"] or user["_id"] in (team.get("co_owner_ids") or [])
     is_commish = league and (
         league.get("commissioner_id") == user["_id"]
         or user["_id"] in (league.get("co_commissioners") or [])
@@ -62,6 +65,7 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
     # ── Iter 105: emergency_changes_* bypass — when enabled and the team has
     # remaining emergency swaps budget, allow the write through and consume a
     # swap from `team.emergency_swaps_used`.
+    emergency_used_field = None
     if league and not is_commish:
         try:
             from utils.lineup_lock import evaluate_lineup_lock
@@ -126,14 +130,7 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
                                             f"({', '.join(sorted(eligibility))})."
                                         ),
                                     )
-                    await db.teams.update_one(
-                        {"_id": team["_id"]},
-                        {"$inc": {used_field: 1}},
-                    )
-                    logger.info(
-                        f"Emergency roster swap consumed: team={team['_id']} "
-                        f"week={current_wk} used={used + 1}/{budget}"
-                    )
+                    emergency_used_field = used_field
                 else:
                     raise HTTPException(
                         status_code=400,
@@ -147,6 +144,8 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
             logger.warning(f"lineup_lock evaluation skipped: {e}")
 
     raw = payload.get("lineup") or {}
+    if not isinstance(raw, dict) or set(raw) - set(team.get("roster") or []):
+        raise HTTPException(409, "Roster changed: assignments must belong to currently owned players. Reload and retry.")
     lineup: dict[str, dict] = {}
     valid_sections = {"forward", "defense", "goalie", "bench", "ir", "ir-plus", "taxi", "minors"}
     starting_sections = {"forward", "defense", "goalie"}
@@ -163,6 +162,24 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
         section_counts[section] = section_counts.get(section, 0) + 1
         if section in starting_sections:
             starter_ids.append(str(pid))
+
+    if league.get("position_breakdown", {}).get("active") or league.get("position_limits"):
+        from services.draft_salary import validate_lineup
+        owned = {str(p["_id"]): p async for p in db.players.find({"_id": {"$in": [ObjectId(pid) for pid in team.get("roster", []) if ObjectId.is_valid(pid)]}})}
+        active = {pid: info for pid, info in lineup.items() if info["section"] in starting_sections}
+        validate_lineup({**team, "lineup": active}, owned, league)
+
+    current_draft = await db.drafts.find_one({"league_id": team["league_id"], "status": {"$in": ["active", "scheduled", "completed"]}})
+    if current_draft and league.get("salary_adherence_mode"):
+        from services.draft_salary import load_context, validate_lineup, evaluate_roster, warning
+        ctx = await load_context(db, current_draft, {**team, "lineup": lineup}, league)
+        validate_lineup({**team, "lineup": lineup}, ctx["players"], league)
+        result = evaluate_roster(ctx)
+        if not result["allowed"]:
+            raise HTTPException(409, detail=result)
+
+    from services.roster_salary import validate_roster_salary
+    salary_warnings, salary_used = await validate_roster_salary(db, team, league, lineup)
 
     # ── Roster-section caps (iter 84) ───────────────────────────
     cap_checks = [
@@ -199,7 +216,7 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
     if active_err and enforce_block:
         raise HTTPException(status_code=400, detail=active_err)
 
-    warnings: list[dict] = []
+    warnings: list[dict] = salary_warnings
     if active_err:
         warnings.append({"code": "min_active_players", "message": active_err})
     min_gp = int((league or {}).get("min_games_played") or 0)
@@ -238,7 +255,7 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
     moves: list[dict] = []
     for pid, info in lineup.items():
         old_info = old_lineup.get(pid) or {}
-        if (old_info.get("section") or "") != info.get("section"):
+        if (old_info.get("section"), old_info.get("slot")) != (info.get("section"), info.get("slot")):
             try:
                 player = await db.players.find_one({"_id": ObjectId(pid)})
             except Exception:
@@ -248,15 +265,19 @@ async def save_team_lineup(team_id: str, payload: dict, request: Request):
             moves.append({
                 "player_id": pid,
                 "player_name": pname,
+                "from_slot": old_info.get("slot"),
+                "to_slot": info.get("slot"),
                 "position": ppos,
                 "from": (old_info.get("section") or "bench").upper(),
                 "to": info.get("section", "bench").upper(),
             })
 
-    await db.teams.update_one(
-        {"_id": ObjectId(team_id)},
-        {"$set": {"lineup": lineup, "lineup_updated_at": datetime.now(timezone.utc)}},
-    )
+    update = {"$set": {"lineup": lineup, "lineup_updated_at": datetime.now(timezone.utc), "salary_used": salary_used}}
+    if emergency_used_field:
+        update["$inc"] = {emergency_used_field: 1}
+    await db.teams.update_one({"_id": team["_id"]}, update)
+    if emergency_used_field:
+        logger.info("Emergency roster swap consumed: team=%s field=%s", team_id, emergency_used_field)
 
     # ── Historical lineup eligibility tracking ───────────────────
     if moves:
@@ -392,12 +413,12 @@ async def get_team_compliance(team_id: str, request: Request):
 
     salary_used = float(team.get("salary_used") or 0.0)
     salary_cap = (league or {}).get("salary_cap")
-    if (league or {}).get("salary_cap_enabled") and salary_cap:
+    if (league or {}).get("salary_cap_enabled") and salary_cap is not None:
         try:
             salary_used = await _recompute_team_salary_used(team_id)
         except Exception:
             pass
-    if (league or {}).get("salary_cap_enabled") and salary_cap and salary_used > salary_cap:
+    if (league or {}).get("salary_cap_enabled") and salary_cap is not None and salary_used > salary_cap:
         reasons.append({
             "code": "over_salary_cap",
             "label": "Over the salary cap",
@@ -459,10 +480,11 @@ async def get_team_compliance(team_id: str, request: Request):
 
     compliant = len(reasons) == 0
 
-    retentions_list = team.get("salary_retentions") or []
-    retention_slots_total = int((league or {}).get("salary_retention_slots") or 3)
+    from services.salary_policy import obligations
+    retentions_list = await obligations(db, league, team)
+    retention_slots_total = min(3, int((league or {}).get("salary_retention_slots", 3)))
     retention_slots_used = len(retentions_list)
-    retained_salary_total = sum(float(r.get("amount") or 0.0) for r in retentions_list)
+    retained_salary_total = sum(float(r.get("amount") or 0) for r in retentions_list)
 
     return {
         "team_id": team_id,

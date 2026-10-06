@@ -25,6 +25,7 @@ Coverage
    - GET /matchup-stars?league_id= returns starred_ids + auto_watch.
    - Auto-watch reasons: rivalry / standings_battle / playoff_implications.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -33,8 +34,8 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 REPO = Path(__file__).resolve().parents[2]
 WAIVERS_TSX = REPO / "frontend/src/lovable/pages/Waivers.tsx"
@@ -72,7 +73,7 @@ def owner_league(owner_token):
 
 # ── 1. FAAB UI gated on Waivers page ────────────────────────────
 def test_waivers_faab_gated_on_system_type():
-    src = WAIVERS_TSX.read_text()
+    src = read_source(WAIVERS_TSX)
     assert "isFaabSystem" in src, "Waivers.tsx must derive isFaabSystem from txConfig"
     assert "system_type" in src, "Waivers.tsx must read waiver.system_type"
     assert "waiver-faab-tile" in src, "Waivers.tsx must testid the FAAB tile"
@@ -85,7 +86,7 @@ def test_waivers_faab_gated_on_system_type():
 
 # ── 2. Date+time picker split ────────────────────────────────────
 def test_trade_deadline_picker_has_separate_date_time():
-    src = RULES_TAB.read_text()
+    src = read_source(RULES_TAB)
     assert "rules-schedule-trade-deadline-at-date-input" in src, "Date-only input testid missing"
     assert "rules-schedule-trade-deadline-at-time-input" in src, "Time-only input testid missing"
     # Time input should be disabled until a date is chosen
@@ -96,11 +97,11 @@ def test_trade_deadline_picker_has_separate_date_time():
 
 # ── 3. More InfoHints on Rosters tab ────────────────────────────
 def test_rosters_tab_has_full_info_hint_coverage():
-    src = ROSTERS_TAB.read_text()
+    src = read_source(ROSTERS_TAB)
     for tid in (
         "info-prospect-pool",
         "info-taxi-squad",
-        "info-position-limits",
+        "info-position-breakdown",
         "info-enforce-position",
         "info-roster-requirements",
         "info-min-active",
@@ -115,7 +116,7 @@ def test_rosters_tab_has_full_info_hint_coverage():
 
 # ── 4. Consolation bracket sizing improvements ─────────────────
 def test_consolation_bracket_recommend_link():
-    src = PLAYOFFS_CARDS.read_text()
+    src = read_source(PLAYOFFS_CARDS)
     assert "idealAlignedSize" in src, "idealAlignedSize derivation missing"
     assert "co-teams-recommend" in src, "Recommended-size link testid missing"
     # Iter 131: now derives from playoffTeams directly (no 2^weeks math)
@@ -127,7 +128,7 @@ def test_consolation_bracket_recommend_link():
 # ── 5. Matchup Watchlist backend + frontend ────────────────────
 def test_matchup_stars_route_present():
     assert STARS_ROUTE.exists()
-    src = STARS_ROUTE.read_text()
+    src = read_source(STARS_ROUTE)
     assert "@router.post" in src, "POST /matchup-stars route missing"
     assert "@router.get" in src, "GET /matchup-stars route missing"
     assert "_compute_auto_watch_reasons" in src, "Auto-watch computation missing"
@@ -195,6 +196,6 @@ def test_watchlist_widget_present():
     # into the MatchupStarButton + the matchup grids themselves.
     star_btn = REPO / "frontend/src/components/MatchupStarButton.jsx"
     assert star_btn.exists(), "MatchupStarButton.jsx must exist"
-    src = star_btn.read_text()
+    src = read_source(star_btn)
     assert "matchup-star-" in src, "Star button testid missing"
     assert "matchup-h2h-info-" in src, "H2H info icon testid missing"

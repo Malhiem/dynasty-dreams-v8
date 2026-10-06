@@ -12,17 +12,7 @@ from pydantic import BaseModel
 from routes.league_guards import require_league_member
 
 
-DEFAULT_SKATER_SCORING = {
-    "goals": 3, "assists": 2, "plus_minus": 1, "penalty_minutes": -0.5,
-    "power_play_goals": 1, "power_play_points": 0.5,
-    "short_handed_goals": 2, "short_handed_points": 1,
-    "game_winning_goals": 1, "shots": 0.5,
-}
-
-DEFAULT_GOALIE_SCORING = {
-    "wins": 5, "losses": -2, "saves": 0.2, "goals_against": -1,
-    "shutouts": 3, "overtime_losses": 0,
-}
+from services.fantasy_scoring import DEFAULT_SKATER_SCORING, DEFAULT_GOALIE_SCORING
 
 router = APIRouter()
 _deps: dict = {}

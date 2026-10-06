@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -214,6 +214,8 @@ async def test_get_current_user_allows_writes_in_sandbox_mode():
         get_jwt_secret, JWT_ALGORITHM,
     )
     db = _db()
+    import server
+    server.db = db
     # Seed a real user to impersonate
     target = await db.users.insert_one({
         "email": "n61write@iter.test", "name": "Writer",

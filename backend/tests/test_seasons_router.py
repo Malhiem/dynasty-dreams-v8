@@ -23,6 +23,7 @@ async def _seed_league(db, **overrides):
         "format": "head_to_head",
         "max_teams": 12,
         "commissioner_id": "test_user_0001",
+        "setup_wizard_complete": True,
     }
     base.update(overrides)
     res = await db.leagues.insert_one(base)
@@ -128,3 +129,12 @@ async def test_get_specific_season_404_when_missing():
         league_id = await _seed_league(ctx.db)
         r = await ctx.client.get(f"/api/leagues/{league_id}/seasons/1999")
         assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_setup_is_not_complete_from_defaults():
+    async with isolated_router_app(seasons_routes) as ctx:
+        league_id = await _seed_league(ctx.db, setup_wizard_complete=False, salary_cap_enabled=False, playoff_teams=6)
+        response = await ctx.client.get(f"/api/leagues/{league_id}/health-score")
+        assert response.status_code == 200
+        assert response.json()["score"] == 0

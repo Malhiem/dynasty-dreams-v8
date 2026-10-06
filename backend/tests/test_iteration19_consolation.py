@@ -14,8 +14,8 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "chriszarek@gmail.com"
-ADMIN_PASS = "Chris2026!"
+ADMIN_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 STRANGER_EMAIL = "TEST_iter19_stranger@example.com"
 STRANGER_PASS = "Stranger123!"
 

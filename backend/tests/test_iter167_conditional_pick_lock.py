@@ -76,9 +76,9 @@ async def test_conditional_pick_locked_from_retrade():
     """Build a synthetic pending pick_upgrades trade, then try to
     propose a new trade that includes the locked pick — must 400."""
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        admin = await _tok(client, "admin@dynastydreams.com", "Admin123!")
+        admin = await _tok(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         ah = {"Authorization": f"Bearer {admin}"}
-        commish = await _tok(client, "chriszarek@gmail.com", "Chris2026!")
+        commish = await _tok(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         ch = {"Authorization": f"Bearer {commish}"}
 
         # Clean slate
@@ -90,17 +90,21 @@ async def test_conditional_pick_locked_from_retrade():
         # via a Mongo write (no public endpoint for this in test scope).
         from dotenv import load_dotenv
         load_dotenv("/app/backend/.env")
-        import os
         from motor.motor_asyncio import AsyncIOMotorClient
         mc = AsyncIOMotorClient(os.environ["MONGO_URL"])
         db = mc[os.environ["DB_NAME"]]
+        lock_id = None
+        owner_user = (await client.get("/api/auth/me", headers=ch)).json()
+        owner_id = owner_user.get("_id") or owner_user.get("id")
         try:
             # Grab one of the seeded picks
-            pick = await db.draft_picks.find_one({"league_id": LID})
+            owner_team = await db.teams.find_one({"league_id": LID, "owner_id": owner_id})
+            assert owner_team is not None
+            pick = await db.draft_picks.find_one({"league_id": LID, "current_team_id": str(owner_team["_id"])})
             assert pick is not None
             pid = str(pick["_id"])
             # Find chris's team in this league
-            chris_team = await db.teams.find_one({"league_id": LID, "owner_id": "69e43c4ddba209f1da22660c"})
+            chris_team = await db.teams.find_one({"league_id": LID, "owner_id": owner_id})
             assert chris_team is not None
             # Get a target team
             other = await db.teams.find_one({"league_id": LID, "_id": {"$ne": chris_team["_id"]}})
@@ -108,7 +112,7 @@ async def test_conditional_pick_locked_from_retrade():
             # Build the lock trade record (executed, with unresolved upgrade)
             lock_id = await db.trades.insert_one({
                 "league_id": LID,
-                "proposer_id": "69e43c4ddba209f1da22660c",
+                "proposer_id": owner_id,
                 "proposer_team_id": str(chris_team["_id"]),
                 "target_owner_id": other.get("owner_id"),
                 "target_team_id": str(other["_id"]),
@@ -156,7 +160,9 @@ async def test_conditional_pick_locked_from_retrade():
             assert "conditional" in r.text.lower() or "locked" in r.text.lower(), r.text
         finally:
             # Clean up the synthetic lock
-            await db.trades.delete_one({"_id": lock_id.inserted_id})
+            if lock_id is not None:
+                await db.trades.delete_one({"_id": lock_id.inserted_id})
+            mc.close()
 
 
 # ── Frontend ──

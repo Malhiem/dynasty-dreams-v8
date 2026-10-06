@@ -13,6 +13,7 @@
      label matches what the panel actually exposes (the table of
      team + owner + invite-email rows).
 """
+from tests.source_tree import read_source
 import os
 import sys
 import uuid
@@ -39,7 +40,7 @@ LEAGUE_ADMIN_TAB = Path("/app/frontend/src/lovable/pages/commissioner/tabs/Leagu
 
 
 def test_admin_dashboard_mounts_recent_crashes_tab():
-    src = ADMIN_DASH.read_text()
+    src = read_source(ADMIN_DASH)
     assert 'import RecentCrashesPanel from "./components/RecentCrashesPanel"' in src
     # Sidebar entry sits next to DB Hygiene as the user requested.
     assert 'value="crashes"' in src
@@ -50,7 +51,7 @@ def test_admin_dashboard_mounts_recent_crashes_tab():
 
 
 def test_recent_crashes_panel_hits_admin_endpoint_with_limit_20():
-    src = CRASHES_PANEL.read_text()
+    src = read_source(CRASHES_PANEL)
     # Newest 20 errors per the user's spec.
     assert 'api.get("/client-errors?limit=20")' in src
     # Refresh button + total count badge for at-a-glance triage.
@@ -67,7 +68,7 @@ def test_recent_crashes_panel_hits_admin_endpoint_with_limit_20():
 
 
 def test_league_admin_subtab_renamed_to_team_and_owner_list():
-    src = LEAGUE_ADMIN_TAB.read_text()
+    src = read_source(LEAGUE_ADMIN_TAB, include_imports=False)
     # New copy + stable testid.
     assert "Team and Owner List" in src
     assert 'data-testid="admin-sub-tab-team-owner-list"' in src
@@ -133,7 +134,9 @@ async def test_matchups_resolve_open_slot_to_claimed_team():
             "status": "scheduled",
         })
 
-        matchups_routes.setup({"db": db, "logger": None})
+        async def fake_get_user(_request):
+            return {"_id": commish, "email": "commish@example.test"}
+        matchups_routes.setup({"db": db, "logger": None, "get_current_user": fake_get_user})
         app = FastAPI()
         sub = APIRouter()
         sub.include_router(matchups_routes.router)

@@ -12,10 +12,10 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-COMMISH_EMAIL = "admin@dynastydreams.com"
-COMMISH_PASS = "Admin123!"
-MONGO_URL = os.environ.get("MONGO_URL") or "mongodb://localhost:27017"
-DB_NAME = os.environ.get("DB_NAME", "test_database")
+COMMISH_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+COMMISH_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+MONGO_URL = os.environ.get("MONGO_URL") or os.environ["MONGO_URL"]
+DB_NAME = os.environ.get("DB_NAME", os.environ["DB_NAME"])
 
 
 def _login(email: str, password: str):

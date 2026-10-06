@@ -41,7 +41,7 @@ def event_loop():
 @pytest.fixture()
 async def db():
     client = AsyncIOMotorClient(os.environ.get("MONGO_URL"))
-    db = client[os.environ.get("DB_NAME", "test_database")]
+    db = client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     # Wire up the deps trades.py + roster.py rely on for calc + salary
     # synthesis. In production these come from server.py's setup(); in
     # this direct-call unit test we mirror them.

@@ -120,9 +120,15 @@ class SwapPickPlayerRequest(BaseModel):
 # ─── Endpoints ────────────────────────────────────────────────────
 
 
+from services.financial_lock import serialize_finances
+from services.draft_salary import validate_selection, warning, entry, after_pick
+from services.draft_mutation import commit_pick, recover
+
 @router.post("/drafts/{draft_id}/pick")
+@serialize_finances(_db)
 async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: Request):
     user = await _get_user(request)
+    await recover(_db(), draft_id)
 
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
@@ -130,6 +136,9 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
 
     if draft["status"] != "active":
         raise HTTPException(status_code=400, detail="Draft is not active")
+
+    if input.expected_pick is not None and input.expected_pick != draft["current_pick"]:
+        raise HTTPException(409, "Draft turn changed; refresh before selecting")
 
     # Iter 170g — abbr derivation aligned with the draft's stored team_map.
     team = await _db().teams.find_one({"league_id": draft["league_id"], "owner_id": user["_id"]})
@@ -182,6 +191,9 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
     if already_picked:
         raise HTTPException(status_code=400, detail="Player already drafted")
 
+    receiving_team = await _db().teams.find_one({"_id": ObjectId(on_clock_team_id)})
+    salary_result, salary_ctx = await validate_selection(_db(), draft, receiving_team, input.player_id, input.destination)
+
     total_teams = len(draft["team_abbrs"])
     current_pick = draft["current_pick"]
     round_num = ((current_pick - 1) // total_teams) + 1
@@ -196,6 +208,8 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         "player_id": str(player["_id"]),
         "player": build_pick_player_payload(player),
         "picked_by": user["_id"],
+        "salary_validation": salary_result,
+        "destination": salary_result["destination"],
         "timestamp": datetime.now(timezone.utc).isoformat(),
         # Iter 232N.27 — Stamp how long the manager took vs the clock
         # start so the leaderboard can compute avg pick time + spotlight
@@ -211,28 +225,13 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
     total_picks = draft["total_rounds"] * total_teams + len(draft.get("bonus_picks") or [])
     new_status = "completed" if next_pick > total_picks else "active"
 
-    await _db().drafts.update_one(
-        {"_id": ObjectId(draft_id)},
-        {
-            "$push": {"picks": pick_doc},
-            "$set": {
-                "current_pick": next_pick,
-                "status": new_status,
-                # Iter 230ar — server-authoritative remaining time anchor.
-                "current_pick_started_at": datetime.now(timezone.utc).isoformat(),
-            },
-        },
-    )
+    await commit_pick(_db(), draft, receiving_team, pick_doc, {**salary_ctx["team"].get("lineup", {}), input.player_id: entry(salary_result["destination"])}, new_status)
 
     # Iter 170g — also push the picked player onto the on-clock team's
     # roster so the Roster page + My Roster tile in the Draft Room both
     # reflect the pick without a separate manual step. Idempotent via
     # `$addToSet`.
     if on_clock_team_id:
-        await _db().teams.update_one(
-            {"_id": ObjectId(on_clock_team_id)},
-            {"$addToSet": {"roster": str(player["_id"])}},
-        )
         # ── Historical scoring: log draft pick ───────────────────
         try:
             from utils.scoring_roster import log_roster_change
@@ -381,6 +380,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
         except Exception:
             pass  # snapshot failure must never block draft completion
 
+    await after_pick(_db(), draft, receiving_team, salary_result, new_status == "completed")
     return pick_doc
 
 
@@ -388,6 +388,7 @@ async def make_draft_pick(draft_id: str, input: MakeDraftPickRequest, request: R
 
 
 @router.post("/drafts/{draft_id}/undo")
+@serialize_finances(_db)
 async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, request: Request):
     """Commissioner-only: rewind the draft by N picks. Removes the
     drafted players from the picking team's roster and broadcasts the
@@ -471,6 +472,7 @@ async def undo_draft_picks(draft_id: str, payload: UndoDraftPicksRequest, reques
 
 
 @router.post("/drafts/{draft_id}/picks/{pick_number}/undo")
+@serialize_finances(_db)
 async def undo_specific_pick(
     draft_id: str,
     pick_number: int,
@@ -682,6 +684,7 @@ async def undo_specific_pick(
 
 
 @router.patch("/drafts/{draft_id}/picks/{overall}")
+@serialize_finances(_db)
 async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerRequest, request: Request):
     """Commissioner-only: replace the player on an existing pick.
 
@@ -712,6 +715,10 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
 
     tid = old_pick.get("team_id") or (draft.get("team_map") or {}).get(old_pick.get("team", ""), {}).get("id")
     old_player_id = old_pick.get("player_id")
+    replacement_team = await _db().teams.find_one({"_id": ObjectId(tid)})
+    replacement_team = {**replacement_team, "roster": [pid for pid in replacement_team.get("roster") or [] if pid != old_player_id],
+        "lineup": {pid: value for pid, value in (replacement_team.get("lineup") or {}).items() if pid != old_player_id}}
+    replacement_result, replacement_ctx = await validate_selection(_db(), {**draft, "picks": [p for p in picks if p.get("overall") != overall]}, replacement_team, payload.new_player_id, old_pick.get("destination"))
     if tid and old_player_id:
         await _db().teams.update_one(
             {"_id": ObjectId(tid)},
@@ -729,7 +736,8 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
     if tid:
         await _db().teams.update_one(
             {"_id": ObjectId(tid)},
-            {"$addToSet": {"roster": str(new_player["_id"])}},
+            {"$addToSet": {"roster": str(new_player["_id"])}, "$set": {"lineup": {
+                **replacement_ctx["team"].get("lineup", {}), str(new_player["_id"]): entry(replacement_result["destination"])}}},
         )
         # ── Ownership tracking (swap — add new) ──────────────────
         try:
@@ -747,6 +755,8 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
         "player": build_pick_player_payload(new_player),
         "swapped_at": datetime.now(timezone.utc).isoformat(),
         "swapped_by": user["_id"],
+        "salary_validation": replacement_result,
+        "destination": replacement_result["destination"],
     }
     await _db().drafts.update_one(
         {"_id": ObjectId(draft_id)},

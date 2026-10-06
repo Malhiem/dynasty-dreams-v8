@@ -244,6 +244,11 @@ async def early_start_clock_msg(draft: dict) -> str:
 # ─────────────────────────────────────────────────────────────────
 
 
+from services.financial_lock import serialize_finances
+from services.draft_salary import load_context, evaluate, entry, warning, after_pick
+from services.draft_mutation import commit_pick, recover
+
+@serialize_finances(_db)
 async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", preference: str | None = None) -> dict:
     """Iter 221 — Shared core for auto-picking the team currently on the clock.
     Returns the recorded pick document. Raises HTTPException on bad state.
@@ -260,6 +265,7 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
     for current_team_id override before falling back to the standard
     draft order.
     """
+    await recover(_db(), draft_id)
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -267,7 +273,7 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
         raise HTTPException(status_code=400, detail="Draft is not active")
 
     # Determine on-clock team, honoring traded picks
-    on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"])
+    on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"], draft.get("bonus_picks"))
     on_clock_team_id = (draft.get("team_map") or {}).get(on_clock, {}).get("id")
 
     # Iter 232x — Check if this pick was traded to a different team.
@@ -308,6 +314,12 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
     chosen_player = None
     via = "top_eligible"
     team = await _db().teams.find_one({"_id": ObjectId(on_clock_team_id)})
+    salary_ctx = await load_context(_db(), draft, team)
+    salary_results = {}
+    def evaluate_candidate(pid):
+        if pid not in salary_results:
+            salary_results[pid] = evaluate(salary_ctx, pid)
+        return salary_results[pid]
     effective_pref = preference or (team or {}).get("auto_pick_preference") or "queue_then_best"
     # Iter 232N.26 — Skip the queue walk when the manager opted into
     # "best available" as their fallback. Both preferences still fall
@@ -321,7 +333,7 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
                 cand = await _db().players.find_one({"_id": ObjectId(pid)})
             except Exception:
                 continue
-            if cand:
+            if cand and evaluate_candidate(pid).get("allowed"):
                 chosen_player = cand
                 via = "queue"
                 break
@@ -346,11 +358,15 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
         async for p in _db().players.find(q).sort([("points", -1), ("name", 1)]):
             if str(p["_id"]) in drafted_ids:
                 continue
+            if not evaluate_candidate(str(p["_id"])).get("allowed"):
+                continue
             chosen_player = p
             break
 
     if chosen_player is None:
-        raise HTTPException(status_code=400, detail="No eligible players left")
+        await _db().drafts.update_one({"_id": draft["_id"]}, {"$set": {"salary_blocked": True}})
+        await warning(_db(), draft, team, {"feasible": False, "reason": "no_legal_candidate", "message": "No legal draft selection remains; adjust roster or league settings."})
+        raise HTTPException(status_code=409, detail="No legal draft selection remains")
 
     total_teams = len(draft["team_abbrs"])
     current_pick = draft["current_pick"]
@@ -365,6 +381,8 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
         "team_id": on_clock_team_id,
         "player_id": str(chosen_player["_id"]),
         "player": build_pick_player_payload(chosen_player),
+        "salary_validation": salary_results[str(chosen_player["_id"])],
+        "destination": salary_results[str(chosen_player["_id"])]["destination"],
         "auto_picked": True,
         "auto_pick_via": via,
         "auto_pick_source": source,
@@ -381,7 +399,7 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
         ),
     }
     next_pick = current_pick + 1
-    total_picks = draft["total_rounds"] * total_teams
+    total_picks = draft["total_rounds"] * total_teams + len(draft.get("bonus_picks") or [])
     new_status = "completed" if next_pick > total_picks else "active"
     # Iter 231x — Optimistic concurrency control. Without this guard
     # two concurrent invocations (the timer worker + a manual UI
@@ -396,33 +414,7 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
     # `started` value and treated every following pick as "already
     # expired", producing the rapid-fire auto-pick incident the user
     # reported on 2026-02 — even after the clock-window guard landed).
-    result = await _db().drafts.update_one(
-        {"_id": ObjectId(draft_id), "current_pick": current_pick, "status": "active"},
-        {
-            "$push": {"picks": pick_doc},
-            "$set": {
-                "current_pick": next_pick,
-                "status": new_status,
-                "current_pick_started_at": datetime.now(timezone.utc).isoformat(),
-            },
-        },
-    )
-    if result.matched_count == 0:
-        # Another writer beat us — refuse silently so the caller can
-        # observe via an HTTP 409. The timer worker catches this and
-        # increments its `errors` counter; the manual /auto-pick
-        # endpoint surfaces the 409 to the client.
-        raise HTTPException(
-            status_code=409,
-            detail=f"Pick #{current_pick} was already made by another process (concurrent update)",
-        )
-    await _db().teams.update_one(
-        {"_id": ObjectId(on_clock_team_id)},
-        {
-            "$addToSet": {"roster": str(chosen_player["_id"])},
-            "$pull": {"draft_queue": str(chosen_player["_id"])},
-        },
-    )
+    await commit_pick(_db(), draft, team, pick_doc, {**salary_ctx["team"].get("lineup", {}), str(chosen_player["_id"]): entry(salary_results[str(chosen_player["_id"])]["destination"])}, new_status, auto=True)
     # ── Ownership tracking (auto-pick) ───────────────────────────
     try:
         from utils.scoring_roster import log_roster_change
@@ -451,7 +443,7 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
     await _broadcast(f"draft_{draft_id}", "draft_pick", {
         **pick_doc,
         "next_pick": next_pick,
-        "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"]) if new_status == "active" else None,
+        "on_the_clock": get_team_for_pick(draft["team_abbrs"], next_pick, draft["snake_draft"], draft.get("bonus_picks")) if new_status == "active" else None,
         "draft_complete": new_status == "completed",
     })
     # Iter 232N.27 — When the auto-pick just completed the draft,
@@ -469,4 +461,5 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
             logging.getLogger(__name__).debug(
                 f"draft_speed_champion award skipped (auto-pick path): {ex}"
             )
+    await after_pick(_db(), draft, team, salary_results[str(chosen_player["_id"])], new_status == "completed")
     return pick_doc

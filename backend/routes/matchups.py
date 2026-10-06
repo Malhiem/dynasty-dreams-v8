@@ -157,6 +157,8 @@ def _build_playoff_bracket(
       • playoff_seeding_method ∈ {high_vs_low, adjacent, custom}
       • playoff_custom_matchups → list of {week, matchups: [{home, away}]}
     """
+    if league.get("playoffs_enabled") is False:
+        return []
     prefix = "consolation_" if is_consolation else "playoff_"
     fmt = "playoff_tree" if is_consolation else (league.get("playoff_format") or "h2h_matchup")
     if not is_consolation and fmt != "playoff_tree":
@@ -669,7 +671,7 @@ async def _resolve_open_slots(db, league_id: str, matchups: list) -> list:
 async def get_matchups(league_id: str, request: Request, week: Optional[int] = None):
     db = _deps["db"]
     user = await _deps["get_current_user"](request)
-    await require_league_member(db, user, league_id)
+    league = await require_league_member(db, user, league_id)
     query = {"league_id": league_id}
     if week:
         query["week"] = week
@@ -677,6 +679,8 @@ async def get_matchups(league_id: str, request: Request, week: Optional[int] = N
     for m in matchups:
         m["_id"] = str(m["_id"])
     matchups = await _resolve_open_slots(db, league_id, matchups)
+    from services.h2h_scoring import live_scores
+    matchups = await live_scores(db, league, matchups)
     return matchups
 
 
@@ -684,7 +688,7 @@ async def get_matchups(league_id: str, request: Request, week: Optional[int] = N
 async def get_current_week(league_id: str, request: Request):
     db = _deps["db"]
     user = await _deps["get_current_user"](request)
-    await require_league_member(db, user, league_id)
+    league = await require_league_member(db, user, league_id)
     pipeline = [
         {"$match": {"league_id": league_id, "status": "scheduled"}},
         {"$group": {"_id": None, "min_week": {"$min": "$week"}}},
@@ -695,6 +699,8 @@ async def get_current_week(league_id: str, request: Request):
     for m in matchups:
         m["_id"] = str(m["_id"])
     matchups = await _resolve_open_slots(db, league_id, matchups)
+    from services.h2h_scoring import live_scores
+    matchups = await live_scores(db, league, matchups)
     return {"week": current, "matchups": matchups}
 
 
@@ -815,6 +821,17 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
             "ended_at": lp.get("ended_at"),
         })
 
+    from utils.game_allocation import _build_game_date_map, _parse_game_date, calc_game_fpts_from_live
+    game_ids = []
+    for player in players:
+        for gid in (player.get("live_stats") or {}):
+            try:
+                game_ids.append(int(gid))
+            except (TypeError, ValueError):
+                continue
+    game_starts = await _build_game_date_map(db, game_ids)
+    scoring_config = await db.scoring_configs.find_one({"league_id": league_id})
+
     daily_totals = {d: 0.0 for d in days}
     player_rows = []
 
@@ -832,19 +849,16 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
         total_games = 0
 
         for gid, ls in (p.get("live_stats") or {}).items():
-            # Determine game date from updated_at
-            updated = ls.get("updated_at")
-            if not updated:
+            # Allocation follows puck drop, never the time a correction arrived.
+            try:
+                game_start = game_starts.get(int(gid))
+            except (TypeError, ValueError):
+                game_start = None
+            game_start = game_start or _parse_game_date(ls.get("updated_at"))
+            if game_start is None:
                 continue
-            if isinstance(updated, str):
-                try:
-                    updated = datetime.fromisoformat(updated.replace("Z", "+00:00"))
-                except Exception:
-                    continue
-            if hasattr(updated, "date"):
-                game_date = updated.date().isoformat()
-            else:
-                continue
+            game_start = game_start.astimezone(timezone.utc)
+            game_date = game_start.date().isoformat()
 
             # Only include games within the matchup period
             if game_date < period_start.isoformat() or game_date > period_end.isoformat():
@@ -853,7 +867,7 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
             # Per-game ownership check: credit only if owned at game date
             if ownership_spans:
                 try:
-                    gd_dt = datetime.fromisoformat(game_date).replace(tzinfo=timezone.utc)
+                    gd_dt = game_start
                     spans = ownership_spans.get(pid, [])
                     owned = False
                     for a, r in spans:
@@ -871,7 +885,7 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
             lineup_periods = lineup_by_player.get(pid, [])
             if lineup_periods:
                 try:
-                    gd_dt = datetime.fromisoformat(game_date).replace(tzinfo=timezone.utc)
+                    gd_dt = game_start
                     eligible = False
                     for lp in lineup_periods:
                         s = lp["started_at"]
@@ -888,7 +902,7 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
                 except Exception:
                     pass
 
-            fpts = _fantasy_points_from_live(ls, is_goalie)
+            fpts = calc_game_fpts_from_live(ls, is_goalie, scoring_config)
             goals = ls.get("goals", 0) or 0
             assists = ls.get("assists", 0) or 0
             shots = ls.get("shots", 0) or 0
@@ -963,11 +977,13 @@ async def get_daily_scoring(league_id: str, team_id: str, week: Optional[int] = 
 async def get_week_results(league_id: str, week: int, request: Request):
     db = _deps["db"]
     user = await _deps["get_current_user"](request)
-    await require_league_member(db, user, league_id)
+    league = await require_league_member(db, user, league_id)
     matchups = await db.matchups.find({"league_id": league_id, "week": week}).to_list(100)
     for m in matchups:
         m["_id"] = str(m["_id"])
     matchups = await _resolve_open_slots(db, league_id, matchups)
+    from services.h2h_scoring import live_scores
+    matchups = await live_scores(db, league, matchups)
     return matchups
 
 
@@ -997,6 +1013,9 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
     }).to_list(100)
     if not matchups:
         raise HTTPException(status_code=400, detail="No scheduled matchups for this week")
+
+    if any(not ObjectId.is_valid(m.get(f"{side}_team_id", "")) for m in matchups for side in ("home", "away")):
+        raise HTTPException(status_code=400, detail="Fill all open schedule slots before simulating this week")
 
     config = await db.scoring_configs.find_one({"league_id": input.league_id})
     scoring_format = league.get("scoring_format", "head_to_head")
@@ -1041,9 +1060,16 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         elif away_score > home_score:
             winner = m["away_team_id"]
 
+        category_fields = {}
+        if scoring_format == "h2h-categories":
+            from services.h2h_scoring import category_result
+            category_fields = await category_result(db, league, m["home_team_id"], m["away_team_id"], input.week)
+            winner = category_fields["winner"]
+
         await db.matchups.update_one(
             {"_id": m["_id"]},
             {"$set": {
+                **category_fields,
                 "home_score": home_score,
                 "away_score": away_score,
                 "winner": winner,
@@ -1404,6 +1430,30 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
             eliminated = scores[0]
             await db.teams.update_one({"_id": ObjectId(eliminated[0])}, {"$set": {"eliminated": True}})
             results.append({"eliminated": eliminated[1], "score": eliminated[2]})
+
+    # Finalize automatic qualification only after every regular matchup is closed.
+    regular_query = {"league_id": input.league_id, "is_playoff": {"$ne": True},
+                     "is_consolation": {"$ne": True}}
+    unfinished = await db.matchups.count_documents({**regular_query, "status": {"$ne": "completed"}})
+    if unfinished == 0 and await db.matchups.count_documents(regular_query):
+        playoff_query = {"league_id": input.league_id, "$or": [{"is_playoff": True}, {"is_consolation": True}]}
+        started = await db.matchups.count_documents({**playoff_query, "status": {"$in": ["completed", "in_progress"]}})
+        if not started:
+            final_teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
+            for consolation in (False, True):
+                prefix = "consolation_" if consolation else "playoff_"
+                if league.get(f"{prefix}seeding_method") == "custom":
+                    continue
+                seeded = _build_playoff_bracket(league, final_teams, is_consolation=consolation)
+                first_round = [row for row in seeded if row.get("bracket_round") == 1]
+                if not first_round:
+                    continue
+                query = {"league_id": input.league_id, "week": first_round[0]["week"],
+                         "is_consolation": consolation, "bracket_round": 1}
+                existing = await db.matchups.find(query).sort("_id", 1).to_list(100)
+                for saved, final in zip(existing, first_round):
+                    await db.matchups.update_one({"_id": saved["_id"], "status": "scheduled"}, {"$set": {
+                        "home_team_id": final["home_team_id"], "away_team_id": final["away_team_id"]}})
 
     await broadcast_to_room(f"league_{input.league_id}", "week_simulated", {
         "week": input.week,

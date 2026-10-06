@@ -15,6 +15,7 @@ Coverage
    unprotected + protected partitions.
 7. DraftBoard renders the expansion listing inside the Order Results tab.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -23,8 +24,8 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 REPO = Path(__file__).resolve().parents[2]
 RIBBON = REPO / "frontend/src/lovable/components/ProtectionListRibbon.jsx"
@@ -62,7 +63,7 @@ def owner_league(owner_token):
 # ── 1. Ribbon component + AppLayout mount ──────────────────────
 def test_protection_ribbon_exists():
     assert RIBBON.exists()
-    src = RIBBON.read_text()
+    src = read_source(RIBBON)
     assert 'data-testid="protection-list-ribbon"' in src
     assert 'data-testid="protection-list-ribbon-countdown"' in src
     assert 'data-testid="protection-list-ribbon-submit"' in src
@@ -74,7 +75,7 @@ def test_protection_ribbon_exists():
 
 
 def test_layout_mounts_ribbon():
-    src = LAYOUT.read_text()
+    src = read_source(LAYOUT)
     assert "import ProtectionListRibbon" in src
     assert "<ProtectionListRibbon" in src
 
@@ -93,8 +94,8 @@ def test_protection_list_status_endpoint_live(owner_token, owner_league):
 
 # ── 3. Admin Select: First-Time disabled when completed + Redraft option ──
 def test_admin_gates_startup_and_offers_redraft():
-    admin_src = ADMIN.read_text()
-    draft_tab = (REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx").read_text()
+    admin_src = read_source(ADMIN)
+    draft_tab = read_source(REPO / "frontend/src/lovable/pages/commissioner/tabs/DraftTab.tsx")
     assert 'data-testid="draft-type-startup"' in draft_tab
     assert "disabled={firstDraftCompleted}" in draft_tab
     assert 'data-testid="draft-type-redraft"' in draft_tab
@@ -148,7 +149,7 @@ def test_expansion_draft_board_endpoint(owner_token, owner_league):
 
 # ── 6. Draft Board page renders the expansion listing ─────────
 def test_draft_board_expansion_listing_block():
-    src = DRAFT_BOARD.read_text()
+    src = read_source(DRAFT_BOARD)
     assert "expansion-draft-board" in src, "Endpoint URL must be fetched"
     assert 'data-testid="expansion-board-card"' in src
     assert 'data-testid="expansion-board-teams"' in src

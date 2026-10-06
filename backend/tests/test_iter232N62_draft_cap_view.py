@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -93,12 +93,23 @@ async def _cleanup(db, seed):
     await db.drafts.delete_one({"_id": ObjectId(seed["draft_id"])})
 
 
+async def _materialize_picks(db, seed):
+    """Mirror the state committed by real picks: roster ownership and draft history."""
+    picks = await db.draft_picks.find({"draft_id": seed["draft_id"]}).to_list(None)
+    for tid in (seed["team1_id"], seed["team2_id"]):
+        await db.teams.update_one({"_id": ObjectId(tid)}, {"$set": {
+            "roster": [p["player_id"] for p in picks if p["team_id"] == tid]}})
+    await db.drafts.update_one({"_id": ObjectId(seed["draft_id"])}, {"$set": {
+        "picks": [{"team_id": p["team_id"], "player_id": p["player_id"]} for p in picks]}})
+
+
 @pytest.mark.asyncio
 async def test_non_cap_league_returns_disabled_shape():
     from routes.draft_cap_view import get_draft_cap_status
     db = _db()
     s = await _seed(db, cap_enabled=False)
     _wire(s["admin_id"])
+    await _materialize_picks(db, s)
     try:
         r = await get_draft_cap_status(s["draft_id"], _StubReq())
         assert r["salary_cap_enabled"] is False
@@ -133,6 +144,7 @@ async def test_cap_league_sums_picks_and_computes_percent():
         "draft_id": s["draft_id"], "pick_number": 2,
         "team_id": s["team1_id"], "player_id": str(p2.inserted_id),
     })
+    await _materialize_picks(db, s)
     try:
         r = await get_draft_cap_status(s["draft_id"], _StubReq())
         assert r["salary_cap_enabled"] is True
@@ -170,6 +182,7 @@ async def test_unpriced_player_uses_default_rookie_aav():
         "draft_id": s["draft_id"], "pick_number": 1,
         "team_id": s["team1_id"], "player_id": str(p.inserted_id),
     })
+    await _materialize_picks(db, s)
     try:
         r = await get_draft_cap_status(s["draft_id"], _StubReq())
         my_team = next(t for t in r["teams"] if t["team_id"] == s["team1_id"])
@@ -194,6 +207,7 @@ async def test_over_cap_flag_when_used_exceeds_cap():
         "draft_id": s["draft_id"], "pick_number": 1,
         "team_id": s["team1_id"], "player_id": str(p.inserted_id),
     })
+    await _materialize_picks(db, s)
     try:
         r = await get_draft_cap_status(s["draft_id"], _StubReq())
         my = next(t for t in r["teams"] if t["team_id"] == s["team1_id"])

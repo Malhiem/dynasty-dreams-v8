@@ -6,6 +6,7 @@ small Repeat icon that opens the TradeBuilder and queues that pick.
 This test pins the wiring to the file so future refactors can't drop
 the trade flow without notice.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -13,7 +14,7 @@ DRAFT_ROOM = REPO / "frontend/src/pages/DraftRoomPage.jsx"
 
 
 def test_draft_room_trade_toggle_present():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # Toggle button + label states
     assert 'data-testid="draft-room-trade-toggle"' in src
     assert "Trade Mode: On" in src
@@ -31,7 +32,7 @@ def test_draft_room_trade_toggle_present():
 
 
 def test_handler_uses_trade_builder_api():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # The handler must call openBuilder + addPick — same API as Draft Board
     assert "tradeBuilder.openBuilder(" in src
     assert "tradeBuilder.addPick(" in src

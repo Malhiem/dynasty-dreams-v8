@@ -1,4 +1,5 @@
 """Tests for GET /api/leagues/{id}/transactions — limit / since / team_id filters."""
+from tests.http_test_auth import test_admin_headers
 import os
 import requests
 import pytest
@@ -21,7 +22,7 @@ TXN_URL = f"{BASE_URL}/api/leagues/{LEAGUE_ID}/transactions"
 
 @pytest.fixture(scope="module")
 def one_team_id():
-    r = requests.get(f"{BASE_URL}/api/teams?league_id={LEAGUE_ID}", timeout=30)
+    r = requests.get(f"{BASE_URL}/api/teams?league_id={LEAGUE_ID}", timeout=30, headers=test_admin_headers())
     assert r.status_code == 200, r.text
     teams = r.json()
     assert isinstance(teams, list) and teams, "expected teams for league"
@@ -95,7 +96,7 @@ def test_combined_filters(one_team_id):
 
 def test_no_empty_pending_trades_zarek_icebreakers():
     """Verify the 47 empty trades between Zarek's Frozen and Ice Breakers were cleaned."""
-    r = requests.get(f"{BASE_URL}/api/leagues/{LEAGUE_ID}/pending-trades", timeout=30)
+    r = requests.get(f"{BASE_URL}/api/leagues/{LEAGUE_ID}/pending-trades", timeout=30, headers=test_admin_headers())
     assert r.status_code == 200
     data = r.json()
     trades = data.get("pending_trades", [])

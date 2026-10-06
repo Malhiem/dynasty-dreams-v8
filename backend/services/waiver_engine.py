@@ -27,6 +27,7 @@ Public API:
     next scheduled processing time (used by the UI).
 """
 from __future__ import annotations
+from services.financial_lock import serialize_finances
 
 import logging
 import random
@@ -264,6 +265,7 @@ async def _finalize_winner(
         return False
 
 
+@serialize_finances(lambda: None)
 async def process_pending_claims(
     db,
     league_id: str,
@@ -375,6 +377,12 @@ async def process_pending_claims(
                 if block:
                     denied.append((cand, block))
                     continue
+            from services.salary_policy import payroll
+            roster = [p for p in team_doc.get("roster") or [] if p != cand.get("drop_player_id")] + [player_id]
+            projected = (await payroll(db, team_doc, league, roster=roster))["used"]
+            if league.get("salary_cap_enabled") and projected > float(league.get("salary_cap") or 0):
+                denied.append((cand, "salary_cap_breach"))
+                continue
             winner = cand
             break
 

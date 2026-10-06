@@ -205,20 +205,29 @@ async def get_draft_board(draft_id: str):
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
+    # Older records can predate the materialized board fields.
+    team_abbrs = draft.get("team_abbrs")
+    if team_abbrs is None:
+        teams = await _db().teams.find({"league_id": draft.get("league_id")}).sort("draft_position", 1).to_list(100)
+        team_abbrs = [team.get("logo_abbr") or team.get("abbreviation") or team.get("name", "Team") for team in teams]
+    total_rounds = draft.get("total_rounds") or draft.get("rounds") or 1
+    snake_draft = draft.get("snake_draft", draft.get("draft_type", "snake") == "snake")
+    picks = draft.get("picks") or []
+    current_pick = draft.get("current_pick") or 1
     board = build_draft_board(
-        draft["team_abbrs"],
-        draft["total_rounds"],
-        draft["snake_draft"],
-        draft["picks"]
+        team_abbrs,
+        total_rounds,
+        snake_draft,
+        picks
     )
     return {
         "board": board,
-        "current_pick": draft["current_pick"],
-        "status": draft["status"],
-        "team_abbrs": draft["team_abbrs"],
-        "total_rounds": draft["total_rounds"],
-        "snake_draft": draft["snake_draft"],
-        "on_the_clock": get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"]) if draft["team_abbrs"] else None
+        "current_pick": current_pick,
+        "status": draft.get("status", "scheduled"),
+        "team_abbrs": team_abbrs,
+        "total_rounds": total_rounds,
+        "snake_draft": snake_draft,
+        "on_the_clock": get_team_for_pick(team_abbrs, current_pick, snake_draft) if team_abbrs else None
     }
 
 

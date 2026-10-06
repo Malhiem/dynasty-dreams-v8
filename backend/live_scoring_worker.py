@@ -177,52 +177,15 @@ async def _recompute_team_live_totals(db):
 
     teams = await db.teams.find(
         {},
-        {"_id": 1, "league_id": 1, "roster": 1, "name": 1, "goalie_daily_lock": 1, "live_stats_game_dates": 1},
+        {"_id": 1, "league_id": 1, "roster": 1, "lineup": 1, "name": 1, "goalie_daily_lock": 1, "live_stats_game_dates": 1},
     ).to_list(1000)
 
-    # Pre-load scoring rosters for each (league, week) pair so we use
-    # historical ownership instead of the live roster.
-    from utils.scoring_roster import get_scoring_roster
-
-    # Pre-load game_id → date mapping for per-game ownership checks
-    all_game_ids_int = []
-    for pid_games in player_game_fpts.values():
-        for gid_str in pid_games:
-            try:
-                all_game_ids_int.append(int(gid_str))
-            except (ValueError, TypeError):
-                pass
-    _game_date_cache: dict[int, str] = {}  # gid_int → "YYYY-MM-DD"
-    if all_game_ids_int:
-        async for g in db.games.find(
-            {"nhl_game_id": {"$in": list(set(all_game_ids_int))}},
-            {"nhl_game_id": 1, "date": 1},
-        ):
-            _game_date_cache[g["nhl_game_id"]] = str(g.get("date", "")).split("T")[0]
-
-    # Pre-load ownership periods per league for per-game checks
-    from datetime import datetime as _dt
-    _ownership_cache: dict[str, list[tuple]] = {}  # f"{pid}:{lid}" → [(acquired, released)]
-    async for op in db.player_ownership_periods.find({}):
-        key = f"{op['player_id']}:{op['league_id']}"
-        _ownership_cache.setdefault(key, []).append(
-            (op["acquired_at"], op.get("released_at"))
-        )
-
-    def _owned_at_game(pid: str, lid: str, game_date_str: str) -> bool:
-        """Quick in-memory ownership check for a game date."""
-        key = f"{pid}:{lid}"
-        spans = _ownership_cache.get(key)
-        if not spans:
-            return True  # No ownership data → assume owned (backward compat)
-        try:
-            gd = _dt.fromisoformat(game_date_str).replace(tzinfo=timezone.utc)
-        except Exception:
-            return True
-        for acquired, released in spans:
-            if acquired <= gd and (released is None or released > gd):
-                return True
-        return False
+    from services.live_roster_allocation import allocation_context, qualifies
+    game_ids = list({int(gid) for games in player_game_fpts.values() for gid in games if str(gid).isdigit()})
+    allocation = await allocation_context(db, game_ids)
+    configs = {row["league_id"]: row async for row in db.scoring_configs.find({})}
+    players_by_id = {str(p["_id"]): p for p in all_players}
+    from utils.game_allocation import calc_game_fpts_from_live
 
     team_deltas = []
     for t in teams:
@@ -240,25 +203,16 @@ async def _recompute_team_live_totals(db):
         lid = str(t.get("league_id") or "")
 
         fpts = 0.0
-        for pid in (t.get("roster") or []):
+        for pid in set(t.get("roster") or []) | allocation[3].get((tid, lid), set()):
             games = player_game_fpts.get(pid, {})
             if not games:
                 continue
 
-            # Filter games by ownership at game date
-            owned_games: dict[str, float] = {}
-            for gid_str, gfpts in games.items():
-                try:
-                    gid_int = int(gid_str)
-                except (ValueError, TypeError):
-                    owned_games[gid_str] = gfpts
-                    continue
-                date_str = _game_date_cache.get(gid_int, "")
-                if not date_str:
-                    owned_games[gid_str] = gfpts  # Can't check → assume owned
-                    continue
-                if _owned_at_game(pid, lid, date_str):
-                    owned_games[gid_str] = gfpts
+            owned_games = {
+                gid: calc_game_fpts_from_live(players_by_id[pid]["live_stats"][gid], player_is_goalie.get(pid, False), configs.get(lid))
+                for gid in games
+                if qualifies(pid, tid, lid, gid, t.get("roster") or [], t.get("lineup") or {}, allocation)
+            }
 
             if not owned_games:
                 continue
@@ -312,18 +266,25 @@ async def _recompute_team_live_totals(db):
 
 async def run_once(db, sio=None):
     """Single poll cycle. Returns summary dict for logs/WebSocket broadcast."""
+    async def unavailable_summary():
+        state = await db.system_state.find_one({"_id": "live_scoring"})
+        latest = dict((state or {}).get("latest") or {"date": None, "games": [], "games_processed": 0,
+            "players_updated": 0, "playoff_games": 0, "polled_at": None})
+        latest.update(stale=True, error="NHL data unavailable")
+        return latest
+
     try:
         from nhlpy import NHLClient
     except Exception as e:
         logger.warning("nhlpy not available: %s", e)
-        return {"error": "nhlpy missing"}
+        return await unavailable_summary()
 
     client = NHLClient()
     try:
         sched = client.schedule.daily_schedule()
     except Exception as e:
         logger.warning("schedule fetch failed: %s", e)
-        return {"error": str(e)}
+        return await unavailable_summary()
 
     games = sched.get("games", []) or []
     today = sched.get("date")

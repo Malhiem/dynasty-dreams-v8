@@ -3,6 +3,7 @@
 Validates the static structure of the rewritten TruncatedRosterPanel + the
 DraftRoom mount wiring + the on-block megaphones being always-visible.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 FRONTEND = Path("/app/frontend/src")
@@ -24,9 +25,9 @@ def _read(rel: str) -> str:
         ):
             fp = FRONTEND / sub
             if fp.exists():
-                parts.append(fp.read_text(encoding='utf-8'))
+                parts.append(read_source(fp, encoding='utf-8'))
         return chr(10).join(parts)
-    return (FRONTEND / rel).read_text(encoding='utf-8')
+    return read_source(FRONTEND / rel, encoding='utf-8')
 
 
 def test_truncated_roster_panel_has_sort_three_click_cycle():
@@ -92,7 +93,7 @@ def test_dynamic_stat_columns_from_scoring_config():
     assert "STAT_LABELS" in panel and '"+/-"' in panel and '"SV%"' in panel
 
     # Backend wires the scoring categories into the response
-    bsrc = (BACKEND / "routes/teams.py").read_text(encoding="utf-8")
+    bsrc = read_source(BACKEND / "routes/teams.py", encoding="utf-8")
     assert '"scoring":' in bsrc
     assert '"skater":' in bsrc and '"goalie":' in bsrc
     # And bucketed stats per player

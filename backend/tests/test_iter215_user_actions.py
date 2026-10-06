@@ -17,8 +17,8 @@ import requests
 import uuid
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 def _login(email, password):
@@ -46,6 +46,12 @@ def _make_disposable_user():
     token = _login(email, password)
     me = requests.get(f"{API_URL}/api/auth/me",
                       headers={"Authorization": f"Bearer {token}"}).json()
+    # Impersonation is intentionally restricted to explicitly marked sandbox users.
+    from pymongo import MongoClient
+    from bson import ObjectId
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as mongo:
+        mongo[os.environ["DB_NAME"]].users.update_one({"_id": ObjectId(me["id"])}, {"$set": {"is_test_account": True}})
     return me["id"], email, token
 
 
@@ -320,7 +326,7 @@ def test_user_detail_extended_sections():
     detail payload (League/Team, Behavioral, Financial, Engagement,
     Compliance)."""
     H = _admin_headers()
-    list_r = requests.get(f"{API_URL}/api/admin/platform/users?q=admin@dynastydreams", headers=H)
+    list_r = requests.get(f"{API_URL}/api/admin/platform/users?q={ADMIN_EMAIL}", headers=H)
     uid = list_r.json()["users"][0]["id"]
     r = requests.get(f"{API_URL}/api/admin/platform/users/{uid}", headers=H)
     assert r.status_code == 200
@@ -427,7 +433,7 @@ def test_impersonate_start_swaps_cookie_and_me_returns_target():
     # /auth/me should now return the TARGET user with impersonation metadata
     me2 = session.get(f"{API_URL}/api/auth/me").json()
     assert me2["email"] == target_email
-    assert me2["_impersonation_mode"] == "read_only"
+    assert me2["_impersonation_mode"] == "sandbox"
     assert me2["_impersonator_email"] == ADMIN_EMAIL
     assert me2["_impersonation_expires_at"]  # populated for the banner countdown
     # Stop impersonation

@@ -30,7 +30,7 @@ async def _login(client, email, password):
 async def test_preferences_catalog_returns_all_25_events():
     """GET /api/notifications/preferences returns the catalog + current prefs."""
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         r = await client.get(
             "/api/notifications/preferences",
             headers={"Authorization": f"Bearer {token}"},
@@ -58,7 +58,7 @@ async def test_preferences_catalog_returns_all_25_events():
 async def test_preferences_update_persists_per_channel():
     """PUT toggles a single channel; subsequent GET reflects it."""
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         # Reset to defaults first so we have a known starting state.
         r = await client.post(
             "/api/notifications/preferences/reset",
@@ -98,7 +98,7 @@ async def test_preferences_update_persists_per_channel():
 @pytest.mark.asyncio
 async def test_preferences_rejects_unknown_event_id():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         r = await client.put(
             "/api/notifications/preferences",
             headers={"Authorization": f"Bearer {token}"},
@@ -122,7 +122,7 @@ async def test_in_app_disabled_blocks_notification_creation():
     already excluded from the fanout in routes/trade_block.py).
     """
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         # Reset, then disable in_app for trade_proposed (we'll then create
         # a notification directly via the activity collection check).
         await client.post(
@@ -155,11 +155,11 @@ async def test_admin_player_status_change_fans_out():
     """POST /api/admin/players/{id}/status-change emits per-rostering-team
     notifications and respects the change_kind whitelist."""
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        admin_token = await _login(client, "admin@dynastydreams.com", "Admin123!")
+        admin_token = await _login(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         # Find any player that's rostered by at least one team.
         from motor.motor_asyncio import AsyncIOMotorClient
         c = AsyncIOMotorClient(os.environ["MONGO_URL"])
-        db = c[os.environ.get("DB_NAME", "test_database")]
+        db = c[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
         team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
         assert team, "no rostered team to test against"
         player_id = team["roster"][0]
@@ -189,10 +189,10 @@ async def test_admin_player_status_change_fans_out():
 async def test_admin_player_status_change_requires_admin():
     """Non-admin callers get 403."""
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        chris_token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        chris_token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         from motor.motor_asyncio import AsyncIOMotorClient
         c = AsyncIOMotorClient(os.environ["MONGO_URL"])
-        db = c[os.environ.get("DB_NAME", "test_database")]
+        db = c[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
         team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
         assert team
         player_id = team["roster"][0]

@@ -11,6 +11,7 @@ Verifies that:
       promotes the requester to commissioner role.
   (6) GET /leagues/{id} hydrates the deep pass-through fields surface.
 """
+import os
 import asyncio
 import logging
 
@@ -27,7 +28,7 @@ from routes import leagues as leagues_routes
 @pytest.fixture
 def isolated_app():
     import os
-    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+    mongo_url = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
     db_name = f"dd_test_iter109_{ObjectId()}"
     client = AsyncIOMotorClient(mongo_url, maxPoolSize=1, retryReads=True, retryWrites=True)
     db = client[db_name]

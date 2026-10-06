@@ -5,8 +5,8 @@ import pytest
 import requests
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-COMMISH_EMAIL = "admin@dynastydreams.com"
-COMMISH_PASS = "Admin123!"
+COMMISH_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+COMMISH_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 def _login(email: str, password: str):
@@ -29,7 +29,7 @@ def _pick_commish_league(s):
 
 def test_dynasty_career_unknown_player_empty():
     """No snapshots → empty history but valid shape."""
-    r = requests.get(f"{BASE_URL}/api/players/000000000000000000000999/dynasty-career")
+    r = _login(COMMISH_EMAIL, COMMISH_PASS).get(f"{BASE_URL}/api/players/000000000000000000000999/dynasty-career")
     assert r.status_code == 200
     body = r.json()
     assert body["history"] == []
@@ -52,7 +52,7 @@ def test_dynasty_career_with_snapshot():
         pytest.skip("No players in snapshot")
     pid = snap["players"][0]["player_id"]
 
-    r = requests.get(f"{BASE_URL}/api/players/{pid}/dynasty-career")
+    r = s.get(f"{BASE_URL}/api/players/{pid}/dynasty-career")
     assert r.status_code == 200
     body = r.json()
     assert body["totals"]["seasons"] >= 1
@@ -79,7 +79,7 @@ def test_dynasty_career_includes_awards_and_championships():
     if not rostered_pids:
         pytest.skip("No rostered players")
     pid = rostered_pids[0]
-    r = requests.get(f"{BASE_URL}/api/players/{pid}/dynasty-career")
+    r = s.get(f"{BASE_URL}/api/players/{pid}/dynasty-career")
     body = r.json()
     if body["history"]:
         first = body["history"][0]

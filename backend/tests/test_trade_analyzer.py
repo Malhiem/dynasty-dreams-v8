@@ -57,7 +57,7 @@ async def _reset_analyzer_quota(uid, is_pro=False):
 @pytest.mark.asyncio
 async def test_analyzer_status_initial():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         uid = await _user_id(client, token)
         await _reset_analyzer_quota(uid)
         r = await client.get("/api/users/me/analyzer-status",
@@ -74,7 +74,7 @@ async def test_value_player_unmetered():
     """Single-player valuation must NOT burn quota and must include all
     projection fields."""
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         uid = await _user_id(client, token)
         await _reset_analyzer_quota(uid)
         lid = await _league_id(client, token)
@@ -102,7 +102,7 @@ async def test_value_player_unmetered():
 @pytest.mark.asyncio
 async def test_value_pick_curve():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         # R1 must outvalue R5 must outvalue R10
         rounds = []
         for r_ in [1, 5, 10]:
@@ -131,7 +131,7 @@ async def test_value_pick_curve():
 @pytest.mark.asyncio
 async def test_player_projections_endpoint():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league_id(client, token)
         pid = await _player_id(client, "Connor McDavid")
         r = await client.get(
@@ -153,7 +153,7 @@ async def test_player_projections_endpoint():
 async def test_analyze_unlimited_after_paywall_removed():
     """Paywall removed — free-tier user can run multiple analyses back-to-back."""
     async with AsyncClient(base_url=BASE, timeout=60) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         uid = await _user_id(client, token)
         await _reset_analyzer_quota(uid, is_pro=False)
         lid = await _league_id(client, token)
@@ -188,8 +188,8 @@ async def test_analyze_unlimited_after_paywall_removed():
 async def test_analyze_pro_unlimited_with_picks_and_faab():
     """Pro user can run unlimited analyses; result includes picks + FAAB."""
     async with AsyncClient(base_url=BASE, timeout=60) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
-        admin_token = await _login(client, "admin@dynastydreams.com", "Admin123!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
+        admin_token = await _login(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         uid = await _user_id(client, token)
         await _reset_analyzer_quota(uid, is_pro=False)
         lid = await _league_id(client, token)
@@ -246,8 +246,8 @@ async def test_analyze_pro_unlimited_with_picks_and_faab():
 @pytest.mark.asyncio
 async def test_analyze_rejects_empty_side():
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
-        admin_token = await _login(client, "admin@dynastydreams.com", "Admin123!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
+        admin_token = await _login(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         uid = await _user_id(client, token)
         # Pro to bypass quota for this validation test
         await client.post(
@@ -276,7 +276,7 @@ async def test_matchup_side_rail_endpoint_shape():
     """The new /leagues/{id}/matchup-side-rail returns enriched matchups
     with per-side top_contributors + projection fields."""
     async with AsyncClient(base_url=BASE, timeout=30) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league_id(client, token)
         r = await client.get(
             f"/api/leagues/{lid}/matchup-side-rail",

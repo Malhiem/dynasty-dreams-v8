@@ -726,6 +726,8 @@ async def get_player(player_id: str, league_id: Optional[str] = None, request: R
     provided. Bio fields (height, weight, birth, draft) come from the NHL
     public API and are cached for 24h via `_career_cache`."""
     db = _db()
+    if not ObjectId.is_valid(player_id):
+        raise HTTPException(status_code=422, detail="Invalid player id")
     player = await db.players.find_one({"_id": ObjectId(player_id)})
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")

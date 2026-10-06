@@ -37,7 +37,7 @@ async def _my_team(client, token):
 @pytest.mark.asyncio
 async def test_update_team_abbr():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         team = await _my_team(client, token)
         original_abbr = team["logo_abbr"]
 
@@ -68,7 +68,7 @@ async def test_update_team_abbr():
 @pytest.mark.asyncio
 async def test_update_team_name_round_trip():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         team = await _my_team(client, token)
         original_name = team["name"]
         new_name = original_name + " Test"
@@ -95,7 +95,7 @@ async def test_update_team_name_round_trip():
 @pytest.mark.asyncio
 async def test_invalid_abbr_rejected():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         team = await _my_team(client, token)
         r = await client.put(
             f"/api/teams/{team['id']}",
@@ -108,7 +108,7 @@ async def test_invalid_abbr_rejected():
 @pytest.mark.asyncio
 async def test_logo_url_set_via_put():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         team = await _my_team(client, token)
         url = "https://example.com/logo.png"
         r = await client.put(
@@ -131,7 +131,7 @@ async def test_logo_url_set_via_put():
 @pytest.mark.asyncio
 async def test_only_owner_or_commish_can_edit():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         teams = (await client.get("/api/teams", headers={"Authorization": f"Bearer {token}"})).json()
         me = (await client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})).json()
         other = next((t for t in teams if t.get("owner_id") != me["id"]), None)
@@ -153,7 +153,7 @@ async def test_theme_color_set_and_clear():
     AND supports explicit clearing via theme_color=null.
     """
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         team = await _my_team(client, token)
         original = team.get("theme_color")
 

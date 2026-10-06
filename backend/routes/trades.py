@@ -6,6 +6,7 @@ and `_execute_multi_party_trade` remain in server.py because the awards and
 matchups modules also depend on them. The trade-route module accesses them
 via the standard `_deps` dict.
 """
+from services.financial_lock import serialize_finances
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -1766,6 +1767,7 @@ async def get_league_trades(
 
 
 @router.post("/trades/{trade_id}/accept")
+@serialize_finances(_db)
 async def accept_trade(trade_id: str, request: Request):
     db = _db()
     logger = _logger()
@@ -1793,6 +1795,9 @@ async def accept_trade(trade_id: str, request: Request):
     if not trade.get("conditions"):
         try:
             executed = await _execute_trade(trade)
+        except HTTPException:
+            await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"status": "proposed"}})
+            raise
         except Exception as e:
             logger.exception("Trade auto-execute failed: %s", e)
 
@@ -2047,6 +2052,7 @@ async def create_multi_party_trade(input: MultiPartyTradeProposalCreate, request
 
 
 @router.post("/trades/{trade_id}/party-respond")
+@serialize_finances(_db)
 async def party_respond_to_trade(trade_id: str, input: TradePartyResponse, request: Request):
     """Accept or reject the trade as the user's party."""
     db = _db()
@@ -2059,7 +2065,7 @@ async def party_respond_to_trade(trade_id: str, input: TradePartyResponse, reque
     parties = trade.get("parties") or []
     if not parties:
         raise HTTPException(status_code=400, detail="This trade does not support party-respond. Use /accept or /reject.")
-    if trade.get("status") != "pending":
+    if trade.get("status") not in ("proposed", "pending"):
         raise HTTPException(status_code=400, detail=f"Trade status is {trade.get('status')}")
 
     party_idx = next((i for i, p in enumerate(parties) if p.get("owner_id") == user["_id"]), None)
@@ -2107,6 +2113,8 @@ async def party_respond_to_trade(trade_id: str, input: TradePartyResponse, reque
             try:
                 executed = await _execute_trade(refreshed)
                 refreshed = await db.trades.find_one({"_id": ObjectId(trade_id)})
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.exception("Multi-party trade auto-execute failed: %s", e)
 
@@ -2155,8 +2163,6 @@ async def execute_trade_endpoint(trade_id: str, request: Request):
     trade = await db.trades.find_one({"_id": ObjectId(trade_id)})
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
-    if trade.get("status") not in ("accepted", "pending", "conditional"):
-        raise HTTPException(status_code=400, detail=f"Trade status is {trade.get('status')}")
     league = await db.leagues.find_one({"_id": ObjectId(trade["league_id"])})
     is_participant = user["_id"] in (trade.get("proposer_id"), trade.get("target_owner_id"))
     is_comm = league and (
@@ -2165,6 +2171,9 @@ async def execute_trade_endpoint(trade_id: str, request: Request):
     )
     if not (is_participant or is_comm):
         raise HTTPException(status_code=403, detail="Not authorized to execute this trade")
+
+    if trade.get("status") not in ("accepted", "pending", "conditional"):
+        raise HTTPException(status_code=400, detail=f"Trade status is {trade.get('status')}")
 
     # Iter 232x — Non-commissioners must wait for the review period to
     # elapse before executing. Only commissioners may push through early.

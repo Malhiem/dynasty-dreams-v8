@@ -30,13 +30,26 @@ def _backend_url():
 
 
 BASE = _backend_url()
-COMMISSIONER_EMAIL = "chriszarek@gmail.com"
-COMMISSIONER_PASSWORD = "Chris2026!"
+COMMISSIONER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+COMMISSIONER_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 # Hamilton Coyotes — Iter 230o seed team with an empty roster, used as
 # the canonical regression fixture for the "empty roster must be
 # non-compliant" rule. Resolved at test run time so test data churn
 # (re-seeds, ID changes) doesn't break the assertion.
 EMPTY_TEAM_NAME = "Hamilton Coyotes"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def empty_roster_inputs(_global_pollution_sweep):
+    from pymongo import MongoClient
+    from bson import ObjectId
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    with MongoClient(os.environ["MONGO_URL"]) as mongo:
+        db = mongo[os.environ["DB_NAME"]]
+        team = db.teams.find_one({"_id": ObjectId("69e59b30cbd3fea02a914c61")})
+        db.teams.update_one({"_id": team["_id"]}, {"$set": {"name": EMPTY_TEAM_NAME, "roster": [], "lineup": {}}})
+        yield
+        db.teams.update_one({"_id": team["_id"]}, {"$set": {"name": team["name"], "roster": team["roster"], "lineup": team.get("lineup", {})}})
 
 
 async def _login(client, email, password):

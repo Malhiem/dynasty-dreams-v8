@@ -29,8 +29,8 @@ DB_NAME = os.environ.get("DB_NAME")
 if not BASE_URL:
     pytest.skip("REACT_APP_BACKEND_URL missing", allow_module_level=True)
 
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 # ───────────────────────── Fixtures ─────────────────────────
@@ -58,7 +58,7 @@ def other_user_session():
     email = f"TEST_other_{uuid.uuid4().hex[:6]}@example.com"
     password = "TestPass123!"
     r = s.post(f"{BASE_URL}/api/auth/register",
-               json={"email": email, "password": password,
+               json={"username": "fixture_" + uuid.uuid4().hex[:16], "email": email, "password": password,
                      "name": f"Tester {uuid.uuid4().hex[:4]}"})
     assert r.status_code in (200, 201), f"register failed: {r.status_code} {r.text}"
     # register typically auto-logs in; ensure cookie
@@ -77,6 +77,44 @@ def admin_commissioner_league(admin_session, mongo_db):
     lg = mongo_db.leagues.find_one({"commissioner_id": admin_id, "premium": {"$ne": True}})
     assert lg, "Admin should have at least one non-premium league"
     return str(lg["_id"])
+
+
+import pytest_asyncio
+from types import SimpleNamespace
+
+@pytest_asyncio.fixture
+async def payment_provider_ctx(monkeypatch):
+    from routes import payments
+    from tests.router_test_utils import isolated_router_app
+    state = {"payment_status": "unpaid"}
+    captured = []
+    session_id = "cs_fixture_" + uuid.uuid4().hex
+    class Checkout:
+        def __init__(self, **kwargs):
+            pass
+        async def create_checkout_session(self, request):
+            captured.append(request)
+            return SimpleNamespace(session_id=session_id, url="https://checkout.example.com/fixture")
+        async def get_checkout_status(self, selected):
+            assert selected == session_id
+            return SimpleNamespace(status="complete", payment_status=state["payment_status"], amount_total=29.99, currency="usd")
+    monkeypatch.setattr(payments, "PAYMENTS_DISABLED", False)
+    monkeypatch.setattr(payments, "StripeCheckout", Checkout)
+    monkeypatch.setattr(payments, "CheckoutSessionRequest", SimpleNamespace)
+    user = {"_id": str(ObjectId()), "role": "admin", "email": ADMIN_EMAIL}
+    async with isolated_router_app(payments, user=user) as ctx:
+        lid = ObjectId()
+        await ctx.db.leagues.insert_one({"_id": lid, "commissioner_id": user["_id"], "premium": False})
+        yield ctx, state, str(lid), captured
+
+@pytest.fixture(scope="module", autouse=True)
+def open_recommendation_inputs(_global_pollution_sweep, mongo_db):
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1"
+    inserted = mongo_db.leagues.insert_one({"name": "Fixture Frozen Match", "commissioner_id": str(ObjectId()),
+        "format": "dynasty", "scoring_format": "head_to_head", "draft_type": "auction", "max_teams": 12,
+        "current_teams": 0, "is_private": False, "sport": "nhl", "status": "drafting"})
+    yield
+    mongo_db.leagues.delete_one({"_id": inserted.inserted_id})
 
 
 # ───────────────────────── 1. League Premium GET ─────────────────────────
@@ -105,18 +143,15 @@ class TestLeaguePremiumGet:
 # ───────────────────────── 2. Payments create ─────────────────────────
 
 class TestPaymentsCreate:
-    def test_league_premium_success(self, admin_session, admin_commissioner_league):
-        r = admin_session.post(f"{BASE_URL}/api/payments/create", json={
-            "package_type": "league_premium",
-            "league_id": admin_commissioner_league,
-            "origin_url": "https://example.com"
-        })
-        assert r.status_code == 200, r.text
-        body = r.json()
-        assert "url" in body and body["url"].startswith("http")
-        assert "session_id" in body and len(body["session_id"]) > 5
-        # stash for later test
-        TestPaymentsCreate.last_session_id = body["session_id"]
+    @pytest.mark.asyncio
+    async def test_league_premium_success(self, payment_provider_ctx):
+        ctx, state, lid, captured = payment_provider_ctx
+        response = await ctx.client.post("/api/payments/create", json={"package_type": "league_premium", "league_id": lid, "origin_url": "https://example.com"})
+        assert response.status_code == 200, response.text
+        assert response.json()["url"].startswith("https://checkout.example.com/")
+        assert captured[0].amount == 29.99
+        transaction = await ctx.db.payment_transactions.find_one({"session_id": response.json()["session_id"]})
+        assert transaction["payment_status"] == "pending"
 
     def test_league_premium_missing_league_id(self, admin_session):
         r = admin_session.post(f"{BASE_URL}/api/payments/create", json={
@@ -157,20 +192,19 @@ class TestPaymentsCreate:
         finally:
             mongo_db.leagues.delete_one({"_id": ins.inserted_id})
 
-    def test_premium_monthly_still_works(self, admin_session):
-        r = admin_session.post(f"{BASE_URL}/api/payments/create", json={
-            "package_type": "premium_monthly",
-            "origin_url": "https://example.com"
-        })
-        assert r.status_code == 200
-        assert "url" in r.json()
+    @pytest.mark.asyncio
+    async def test_premium_monthly_still_works(self, payment_provider_ctx):
+        ctx, state, lid, captured = payment_provider_ctx
+        response = await ctx.client.post("/api/payments/create", json={"package_type": "premium_monthly", "origin_url": "https://example.com"})
+        assert response.status_code == 200, response.text
+        assert captured[0].amount == 9.99
 
-    def test_premium_yearly_still_works(self, admin_session):
-        r = admin_session.post(f"{BASE_URL}/api/payments/create", json={
-            "package_type": "premium_yearly",
-            "origin_url": "https://example.com"
-        })
-        assert r.status_code == 200
+    @pytest.mark.asyncio
+    async def test_premium_yearly_still_works(self, payment_provider_ctx):
+        ctx, state, lid, captured = payment_provider_ctx
+        response = await ctx.client.post("/api/payments/create", json={"package_type": "premium_yearly", "origin_url": "https://example.com"})
+        assert response.status_code == 200, response.text
+        assert captured[0].amount == 79.99
 
     def test_invalid_package_type_400(self, admin_session):
         r = admin_session.post(f"{BASE_URL}/api/payments/create", json={
@@ -183,78 +217,21 @@ class TestPaymentsCreate:
 # ───────────────────────── 3. Simulated paid flow ─────────────────────────
 
 class TestSimulatedPaidFlow:
-    def test_mutate_to_paid_flips_premium(self, admin_session, admin_commissioner_league, mongo_db):
-        """Create session, mutate payment_status to 'paid' in Mongo,
-        then call GET /payments/status/{id} — but the endpoint re-queries Stripe which
-        will return 'unpaid'. So we directly test the branch by using the DB state manipulation +
-        a second mock: we can't easily simulate Stripe 'paid'. Instead, we assert the
-        BRANCH exists by calling the endpoint and verifying no error + proper auth.
-
-        Additionally we *directly* simulate the paid side-effect by running the same
-        update that the endpoint does when status.payment_status=='paid' — but since
-        this is a guardrail, we instead just verify the endpoint returns a valid
-        payload and auth-forbids other users.
-        """
-        # Create fresh session
-        r = admin_session.post(f"{BASE_URL}/api/payments/create", json={
-            "package_type": "league_premium",
-            "league_id": admin_commissioner_league,
-            "origin_url": "https://example.com"
-        })
-        assert r.status_code == 200
-        session_id = r.json()["session_id"]
-
-        # Call status — the test Stripe key returns CheckoutError (no such session)
-        # which surfaces as 500. That's a pre-existing quirk of the test env; we
-        # tolerate either 200 (stripe session retrievable) or 500 (test key no-op)
-        # and move on to validate the DB branch directly.
-        r2 = admin_session.get(f"{BASE_URL}/api/payments/status/{session_id}")
-        assert r2.status_code in (200, 500), f"unexpected status: {r2.status_code}"
-
-        # Directly simulate the paid branch by running the exact same update logic
-        # the endpoint would run if Stripe returned paid.
-        mongo_db.payment_transactions.update_one(
-            {"session_id": session_id},
-            {"$set": {"payment_status": "paid"}}
-        )
-        # Now manually run the league-premium unlock the endpoint would do
-        from datetime import datetime, timezone
-        LEAGUE_PREMIUM_FEATURE_IDS = [
-            "salary_cap", "contracts", "draft_scheduling",
-            "minor_leagues", "custom_scoring", "activity_webhooks"
-        ]
-        mongo_db.leagues.update_one(
-            {"_id": ObjectId(admin_commissioner_league)},
-            {"$set": {
-                "premium": True,
-                "premium_activated_at": datetime.now(timezone.utc),
-                "premium_features": LEAGUE_PREMIUM_FEATURE_IDS,
-            }}
-        )
-        mongo_db.activity_feed.insert_one({
-            "league_id": admin_commissioner_league,
-            "type": "league_premium_unlocked",
-            "message": "Premium features unlocked for this league",
-            "created_at": datetime.now(timezone.utc),
-        })
-
-        # Verify via public endpoint
-        r3 = admin_session.get(f"{BASE_URL}/api/leagues/{admin_commissioner_league}/premium")
-        assert r3.status_code == 200
-        data = r3.json()
-        assert data["premium"] is True
-        assert len(data["unlocked_features"]) == 6
-
-        # Cleanup so test is idempotent
-        mongo_db.leagues.update_one(
-            {"_id": ObjectId(admin_commissioner_league)},
-            {"$set": {"premium": False, "premium_features": []},
-             "$unset": {"premium_activated_at": ""}}
-        )
-        mongo_db.activity_feed.delete_many({
-            "league_id": admin_commissioner_league,
-            "type": "league_premium_unlocked",
-        })
+    @pytest.mark.asyncio
+    async def test_mutate_to_paid_flips_premium(self, payment_provider_ctx):
+        ctx, state, lid, captured = payment_provider_ctx
+        response = await ctx.client.post("/api/payments/create", json={"package_type": "league_premium", "league_id": lid, "origin_url": "https://example.com"})
+        assert response.status_code == 200, response.text
+        session_id = response.json()["session_id"]
+        assert (await ctx.db.leagues.find_one({"_id": ObjectId(lid)}))["premium"] is False
+        state["payment_status"] = "paid"
+        for _ in range(2):
+            paid = await ctx.client.get(f"/api/payments/status/{session_id}")
+            assert paid.status_code == 200, paid.text
+            assert paid.json()["payment_status"] == "paid"
+        league = await ctx.db.leagues.find_one({"_id": ObjectId(lid)})
+        assert league["premium"] is True and len(league["premium_features"]) == 6
+        assert len([call for call in ctx.activity_calls if call["event_type"] == "league_premium_unlocked"]) == 1
 
 
 # ───────────────────────── 4. Recommendations ─────────────────────────
@@ -275,7 +252,7 @@ class TestRecommendations:
 
     def test_hardcore_head_to_head_auction_ranks_frozen_dynasty_top(self, admin_session, mongo_db):
         # Make sure a "Frozen Dynasty" style league exists
-        existing = mongo_db.leagues.find_one({"name": "Frozen Dynasty"})
+        existing = mongo_db.leagues.find_one({"name": "Fixture Frozen Match"})
         cleanup_needed = False
         if not existing:
             # Seed one for the test
@@ -299,7 +276,7 @@ class TestRecommendations:
             non_own = [r_ for r_ in recs if not r_.get("is_own")]
             assert non_own, "Expected at least one non-own recommendation"
             top = non_own[0]
-            assert top["name"] == "Frozen Dynasty", f"Top was {top['name']}"
+            assert top["name"] == "Fixture Frozen Match", f"Top was {top['name']}"
             assert top["match_score"] == 100
             reason = top["match_reason"].lower()
             assert "hardcore" in reason
@@ -315,7 +292,7 @@ class TestRecommendations:
         s = requests.Session()
         email = f"TEST_own_{uuid.uuid4().hex[:6]}@example.com"
         pwd = "TestPass123!"
-        reg = s.post(f"{BASE_URL}/api/auth/register", json={
+        reg = s.post(f"{BASE_URL}/api/auth/register", json={"username": "fixture_" + uuid.uuid4().hex[:16],
             "email": email, "password": pwd,
             "name": f"Own Tester {uuid.uuid4().hex[:4]}"
         })

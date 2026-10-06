@@ -8,6 +8,7 @@
 (2) `/api/scoring/config` GET still returns defaults under the same shape
     after the iter-108 extraction into routes/scoring.py.
 """
+import os
 import asyncio
 from datetime import datetime, timezone
 
@@ -25,7 +26,7 @@ from routes import live_scoring as live_scoring_routes
 @pytest.fixture
 def isolated_app():
     import os
-    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+    mongo_url = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
     db_name = f"dd_test_iter108_{ObjectId()}"
     client = AsyncIOMotorClient(mongo_url, maxPoolSize=1, retryReads=True, retryWrites=True)
     db = client[db_name]
@@ -84,7 +85,8 @@ async def test_scoring_config_defaults_after_extraction(isolated_app):
     app, db, _ = isolated_app
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.get("/api/scoring/config", params={"league_id": "nope"})
+        inserted = await db.leagues.insert_one({"name": "Defaults Fixture", "commissioner_id": "commish-1"})
+        r = await ac.get("/api/scoring/config", params={"league_id": str(inserted.inserted_id)})
         assert r.status_code == 200
         body = r.json()
         # Defaults are returned when no config exists for the league.

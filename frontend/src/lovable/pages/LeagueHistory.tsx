@@ -1,5 +1,8 @@
 // @ts-nocheck
-import { useState, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import { useHistoryRequest } from "./history/useHistoryRequest";
+import { seasonPlayerAwards, seasonChampions, seasonPresidents, highestPointsRecord, awardCountLeaders } from "./history/awardRecords";
+import { HistoryStatus } from "./history/HistoryStatus";
 import { Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -111,27 +114,20 @@ function DynastyArc({ rows, testId }: { rows: SeasonRow[]; testId?: string }) {
 
 const LeagueHistory = () => {
   const { league, leagueTeams } = useActiveLeague();
-  const [seasons, setSeasons] = useState<any[]>([]);
-  const [trophyData, setTrophyData] = useState<any>(null);
-  const [recentChampions, setRecentChampions] = useState<any[]>([]);
-  const [consolationWinners, setConsolationWinners] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!league?.id) return;
-    setLoading(true);
-    Promise.all([
-      api.get(`/leagues/${league.id}/seasons?include_team_stats=true`).then((r) => r.data?.seasons || []).catch(() => []),
-      api.get(`/leagues/${league.id}/trophy-room`).then((r) => r.data || null).catch(() => null),
-      api.get(`/leagues/${league.id}/team-rewards`)
-        .then(({ data }) => (data?.rewards || []).filter((r: any) => r.source === "consolation_winner"))
-        .catch(() => []),
-    ]).then(([s, t, c]) => {
-      setSeasons(s);
-      setTrophyData(t);
-      setConsolationWinners(c);
-    }).finally(() => setLoading(false));
+  const loadHistory = useCallback(async (signal: AbortSignal) => {
+    const [s, t, c] = await Promise.all([
+      api.get(`/leagues/${league?.id}/seasons?include_team_stats=true`, {signal}),
+      api.get(`/leagues/${league?.id}/trophy-room`, {signal}),
+      api.get(`/leagues/${league?.id}/team-rewards`, {signal}),
+    ]);
+    return {seasons: s.data?.seasons || [], trophyData: t.data, consolationWinners: (c.data?.rewards || []).filter((r: any) => r.source === "consolation_winner")};
   }, [league?.id]);
+  const historyRequest = useHistoryRequest<any>(league?.id || null, loadHistory);
+  const seasons = historyRequest.data?.seasons || [];
+  const trophyData = historyRequest.data?.trophyData || null;
+  const consolationWinners = historyRequest.data?.consolationWinners || [];
+  const loading = historyRequest.loading;
+  const [recentChampions, setRecentChampions] = useState<any[]>([]);
 
   // Live champions = teams with championship_won_at populated (in current season)
   useEffect(() => {
@@ -201,12 +197,12 @@ const LeagueHistory = () => {
 
     // ─── Trophy tally from trophy-room aggregator (championships, etc.) ───
     for (const s of trophyData.seasons || []) {
-      if (s.champion?.team_id) {
-        const r = ensure(s.champion.team_id, s.champion.team_name);
+      for (const winner of seasonChampions(s)) {
+        const r = ensure(winner.team_id, winner.team_name);
         if (r) r.championships += 1;
       }
-      if (s.presidents_trophy?.team_id) {
-        const r = ensure(s.presidents_trophy.team_id, s.presidents_trophy.team_name);
+      for (const winner of seasonPresidents(s)) {
+        const r = ensure(winner.team_id, winner.team_name);
         if (r) r.presidentsTrophies += 1;
       }
       for (const d of s.division_winners || []) {
@@ -222,13 +218,9 @@ const LeagueHistory = () => {
     // ─── Add LIVE current-season W/L/T/PF for every active team ───
     // If a snapshot for the current year already exists (status != "in_progress"
     // and season_year is in `seasons`), skip — otherwise we'd double count.
-    const snapshotYears = new Set((seasons || []).map((s: any) => s.season_year));
-    const currentYearOpen = !!leagueTeams?.length && !snapshotYears.has(
-      // Heuristic: current_season_year comes from league but we don't have it here;
-      // we infer "open" by checking if every team's wins+losses+ties equals 0 → already snapshotted.
-      // Simpler: always count live unless we detect a snapshot covers it (best-effort).
-      -1,
-    );
+    const snapshotYears = new Set((seasons || []).map((s: any) => Number(s.season_year)));
+    const currentYear = Number(league?.current_season_year) || new Date().getFullYear();
+    const currentYearOpen = !!leagueTeams?.length && !snapshotYears.has(currentYear);
     if (currentYearOpen) {
       for (const t of leagueTeams || []) {
         const r = ensure(t.id, t.name);
@@ -244,7 +236,7 @@ const LeagueHistory = () => {
           r.totalPointsAgainst += t.points_against || 0;
           // Add the live current season as a "current" row (used for arc + streak)
           r.seasonRows.push({
-            year: (league?.current_season_year as number) || new Date().getFullYear(),
+            year: currentYear,
             wins: t.wins || 0,
             losses: t.losses || 0,
             ties: t.ties || 0,
@@ -285,26 +277,12 @@ const LeagueHistory = () => {
   const leagueRecords = useMemo(() => {
     if (!trophyData || !lifetimeTeamRecords.length) return null;
     const seasonsList = trophyData.seasons || [];
-    // Highest season points → from each season's president's trophy team (highest PF that year)
-    let highest = { team: "—", value: 0, season: "—" };
-    for (const s of seasonsList) {
-      const pf = s.presidents_trophy?.points_for || 0;
-      if (pf > highest.value) {
-        highest = { team: s.presidents_trophy?.team_name || "—", value: pf, season: String(s.season_year) };
-      }
-    }
-    // Most championships
-    const champLeader = lifetimeTeamRecords[0];
-    const champSeasons = seasonsList
-      .filter((s: any) => s.champion?.team_id === champLeader?.team_id)
-      .map((s: any) => String(s.season_year));
+    const highest = highestPointsRecord(seasonsList);
+    const count = Math.max(0, ...lifetimeTeamRecords.map((r: any) => r.championships));
+    const holders = count > 0 ? lifetimeTeamRecords.filter((r: any) => r.championships === count).map((r: any) => ({team: r.team, seasons: seasonsList.filter((s: any) => seasonChampions(s).some((t: any) => t.team_id === r.team_id)).map((s: any) => String(s.season_year))})) : [];
     return {
       highestSeasonPoints: highest,
-      mostChampionships: {
-        team: champLeader?.team || "—",
-        value: champLeader?.championships || 0,
-        seasons: champSeasons,
-      },
+      mostChampionships: {value: count, holders},
       totalSeasons: seasonsList.length,
     };
   }, [trophyData, lifetimeTeamRecords]);
@@ -330,17 +308,18 @@ const LeagueHistory = () => {
       },
     };
     for (const s of trophyData.seasons || []) {
-      for (const key of ["season_mvp", "best_goalie", "best_defenseman"] as const) {
-        const t = s[key];
+      for (const t of seasonPlayerAwards(s)) {
         if (!t) continue;
         const bucket = buckets[t.label];
         if (!bucket) continue;
         bucket.winners.push({
           season: String(s.season_year),
           player: t.player_name,
+          playerId: t.player_id,
           position: t.position,
           team: t.owner_team_name || "—",
           fantasyPoints: t.points || 0,
+          scoringBasis: t.scoring_basis,
         });
       }
     }
@@ -350,6 +329,7 @@ const LeagueHistory = () => {
   return (
     <AppLayout>
       <div className="container py-8" data-testid="league-history-page">
+        {trophyData?.seasons?.some((s: any) => s.champion_status === "ambiguous") && <p role="alert">Some older championship records have ambiguous franchise names. No champion has been assigned to those records.</p>}
         <div className="mb-8 animate-fade-in">
           <h1 className="text-3xl font-bold mb-2 flex items-center gap-3">
             <Trophy className="h-8 w-8 text-primary" />
@@ -362,7 +342,7 @@ const LeagueHistory = () => {
           </p>
         </div>
 
-        <Tabs defaultValue="lifetime" className="space-y-6">
+        {!league?.id ? <p role="status">Select a league to view its history.</p> : loading || historyRequest.error ? <HistoryStatus loading={loading} error={historyRequest.error} retry={historyRequest.retry} /> : <Tabs defaultValue="lifetime" className="space-y-6">
           {(recentChampions.length > 0 || consolationWinners.length > 0) && (
             <Card
               className="bg-card/50 backdrop-blur border-amber-500/30"
@@ -625,12 +605,11 @@ const LeagueHistory = () => {
                     <div className="text-2xl font-bold text-green-500" data-testid="record-highest-pts-value">
                       {leagueRecords.highestSeasonPoints.value.toLocaleString(undefined, { maximumFractionDigits: 1 })}
                     </div>
-                    <p className="text-sm text-muted-foreground">{leagueRecords.highestSeasonPoints.team}</p>
-                    <Badge variant="outline" className="mt-2">{leagueRecords.highestSeasonPoints.season}</Badge>
+                    {leagueRecords.highestSeasonPoints.holders.map((holder: any) => <div key={`${holder.team_id}-${holder.season}`} data-testid={`record-points-holder-${holder.team_id}-${holder.season}`}><p className="text-sm text-muted-foreground">{holder.team_name}</p><Badge variant="outline" className="mt-2">{holder.season}</Badge></div>)}
                   </CardContent>
                 </Card>
 
-                <Card className="bg-card/50 backdrop-blur border-border/50">
+                <Card data-testid="record-most-champs-card" className="bg-card/50 backdrop-blur border-border/50">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm font-medium flex items-center gap-2">
                       <Trophy className="h-4 w-4 text-yellow-500" />
@@ -641,12 +620,7 @@ const LeagueHistory = () => {
                     <div className="text-2xl font-bold text-yellow-500" data-testid="record-most-champs-value">
                       {leagueRecords.mostChampionships.value}
                     </div>
-                    <p className="text-sm text-muted-foreground">{leagueRecords.mostChampionships.team}</p>
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {leagueRecords.mostChampionships.seasons.map((s: string) => (
-                        <Badge key={s} variant="outline" className="text-xs">{s}</Badge>
-                      ))}
-                    </div>
+                    {leagueRecords.mostChampionships.holders.length === 0 ? <p>No championships yet.</p> : leagueRecords.mostChampionships.holders.map((holder: any) => <div key={holder.team}><p className="text-sm text-muted-foreground">{holder.team}</p><div className="flex flex-wrap gap-1 mt-2">{holder.seasons.map((year: string) => <Badge key={year} variant="outline" className="text-xs">{year}</Badge>)}</div></div>)}
                   </CardContent>
                 </Card>
 
@@ -679,11 +653,7 @@ const LeagueHistory = () => {
                 </Card>
               ) : (
                 playerAwards.map((award: any) => {
-                  const mostWins = award.winners.reduce<Record<string, number>>((acc: any, w: any) => {
-                    acc[w.player] = (acc[w.player] || 0) + 1;
-                    return acc;
-                  }, {});
-                  const topWinner = Object.entries(mostWins).sort((a: any, b: any) => b[1] - a[1])[0];
+                  const topWinners = awardCountLeaders(award.winners);
                   return (
                     <Card key={award.name} className="bg-card/50 backdrop-blur border-border/50" data-testid={`player-award-${award.name.replace(/\s+/g, "-").toLowerCase()}`}>
                       <CardHeader>
@@ -693,13 +663,9 @@ const LeagueHistory = () => {
                               <Award className="h-5 w-5 text-amber-400" />
                               {award.name}
                             </CardTitle>
-                            <CardDescription>{award.description}</CardDescription>
+                            <CardDescription>{award.description}{award.winners.some((w: any) => w.scoringBasis === "legacy_estimate") && " · Older seasons use legacy score estimates."}</CardDescription>
                           </div>
-                          {topWinner && topWinner[1] > 1 && (
-                            <Badge variant="outline" className="shrink-0 border-primary/30 text-primary">
-                              {topWinner[0]} — {topWinner[1]}× winner
-                            </Badge>
-                          )}
+                          {topWinners.map((winner: any) => <Badge key={winner.id} variant="outline" className="shrink-0 border-primary/30 text-primary" data-testid={`player-award-count-${winner.id}`}>{winner.name} — {winner.count}× winner</Badge>)}
                         </div>
                       </CardHeader>
                       <CardContent>
@@ -715,7 +681,7 @@ const LeagueHistory = () => {
                           </TableHeader>
                           <TableBody>
                             {award.winners.map((w: any, i: number) => (
-                              <TableRow key={`${w.season}-${w.player}`} className={i === 0 ? "bg-primary/5" : ""}>
+                              <TableRow key={`${w.season}-${w.playerId}`} className={i === 0 ? "bg-primary/5" : ""}>
                                 <TableCell>
                                   <Badge variant={i === 0 ? "default" : "outline"} className={i === 0 ? "bg-primary/20 text-primary" : ""}>
                                     {w.season}
@@ -750,7 +716,7 @@ const LeagueHistory = () => {
               <TrophyRoomView leagueId={league?.id} leagueName={league?.name} embedded />
             </div>
           </TabsContent>
-        </Tabs>
+        </Tabs>}
       </div>
     </AppLayout>
   );

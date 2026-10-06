@@ -11,10 +11,10 @@ import os
 import requests
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
-USER_EMAIL = "chriszarek@gmail.com"
-USER_PASS = "Chris2026!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+USER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+USER_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 def _login(email, password) -> str:
@@ -63,13 +63,13 @@ def test_users_admin_list_shape_and_pagination():
 
 def test_users_admin_search_filter():
     r = requests.get(
-        f"{API_URL}/api/admin/platform/users?q=admin@dynastydreams",
+        f"{API_URL}/api/admin/platform/users?q={ADMIN_EMAIL}",
         headers=_admin_headers(),
     )
     assert r.status_code == 200
     d = r.json()
     emails = [u["email"] for u in d["users"]]
-    assert any("admin@dynastydreams" in (e or "") for e in emails), emails
+    assert any(ADMIN_EMAIL == e for e in emails), emails
 
 
 # ── /users/{id} — detail drilldown ──
@@ -78,7 +78,7 @@ def test_user_detail_non_admin_returns_403():
     headers = {"Authorization": f"Bearer {_login(USER_EMAIL, USER_PASS)}"}
     # Use the admin's own ID (looking up first user that matches admin email)
     list_r = requests.get(
-        f"{API_URL}/api/admin/platform/users?q=admin@dynastydreams",
+        f"{API_URL}/api/admin/platform/users?q={ADMIN_EMAIL}",
         headers=_admin_headers(),
     )
     uid = list_r.json()["users"][0]["id"]
@@ -88,7 +88,7 @@ def test_user_detail_non_admin_returns_403():
 
 def test_user_detail_admin_shape():
     list_r = requests.get(
-        f"{API_URL}/api/admin/platform/users?q=admin@dynastydreams",
+        f"{API_URL}/api/admin/platform/users?q={ADMIN_EMAIL}",
         headers=_admin_headers(),
     )
     uid = list_r.json()["users"][0]["id"]

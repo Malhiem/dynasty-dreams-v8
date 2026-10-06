@@ -23,8 +23,8 @@ def _backend_url():
 
 
 BASE = _backend_url()
-USER_EMAIL = "chriszarek@gmail.com"
-USER_PASSWORD = "Chris2026!"
+USER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+USER_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 TEAM_ID = "69e59b30cbd3fea02a914c61"  # Zarek's Frozen
 LEAGUE_ID = "69e46af167999bfb85c39628"  # Ice Kings (cap enabled @ $88M)
 
@@ -36,7 +36,7 @@ async def _login(client, email, password):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _ensure_league_cap_state():
+def _ensure_league_cap_state(_global_pollution_sweep):
     """Iter 230u — Self-healing fixture: the salary-cap suite asserts the
     league has `salary_cap_enabled=True` and `salary_cap=$88M`. Real users
     edit league settings between test runs, so the seed value drifts.
@@ -100,34 +100,33 @@ async def test_compliance_returns_live_salary_used():
 
 @pytest.mark.asyncio
 async def test_add_denied_when_over_cap():
-    """Adding McDavid (~$13.5M) to Zarek's $86M roster should push over $88M cap."""
+    """A known $1M input cannot fit into $500K of remaining room."""
+    from motor.motor_asyncio import AsyncIOMotorClient
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1", "Requires disposable fixture inputs"
+    mongo = AsyncIOMotorClient(os.environ["MONGO_URL"])
+    db = mongo[os.environ["DB_NAME"]]
+    inserted = await db.players.insert_one({"name": "Fixture Overcap Target", "position": "C", "sport": "nhl",
+        "player_type": "skater", "contract": {"aav": 1_000_000, "salary": 1_000_000, "yearsRemaining": 3}, "_test_seed": True})
+    from bson import ObjectId
+    league = await db.leagues.find_one({"_id": ObjectId(LEAGUE_ID)})
+    await db.leagues.update_one({"_id": league["_id"]}, {"$set": {"roster_spots": 30}})
     async with AsyncClient(base_url=BASE, timeout=30) as client:
         token = await _login(client, USER_EMAIL, USER_PASSWORD)
-        # Find an unrostered star player. Connor McDavid is on Zarek's other
-        # team if any; scan the FA pool for any high-points center.
-        r = await client.get(
-            "/api/players?search=McDavid&limit=1",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        if r.status_code != 200 or not r.json().get("players"):
-            pytest.skip("Could not find McDavid in player pool")
-        mcdavid = r.json()["players"][0]
-        pid = mcdavid.get("_id") or mcdavid.get("id")
-        # Attempt the add — should fail with 400 over-cap (or 400 already on roster)
-        add = await client.post(
-            f"/api/roster/{TEAM_ID}/add",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"player_id": pid},
-        )
-        # Allow either over-cap denial OR already-on-roster (depending on team state)
-        assert add.status_code == 400, add.text
-        detail = add.json().get("detail", "").lower()
-        assert (
-            "salary cap" in detail
-            or "over the salary cap" in detail
-            or "already on roster" in detail
-            or "roster full" in detail
-        ), f"Unexpected denial reason: {detail}"
+        h = {"Authorization": f"Bearer {token}"}
+        before = (await client.get(f"/api/teams/{TEAM_ID}/compliance", headers=h)).json()
+        try:
+            changed = await client.put(f"/api/leagues/{LEAGUE_ID}/admin/cap-settings", headers=h,
+                json={"salary_cap_enabled": True, "salary_cap": int(before["salary_used"]) + 500_000})
+            assert changed.status_code == 200, changed.text
+            response = await client.post(f"/api/roster/{TEAM_ID}/add", headers=h, json={"player_id": str(inserted.inserted_id)})
+            assert response.status_code == 400, response.text
+            assert "salary cap" in response.json()["detail"].lower()
+        finally:
+            await client.put(f"/api/leagues/{LEAGUE_ID}/admin/cap-settings", headers=h,
+                json={"salary_cap_enabled": True, "salary_cap": int(before["salary_cap"])})
+            await db.leagues.update_one({"_id": league["_id"]}, {"$set": {"roster_spots": league["roster_spots"]}})
+            await db.players.delete_one({"_id": inserted.inserted_id})
+            mongo.close()
 
 
 @pytest.mark.asyncio

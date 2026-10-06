@@ -20,14 +20,16 @@ Two bug fixes from user feedback:
    have a real `matchup_id` to act on.
 """
 from __future__ import annotations
+from tests.http_test_auth import test_admin_headers
+from tests.playoff_input_fixture import playoff_inputs
 
 import os
 import requests
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
 LEAGUE_ID = "69e46af167999bfb85c39628"
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 def _login() -> str:
@@ -42,7 +44,7 @@ def _login() -> str:
 def test_legacy_league_keeps_100_score():
     """Ice Kings has `setup_wizard_complete=true` from a prior session.
     Health score must still report 100 (data-inference fallback)."""
-    r = requests.get(f"{API_URL}/api/leagues/{LEAGUE_ID}/health-score")
+    r = requests.get(f"{API_URL}/api/leagues/{LEAGUE_ID}/health-score", headers=test_admin_headers())
     r.raise_for_status()
     d = r.json()
     assert d["score"] == 100, f"Legacy league regressed: {d['score']}"
@@ -66,7 +68,7 @@ def test_new_league_starts_at_zero_score():
     assert new.status_code == 200, new.text
     league_id = new.json()["id"]
     try:
-        h = requests.get(f"{API_URL}/api/leagues/{league_id}/health-score").json()
+        h = requests.get(f"{API_URL}/api/leagues/{league_id}/health-score", headers=test_admin_headers()).json()
         assert h["score"] == 0, f"Fresh league score should be 0, got {h['score']}"
         # All sections incomplete
         for s in h["sections"]:
@@ -97,7 +99,7 @@ def test_setup_progress_endpoint_increments_score():
             json={"sections": ["basics", "cap"]},
         )
         assert r.status_code == 200, r.text
-        h = requests.get(f"{API_URL}/api/leagues/{league_id}/health-score").json()
+        h = requests.get(f"{API_URL}/api/leagues/{league_id}/health-score", headers=test_admin_headers()).json()
         assert h["score"] == 32, f"basics+cap should give 32, got {h['score']}"
 
         # Stamp all remaining
@@ -107,7 +109,7 @@ def test_setup_progress_endpoint_increments_score():
             json={"sections": ["divisions", "schedule", "playoffs", "draft"]},
         )
         assert r.status_code == 200
-        h = requests.get(f"{API_URL}/api/leagues/{league_id}/health-score").json()
+        h = requests.get(f"{API_URL}/api/leagues/{league_id}/health-score", headers=test_admin_headers()).json()
         assert h["score"] == 100, f"all sections should give 100, got {h['score']}"
     finally:
         requests.delete(f"{API_URL}/api/leagues/{league_id}", headers=headers)
@@ -137,7 +139,7 @@ def test_setup_progress_rejects_unknown_sections():
 
 
 def _bracket():
-    r = requests.get(f"{API_URL}/api/leagues/{LEAGUE_ID}/playoff-bracket")
+    r = requests.get(f"{API_URL}/api/leagues/{LEAGUE_ID}/playoff-bracket", headers=test_admin_headers())
     r.raise_for_status()
     return r.json()
 

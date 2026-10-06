@@ -99,7 +99,7 @@ async def test_admin_pro_toggle_non_admin_403():
 @pytest.mark.asyncio
 async def test_admin_pro_toggle_admin_succeeds():
     async with isolated_router_app(comparisons_routes) as ctx:
-        admin_email = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
+        admin_email = os.environ.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"))
         admin = await _seed_user(ctx.db, email=admin_email)
         target = await _seed_user(ctx.db, email="target@example.com", is_pro=False)
         comparisons_routes._deps["get_current_user"] = lambda _r: _async_return(admin)
@@ -117,7 +117,7 @@ async def test_admin_pro_toggle_admin_succeeds():
 @pytest.mark.asyncio
 async def test_admin_pro_toggle_invalid_user_id():
     async with isolated_router_app(comparisons_routes) as ctx:
-        admin = await _seed_user(ctx.db, email=os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com"))
+        admin = await _seed_user(ctx.db, email=os.environ.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")))
         comparisons_routes._deps["get_current_user"] = lambda _r: _async_return(admin)
         r = await ctx.client.post(
             "/api/admin/users/not-a-real-id/pro",

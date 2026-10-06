@@ -1,4 +1,5 @@
 """Iter 149 — Seed pending-trade admin endpoint + Trading Block draft overlay."""
+from tests.source_tree import read_source
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -23,9 +24,9 @@ def _read(rel: str) -> str:
         ):
             fp = FRONTEND / sub
             if fp.exists():
-                parts.append(fp.read_text(encoding='utf-8'))
+                parts.append(read_source(fp, encoding='utf-8'))
         return chr(10).join(parts)
-    return (FRONTEND / rel).read_text(encoding='utf-8')
+    return read_source(FRONTEND / rel, encoding='utf-8')
 
 
 # ─── Frontend file-content checks ────────────────────────────────────
@@ -61,9 +62,9 @@ def test_draft_room_has_trading_block_toggle_and_overlays():
 
 
 def test_trade_block_create_model_has_draft_only_flag():
-    src = (Path("/app/backend") / "trade_waiver_engine.py").read_text(encoding="utf-8")
+    src = read_source(Path("/app/backend") / "trade_waiver_engine.py", encoding="utf-8")
     assert "draft_only" in src
-    src2 = (Path("/app/backend/routes") / "trade_block.py").read_text(encoding="utf-8")
+    src2 = read_source(Path("/app/backend/routes") / "trade_block.py", encoding="utf-8")
     assert 'bool(input.draft_only)' in src2 or '"draft_only": bool(input.draft_only)' in src2
 
 
@@ -77,7 +78,7 @@ def test_admin_seed_pending_trade_route_registered():
 
 
 def test_admin_seed_pending_trade_requires_admin():
-    src = (Path("/app/backend/routes") / "admin.py").read_text(encoding="utf-8")
+    src = read_source(Path("/app/backend/routes") / "admin.py", encoding="utf-8")
     # Has the route + the site-admin gate
     assert "@router.post(\"/admin/seed/pending-trade\")" in src
     assert "_is_site_admin(user)" in src

@@ -19,6 +19,7 @@ This locks in the artefacts:
     tab strip for a `<Select>` dropdown on mobile (controlled state
     keeps desktop tabs + the dropdown in sync)
 """
+from tests.source_tree import read_source
 import json
 from pathlib import Path
 
@@ -35,7 +36,7 @@ COMMISSIONER = SRC / "lovable" / "pages" / "CommissionerSettings.tsx"
 
 
 def test_manifest_declares_standalone_pwa():
-    data = json.loads(MANIFEST.read_text())
+    data = json.loads(read_source(MANIFEST))
     assert data["name"] == "DynastyDreams Fantasy Hockey"
     assert data["short_name"] == "DynastyDreams"
     # `standalone` strips the browser chrome so the app feels native.
@@ -62,7 +63,7 @@ def test_manifest_icons_exist_on_disk():
 
 
 def test_index_html_carries_pwa_meta():
-    src = INDEX.read_text()
+    src = read_source(INDEX)
     # Manifest link.
     assert '<link rel="manifest" href="/manifest.json" />' in src
     # iOS-specific tags so Add to Home Screen produces a real icon
@@ -79,7 +80,7 @@ def test_index_html_carries_pwa_meta():
 
 
 def test_install_banner_handles_both_android_and_ios():
-    src = BANNER.read_text()
+    src = read_source(BANNER)
     # Android: capture the `beforeinstallprompt` event and surface a
     # tappable "Install app" button.
     assert "beforeinstallprompt" in src
@@ -104,7 +105,7 @@ def test_install_banner_handles_both_android_and_ios():
 
 
 def test_app_mounts_install_banner_inside_router():
-    src = APP_JS.read_text()
+    src = read_source(APP_JS)
     assert 'import PWAInstallBanner from "@/components/PWAInstallBanner"' in src
     # Mounted right after ImpersonationBanner so it lives above every
     # route's content but below the impersonation chrome.
@@ -112,12 +113,12 @@ def test_app_mounts_install_banner_inside_router():
 
 
 def test_commissioner_settings_tabs_collapse_to_dropdown_on_mobile():
-    src = COMMISSIONER.read_text()
+    src = read_source(COMMISSIONER)
     # Single source of truth for the tab strip.
     assert "const COMMISSIONER_TABS" in src
     # Controlled active tab so the Select + TabsList stay in sync.
-    assert 'useState<string>("league-setup")' in src
-    assert "<Tabs value={activeTab} onValueChange={setActiveTab}" in src
+    assert 'useState<string>(initialTab)' in src
+    assert "<Tabs value={activeTab} onValueChange={handleTabChange}" in src
     # Desktop tab strip is hidden below md.
     assert 'className="hidden md:flex flex-wrap h-auto bg-secondary border border-border"' in src
     # Mobile dropdown — wrapped in md:hidden so it disappears on desktop.
@@ -127,13 +128,13 @@ def test_commissioner_settings_tabs_collapse_to_dropdown_on_mobile():
     assert 'data-testid={`commissioner-settings-mobile-tab-${value}`}' in src
     # Health-card jump now updates state directly (no more brittle
     # DOM-click) — the fallback remains for legacy callers.
-    assert "if (typeof tab === \"string\") setActiveTab(tab);" in src
+    assert 'if (typeof tab === "string") setActiveTab(tab);' in src
 
 
 def test_commissioner_tabs_config_lists_every_section():
     """Locks in the 12 sub-sections so a future PR doesn't silently
     drop the dropdown's coverage."""
-    src = COMMISSIONER.read_text()
+    src = read_source(COMMISSIONER)
     for tab in (
         "league-setup",
         "player-pool",

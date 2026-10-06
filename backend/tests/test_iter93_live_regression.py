@@ -10,7 +10,7 @@ LEAGUE_ID = "69e46af167999bfb85c39628"
 @pytest.fixture(scope="module")
 def session():
     s = requests.Session()
-    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": "chriszarek@gmail.com", "password": "Chris2026!"})
+    r = s.post(f"{BASE_URL}/api/auth/login", json={"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")})
     assert r.status_code == 200, f"login failed: {r.status_code} {r.text[:300]}"
     data = r.json()
     token = data.get("access_token") or data.get("token")

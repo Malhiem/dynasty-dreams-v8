@@ -67,8 +67,8 @@ async def _setup_two_team_league(client):
 
     # Reassign one team to user B directly via MongoDB so we don't depend
     # on whatever join/invite endpoint exists.
-    mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
-    db = mongo[os.environ.get("DB_NAME", "test_database")]
+    mongo = AsyncIOMotorClient(os.environ.get("MONGO_URL", os.environ["MONGO_URL"]))
+    db = mongo[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     teams = await db.teams.find({"league_id": league_id}).to_list(20)
     assert len(teams) >= 1
     # The commissioner's auto-created team:

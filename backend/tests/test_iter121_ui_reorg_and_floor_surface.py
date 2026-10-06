@@ -24,8 +24,8 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
-ADMIN_PW = os.environ.get("ADMIN_PASSWORD", "Admin123!")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"))
+ADMIN_PW = os.environ.get("ADMIN_PASSWORD", os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
 
 
 def _login(email, password):
@@ -63,7 +63,9 @@ def test_roster_shape_removed_from_transactions_tab():
 
 
 def test_salary_cap_contracts_tab_exists():
-    src = open("/app/frontend/src/lovable/pages/CommissionerSettings.tsx").read()
+    from pathlib import Path
+    from tests.source_tree import read_source
+    src = read_source(Path("/app/frontend/src/lovable/pages/CommissionerSettings.tsx"))
     assert 'tab-salary-cap-contracts' in src
     assert 'salary-cap-contracts-tab' in src
     # Iter 158 — three cards now live inside SalaryCapContractsTab.tsx

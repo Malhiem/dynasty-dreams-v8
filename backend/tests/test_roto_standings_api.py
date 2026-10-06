@@ -19,8 +19,8 @@ H2H_LEAGUE_ID = "69e46af167999bfb85c3962a"  # Frozen Dynasty (non-roto)
 def auth_token():
     """Get admin auth token."""
     resp = requests.post(f"{BASE_URL}/api/auth/login", json={
-        "email": "admin@dynastydreams.com",
-        "password": "Admin123!"
+        "email": os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"),
+        "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
     })
     assert resp.status_code == 200, f"Login failed: {resp.text}"
     return resp.json()["access_token"]

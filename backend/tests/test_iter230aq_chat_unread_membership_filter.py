@@ -51,7 +51,7 @@ async def test_chat_unread_ignores_channels_in_other_leagues():
     User B (in a totally separate league) hits `/chat/unread` and
     must see 0, NOT user A's messages."""
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     async with httpx.AsyncClient(timeout=30.0) as client:
         user_a = await _register(client, "ua")
@@ -110,7 +110,7 @@ async def test_chat_unread_does_count_channels_in_member_leagues():
     """Same scenario, but user B joins user A's league via team. Now
     `/chat/unread` MUST report the 5 unread messages."""
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     async with httpx.AsyncClient(timeout=30.0) as client:
         user_a = await _register(client, "ua")
@@ -166,7 +166,7 @@ async def test_chat_unread_explicit_league_filter_zero_when_not_member():
     """Passing `?league_id=X` for a league the user isn't in must
     return zero (not leak that the league exists)."""
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     async with httpx.AsyncClient(timeout=30.0) as client:
         user_a = await _register(client, "ua")

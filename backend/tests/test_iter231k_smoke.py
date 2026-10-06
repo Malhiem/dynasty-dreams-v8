@@ -8,7 +8,7 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
-CREDS = {"email": "chriszarek@gmail.com", "password": "Chris2026!"}
+CREDS = {"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")}
 
 
 @pytest.fixture(scope="module")

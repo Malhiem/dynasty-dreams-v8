@@ -37,7 +37,7 @@ def _create_league(tok, *, roster_spots=19, bench_spots=6, minors_spots=30):
     in mongo since the create endpoint only accepts roster_spots."""
     from pymongo import MongoClient
     from bson import ObjectId
-    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
     H = {"Authorization": f"Bearer {tok}"}
     r = requests.post(f"{API_URL}/api/leagues", headers=H, json={
         "name": f"iter228d-{uuid.uuid4().hex[:6]}",
@@ -200,7 +200,7 @@ def test_delete_draft_rejects_in_progress_draft():
     """In-progress drafts cannot be archived directly — must be ended first."""
     from pymongo import MongoClient
     from bson import ObjectId
-    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+    db = MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
     _, tok = _register("dnIp")
     league = _create_league(tok)

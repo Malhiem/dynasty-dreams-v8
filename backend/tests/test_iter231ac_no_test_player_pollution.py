@@ -62,7 +62,7 @@ async def test_no_polluting_players_in_live_db():
     WaiverTarget rows. Failures here mean a recent run polluted again
     AND the cleanup didn't catch it — re-run the iter231ac repair."""
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     pattern = re.compile(r"^(ForceP|FutureP|WaiverTarget)", re.IGNORECASE)
     count = await db.players.count_documents({"name": {"$regex": pattern}})
@@ -76,7 +76,7 @@ async def test_no_polluting_players_in_live_db():
 async def test_no_iter228_ephemeral_leagues_in_live_db():
     """Live preview DB must contain ZERO `iter228-*` ephemeral leagues."""
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     count = await db.leagues.count_documents({"name": {"$regex": "^iter228-"}})
     assert count == 0, (

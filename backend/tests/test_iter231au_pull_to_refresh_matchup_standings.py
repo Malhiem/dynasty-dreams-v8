@@ -9,6 +9,7 @@ Iter 232a — Updated for the correctness rework:
     the refresh request must include `?nocache=1` so the service
     worker bypasses its cache instead of serving the stale copy.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 
@@ -17,14 +18,16 @@ STANDINGS = Path("/app/frontend/src/lovable/pages/Standings.tsx")
 
 
 def test_matchup_page_wires_pull_to_refresh():
-    src = MATCHUP.read_text()
+    src = read_source(MATCHUP)
     # Imports.
     assert 'import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";' in src
     assert 'import PullToRefreshIndicator from "@/components/PullToRefreshIndicator";' in src
     # Refresh tick still drives the existing fetch effects.
     assert "const [refreshTick, setRefreshTick] = useState(0);" in src
     # The refresh must force a SW cache bypass on the matchups GET.
-    assert "/matchups/${league.id}/current-week?nocache=1" in src
+    assert "matchupPath(league.id, dailyScoringWeek, true)" in src
+    assert 'path.includes("?") ? "&" : "?"' in src
+    assert "nocache=1" in src
     # And must actually await the underlying fetches (not the old
     # fire-and-forget setRefreshTick that resolved instantly).
     assert "await Promise.all(tasks)" in src
@@ -33,7 +36,7 @@ def test_matchup_page_wires_pull_to_refresh():
     assert "/live-scoring/team/${focusedMyTeam.id}" in src
     assert "/live-scoring/team/${opponentTeam.id}" in src
     # Existing tick-driven effects remain in place.
-    assert "}, [league, refreshTick]);" in src
+    assert "}, [league?.id, refreshTick, dailyScoringWeek]);" in src
     assert "}, [focusedMyTeam, refreshTick]);" in src
     assert "}, [opponentTeam, refreshTick]);" in src
     # Indicator mounted above content.
@@ -41,7 +44,7 @@ def test_matchup_page_wires_pull_to_refresh():
 
 
 def test_standings_page_wires_pull_to_refresh():
-    src = STANDINGS.read_text()
+    src = read_source(STANDINGS)
     assert 'import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";' in src
     assert 'import PullToRefreshIndicator from "@/components/PullToRefreshIndicator";' in src
     # Refactored into a memoized async fetcher so PTR can await it.

@@ -13,6 +13,7 @@ Covers the new hard-rule behaviour on the League Structure admin tab:
      state into the map.
 """
 from __future__ import annotations
+import os
 
 import asyncio
 import logging
@@ -29,7 +30,7 @@ from routes import leagues as leagues_routes
 @pytest.fixture
 def app_and_db():
     import os
-    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+    mongo_url = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
     db_name = f"dd_test_iter232N67_{ObjectId()}"
     client = AsyncIOMotorClient(mongo_url, maxPoolSize=1)
     db = client[db_name]

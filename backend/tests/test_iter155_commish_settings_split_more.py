@@ -12,12 +12,13 @@ and is wired back into CommissionerSettings.tsx via prop drilling. Combined
 with the Iter 154 AuditLogTab extraction, the parent file is down from
 2,631 → ~2,268 lines (-363).
 """
+from tests.source_tree import read_source
 from pathlib import Path
 FRONTEND = Path("/app/frontend/src")
 
 
 def _read(rel: str) -> str:
-    return (FRONTEND / rel).read_text(encoding="utf-8")
+    return read_source(FRONTEND / rel, include_imports=not rel.endswith("CommissionerSettings.tsx"), encoding="utf-8")
 
 
 def test_player_pool_tab_extracted():
@@ -36,8 +37,8 @@ def test_player_pool_tab_extracted():
 def test_scoring_tab_extracted():
     parent = _read("lovable/pages/CommissionerSettings.tsx")
     tab = _read("lovable/pages/commissioner/tabs/ScoringTab.tsx")
-    assert "import ScoringTab from " in parent
-    assert "<ScoringTab" in parent
+    assert "import PersistedScoringTab from " in parent
+    assert "<PersistedScoringTab" in parent
     assert "Skater Scoring Categories" not in parent
     assert "Enabled Skater Categories" not in parent
     assert 'data-testid="commissioner-scoring-tab"' in tab

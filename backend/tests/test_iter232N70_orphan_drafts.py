@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -212,7 +212,7 @@ async def test_upcoming_drafts_endpoint_filters_orphans():
     real_scheduled = await db.drafts.insert_one({
         "league_id": league_id,
         "status": "scheduled",
-        "scheduled_time": "2026-09-01T15:00:00Z",
+        "scheduled_time": (__import__("datetime").datetime.now(__import__("datetime").timezone.utc) + __import__("datetime").timedelta(days=1)).isoformat(),
         "total_rounds": 20,
     })
 

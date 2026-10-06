@@ -11,6 +11,7 @@ Backend changes covered:
   (5) New `POST /drafts/auto-init/{league_id}` endpoint — fetches or
       creates a draft for the league (commissioner-only).
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 # Iter 231 — drafts.py decomposed across many modules. Use shared shim.
@@ -24,7 +25,7 @@ DRAFT_ROOM = DraftRoomFamilyShim()
 
 
 def _src() -> str:
-    return DRAFTS_ROUTE.read_text()
+    return read_source(DRAFTS_ROUTE)
 
 
 def test_team_abbr_helpers_present():
@@ -53,13 +54,18 @@ def test_make_draft_pick_pushes_to_roster():
     src = _src()
     block = src.split("async def make_draft_pick(draft_id: str")[1].split("async def pause_draft")[0]
     # Pushes the picked player id onto the on-clock team's roster.
-    assert '"$addToSet": {"roster": str(player["_id"])}' in block
+    assert "await commit_pick(_db(), draft, receiving_team, pick_doc," in block
+    mutation = read_source(Path("/app/backend/services/draft_mutation.py"))
+    assert 'roster = list(dict.fromkeys([*before["roster"], pick["player_id"]]))' in mutation
+    assert '"roster": roster, "lineup": lineup, "draft_queue": queue' in mutation
     # Uses the on-clock team_id resolved via team_map (not the user's
     # team_id — important for commissioner picking for other teams).
     assert "on_clock_team_id" in block
     # Pick doc carries the team_id + richer player object (headshot, stats).
     assert '"team_id": on_clock_team_id' in block
-    assert '"headshot"' in block
+    assert "build_pick_player_payload(player)" in block
+    helpers = read_source(Path("/app/backend/routes/draft_helpers.py"))
+    assert '"headshot"' in helpers
 
 
 def test_eligible_players_returns_headshot_url():
@@ -89,7 +95,7 @@ def test_auto_init_endpoint_present_and_commissioner_only():
 
 
 def test_draftroom_auto_init_on_mount():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # Iter 231 — auto-init moved into use-draft-auto-init hook; the
     # league-id variable was renamed from `activeLeagueCtx.id` →
     # `leagueId`. Functional intent (calls /drafts/auto-init/{league_id})
@@ -102,16 +108,16 @@ def test_draftroom_auto_init_on_mount():
 
 
 def test_draftroom_posts_pick_to_backend_when_active():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # The unified draft handler short-circuits to a real POST when the
     # draft is active and the player id is a real Mongo ObjectId.
-    assert "api.post(`/drafts/${currentDraft._id}/pick`, { player_id: nextPlayer.id })" in src
+    assert "api.post(`/drafts/${currentDraft._id}/pick`, { player_id: nextPlayer.id, destination, expected_pick: draftConfig.currentPick })" in src
     # Refetches the canonical state after a successful pick.
     assert "api.get(`/drafts/${currentDraft._id}`)" in src
 
 
 def test_draftroom_start_buttons_wire_to_backend():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # Iter 231 — `_start` in use-draft-commissioner-actions now resolves
     # the draft id via `materialiseDraft()` (auto-init?commit=true when
     # the draft is still in preview mode) so the start POST targets the
@@ -122,7 +128,7 @@ def test_draftroom_start_buttons_wire_to_backend():
 
 
 def test_draftroom_fetches_real_eligible_players():
-    src = DRAFT_ROOM.read_text()
+    src = read_source(DRAFT_ROOM)
     # Iter 231ak — the hook now paginates the eligible-players endpoint
     # (PAGE_SIZE=200) so the full pool surfaces in the Eligible tab.
     # Previously the hook only fetched the first 100 rows, which made

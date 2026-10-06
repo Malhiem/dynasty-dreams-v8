@@ -11,6 +11,7 @@ Validates:
   - Frontend wiring: TankMonitorTable accepts week-range mode, has the
     backfill button + week-range toggle.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -28,8 +29,8 @@ def _backend_url():
 
 
 BASE = _backend_url()
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 LID = "69e46af167999bfb85c39628"
 
 
@@ -114,7 +115,7 @@ FRONTEND = Path("/app/frontend/src")
 
 
 def test_tank_monitor_table_supports_week_range_in_live_mode():
-    src = (FRONTEND / "lovable/pages/commissioner/data/commissionerData.tsx").read_text()
+    src = read_source(FRONTEND / "lovable/pages/commissioner/data/commissionerData.tsx")
     # Week-range toggle + backfill UI exist
     assert 'data-testid="tank-monitor-toggle-week-range"' in src
     assert 'data-testid="tank-monitor-backfill-button"' in src

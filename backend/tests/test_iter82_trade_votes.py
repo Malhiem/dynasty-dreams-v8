@@ -36,10 +36,10 @@ def _env(key):
 
 
 BASE = _backend_url()
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 LID = "69e46af167999bfb85c39628"
 
 
@@ -103,8 +103,9 @@ async def test_salary_retention_slots_endpoint_still_works_after_refactor():
         token = await _login(client)
         h = {"Authorization": f"Bearer {token}"}
         before = (await client.get(f"/api/leagues/{LID}", headers=h)).json()
-        orig = before.get("salary_retention_slots") or 3
-        target = 5 if orig != 5 else 4
+        orig = before.get("salary_retention_slots", 3)
+        if orig is None: orig = 3
+        target = 2 if orig != 2 else 0
         try:
             r = await client.put(
                 f"/api/leagues/{LID}/salary-retention-slots",

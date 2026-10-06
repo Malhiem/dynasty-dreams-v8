@@ -2,6 +2,7 @@
 Iter 159 — Consolidated data module `commissionerData.tsx` extracted from
 CommissionerSettings.tsx. Drops parent from ~1,380 LOC to ~640 LOC.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -11,7 +12,7 @@ DATA = REPO / "frontend/src/lovable/pages/commissioner/data/commissionerData.tsx
 
 def test_data_module_exists_with_all_exports():
     assert DATA.exists(), "commissionerData.tsx must exist"
-    src = DATA.read_text()
+    src = read_source(DATA)
     # Static lists
     assert "export const nhlTeams" in src
     # Scoring categories + type
@@ -43,7 +44,7 @@ def test_data_module_exists_with_all_exports():
 
 
 def test_admin_imports_from_data_module():
-    src = ADMIN.read_text()
+    src = read_source(ADMIN)
     assert 'from "@/lovable/pages/commissioner/data/commissionerData"' in src
     for sym in (
         "nhlTeams",
@@ -59,7 +60,7 @@ def test_admin_imports_from_data_module():
 
 def test_admin_no_longer_defines_data_inline():
     """Parent file must NOT redefine any of the extracted constants/components."""
-    src = ADMIN.read_text()
+    src = read_source(ADMIN, include_imports=False)
     # Negative assertions — old inline declarations are gone
     assert "const TOTAL_WEEKS = 22" not in src
     assert "const generateWeeklyData =" not in src
@@ -78,5 +79,5 @@ def test_admin_no_longer_defines_data_inline():
 
 def test_admin_line_count_under_700():
     """Parent must be under 700 lines after Iter 159 consolidation."""
-    n = len(ADMIN.read_text().splitlines())
+    n = len(read_source(ADMIN, include_imports=False).splitlines())
     assert n < 700, f"CommissionerSettings.tsx is {n} lines — Iter 159 target was < 700"

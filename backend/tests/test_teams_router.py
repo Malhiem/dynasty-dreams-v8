@@ -159,3 +159,32 @@ async def test_delete_logo_clears_field():
         assert r.status_code == 200
         team = await ctx.db.teams.find_one({"_id": ObjectId(team_id)})
         assert team.get("logo_url") in (None, "")
+
+
+@pytest.mark.asyncio
+async def test_owner_summaries_exclude_other_owners_and_financial_fields():
+    async with isolated_router_app(teams_routes, user={"_id": "summary-owner", "id": "summary-owner", "name": "Owner"}) as ctx:
+        league_id = await seed_league(ctx.db)
+        own_id = await seed_team(ctx.db, league_id=league_id, owner_id="summary-owner", name="Mine")
+        await seed_team(ctx.db, league_id=league_id, owner_id="another-owner", name="Other")
+        response = await ctx.client.get("/api/teams/mine/summaries")
+        assert response.status_code == 200, response.text
+        assert [team["id"] for team in response.json()] == [own_id]
+        assert response.json()[0]["name"] == "Mine"
+        assert "roster" not in response.json()[0]
+        assert "salary_used" not in response.json()[0]
+
+
+@pytest.mark.asyncio
+async def test_owner_summaries_require_authentication():
+    async with isolated_router_app(teams_routes) as ctx:
+        original = teams_routes._deps["get_current_user"]
+        async def anonymous(request):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        teams_routes._deps["get_current_user"] = anonymous
+        try:
+            response = await ctx.client.get("/api/teams/mine/summaries")
+            assert response.status_code == 401
+        finally:
+            teams_routes._deps["get_current_user"] = original

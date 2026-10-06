@@ -28,10 +28,10 @@ BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or _read_frontend_env()).rst
 assert BASE_URL, "REACT_APP_BACKEND_URL not set"
 API = f"{BASE_URL}/api"
 
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PW = "Admin123!"
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PW = "Chris2026!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PW = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PW = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 def _login(email: str, password: str) -> requests.Session:
@@ -119,7 +119,7 @@ class TestRecalcCorrectness:
         # Pull standings + completed matchups
         st = admin.get(f"{API}/leagues/{ice_kings_id}/standings", timeout=30)
         assert st.status_code == 200
-        standings = st.json()
+        standings = st.json()["standings"]
         assert len(standings) > 0
 
         # Aggregate expected PF/PA from matchups (all weeks) status=completed
@@ -174,7 +174,7 @@ class TestRecalcCorrectness:
         """Sanity: after recalc, no team has PF > 20000 (the original bug
         showed 56,418 PF on Zarek's Frozen)."""
         admin.post(f"{API}/leagues/{ice_kings_id}/recalculate-stats", timeout=60)
-        st = admin.get(f"{API}/leagues/{ice_kings_id}/standings", timeout=30).json()
+        st = admin.get(f"{API}/leagues/{ice_kings_id}/standings", timeout=30).json()["standings"]
         for row in st:
             pf = float(row.get("points_for") or 0)
             assert pf < 20000, f"{row.get('team_name')} PF still inflated: {pf}"

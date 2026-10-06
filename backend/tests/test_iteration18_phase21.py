@@ -1,15 +1,16 @@
 """Phase 21 backend tests: week-at-a-glance opponent + scoring_format, and team awards endpoint."""
 import os
+from tests.live_snapshot_fixture import live_snapshot_inputs
 import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PASS = "Chris2026!"
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 ICE_KINGS_ID = "69e46af167999bfb85c39628"
 ZAREK_TEAM_ID = "69e59b30cbd3fea02a914c61"

@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from routes import matchups as matchups_routes  # noqa: E402
 
-from tests.router_test_utils import isolated_router_app  # noqa: E402
+from tests.router_test_utils import isolated_router_app, seed_league  # noqa: E402
 
 
 async def _seed_matchups(db, league_id="L1"):
@@ -35,8 +35,9 @@ async def _seed_matchups(db, league_id="L1"):
 @pytest.mark.asyncio
 async def test_get_matchups_returns_all_sorted_by_week():
     async with isolated_router_app(matchups_routes) as ctx:
-        await _seed_matchups(ctx.db)
-        r = await ctx.client.get("/api/matchups/L1")
+        lid = await seed_league(ctx.db)
+        await _seed_matchups(ctx.db, lid)
+        r = await ctx.client.get(f"/api/matchups/{lid}")
         assert r.status_code == 200
         body = r.json()
         assert [m["week"] for m in body] == [1, 2, 3]
@@ -45,8 +46,9 @@ async def test_get_matchups_returns_all_sorted_by_week():
 @pytest.mark.asyncio
 async def test_get_matchups_filtered_by_week():
     async with isolated_router_app(matchups_routes) as ctx:
-        await _seed_matchups(ctx.db)
-        r = await ctx.client.get("/api/matchups/L1?week=2")
+        lid = await seed_league(ctx.db)
+        await _seed_matchups(ctx.db, lid)
+        r = await ctx.client.get(f"/api/matchups/{lid}?week=2")
         body = r.json()
         assert len(body) == 1
         assert body[0]["week"] == 2
@@ -55,9 +57,10 @@ async def test_get_matchups_filtered_by_week():
 @pytest.mark.asyncio
 async def test_current_week_returns_earliest_scheduled():
     async with isolated_router_app(matchups_routes) as ctx:
-        await _seed_matchups(ctx.db)
+        lid = await seed_league(ctx.db)
+        await _seed_matchups(ctx.db, lid)
         # Week 1 is completed, so current = min(scheduled) = 2
-        r = await ctx.client.get("/api/matchups/L1/current-week")
+        r = await ctx.client.get(f"/api/matchups/{lid}/current-week")
         body = r.json()
         assert body["week"] == 2
         assert len(body["matchups"]) == 1
@@ -66,11 +69,12 @@ async def test_current_week_returns_earliest_scheduled():
 @pytest.mark.asyncio
 async def test_current_week_defaults_to_1_when_nothing_scheduled():
     async with isolated_router_app(matchups_routes) as ctx:
+        lid = await seed_league(ctx.db)
         await ctx.db.matchups.insert_one({
-            "league_id": "L1", "week": 5, "status": "completed",
+            "league_id": lid, "week": 5, "status": "completed",
             "home_team_id": "TA", "away_team_id": "TB",
         })
-        r = await ctx.client.get("/api/matchups/L1/current-week")
+        r = await ctx.client.get(f"/api/matchups/{lid}/current-week")
         body = r.json()
         assert body["week"] == 1
         assert body["matchups"] == []
@@ -79,8 +83,9 @@ async def test_current_week_defaults_to_1_when_nothing_scheduled():
 @pytest.mark.asyncio
 async def test_week_results():
     async with isolated_router_app(matchups_routes) as ctx:
-        await _seed_matchups(ctx.db)
-        r = await ctx.client.get("/api/matchups/L1/results?week=1")
+        lid = await seed_league(ctx.db)
+        await _seed_matchups(ctx.db, lid)
+        r = await ctx.client.get(f"/api/matchups/{lid}/results?week=1")
         body = r.json()
         assert len(body) == 1
         assert body[0]["winner"] == "TA"
@@ -90,6 +95,7 @@ async def test_week_results():
 @pytest.mark.asyncio
 async def test_get_matchups_empty_league_returns_empty_list():
     async with isolated_router_app(matchups_routes) as ctx:
-        r = await ctx.client.get("/api/matchups/UNKNOWN")
+        lid = await seed_league(ctx.db)
+        r = await ctx.client.get(f"/api/matchups/{lid}")
         assert r.status_code == 200
         assert r.json() == []

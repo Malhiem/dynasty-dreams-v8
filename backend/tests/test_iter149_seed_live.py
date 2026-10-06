@@ -1,4 +1,5 @@
 """Iter 149 — Live HTTP integration test for seed endpoint + trade-block on the preview URL."""
+import uuid
 import os
 import requests
 import pytest
@@ -12,8 +13,8 @@ if not BASE_URL:
                 BASE_URL = line.split("=", 1)[1].strip().strip('"').rstrip("/")
                 break
 
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASS = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 @pytest.fixture(scope="module")
@@ -77,7 +78,7 @@ def test_seed_pending_trade_endpoint_forbidden_for_non_admin(league_id):
     # Try to register/login a non-admin to verify 403 specifically
     import uuid
     email = f"qa_iter149_{uuid.uuid4().hex[:8]}@example.com"
-    reg = s.post(f"{BASE_URL}/api/auth/register", json={"email": email, "password": "TestPass123!", "full_name": "QA 149"}, timeout=15)
+    reg = s.post(f"{BASE_URL}/api/auth/register", json={"username": "fixture_" + uuid.uuid4().hex[:16], "email": email, "password": "TestPass123!", "full_name": "QA 149"}, timeout=15)
     if reg.status_code in (200, 201):
         body = reg.json()
         tok = body.get("access_token") or body.get("token")

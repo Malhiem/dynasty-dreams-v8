@@ -16,6 +16,7 @@ Iter 182 — Three follow-ups after iter 181:
       `player_season_stats` collection populated by
       `scripts/iter182_backfill_season_stats.py`.
 """
+from tests.source_tree import read_source
 from pathlib import Path
 
 WAIVERS_TSX = Path("/app/frontend/src/lovable/pages/Waivers.tsx")
@@ -30,14 +31,14 @@ WAIVERS_PY = Path("/app/backend/routes/waivers.py")
 # ── (1) Prospect suffix cleanup ────────────────────────────────────
 
 def test_prospect_seed_no_longer_appends_suffix():
-    src = SEED_SCRIPT.read_text()
+    src = read_source(SEED_SCRIPT, include_imports=False)
     assert 'prospect_name = f"{name} (Prospect)"' not in src
     assert "prospect_name = name" in src
 
 
 def test_iter182_cleanup_script_exists_and_handles_collisions():
     assert CLEANUP_SCRIPT.exists()
-    src = CLEANUP_SCRIPT.read_text()
+    src = read_source(CLEANUP_SCRIPT, include_imports=False)
     # The script must (a) delete prospect-vs-prospect orphan dupes,
     # (b) rename rather than skip on NHL-veteran collisions (the
     # MinorEligibleBadge differentiates them now), (c) record an
@@ -52,7 +53,7 @@ def test_iter182_cleanup_script_exists_and_handles_collisions():
 # ── (2) "Team" column on /waivers ───────────────────────────────────
 
 def test_waivers_available_table_has_dedicated_team_column():
-    src = WAIVERS_TSX.read_text()
+    src = read_source(WAIVERS_TSX)
     # The Player column no longer renders the team-logo div block —
     # the team is rendered in its own dedicated column.
     assert "<TableHead>Player</TableHead>" in src
@@ -66,7 +67,7 @@ def test_waivers_available_table_has_dedicated_team_column():
 # ── (3) Timeframe dropdown expanded ─────────────────────────────────
 
 def test_waivers_timeframe_dropdown_exposes_expanded_options():
-    src = WAIVERS_TSX.read_text()
+    src = read_source(WAIVERS_TSX)
     assert 'data-testid="waiver-available-timeframe"' in src
     # All required options surface in the dropdown.
     for v in [
@@ -81,12 +82,12 @@ def test_waivers_timeframe_dropdown_exposes_expanded_options():
         assert v in src, f"missing timeframe option: {v}"
     # State + dep array wire the dropdown into the live fetch.
     assert "availableTimeframe" in src
-    assert "[league?.id, myTeam?.id, availableTimeframe]" in src
+    assert "[league?.id, myTeam?.id, availableTimeframe, availableUndraftedOnly]" in src
     assert "encodeURIComponent(availableTimeframe)" in src
 
 
 def test_players_page_timeframe_dropdown_includes_prior_seasons_and_matchup():
-    src = PLAYERS_PAGE.read_text()
+    src = read_source(PLAYERS_PAGE)
     for v in [
         '{ value: "season", label: "YTD (2025-26)" }',
         '{ value: "matchup", label: "Current Matchup" }',
@@ -99,7 +100,7 @@ def test_players_page_timeframe_dropdown_includes_prior_seasons_and_matchup():
 
 
 def test_backend_players_route_accepts_prior_season_and_matchup_timeframes():
-    src = PLAYERS_PY.read_text()
+    src = read_source(PLAYERS_PY)
     # Prior-season + playoffs branches resolve via the cached
     # `player_season_stats` collection.
     assert 'prior_season_match: Optional[dict] = None' in src
@@ -114,7 +115,7 @@ def test_backend_players_route_accepts_prior_season_and_matchup_timeframes():
 
 def test_iter182_season_backfill_script_exists():
     assert SEASON_BACKFILL.exists()
-    src = SEASON_BACKFILL.read_text()
+    src = read_source(SEASON_BACKFILL)
     # Targets the NHL stats landing endpoint that iter 175 already uses.
     assert "api-web.nhle.com/v1/player/{nhl_id}/landing" in src
     # Pulls both 2024-25 + 2023-24 regular AND playoffs.
@@ -126,7 +127,7 @@ def test_iter182_season_backfill_script_exists():
 
 
 def test_waivers_endpoint_accepts_timeframe_param():
-    src = WAIVERS_PY.read_text()
+    src = read_source(WAIVERS_PY)
     assert 'timeframe: str = "season"' in src
     assert '"timeframe": timeframe,' in src
     # Iter 182 — also honours prior-season + playoffs by reading

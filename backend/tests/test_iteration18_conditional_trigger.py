@@ -15,11 +15,11 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
-MONGO_URL = "mongodb://localhost:27017"
-DB_NAME = "test_database"
+MONGO_URL = os.environ["MONGO_URL"]
+DB_NAME = os.environ["DB_NAME"]
 
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PASS = "Chris2026!"
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 ICE_KINGS_ID = "69e46af167999bfb85c39628"
 ZAREK_TEAM_ID = "69e59b30cbd3fea02a914c61"
 

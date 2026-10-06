@@ -14,6 +14,7 @@ Backend (live API):
   5. `GET /api/leagues/{league_id}/draft-order` returns ordered seeds.
   6. Without a lottery, source = `reverse_standings`.
 """
+from tests.source_tree import read_source
 import os
 from pathlib import Path
 
@@ -22,13 +23,13 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "http://localhost:8001"
 API = f"{BASE_URL}/api"
-OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", "chriszarek@gmail.com")
-OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", "Chris2026!")
+OWNER_EMAIL = os.environ.get("OWNER_TEST_EMAIL", os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"))
+OWNER_PW = os.environ.get("OWNER_TEST_PASSWORD", os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
 
 REPO = Path(__file__).resolve().parents[2]
 DEPTH = REPO / "frontend/src/lovable/pages/DepthChart.tsx"
 DRAFT = REPO / "frontend/src/lovable/pages/DraftBoard.tsx"
-DRAFTS_ROUTE = REPO / "backend/routes/drafts.py"
+DRAFTS_ROUTE = REPO / "backend/routes/draft_order.py"
 
 
 def _login(email, password):
@@ -58,7 +59,7 @@ def owner_league(owner_token):
 
 # ── Frontend — CapRing + per-row % of cap ──────────────────────
 def test_cap_ring_helper_exists():
-    src = DEPTH.read_text()
+    src = read_source(DEPTH)
     assert "const CapRing" in src, "CapRing component missing"
     assert "<CapRing" in src, "CapRing must be rendered in the chips"
     # Per-line and per-pair % testids
@@ -69,7 +70,7 @@ def test_cap_ring_helper_exists():
 
 # ── Frontend — DraftBoard wires the new endpoint + reorders ────
 def test_draft_board_wires_order_endpoint():
-    src = DRAFT.read_text()
+    src = read_source(DRAFT)
     assert "/draft-order?year=" in src, "Draft order endpoint not called"
     assert "draftOrder" in src, "Draft order state missing"
     assert "seedById" in src, "Sort by seed missing"
@@ -79,7 +80,7 @@ def test_draft_board_wires_order_endpoint():
 
 # ── Backend — route function exists ────────────────────────────
 def test_draft_order_route_defined():
-    src = DRAFTS_ROUTE.read_text()
+    src = read_source(DRAFTS_ROUTE)
     assert '"/leagues/{league_id}/draft-order"' in src, "Endpoint path missing"
     assert "async def get_league_draft_order" in src, "Handler missing"
     assert "lottery_applied" in src and "reverse_standings" in src, "Both source codes required"

@@ -4,7 +4,7 @@ import requests
 import pytest
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
-ADMIN = {"email": "admin@dynastydreams.com", "password": "Admin123!"}
+ADMIN = {"email": os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")}
 
 
 @pytest.fixture(scope="module")
@@ -71,7 +71,7 @@ def test_cap_settings_put_new_fields(s):
     lid = target.get("id") or target.get("_id")
     payload = {
         "salary_cap_enabled": True,
-        "salary_cap": target.get("salary_cap") or 90_000_000,
+        "salary_cap": int(target.get("salary_cap") or 90_000_000),
         "default_rookie_aav": 975000,
         "minors_cap_treatment": "default",
     }

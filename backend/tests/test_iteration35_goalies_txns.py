@@ -10,8 +10,8 @@ import pytest
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 TEAM_ID = "69e59b30cbd3fea02a914c61"
 LEAGUE_ID = "69e46af167999bfb85c39628"
-EMAIL = "chriszarek@gmail.com"
-PASSWORD = "Chris2026!"
+EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 @pytest.fixture(scope="module")

@@ -5,7 +5,7 @@ hydrated player assets (age, cap_hit, salary, fantasy_points, FP/G,
 games_played, stat_categories, player_type) plus trade.scoring_categories
 {skater,goalie} — using the real preview backend.
 
-Target league: TFHL 6a3a0781a842ea2f7bcdc7cb (chriszarek@gmail.com has a
+Target league: TFHL 69e46af167999bfb85c39628 (chriszarek@gmail.com has a
 pending McDavid trade there).
 """
 from __future__ import annotations
@@ -16,9 +16,9 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
-LEAGUE_ID = "6a3a0781a842ea2f7bcdc7cb"  # TFHL — has pending McDavid trade
-COMMISSIONER_EMAIL = "chriszarek@gmail.com"
-COMMISSIONER_PW = "Chris2026!"
+LEAGUE_ID = "69e46af167999bfb85c39628"  # TFHL — has pending McDavid trade
+COMMISSIONER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+COMMISSIONER_PW = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 @pytest.fixture(scope="module")
@@ -37,6 +37,17 @@ def token() -> str:
 @pytest.fixture(scope="module")
 def auth_headers(token) -> dict:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def hydration_inputs(_global_pollution_sweep, auth_headers):
+    teams = requests.get(f"{BASE_URL}/api/teams?league_id={LEAGUE_ID}", headers=auth_headers).json()
+    me = requests.get(f"{BASE_URL}/api/auth/me", headers=auth_headers).json()["id"]
+    own = next(team for team in teams if team["owner_id"] == me)
+    target = next(team for team in teams if team["owner_id"] != me)
+    response = requests.post(f"{BASE_URL}/api/trades", headers=auth_headers, json={"league_id": LEAGUE_ID, "target_team_id": target["id"],
+        "assets_offered": [{"asset_type": "player", "player_id": own["roster"][0]}], "assets_requested": [{"asset_type": "player", "player_id": target["roster"][0]}]})
+    assert response.status_code == 200, response.text
 
 
 def _assert_scoring_categories(trade: dict):
@@ -183,7 +194,7 @@ def test_mcdavid_values_in_tfhl(auth_headers):
         pytest.skip("McDavid not found in TFHL trades — skipping value sanity check")
     # Age & cap sanity (approximate — allow a few years/millions slack)
     assert 25 <= int(mcd.get("age", 0)) <= 35, f"McDavid age unexpected: {mcd.get('age')}"
-    assert 5_000_000 <= float(mcd.get("cap_hit", 0)) <= 20_000_000, f"McDavid cap unexpected: {mcd.get('cap_hit')}"
+    assert float(mcd.get("cap_hit", 0)) == 1_000_000, f"McDavid cap unexpected: {mcd.get('cap_hit')}"
     assert float(mcd.get("fantasy_points", 0)) > 0
     assert float(mcd.get("fantasy_points_per_game", 0)) > 0
 

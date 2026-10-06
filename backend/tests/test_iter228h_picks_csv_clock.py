@@ -9,11 +9,11 @@ from bson import ObjectId
 from pymongo import MongoClient
 
 API_URL = os.environ["REACT_APP_BACKEND_URL"]
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@dynastydreams.com")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"))
 
 
 def _db_sync():
-    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 def _register(prefix="i228h"):
@@ -30,7 +30,7 @@ def _register(prefix="i228h"):
 
 def _login_admin():
     r = requests.post(f"{API_URL}/api/auth/login",
-                      json={"email": ADMIN_EMAIL, "password": "Admin123!"})
+                      json={"email": ADMIN_EMAIL, "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")})
     r.raise_for_status()
     return r.json()["access_token"]
 

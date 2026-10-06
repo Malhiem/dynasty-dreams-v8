@@ -38,7 +38,7 @@ async def _league(client, token):
 @pytest.mark.asyncio
 async def test_default_channels_and_max_cap():
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         r = await c.get(f"/api/chat/channels?league_id={lid}",
                         headers={"Authorization": f"Bearer {tok}"})
@@ -52,7 +52,7 @@ async def test_default_channels_and_max_cap():
 @pytest.mark.asyncio
 async def test_dms_auto_materialize_and_members():
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
         r = await c.get(f"/api/chat/channels?league_id={lid}", headers=h)
@@ -68,7 +68,7 @@ async def test_dms_auto_materialize_and_members():
 @pytest.mark.asyncio
 async def test_post_message_and_read_cursor():
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
         chans = (await c.get(f"/api/chat/channels?league_id={lid}", headers=h)).json()["channels"]
@@ -94,7 +94,7 @@ async def test_post_message_and_read_cursor():
 @pytest.mark.asyncio
 async def test_mute_durations_and_unmute():
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
         chans = (await c.get(f"/api/chat/channels?league_id={lid}", headers=h)).json()["channels"]
@@ -121,7 +121,7 @@ async def test_mute_durations_and_unmute():
 @pytest.mark.asyncio
 async def test_commissioner_create_delete_and_default_protected():
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
         # create
@@ -151,17 +151,26 @@ async def test_trade_execution_emits_chat_messages():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
 
         teams = await db.teams.find({"league_id": lid}).to_list(20)
-        me = next(t for t in teams if t.get("name") == "Zarek's Frozen")
-        other = next(t for t in teams if t["_id"] != me["_id"])
+        uid = (await c.get("/api/auth/me", headers=h)).json()["id"]
+        me = next(t for t in teams if t.get("owner_id") == uid)
+        admin_token = await _login(c, os.environ["ADMIN_EMAIL"], os.environ["ADMIN_PASSWORD"])
+        admin_id = (await c.get("/api/auth/me", headers={"Authorization": f"Bearer {admin_token}"})).json()["id"]
+        other = next(t for t in teams if t.get("owner_id") == admin_id)
         my_pick = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(me["_id"])})
         other_pick = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(other["_id"])})
         if not my_pick or not other_pick:
-            pytest.skip("No draft picks seeded")
+            from datetime import datetime, timezone
+            for team in (me, other):
+                await db.draft_picks.insert_one({"league_id": lid, "original_team_id": str(team["_id"]),
+                    "current_team_id": str(team["_id"]), "year": 2027, "round": 1,
+                    "status": "available", "created_at": datetime.now(timezone.utc), "_test_seed": True})
+            my_pick = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(me["_id"])})
+            other_pick = await db.draft_picks.find_one({"league_id": lid, "current_team_id": str(other["_id"])})
 
         payload = {
             "league_id": lid,
@@ -176,7 +185,10 @@ async def test_trade_execution_emits_chat_messages():
         trade_id = body.get("id") or body.get("_id") or body.get("trade_id")
         assert trade_id, f"No trade id in response: {body}"
 
-        # chris is co-comm of Ice Kings, can force-execute
+        accepted = await c.post(f"/api/trades/{trade_id}/respond", json={"action": "accept"},
+                                headers={"Authorization": f"Bearer {admin_token}"})
+        assert accepted.status_code == 200, accepted.text
+        # The isolated owner is a league co-commissioner.
         r = await c.post(f"/api/trades/{trade_id}/execute", headers=h)
         assert r.status_code == 200, r.text
 

@@ -51,13 +51,13 @@ async def test_executed_trade_clears_trade_block_for_traded_players():
         })
         await db.trade_block.insert_many([
             {
-                "item_type": "player", "looking_for": ["Best Offer"],
+                "item_type": "player", "looking_for": ["Best Offer"], "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
                 "owner_id": a.get("owner_id") or "_", "owner_name": "owner_a",
                 "league_id": LID, "team_id": str(a["_id"]),
                 "player_id": a_pid, "name": "Test A", "position": "C",
             },
             {
-                "item_type": "player", "looking_for": ["Best Offer"],
+                "item_type": "player", "looking_for": ["Best Offer"], "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
                 "owner_id": b.get("owner_id") or "_", "owner_name": "owner_b",
                 "league_id": LID, "team_id": str(b["_id"]),
                 "player_id": b_pid, "name": "Test B", "position": "RW",
@@ -70,7 +70,15 @@ async def test_executed_trade_clears_trade_block_for_traded_players():
 
         # Assemble a synthetic executed trade and call `_execute_trade` directly.
         # We import here so the test owns the module import cost.
-        from server import _execute_trade
+        import logging
+        from datetime import datetime, timezone
+        from services import trade_engine
+        previous_deps = dict(trade_engine._deps)
+        async def broadcast(*args, **kwargs):
+            pass
+        trade_engine._deps.clear()
+        trade_engine.setup({"db": db, "logger": logging.getLogger(__name__), "broadcast_to_room": broadcast})
+        _execute_trade = trade_engine._execute_trade
 
         trade_doc = {
             "league_id": LID,
@@ -97,5 +105,8 @@ async def test_executed_trade_clears_trade_block_for_traded_players():
             await db.teams.update_one({"_id": a["_id"]}, {"$set": {"roster": a.get("roster", [])}})
             await db.teams.update_one({"_id": b["_id"]}, {"$set": {"roster": b.get("roster", [])}})
             await db.trades.delete_one({"_id": ins.inserted_id})
+            await db.trade_block.delete_many({"league_id": LID, "player_id": {"$in": [a_pid, b_pid]}})
+            trade_engine._deps.clear()
+            trade_engine._deps.update(previous_deps)
     finally:
         mongo.close()

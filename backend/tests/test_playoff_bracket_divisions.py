@@ -6,15 +6,16 @@ Covers:
 - PUT /api/leagues/{id}/divisions (commissioner only) assigns teams
 - Standings endpoint returns division + GB + movement when divisions are set
 """
+from tests.http_test_auth import test_admin_headers
 import os
 import pytest
 import requests
 
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-COMMISH_EMAIL = "chriszarek@gmail.com"
-COMMISH_PASS = "Chris2026!"
-NON_COMMISH_EMAIL = "admin@dynastydreams.com"
-NON_COMMISH_PASS = "Admin123!"
+COMMISH_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+COMMISH_PASS = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
+NON_COMMISH_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+NON_COMMISH_PASS = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 def _login(email: str, password: str) -> tuple[requests.Session, str]:
@@ -42,7 +43,7 @@ def _get_commish_league() -> tuple[str, list]:
 def test_playoff_bracket_structure():
     """Bracket includes playoff_size, playoff_teams (seeded), and rounds list."""
     league_id, teams = _get_commish_league()
-    r = requests.get(f"{BASE_URL}/api/leagues/{league_id}/playoff-bracket")
+    r = requests.get(f"{BASE_URL}/api/leagues/{league_id}/playoff-bracket", headers=test_admin_headers())
     assert r.status_code == 200, r.text
     data = r.json()
 
@@ -70,7 +71,7 @@ def test_playoff_bracket_structure():
 def test_playoff_bracket_six_teams_has_byes():
     """6-team bracket gives seeds 1 & 2 byes."""
     league_id, _ = _get_commish_league()
-    r = requests.get(f"{BASE_URL}/api/leagues/{league_id}/playoff-bracket")
+    r = requests.get(f"{BASE_URL}/api/leagues/{league_id}/playoff-bracket", headers=test_admin_headers())
     data = r.json()
     if data["playoff_size"] == 6:
         assert len(data["bye_teams"]) == 2, "6-team bracket should have 2 byes"
@@ -81,7 +82,7 @@ def test_playoff_bracket_six_teams_has_byes():
 def test_get_divisions_empty_initially():
     """Unassigned teams returned in 'unassigned'."""
     league_id, _ = _get_commish_league()
-    r = requests.get(f"{BASE_URL}/api/leagues/{league_id}/divisions")
+    r = requests.get(f"{BASE_URL}/api/leagues/{league_id}/divisions", headers=test_admin_headers())
     assert r.status_code == 200
     data = r.json()
     assert "divisions" in data
@@ -122,9 +123,9 @@ def test_put_divisions_commissioner_assigns_and_standings_reflect():
 
     # Assign first 4 teams to divisions, next 4 to opposite conference
     assignments = []
-    for i, t in enumerate(teams[:8]):
+    for i, t in enumerate(teams):
         div = ["Atlantic", "Metropolitan", "Central", "Pacific"][i % 4]
-        conf = "Eastern" if i < 4 else "Western"
+        conf = "Eastern" if div in ("Atlantic", "Metropolitan") else "Western"
         assignments.append({"team_id": t["id"], "division": div, "conference": conf})
 
     r = s.put(
@@ -140,7 +141,7 @@ def test_put_divisions_commissioner_assigns_and_standings_reflect():
     assert "Atlantic" in assigned_div_names, f"Atlantic not persisted: {assigned_div_names}"
 
     # Standings now returns has_divisions=True and each assigned row has division field
-    st = requests.get(f"{BASE_URL}/api/leagues/{league_id}/standings").json()
+    st = requests.get(f"{BASE_URL}/api/leagues/{league_id}/standings", headers=test_admin_headers()).json()
     assert st["has_divisions"] is True
     assert "Atlantic" in st["divisions"]
     # Leader has gb=0, others have gb >= 0
@@ -157,7 +158,7 @@ def test_put_divisions_commissioner_assigns_and_standings_reflect():
 def test_standings_shape_has_metadata():
     """Standings payload has standings[], has_divisions, has_conferences, divisions, conferences."""
     league_id, _ = _get_commish_league()
-    r = requests.get(f"{BASE_URL}/api/leagues/{league_id}/standings")
+    r = requests.get(f"{BASE_URL}/api/leagues/{league_id}/standings", headers=test_admin_headers())
     data = r.json()
     for key in ("standings", "has_divisions", "has_conferences", "divisions", "conferences"):
         assert key in data, f"Missing key {key} in standings payload"

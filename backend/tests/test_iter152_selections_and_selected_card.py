@@ -1,4 +1,5 @@
 """Iter 152 — Selections tab + own-team-only TB add + SelectedPlayerCard."""
+from tests.source_tree import read_source
 from pathlib import Path
 FRONTEND = Path("/app/frontend/src")
 
@@ -18,9 +19,9 @@ def _read(rel: str) -> str:
         ):
             fp = FRONTEND / sub
             if fp.exists():
-                parts.append(fp.read_text(encoding='utf-8'))
+                parts.append(read_source(fp, encoding='utf-8'))
         return chr(10).join(parts)
-    return (FRONTEND / rel).read_text(encoding='utf-8')
+    return read_source(FRONTEND / rel, encoding='utf-8')
 
 
 def test_draft_chat_has_selections_tab():

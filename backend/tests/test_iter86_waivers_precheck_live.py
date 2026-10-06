@@ -17,10 +17,10 @@ BASE_URL = os.environ.get(
     "https://dynasty-preview.preview.emergentagent.com",
 ).rstrip("/")
 
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PWD = "Chris2026!"
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PWD = "Admin123!"
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PWD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PWD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 ICE_KINGS_LEAGUE_ID = "69e46af167999bfb85c39628"
 ZAREK_TEAM_ID = "69e59b30cbd3fea02a914c61"

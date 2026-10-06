@@ -3,6 +3,7 @@
 Verifies that the iter-111 admin endpoint accepts the new fields, persists
 them, and that the LeagueResponse hydrates them on subsequent GETs.
 """
+import os
 import asyncio
 import logging
 
@@ -18,7 +19,7 @@ from routes import leagues as leagues_routes
 @pytest.fixture
 def isolated_app():
     import os
-    mongo_url = os.environ.get("MONGO_URL", "mongodb://localhost:27017")
+    mongo_url = os.environ.get("MONGO_URL", os.environ["MONGO_URL"])
     db_name = f"dd_test_iter111_{ObjectId()}"
     client = AsyncIOMotorClient(mongo_url, maxPoolSize=1, retryReads=True, retryWrites=True)
     db = client[db_name]

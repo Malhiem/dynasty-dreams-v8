@@ -91,7 +91,10 @@ def test_player_roster_no_inline_violation_helpers():
     src = PLAYER_ROSTER.read_text()
     # The inline definitions should be gone. Re-exports + imports OK.
     # We assert there's only the import + re-export, no `const` definition.
-    assert "const getRosterViolations = " not in src
+    # The room supplies live league rules through a thin wrapper; the
+    # violation calculation still lives in the extracted internals module.
+    assert "defaultRosterViolations(list, LEAGUE_ROSTER_SLOTS, sectionConfig)" in src
+    assert "defaultRosterViolations" in src
     assert "const canOwnerFixViolations = " not in src
     assert "const getContractTypeColor = " not in src
 

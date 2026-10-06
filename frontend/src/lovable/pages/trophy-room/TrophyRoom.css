@@ -1,0 +1,248 @@
+.trophy-room {
+          background: radial-gradient(ellipse at top, #1a1008 0%, #0d0805 70%, #050300 100%);
+          min-height: 100%;
+          padding: 24px 32px 60px;
+          color: #c8a060;
+          font-family: 'Cinzel', 'Playfair Display', Georgia, serif;
+        }
+        .trophy-room-header {
+          display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap;
+          gap: 16px; padding-bottom: 18px;
+          border-bottom: 1px solid rgba(200,160,96,0.2);
+          margin-bottom: 28px;
+        }
+        .franchise-name {
+          font-size: 28px; font-weight: 700; letter-spacing: 0.18em;
+          text-transform: uppercase; color: #f0d080;
+          text-shadow: 0 0 18px rgba(200,160,96,0.35), 0 1px 0 rgba(0,0,0,0.6);
+        }
+        .season-selector { display: inline-flex; gap: 6px; }
+        .s-btn {
+          background: rgba(74,56,32,0.4); border: 1px solid rgba(200,160,96,0.3);
+          color: #c8a060; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+          padding: 6px 14px; border-radius: 4px; cursor: pointer; transition: all 0.2s;
+        }
+        .s-btn:hover { background: rgba(74,56,32,0.7); }
+        .s-btn.active {
+          background: linear-gradient(180deg,#c8a060,#7a6040); color: #1a1008;
+          font-weight: 600; box-shadow: 0 0 12px rgba(200,160,96,0.4);
+        }
+        .rafters {
+          position: relative; margin: 30px 0 36px;
+          padding: 24px 16px 32px;
+        }
+        .rafter-beam {
+          position: absolute; top: 0; left: 0; right: 0; height: 14px;
+          background: linear-gradient(180deg,#3a2510,#1a0a05,#3a2510);
+          border-bottom: 2px solid #6a4020;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+        }
+        .rafter-label {
+          font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase;
+          color: #7a6040; text-align: center; margin-top: 18px; margin-bottom: 18px;
+        }
+        .banners-row {
+          display: flex; flex-wrap: wrap; gap: 18px; justify-content: center;
+        }
+        .trophy-banner {
+          background: transparent; border: none; padding: 0;
+          display: flex; flex-direction: column; align-items: center;
+          cursor: pointer; transition: transform 0.25s ease;
+          animation: bannerDrop 0.6s ease-out backwards;
+        }
+        .trophy-banner:hover { transform: translateY(-4px); }
+        .trophy-banner:nth-child(1) { animation-delay: 0.05s; }
+        .trophy-banner:nth-child(2) { animation-delay: 0.12s; }
+        .trophy-banner:nth-child(3) { animation-delay: 0.18s; }
+        .trophy-banner:nth-child(4) { animation-delay: 0.24s; }
+        .trophy-banner:nth-child(5) { animation-delay: 0.30s; }
+        .trophy-banner-rope { width: 2px; height: 14px; background: #4a3820; }
+        .trophy-banner-body {
+          background: var(--banner-color, #3a2510);
+          color: #f0d080; padding: 14px 16px 26px; min-width: 110px; text-align: center;
+          clip-path: polygon(0 0, 100% 0, 100% 86%, 50% 100%, 0 86%);
+          box-shadow: 0 6px 18px rgba(0,0,0,0.55), inset 0 0 30px rgba(0,0,0,0.25);
+          border: 1px solid rgba(240,208,128,0.25);
+          display: flex; flex-direction: column; align-items: center; gap: 4px;
+        }
+        .trophy-banner-year {
+          font-size: 18px; font-weight: 700; letter-spacing: 0.04em;
+          color: #f0d080; text-shadow: 0 1px 0 rgba(0,0,0,0.5);
+        }
+        .trophy-banner-title {
+          font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase;
+          color: #f0d080; opacity: 0.85;
+        }
+        .trophy-banner-detail {
+          font-size: 8px; letter-spacing: 0.15em; text-transform: uppercase;
+          color: #c8a060; opacity: 0.7;
+        }
+        .banner-with-team { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+        .banner-team-name {
+          font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+          color: #c8a060; opacity: 0.7;
+        }
+        .display-case { margin-bottom: 36px; }
+        .case-label {
+          font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase;
+          color: #c8a060; text-align: center; padding: 8px 0;
+          border-top: 1px solid rgba(200,160,96,0.18);
+          border-bottom: 1px solid rgba(200,160,96,0.18);
+          margin-bottom: 20px;
+        }
+        .shelf {
+          background: linear-gradient(180deg,#2a1a0e,#1a1008);
+          border-top: 2px solid #6a4020; border-bottom: 1px solid #1a1008;
+          padding: 22px 18px 16px; position: relative;
+          display: flex; flex-wrap: wrap; gap: 22px; justify-content: center;
+        }
+        .shelf-grid { gap: 26px; }
+        .shelf-shadow {
+          position: absolute; left: 0; right: 0; bottom: -10px; height: 10px;
+          background: linear-gradient(180deg,rgba(0,0,0,0.5),transparent);
+        }
+        .trophy-item {
+          background: transparent; border: none; cursor: pointer;
+          display: flex; flex-direction: column; align-items: center; gap: 6px;
+          min-width: 130px; max-width: 160px; transition: transform 0.2s;
+          padding: 6px 8px;
+        }
+        .trophy-item:hover { transform: translateY(-3px); }
+        .trophy-icon {
+          position: relative;
+          width: 64px; height: 64px;
+          background: radial-gradient(circle at 35% 30%, #f0d080, #c8a060 50%, #7a6040 100%);
+          border-radius: 50%;
+          display: flex; align-items: center; justify-content: center;
+          box-shadow: 0 4px 14px rgba(200,160,96,0.4), inset 0 -4px 10px rgba(0,0,0,0.3);
+          border: 2px solid #6a4020;
+        }
+        .trophy-glow {
+          position: absolute; inset: -8px;
+          background: radial-gradient(circle, rgba(255,200,50,0.18), transparent 60%);
+          border-radius: 50%; pointer-events: none;
+        }
+        .trophy-plaque {
+          background: linear-gradient(180deg,#3a2510,#1a1008);
+          border: 1px solid rgba(200,160,96,0.3);
+          padding: 6px 10px; min-width: 110px; text-align: center;
+          border-radius: 3px;
+        }
+        .trophy-plaque-name {
+          font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+          color: #f0d080; font-weight: 600;
+        }
+        .trophy-plaque-stat {
+          font-size: 11px; color: #c8a060; margin-top: 2px;
+        }
+        .trophy-plaque-owner {
+          font-size: 8px; color: #7a6040; letter-spacing: 0.1em;
+          text-transform: uppercase; margin-top: 2px;
+        }
+        .plaques-row {
+          display: flex; flex-wrap: wrap; gap: 14px; justify-content: center;
+        }
+        .hall-plaque {
+          background: linear-gradient(180deg,#3a2510,#1a0a05);
+          border: 1px solid rgba(200,160,96,0.3);
+          color: #c8a060; padding: 10px 14px; cursor: pointer;
+          display: flex; gap: 12px; align-items: center; min-width: 240px;
+          border-radius: 3px; box-shadow: 0 3px 10px rgba(0,0,0,0.5);
+          transition: transform 0.2s, border-color 0.2s;
+        }
+        .hall-plaque:hover { transform: translateY(-2px); border-color: rgba(240,208,128,0.6); }
+        .plaque-avatar {
+          width: 38px; height: 38px; border-radius: 50%;
+          background: radial-gradient(circle at 35% 30%, #f0d080, #7a6040);
+          display: flex; align-items: center; justify-content: center;
+          font-weight: 700; color: #1a1008; font-size: 13px; letter-spacing: 0.05em;
+          box-shadow: inset 0 -3px 8px rgba(0,0,0,0.3);
+        }
+        .plaque-info { flex: 1; text-align: left; }
+        .plaque-player {
+          font-size: 13px; color: #f0d080; font-weight: 600;
+          letter-spacing: 0.05em;
+        }
+        .plaque-seasons {
+          font-size: 9px; color: #7a6040; letter-spacing: 0.12em;
+          text-transform: uppercase; margin-top: 1px;
+        }
+        .plaque-trophies-list { margin-top: 4px; }
+        .plaque-badge {
+          font-size: 8px; letter-spacing: 0.18em; text-transform: uppercase;
+          background: rgba(200,160,96,0.15); border: 1px solid rgba(200,160,96,0.4);
+          padding: 3px 7px; color: #f0d080; border-radius: 3px;
+        }
+        .team-rooms-grid {
+          display: grid; gap: 10px;
+          grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        }
+        .team-room-card {
+          background: linear-gradient(180deg,#2a1a0e,#1a1008);
+          border: 1px solid rgba(200,160,96,0.25);
+          padding: 14px; cursor: pointer; text-align: left;
+          border-radius: 3px; color: #c8a060;
+          transition: transform 0.15s, border-color 0.15s;
+        }
+        .team-room-card:hover {
+          transform: translateY(-2px); border-color: rgba(240,208,128,0.6);
+        }
+        .team-room-name { font-size: 13px; color: #f0d080; font-weight: 600; }
+        .team-room-banners { font-size: 10px; color: #7a6040; margin-top: 4px;
+          letter-spacing: 0.1em; text-transform: uppercase; }
+
+        /* Iter 232N.28 — Draft Hall of Awards.
+           Vintage plaques stacked in a responsive grid so old drafts
+           feel like museum exhibits rather than a spreadsheet. */
+        .hall-of-awards-grid {
+          display: grid; gap: 14px;
+          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+        }
+        .draft-award-card {
+          background: linear-gradient(180deg,#2a1a0e 0%,#1a0f07 100%);
+          border: 1px solid rgba(200,160,96,0.35);
+          border-radius: 3px;
+          padding: 12px 14px;
+          box-shadow: 0 3px 10px rgba(0,0,0,0.5), inset 0 -2px 6px rgba(0,0,0,0.4);
+          color: #c8a060;
+        }
+        .draft-award-header {
+          display: flex; justify-content: space-between; align-items: baseline;
+          gap: 8px; margin-bottom: 2px;
+        }
+        .draft-award-year {
+          font-size: 11px; letter-spacing: 0.2em;
+          color: #7a6040; text-transform: uppercase;
+        }
+        .draft-award-name {
+          font-size: 13px; color: #f0d080; font-weight: 600;
+          letter-spacing: 0.06em; text-align: right; flex: 1;
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .draft-award-meta {
+          font-size: 9px; color: #7a6040; letter-spacing: 0.15em;
+          text-transform: uppercase; margin-bottom: 8px;
+          padding-bottom: 6px; border-bottom: 1px solid rgba(200,160,96,0.15);
+        }
+        .draft-award-rows {
+          display: flex; flex-direction: column; gap: 4px;
+        }
+        .draft-award-row {
+          display: flex; align-items: center; gap: 6px;
+          font-size: 10px; letter-spacing: 0.05em;
+        }
+        .draft-award-icon { color: #c8a060; flex-shrink: 0; }
+        .draft-award-label {
+          color: #7a6040; text-transform: uppercase;
+          letter-spacing: 0.12em; font-size: 8.5px;
+          min-width: 82px;
+        }
+        .draft-award-winner {
+          color: #f0d080; font-weight: 600;
+          flex: 1; overflow: hidden; text-overflow: ellipsis;
+          white-space: nowrap; text-align: right;
+        }
+        @keyframes bannerDrop {
+          from { transform: translateY(-30px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }

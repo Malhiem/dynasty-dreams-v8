@@ -20,7 +20,7 @@ API_URL = os.environ["REACT_APP_BACKEND_URL"]
 
 
 def _db():
-    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", "test_database")]
+    return MongoClient(os.environ["MONGO_URL"])[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 def _register(prefix="i228l"):
@@ -37,7 +37,7 @@ def _register(prefix="i228l"):
 
 def _admin_login():
     r = requests.post(f"{API_URL}/api/auth/login",
-                      json={"email": "admin@dynastydreams.com", "password": "Admin123!"})
+                      json={"email": os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")})
     r.raise_for_status()
     return r.json()["access_token"]
 
@@ -125,7 +125,7 @@ def test_admin_audit_timeline_endpoint_returns_merged_history():
     # Verify metadata snapshot present
     purge_entry = next(e for e in body["entries"] if e["action"] == "draft_purge")
     assert purge_entry["metadata"]["draft_name"] == "AuditTrail Draft"
-    assert purge_entry["admin_email"] == "admin@dynastydreams.com"
+    assert purge_entry["admin_email"] == os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
 
 
 def test_admin_audit_endpoint_requires_admin():

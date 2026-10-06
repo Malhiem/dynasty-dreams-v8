@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -47,8 +47,8 @@ async def _seed_user(db, role="admin"):
 
 @pytest.mark.asyncio
 async def test_registered_endpoint_rejects_non_admin():
-    from routes.draft_ops import list_registered_metrics
-    from routes import draft_ops as m
+    from routes.admin_metrics import list_registered_metrics
+    from routes import admin_metrics as m
 
     db = _db()
     caller = await _seed_user(db, role="user")
@@ -68,8 +68,8 @@ async def test_registered_endpoint_rejects_non_admin():
 
 @pytest.mark.asyncio
 async def test_registered_endpoint_returns_kinds_and_last_seen():
-    from routes.draft_ops import list_registered_metrics
-    from routes import draft_ops as m
+    from routes.admin_metrics import list_registered_metrics
+    from routes import admin_metrics as m
 
     db = _db()
     admin = await _seed_user(db, role="admin")
@@ -127,8 +127,8 @@ async def test_registered_endpoint_empty_kinds_when_no_rollups():
     """A newly-registered metric with zero rollup docs must still show
     up in discovery with empty `kinds` and null `last_seen_day` — so the
     Metric Explorer can render 'no rollup rows yet' gracefully."""
-    from routes.draft_ops import list_registered_metrics
-    from routes import draft_ops as m
+    from routes.admin_metrics import list_registered_metrics
+    from routes import admin_metrics as m
 
     db = _db()
     admin = await _seed_user(db, role="admin")

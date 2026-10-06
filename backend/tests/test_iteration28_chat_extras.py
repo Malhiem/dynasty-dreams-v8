@@ -43,7 +43,7 @@ async def _league(client, token):
 async def test_unread_shape_excludes_muted_and_self():
     """GET /api/chat/unread returns {unread, by_channel} and respects mute."""
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
         r = await c.get(f"/api/chat/unread?league_id={lid}", headers=h)
@@ -67,7 +67,7 @@ async def test_unread_shape_excludes_muted_and_self():
 @pytest.mark.asyncio
 async def test_message_too_long_rejected():
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
         chans = (await c.get(f"/api/chat/channels?league_id={lid}", headers=h)).json()["channels"]
@@ -81,7 +81,7 @@ async def test_message_too_long_rejected():
 @pytest.mark.asyncio
 async def test_create_channel_normalizes_and_rejects_duplicate():
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
         # cleanup any existing test channels first
@@ -114,7 +114,7 @@ async def test_non_commissioner_cannot_create_or_delete_channel():
     async with AsyncClient(base_url=BASE, timeout=30, cookies={}) as c:
         # Disable cookie persistence so login cookies don't override Bearer
         c.cookies.clear()
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         c.cookies.clear()
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
@@ -164,7 +164,7 @@ async def test_dm_access_guard_non_participant_403():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
 
@@ -195,7 +195,7 @@ async def test_transactions_includes_waiver_lost_and_competing_claims():
     """GET /api/leagues/{id}/transactions returns waiver_lost rows AND
     waiver_won rows carry competing_claims/winning_team_name/winning_bid."""
     async with AsyncClient(base_url=BASE, timeout=30) as c:
-        tok = await _login(c, "chriszarek@gmail.com", "Chris2026!")
+        tok = await _login(c, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
         lid = await _league(c, tok)
         h = {"Authorization": f"Bearer {tok}"}
         r = await c.get(f"/api/leagues/{lid}/transactions?limit=200", headers=h)

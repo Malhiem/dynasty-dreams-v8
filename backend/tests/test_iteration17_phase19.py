@@ -9,8 +9,8 @@ _env = dotenv_values(Path(__file__).resolve().parents[2] / "frontend" / ".env")
 BASE = (os.environ.get("REACT_APP_BACKEND_URL") or _env.get("REACT_APP_BACKEND_URL")).rstrip("/")
 API = f"{BASE}/api"
 
-CHRIS_EMAIL = "chriszarek@gmail.com"
-CHRIS_PWD = "Chris2026!"
+CHRIS_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+CHRIS_PWD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 ICE_KINGS_LID = "69e46af167999bfb85c39628"
 
 
@@ -77,13 +77,17 @@ class TestDraftPicks:
         for old in ("Arctic Wolves", "Blizzards", "Frostbite Falcons"):
             assert old not in names, f"Mock team name '{old}' leaked"
         # At least some real ones should appear
-        real = {"Zarek's Frozen", "Ice Breakers", "Slapshot Snipers"}
-        assert real.intersection(names), f"Expected real team names, got {names}"
+        from tests.http_test_auth import test_admin_headers
+        actual = requests.get(f"{API}/teams", params={"league_id": ICE_KINGS_LID}, headers=test_admin_headers()).json()
+        assert names == {team["name"] for team in actual}
 
 
 # ── Evaluate conditions (no auth required) ────────────────────────────
 class TestEvaluateConditions:
     def test_evaluate_no_auth(self, chris_session):
+        from pymongo import MongoClient
+        with MongoClient(os.environ["MONGO_URL"]) as mongo:
+            mongo[os.environ["DB_NAME"]].leagues.update_one({"_id": __import__("bson").ObjectId(ICE_KINGS_LID)}, {"$set": {"transactions_config.trades.conditional_trades_enabled": True}})
         # Propose a quick conditional trade then call evaluate w/o auth
         r = chris_session.get(f"{API}/teams", params={"league_id": ICE_KINGS_LID})
         assert r.status_code == 200

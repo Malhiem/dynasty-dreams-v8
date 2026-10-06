@@ -13,6 +13,7 @@ Credentials & target league taken from review_request:
   Frozen Dynasty league: 69e46af167999bfb85c3962a
   Ice Kings Head-to-Head league: 69e46af167999bfb85c39628
 """
+from tests.source_tree import read_source
 import os
 import copy
 from pathlib import Path
@@ -28,15 +29,15 @@ def _load_backend_url() -> str:
         return val.rstrip("/")
     env_path = Path("/app/frontend/.env")
     if env_path.exists():
-        for line in env_path.read_text().splitlines():
+        for line in read_source(env_path, include_imports=False).splitlines():
             if line.startswith("REACT_APP_BACKEND_URL="):
                 return line.split("=", 1)[1].strip().rstrip("/")
     raise RuntimeError("REACT_APP_BACKEND_URL not found")
 
 
 BASE_URL = _load_backend_url()
-OWNER_EMAIL = "chriszarek@gmail.com"
-OWNER_PASSWORD = "Chris2026!"
+OWNER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+OWNER_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 FROZEN_LEAGUE_ID = "69e46af167999bfb85c3962a"
 ICE_KINGS_LEAGUE_ID = "69e46af167999bfb85c39628"
 

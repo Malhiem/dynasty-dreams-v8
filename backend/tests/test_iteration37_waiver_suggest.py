@@ -13,8 +13,8 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dynasty-preview.preview.emergentagent.com").rstrip("/")
 LEAGUE_ID = "69e46af167999bfb85c39628"
 TEAM_ID = "69e59b30cbd3fea02a914c61"
-USER_EMAIL = "chriszarek@gmail.com"
-USER_PASSWORD = "Chris2026!"
+USER_EMAIL = os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")
+USER_PASSWORD = os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")
 
 
 @pytest.fixture(scope="module")
@@ -49,7 +49,7 @@ def pro_auth_session(auth_session):
     admin = requests.Session()
     admin.headers.update({"Content-Type": "application/json"})
     admin_login = admin.post(f"{BASE_URL}/api/auth/login", json={
-        "email": "admin@dynastydreams.com", "password": "Admin123!",
+        "email": os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), "password": os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"),
     })
     if admin_login.status_code != 200:
         pytest.skip(f"Admin auth failed: {admin_login.status_code}")

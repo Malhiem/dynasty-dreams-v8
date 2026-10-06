@@ -83,7 +83,7 @@ async def _require_admin(request: Request):
 # create/update to prevent accidental writes to computed/audit fields
 # like `seeded_at`, `nhl_data_synced_at`, `last_synced_at`, etc.
 _EDITABLE_FIELDS = {
-    "name", "position", "player_type", "team", "team_name", "league",
+    "name", "position", "player_type", "team", "team_name", "league", "league_status",
     "age", "birth_date", "birth_country", "shoots", "nhl_id",
     "games_played", "goals", "assists", "points", "shots",
     "plus_minus", "penalty_minutes",
@@ -179,6 +179,7 @@ class CreatePlayerRequest(BaseModel):
     team: Optional[str] = None
     team_name: Optional[str] = None
     league: Optional[str] = "NHL"
+    league_status: Optional[str] = None
     age: Optional[int] = Field(None, ge=15, le=60)
     nhl_id: Optional[str] = None
     is_prospect: Optional[bool] = False

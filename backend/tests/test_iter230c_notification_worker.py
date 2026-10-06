@@ -34,7 +34,7 @@ BASE = _backend_url()
 
 def _db_sync():
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    return client[os.environ.get("DB_NAME", "test_database")]
+    return client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 async def _login(client, email, password):

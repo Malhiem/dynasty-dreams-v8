@@ -28,6 +28,7 @@ const SHORT_TTL_PATTERNS = [
 ];
 const SHORT_TTL_MS = 5_000;
 const DEDUPABLE_PATTERNS = [
+  /\/teams\/mine\/summaries$/,
   /\/leagues\?my_leagues=true/,
   /\/teams\?league_id=[^&]+$/,
   /\/auth\/me$/,

@@ -19,6 +19,8 @@ from bson import ObjectId
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field, field_validator
 
+from services.financial_lock import serialize_finances
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -256,7 +258,22 @@ async def get_teams(request: Request, league_id: Optional[str] = None):
     if league_id:
         query["league_id"] = league_id
     teams = await db.teams.find(query).to_list(200)
+    from services.salary_policy import payroll
+    for team in teams:
+        team["salary_used"] = (await payroll(db, team))["used"]
     return [team_to_response(team) for team in teams]
+
+
+@router.get("/teams/mine/summaries")
+async def get_my_team_summaries(request: Request):
+    """Lightweight owner summaries for the multi-league switcher."""
+    user = await _require_user(request)
+    rows = await _deps["db"].teams.find({"owner_id": user["_id"]}, {
+        "league_id": 1, "owner_id": 1, "name": 1, "logo_abbr": 1,
+        "logo_url": 1, "abbreviation": 1, "theme_color": 1,
+    }).to_list(500)
+    return [{**{key: value for key, value in row.items() if key != "_id"},
+             "id": str(row["_id"])} for row in rows]
 
 
 @router.get("/teams/{team_id}", response_model=TeamResponse)
@@ -271,6 +288,8 @@ async def get_team(team_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Team not found")
     # ...and then enforce league membership.
     await _require_league_member(request, str(team.get("league_id") or ""))
+    from services.salary_policy import payroll
+    team["salary_used"] = (await payroll(db, team))["used"]
     return team_to_response(team)
 
 
@@ -571,6 +590,7 @@ class BuyoutInput(BaseModel):
 
 
 @router.post("/teams/{team_id}/players/{player_id}/buyout")
+@serialize_finances(lambda: _deps["db"])
 async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, request: Request):
     """Commissioner/Owner action — remove a player from the roster and stamp
     a multi-year dead-cap schedule on the team document.
@@ -625,7 +645,9 @@ async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, r
             nhl_id=player.get("nhl_id"), age=int(player.get("age") or 27),
         )
 
-    salary = int(contract.get("salary") or 0)
+    ledger = await db.contracts.find_one({"league_id": team["league_id"], "team_id": team_id,
+                                          "player_id": player_id, "status": "active"})
+    salary = int(ledger.get("aav") or 0) if ledger else int(contract.get("aav", contract.get("salary")) or 0)
     years_remaining = int(contract.get("yearsRemaining") or 1)
     if salary <= 0 or years_remaining <= 0:
         raise HTTPException(status_code=400, detail="Player has no remaining contract to buy out")
@@ -655,7 +677,8 @@ async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, r
     total_dead = int(round(salary * years_remaining * rate))
     annual_dead = int(round(total_dead / span))
     from datetime import datetime as _dt
-    cur_year = _dt.now(timezone.utc).year
+    from services.salary_policy import applicable_season, payroll
+    cur_year = applicable_season(league)
     schedule_entries = []
     created_at = _dt.now(timezone.utc)
     for i in range(span):
@@ -672,7 +695,7 @@ async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, r
             "created_at": created_at,
         })
 
-    # Apply: remove player from roster, append schedule.
+    # Apply: remove player and replace its active contract charge with the schedule.
     new_roster = [pid for pid in (team.get("roster") or []) if pid != player_id]
     await db.teams.update_one(
         {"_id": team["_id"]},
@@ -681,6 +704,13 @@ async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, r
             "$push": {"dead_cap_schedule": {"$each": schedule_entries}},
         },
     )
+
+    await db.contracts.update_many({"league_id": team["league_id"], "team_id": team_id,
+                                    "player_id": player_id, "status": "active"},
+                                   {"$set": {"status": "bought_out"}})
+    updated = await db.teams.find_one({"_id": team["_id"]})
+    state = await payroll(db, updated, league)
+    await db.teams.update_one({"_id": team["_id"]}, {"$set": {"salary_used": state["used"]}})
 
     # ── Ownership tracking (buyout) ──────────────────────────────
     try:
@@ -703,6 +733,7 @@ async def buy_out_contract(team_id: str, player_id: str, payload: BuyoutInput, r
 
 
 @router.delete("/teams/{team_id}/buyouts/{player_id}")
+@serialize_finances(lambda: _deps["db"])
 async def reverse_buyout(team_id: str, player_id: str, request: Request):
     """Commissioner-only — undo a buyout. Removes every schedule entry whose
     source is "buyout" and player_id matches, and re-adds the player to the
@@ -740,6 +771,14 @@ async def reverse_buyout(team_id: str, player_id: str, request: Request):
         {"$set": {"dead_cap_schedule": kept, "roster": roster}},
     )
 
+    await db.contracts.update_many({"league_id": team["league_id"], "team_id": team_id,
+                                    "player_id": player_id, "status": "bought_out"},
+                                   {"$set": {"status": "active"}})
+    from services.salary_policy import payroll
+    updated = await db.teams.find_one({"_id": team["_id"]})
+    state = await payroll(db, updated, league)
+    await db.teams.update_one({"_id": team["_id"]}, {"$set": {"salary_used": state["used"]}})
+
     # ── Ownership tracking (buyout reversal) ─────────────────────
     try:
         from utils.scoring_roster import log_roster_change
@@ -758,13 +797,9 @@ async def reverse_buyout(team_id: str, player_id: str, request: Request):
 
 
 @router.delete("/teams/{team_id}/dead-cap/retention/{player_id}")
+@serialize_finances(lambda: _deps["db"])
 async def cancel_retention_charge(team_id: str, player_id: str, request: Request):
-    """Commissioner-only — forgive a salary-retention charge against this team.
-
-    Deletes the matching row from `db.salary_retentions` (so the schedule
-    endpoint no longer flattens it back in). Intended for "new owner takeover"
-    situations where the league waives prior commitments.
-    """
+    """Forgive the current obligation and preserve its policy and audit history."""
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
     _safe_object_id = _deps["_safe_object_id"]
@@ -782,15 +817,35 @@ async def cancel_retention_charge(team_id: str, player_id: str, request: Request
     )
     if not is_commish:
         raise HTTPException(status_code=403, detail="Only the commissioner may cancel retention charges")
-    result = await db.salary_retentions.delete_many({
-        "league_id": team["league_id"],
-        "retainer_team_id": team_id,
-        "player_id": player_id,
-    })
-    if result.deleted_count == 0:
+    from services.salary_policy import obligations, payroll
+    rows = await obligations(db, league, team)
+    rows = [row for row in rows if row.get("player_id") == player_id]
+    if not rows:
         raise HTTPException(status_code=404, detail="No active retention found for this player")
+    policy = league.get("retention_forgiveness_policy", "receiver_pays")
+    cancelled_at = datetime.now(timezone.utc)
+    for row in rows:
+        query = {"_id": row["_id"]} if row.get("_id") else {
+            "league_id": team["league_id"], "retainer_team_id": team_id,
+            "player_id": player_id, "season_year": row.get("season_year", row.get("year"))}
+        await db.salary_retentions.update_one(query, {"$set": {
+            **{key: value for key, value in row.items() if key != "_id"},
+            "league_id": team["league_id"], "retainer_team_id": team_id,
+            "status": "cancelled", "cancelled_at": cancelled_at,
+            "cancelled_by": str(user["_id"]), "forgiveness_policy": policy}}, upsert=True)
+    await db.teams.update_one({"_id": team["_id"]}, {"$pull": {
+        "dead_cap_schedule": {"source": "retention", "player_id": player_id},
+        "salary_retentions": {"player_id": player_id}}})
+    await db.audit_log.insert_one({"league_id": team["league_id"], "team_id": team_id,
+        "player_id": player_id, "action": "retention_forgiven", "user_id": str(user["_id"]),
+        "forgiveness_policy": policy, "amount": sum(float(row.get("amount") or 0) for row in rows),
+        "created_at": cancelled_at})
+    for affected in await db.teams.find({"league_id": team["league_id"]}).to_list(1000):
+        state = await payroll(db, affected, league)
+        await db.teams.update_one({"_id": affected["_id"]}, {"$set": {"salary_used": state["used"]}})
     return {"team_id": team_id, "player_id": player_id,
-            "deleted_count": result.deleted_count, "reversed": True}
+            "deleted_count": len(rows), "cancelled_count": len(rows),
+            "forgiveness_policy": policy, "reversed": True}
 
 
 
@@ -817,56 +872,18 @@ async def get_dead_cap_schedule(team_id: str, request: Request):
     await _require_league_member(request, str(team.get("league_id") or ""))
     schedule = list(team.get("dead_cap_schedule") or [])
 
-    # ── Iter 113 — Inline salary-retention rows for *legacy* trades that
-    # pre-date the schedule write. Skip if the team's dead_cap_schedule
-    # already has matching retention entries for this player (to avoid
-    # double-counting after the trade-engine fix in iter 113).
-    league_id = team.get("league_id")
-    if league_id:
-        from routes.roster import _synthesize_contract
-        cur_year = datetime.now(timezone.utc).year
-        existing_retention_pids = {
-            e.get("player_id") for e in schedule
-            if e.get("source") == "retention" and e.get("player_id")
-        }
-        retentions = await db.salary_retentions.find(
-            {"league_id": league_id, "retainer_team_id": team_id},
-        ).to_list(200)
-        for r in retentions:
-            pid = r.get("player_id")
-            if pid in existing_retention_pids:
-                continue  # Already in the schedule — skip on-the-fly merge.
-            amount = float(r.get("amount") or 0)
-            if not pid or amount <= 0:
-                continue
-            try:
-                player = await db.players.find_one({"_id": ObjectId(pid)})
-            except Exception:
-                player = None
-            years_rem = 1
-            if player:
-                contract = player.get("contract") or {}
-                if not contract.get("yearsRemaining"):
-                    is_g = player.get("player_type") == "goalie" or player.get("position") == "G"
-                    contract = _synthesize_contract(
-                        is_g=is_g,
-                        fpts_season=float(player.get("fantasy_points") or 0.0),
-                        points=int(player.get("points") or 0),
-                        nhl_id=player.get("nhl_id"),
-                        age=int(player.get("age") or 27),
-                    )
-                years_rem = max(1, int(contract.get("yearsRemaining") or 1))
-            player_name = (player or {}).get("name", "Retained player")
-            retention_created = r.get("created_at")
-            for i in range(years_rem):
-                schedule.append({
-                    "year": cur_year + i,
-                    "amount": int(round(amount)),
-                    "source": "retention",
-                    "player_id": pid,
-                    "player_name": player_name,
-                    "created_at": retention_created,
-                })
+    from services.salary_policy import obligations, obligation_year
+    league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    # Ledger history supplies season identity. Existing mirrors are deduplicated.
+    known = {(e.get("player_id"), int(e.get("year") or 0)) for e in schedule if e.get("source") == "retention"}
+    for r in await obligations(db, league, team, include_history=True):
+        if r.get("status") == "cancelled":
+            continue
+        pid, year = r.get("player_id"), obligation_year(r, league)
+        if (pid, year) not in known and float(r.get("amount") or 0) > 0:
+            player = await db.players.find_one({"_id": ObjectId(pid)}) or {}
+            schedule.append({**r, "year": year, "source": "retention", "player_name": player.get("name", "Retained player")})
+            known.add((pid, year))
 
     # ── Aggregate per year + return per-source line items ──
     by_year: dict = {}

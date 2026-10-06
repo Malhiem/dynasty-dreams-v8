@@ -24,7 +24,11 @@ DB_NAME = os.environ['DB_NAME']
 @pytest.fixture
 async def db():
     client = AsyncIOMotorClient(MONGO_URL)
-    yield client[DB_NAME]
+    database = client[DB_NAME]
+    if not await database.leagues.find_one({"name": "TFHL"}):
+        client.close()
+        pytest.skip("Historical TFHL repair verification requires an explicit TFHL snapshot; the disposable application suite has none")
+    yield database
     client.close()
 
 

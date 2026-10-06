@@ -123,7 +123,7 @@ async def test_list_subscriptions_only_own_user():
 
 
 @pytest.mark.asyncio
-async def test_apply_pick_upgrades_notifies_parties_and_subs_on_trigger():
+async def test_apply_pick_upgrades_notifies_parties_and_subs_on_trigger(monkeypatch):
     """When a pending upgrade flips to triggered, both trade parties AND
     any subscribed user should receive a notification, AND the stale
     subscription rows should be cleaned up."""
@@ -143,13 +143,13 @@ async def test_apply_pick_upgrades_notifies_parties_and_subs_on_trigger():
         async def fake_eval_single(_cond, _trade):
             return True, 42.0
 
-        trade_engine._deps.update({
+        monkeypatch.setattr(trade_engine, "_deps", {
             "db": ctx.db,
             "logger": __import__("logging").getLogger("test"),
             "create_notification": fake_create_notification,
             "broadcast_to_room": (lambda *a, **kw: None),  # unused on this path
         })
-        trade_engine._evaluate_single_condition = fake_eval_single
+        monkeypatch.setattr(trade_engine, "_evaluate_single_condition", fake_eval_single)
 
         # Seed a pick + a trade with one pending pick_upgrade
         pick_res = await ctx.db.draft_picks.insert_one({
@@ -193,7 +193,7 @@ async def test_apply_pick_upgrades_notifies_parties_and_subs_on_trigger():
 
 
 @pytest.mark.asyncio
-async def test_apply_pick_upgrades_notifies_parties_on_failed_final_eval():
+async def test_apply_pick_upgrades_notifies_parties_on_failed_final_eval(monkeypatch):
     """When `final_eval=True` and the condition is NOT met, both trade
     parties (and any subscribers) get a 'did not trigger' notification."""
     async with isolated_router_app(trades_routes) as ctx:
@@ -207,13 +207,13 @@ async def test_apply_pick_upgrades_notifies_parties_on_failed_final_eval():
         async def fake_eval_single(_cond, _trade):
             return False, 7.0  # unmet
 
-        trade_engine._deps.update({
+        monkeypatch.setattr(trade_engine, "_deps", {
             "db": ctx.db,
             "logger": __import__("logging").getLogger("test"),
             "create_notification": fake_create_notification,
             "broadcast_to_room": (lambda *a, **kw: None),
         })
-        trade_engine._evaluate_single_condition = fake_eval_single
+        monkeypatch.setattr(trade_engine, "_evaluate_single_condition", fake_eval_single)
 
         pick_res = await ctx.db.draft_picks.insert_one({
             "league_id": "L1", "year": 2026, "round": 1, "current_team_id": "T2",

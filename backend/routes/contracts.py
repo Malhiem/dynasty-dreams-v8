@@ -13,6 +13,8 @@ from typing import Optional
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+from routes.league_guards import require_league_member, verify_team_in_league
+from services.financial_lock import serialize_finances
 
 router = APIRouter()
 _deps: dict = {}
@@ -44,94 +46,22 @@ class ContractCreate(BaseModel):
 
 
 class ContractUpdate(BaseModel):
-    aav: Optional[float] = None
+    aav: Optional[float] = Field(None, ge=0)
     status: Optional[str] = None
     no_trade_clause: Optional[bool] = None
     no_move_clause: Optional[bool] = None
 
 
 async def get_team_cap_used(team_id: str, league_id: str) -> float:
-    """Returns the team's active cap usage.
-
-    Source of truth:
-      1. Sum of `db.contracts.aav` if any active contracts exist
-         (legacy / commissioner-managed).
-      2. Otherwise fall back to the synthesized per-player salary used
-         everywhere else (`_recompute_team_salary_used`, kept consistent
-         with the roster page, compliance check, and
-         `/roster/{id}/detail`).
-
-    Iter 232N.63 — When the contract-sum path is used, applies the
-    league's `minors_cap_treatment` to any contract whose player is
-    currently assigned to the team's minors section. The roster
-    fallback (`_recompute_team_salary_used`) applies the same policy
-    internally.
-    """
-    from utils.cap_treatment import (
-        _player_is_in_minors, apply_minors_treatment,
-    )
-    db = _deps["db"]
-    _recompute = _deps["_recompute_team_salary_used"]
-
-    # Pull cap-treatment settings + team lineup once so we can apply
-    # the policy to each contract without extra round trips.
-    league = await db.leagues.find_one(
-        {"_id": ObjectId(league_id)},
-        {"minors_cap_treatment": 1, "default_rookie_aav": 1},
-    ) or {}
-    treatment = (league.get("minors_cap_treatment") or "full").lower()
-    default_rookie_aav = int(league.get("default_rookie_aav") or 950_000)
-
-    contracts = await db.contracts.find(
-        {"team_id": team_id, "league_id": league_id, "status": "active"},
-    ).to_list(400)
-
-    if contracts:
-        # Fast path when no minors treatment is needed.
-        if treatment == "full":
-            return float(sum(float(c.get("aav") or 0) for c in contracts))
-
-        team = await db.teams.find_one(
-            {"_id": ObjectId(team_id)},
-            {"lineup": 1},
-        ) or {}
-        lineup = team.get("lineup") or {}
-
-        # Batch-load player rows keyed by id for the tiered path.
-        player_ids = [c.get("player_id") for c in contracts if c.get("player_id")]
-        players_by_id: dict = {}
-        if player_ids:
-            try:
-                obj_ids = [ObjectId(p) for p in player_ids]
-                async for p in db.players.find(
-                    {"_id": {"$in": obj_ids}},
-                    {"age": 1, "is_prospect": 1},
-                ):
-                    players_by_id[str(p["_id"])] = p
-            except Exception:
-                pass
-
-        total = 0.0
-        for c in contracts:
-            aav = float(c.get("aav") or 0)
-            pid = str(c.get("player_id") or "")
-            player = players_by_id.get(pid) or {"_id": pid}
-            in_minors = _player_is_in_minors(player, lineup)
-            total += apply_minors_treatment(
-                player,
-                base_aav=aav,
-                is_in_minors=in_minors,
-                treatment=treatment,
-                default_rookie_aav=default_rookie_aav,
-            )
-        return total
-    try:
-        return await _recompute(team_id)
-    except Exception:
-        return 0.0
+    from services.salary_policy import payroll
+    team = await _deps["db"].teams.find_one({"_id": ObjectId(team_id)})
+    if not team or team.get("league_id") != league_id:
+        raise HTTPException(404, "Team does not belong to league")
+    return (await payroll(_deps["db"], team))["used"]
 
 
 @router.post("/contracts")
+@serialize_finances(lambda: _deps["db"])
 async def create_contract(input: ContractCreate, request: Request):
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
@@ -147,6 +77,7 @@ async def create_contract(input: ContractCreate, request: Request):
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
+    await verify_team_in_league(db, input.team_id, input.league_id)
     is_commissioner = league["commissioner_id"] == user["_id"]
     if team["owner_id"] != user["_id"] and not is_commissioner:
         raise HTTPException(status_code=403, detail="Not authorized")
@@ -155,10 +86,15 @@ async def create_contract(input: ContractCreate, request: Request):
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
+    if await db.contracts.find_one({"league_id": input.league_id, "team_id": input.team_id,
+                                    "player_id": input.player_id, "status": "active"}):
+        raise HTTPException(400, "An active contract already exists for this player")
+    from services.salary_policy import payroll
+    projected = await payroll(db, team, league, contract_overrides={input.player_id: input.aav})
     if league.get("salary_cap_enabled"):
         cap = league.get("salary_cap", 82500000)
         current_used = await get_team_cap_used(input.team_id, input.league_id)
-        if current_used + input.aav > cap:
+        if projected["used"] > cap:
             raise HTTPException(
                 status_code=400,
                 detail=(
@@ -207,8 +143,11 @@ async def get_contracts(
     league_id: str,
     team_id: Optional[str] = None,
     status: Optional[str] = None,
+    request: Request = None,
 ):
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     query: dict = {"league_id": league_id}
     if team_id:
         query["team_id"] = team_id
@@ -221,16 +160,19 @@ async def get_contracts(
 
 
 @router.get("/contracts/{contract_id}")
-async def get_contract(contract_id: str):
+async def get_contract(contract_id: str, request: Request):
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
     contract = await db.contracts.find_one({"_id": ObjectId(contract_id)})
     if not contract:
         raise HTTPException(status_code=404, detail="Contract not found")
+    await require_league_member(db, user, contract["league_id"])
     contract["_id"] = str(contract["_id"])
     return contract
 
 
 @router.put("/contracts/{contract_id}")
+@serialize_finances(lambda: _deps["db"])
 async def update_contract(contract_id: str, input: ContractUpdate, request: Request):
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
@@ -254,6 +196,12 @@ async def update_contract(contract_id: str, input: ContractUpdate, request: Requ
     if input.no_move_clause is not None:
         updates["no_move_clause"] = input.no_move_clause
 
+    if input.aav is not None and league.get("salary_cap_enabled"):
+        from services.salary_policy import payroll
+        team = await db.teams.find_one({"_id": ObjectId(contract["team_id"])})
+        projected = await payroll(db, team, league, contract_overrides={contract["player_id"]: input.aav})
+        if projected["used"] > float(league.get("salary_cap") or 0):
+            raise HTTPException(400, "Contract exceeds salary cap")
     if updates:
         await db.contracts.update_one({"_id": ObjectId(contract_id)}, {"$set": updates})
     return {"updated": list(updates.keys())}
@@ -263,15 +211,16 @@ async def update_contract(contract_id: str, input: ContractUpdate, request: Requ
 
 
 @router.get("/salary-cap/{league_id}")
-async def get_salary_cap_overview(league_id: str):
+async def get_salary_cap_overview(league_id: str, request: Request):
     db = _deps["db"]
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    user = await _deps["get_current_user"](request)
+    league = await require_league_member(db, user, league_id)
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
 
     # Default to the historical NHL hard cap ($88M) when the league hasn't
     # explicitly configured one. Avoids ZeroDivisionError on cap_pct.
-    cap = league.get("salary_cap") or 88_000_000
+    cap = league.get("salary_cap") if league.get("salary_cap") is not None else 88_000_000
     teams = await db.teams.find({"league_id": league_id}).to_list(100)
 
     team_caps = []
@@ -306,8 +255,10 @@ async def get_salary_cap_overview(league_id: str):
 
 
 @router.get("/salary-cap/{league_id}/expiring")
-async def get_expiring_contracts(league_id: str, year: int = 2026):
+async def get_expiring_contracts(league_id: str, request: Request, year: int = 2026):
     db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    await require_league_member(db, user, league_id)
     contracts = await db.contracts.find({
         "league_id": league_id,
         "free_agency_year": year,

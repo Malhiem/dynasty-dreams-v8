@@ -231,7 +231,7 @@ export const StatsTable = ({
               <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} fptsColIndex={fptsColIndex} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                 {sectionPlayers.length === 0 ? (
                   <>
-                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
+                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId), sectionConfig) ? (
                       <OpenSlotRow section={section} colSpan={colSpan} onMoveToSection={onMoveToSection!} />
                     ) : (
                       <tr className="border-b border-border/50 opacity-50">
@@ -255,7 +255,7 @@ export const StatsTable = ({
                         {showOwnership && <OwnershipCell player={player} ownership={ownershipMap[String(player.id)]} />}
                       </PlayerRow>
                     ))}
-                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) && (
+                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId), sectionConfig) && (
                       <OpenSlotRow section={section} colSpan={colSpan} onMoveToSection={onMoveToSection!} />
                     )}
                   </>
@@ -559,7 +559,7 @@ export const FantasyPointsTable = ({
               <SectionGroup key={section} config={config} sectionTotal={getSectionTotal(section)} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                 {sectionPlayers.length === 0 ? (
                   <>
-                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
+                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId), sectionConfig) ? (
                       <OpenSlotRow section={section} colSpan={colSpan} onMoveToSection={onMoveToSection!} />
                     ) : (
                       <tr className="border-b border-border/50 opacity-50"><td colSpan={colSpan} className="p-3 text-center"><span className="text-xs text-muted-foreground italic">No players</span></td></tr>
@@ -588,7 +588,7 @@ export const FantasyPointsTable = ({
                         </tr>
                       );
                     })}
-                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) && (
+                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId), sectionConfig) && (
                       <OpenSlotRow section={section} colSpan={colSpan} onMoveToSection={onMoveToSection!} />
                     )}
                   </>
@@ -701,7 +701,7 @@ export const MatchupScheduleTable = ({
               <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                 {sectionPlayers.length === 0 ? (
                   <>
-                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
+                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId), sectionConfig) ? (
                       <OpenSlotRow section={section} colSpan={colSpan} onMoveToSection={onMoveToSection!} />
                     ) : (
                       <tr className="border-b border-border/50 opacity-50"><td colSpan={colSpan} className="p-3 text-center"><span className="text-xs text-muted-foreground italic">No players</span></td></tr>
@@ -710,7 +710,7 @@ export const MatchupScheduleTable = ({
                 ) : (
                   <>
                     {sectionPlayers.map((player, index) => renderMatchupPlayerRow(player, index))}
-                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) && (
+                    {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId), sectionConfig) && (
                       <OpenSlotRow section={section} colSpan={colSpan} onMoveToSection={onMoveToSection!} />
                     )}
                   </>
@@ -820,7 +820,7 @@ export const FullScheduleTable = ({
                 <SectionGroup key={section} config={config} colSpan={colSpan} section={section} playerCount={sectionPlayers.length} sectionPlayers={sectionPlayers} sectionTimeframe={sectionTimeframe} getPlayerPoints={getPlayerPoints} onTrade={onTrade}>
                   {sectionPlayers.length === 0 ? (
                     <>
-                      {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) ? (
+                      {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId), sectionConfig) ? (
                         <OpenSlotRow section={section} colSpan={colSpan} onMoveToSection={onMoveToSection!} />
                       ) : (
                         <tr className="border-b border-border/50 opacity-50"><td colSpan={colSpan} className="p-3 text-center"><span className="text-xs text-muted-foreground italic">No players</span></td></tr>
@@ -829,7 +829,7 @@ export const FullScheduleTable = ({
                   ) : (
                     <>
                       {sectionPlayers.map((player, index) => renderFullScheduleRow(player, index))}
-                      {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId)) && (
+                      {shouldShowOpenSlotForSection(section, highlightedPlayerId, onMoveToSection, sectionCounts, findHighlightedPlayer(grouped, highlightedPlayerId), sectionConfig) && (
                         <OpenSlotRow section={section} colSpan={colSpan} onMoveToSection={onMoveToSection!} />
                       )}
                     </>
@@ -1314,6 +1314,7 @@ export const DropButton = ({ player, onDrop }: { player: Player; onDrop: (p: Pla
           className="h-7 w-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
           onClick={() => onDrop(player)}
           data-testid={`roster-drop-btn-${player.id}`}
+          aria-label={`Drop ${player.name}`}
         >
           <MinusCircle className="h-3.5 w-3.5" />
         </Button>

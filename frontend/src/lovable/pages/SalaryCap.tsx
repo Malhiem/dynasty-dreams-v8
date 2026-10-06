@@ -295,17 +295,18 @@ const SalaryCap = () => {
   // not from the auto-scaling fallback that previously inflated the visual cap
   // when contracts overshot. If the league has no cap set we fall back to the
   // NHL default ($82.5M).
-  const capLimit = Number(league?.salary_cap || 82_500_000);
+  const capLimit = Number(league?.salary_cap ?? 82_500_000);
   const currentSpending = contracts.reduce((sum, c) => sum + c.salary, 0);
   // Iter 112 — Dead cap for the *current* calendar year (current row of schedule)
-  const curYear = new Date().getFullYear();
+  const curYear = rosterDetail?.financial_season_year ?? (league as any)?.current_season_year ?? new Date().getFullYear();
   const deadCap = (deadCapSchedule.schedule || [])
     .filter((r: any) => r.year === curYear)
     .reduce((s: number, r: any) => s + Number(r.total || 0), 0);
   const totalRetained = 0;
   const retainedSalaries: any[] = [];
-  const capSpace = capLimit - currentSpending - deadCap - totalRetained;
-  const capUsagePercent = ((currentSpending + deadCap + totalRetained) / capLimit) * 100;
+  const capUsed = rosterDetail?.salary_used ?? (currentSpending + deadCap + totalRetained);
+  const capSpace = capLimit - capUsed;
+  const capUsagePercent = capLimit > 0 ? (capUsed / capLimit) * 100 : 0;
 
   // ── By-Year payload (iter 110, extended iter 113) ───────────────
   // For each of the next 5 NHL seasons, sum the salaries of players whose
@@ -473,7 +474,7 @@ const SalaryCap = () => {
                 </div>
                 <div>
                   <p className="text-sm text-muted-foreground">Cap Hit</p>
-                  <p className="text-xl font-bold">${(currentSpending / 1000000).toFixed(1)}M</p>
+                  <p className="text-xl font-bold">${(capUsed / 1000000).toFixed(1)}M</p>
                 </div>
               </div>
             </CardContent>
@@ -605,7 +606,7 @@ const SalaryCap = () => {
             </CardHeader>
             <CardContent className="pt-0">
               {(() => {
-                const cur = currentSpending + deadCap + totalRetained;
+                const cur = capUsed;
                 const isMyTeamCompliant = cur >= floorCurrent;
                 const shortfall = floorCurrent - cur;
                 return (

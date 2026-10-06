@@ -10,6 +10,7 @@ Tests:
      present).
 """
 from __future__ import annotations
+from tests.source_tree import read_source
 
 import os
 import sys
@@ -24,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
@@ -32,7 +33,7 @@ def _db():
 
 
 def test_prospects_route_module_exists():
-    src = Path("/app/backend/routes/prospects.py").read_text()
+    src = read_source(Path("/app/backend/routes/prospects.py"))
     for path in (
         "/prospects", "/prospects/filters", "/prospects/watchlist",
         "/prospects/watchlist/{prospect_id}",
@@ -41,7 +42,7 @@ def test_prospects_route_module_exists():
 
 
 def test_prospects_route_wired_in_server():
-    src = Path("/app/backend/server.py").read_text()
+    src = read_source(Path("/app/backend/server.py"))
     assert "prospects as prospects_routes" in src
     assert "prospects_routes.setup(_router_deps)" in src
     assert "api_router.include_router(prospects_routes.router)" in src
@@ -50,7 +51,7 @@ def test_prospects_route_wired_in_server():
 def test_frontend_prospects_uses_live_api():
     """Prospects.tsx must no longer hardcode an 8-entry mock array
     and must hit the new endpoints."""
-    src = Path("/app/frontend/src/lovable/pages/Prospects.tsx").read_text()
+    src = read_source(Path("/app/frontend/src/lovable/pages/Prospects.tsx"), include_imports=False)
     # Mock data removed.
     assert "Connor Bedard" not in src
     assert "Macklin Celebrini" not in src
@@ -72,7 +73,7 @@ def test_watchlist_writes_coerce_objectid():
     """Iter 231ai bug: server.py:172 coerces user._id to string for JSON
     safety, so the watchlist update_many must coerce back to ObjectId
     or the $addToSet silently no-ops. Guard the fix."""
-    src = Path("/app/backend/routes/prospects.py").read_text()
+    src = read_source(Path("/app/backend/routes/prospects.py"))
     # Must convert back to ObjectId on the write path.
     assert 'ObjectId(user["_id"])' in src
 
@@ -214,6 +215,7 @@ async def test_filters_endpoint_returns_distinct_options():
     # Years sorted DESC, most-recent first.
     assert res["years"] == sorted(res["years"], reverse=True)
     assert res["positions"], "Positions must include at least C/D/G"
-    # NHL has 32 teams — there must be at least a dozen distinct
-    # drafting teams across 6 years of picks.
-    assert len(res["drafted_by_teams"]) >= 12
+    expected = sorted(await db.players.distinct("drafted_by_team", {
+        "player_type": "prospect", "drafted_by_team": {"$nin": [None, ""]}}))
+    assert expected, "Fixture must include drafting-team affiliations"
+    assert res["drafted_by_teams"] == expected

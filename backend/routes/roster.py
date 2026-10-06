@@ -1,3 +1,4 @@
+from services.financial_lock import serialize_finances
 """Roster router (read + write side).
 
 Extracted from server.py during iter 91 (read side) and iter 98 (write
@@ -191,6 +192,12 @@ async def _load_roster_context(request: Request, team_id: str):
         raise HTTPException(status_code=404, detail="Team not found")
     await _require_league_member_for_team(request, team)
 
+    return await _load_roster_data(team)
+
+
+async def _load_roster_data(team: dict):
+    """Internal roster inputs for authorized routes and trusted monitor workers."""
+    db = _deps["db"]
     league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
     config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
 
@@ -430,11 +437,18 @@ async def get_roster_detail(team_id: str, request: Request):
     contracts/eligibility, and roster section assignment with the team's
     lineup overrides honored.
     """
+    context = await _load_roster_context(request, team_id)
+    return await _build_roster_detail(*context)
+
+
+async def _build_roster_detail(team, league, config, players_raw):
+    """Build the shared payload from already-authorized or internal inputs."""
+    team_id = str(team["_id"])
     calculate_fantasy_points = _deps["calculate_fantasy_points"]
 
-    # Iter 232N.10 — Shared preamble (auth + team + player fetch).
-    team, league, config, players_raw = await _load_roster_context(request, team_id)
-
+    from services.salary_policy import payroll, applicable_season
+    financial = await payroll(_deps["db"], team, league)
+    team["salary_used"] = financial["used"]
     roster_ids = team.get("roster", []) or []
     if not roster_ids:
         return {
@@ -442,6 +456,9 @@ async def get_roster_detail(team_id: str, request: Request):
             "league_id": team["league_id"],
             "league_name": (league or {}).get("name"),
             "players": [],
+            "salary_used": financial["used"],
+            "retained_salary_total": financial["retained_total"],
+            "financial_season_year": applicable_season(league),
         }
 
     # Iter 232N.10 — Shared badge-enrichment inputs.
@@ -468,11 +485,16 @@ async def get_roster_detail(team_id: str, request: Request):
             else ("down" if games > 0 and points < 10 else "stable")
         )
 
-        eligible = [pos] if pos in ("C", "LW", "RW", "D", "G") else ["F"]
+        from services.draft_salary import positions
+        eligible = sorted(positions(p) - {""}) or ["F"]
         contract = _synthesize_contract(
             is_g=is_g, fpts_season=fpts_season,
             points=points, nhl_id=p.get("nhl_id"),
         )
+
+        contract.update(p.get("contract") or {})
+        contract["salary"] = financial["players"].get(str(p["_id"]), 0)
+        contract["aav"] = financial["base_prices"].get(str(p["_id"]), 0)
 
         # Iter 174 — Compute a real age + surface prospect status so the
         # spillover logic (and frontend compliance flags) can tell
@@ -583,64 +605,35 @@ async def get_roster_detail(team_id: str, request: Request):
 
     enriched.sort(key=lambda x: -x["fantasy_points"])
 
-    # Default-assign starting slots based on position eligibility.
-    assigned_ids: set = set()
-    for slot_id, _label, elig in _STARTING_SLOTS:
-        for cand in enriched:
-            if cand["id"] in assigned_ids:
-                continue
-            if cand["position"] in elig:
-                cand["rosterSlotId"] = slot_id
-                cand["rosterSection"] = "goalies" if cand.get("is_goalie") else "starting"
-                assigned_ids.add(cand["id"])
-                break
-
-    # Spillover: bench (up to 6) → minors; goalies → goalies/goalies_minors.
-    # Iter 174 — Veterans (player_type != "prospect") never spill into
-    # minors. They stay on the bench even if it visually exceeds the
-    # 6-slot cap — the compliance widget will surface "Bench over
-    # limit" but it won't fabricate an illegal minors placement.
+    from services.draft_salary import normalized_lineup
+    players_by_id = {str(p["_id"]): p for p in players_raw}
+    valid_active = (league or {}).get("position_breakdown", {}).get("active") or (league or {}).get("position_limits") or {}
+    layout_league = league or {}
+    if not valid_active:
+        from collections import Counter
+        default_active = dict(Counter(label for _, label, _ in _STARTING_SLOTS))
+        default_active["D"] = 1
+        layout_league = {**layout_league, "position_breakdown": {"active": {**default_active, "G": 4}}}
+    display_team = {**team, "lineup": {pid: info for pid, info in (team.get("lineup") or {}).items() if info.get("slot") != "ACT"}}
+    lineup = normalized_lineup(display_team, players_by_id, layout_league)
+    display_active = valid_active or layout_league["position_breakdown"]["active"]
+    assigned_counts = {}
     for cand in enriched:
-        if cand["id"] in assigned_ids:
-            continue
+        ln = lineup.get(cand["id"]) or {"section": "bench", "slot": "BN"}
+        sec = ln.get("section", "bench").lower()
+        groups = {"forward": "starting", "defense": "starting", "starting": "starting",
+                  "goalie": "goalies", "bench": "bench", "minors": "minors", "ir": "ir"}
+        cand["rosterSection"] = groups.get(sec, "bench")
         cand["rosterSlotId"] = None
-        if cand.get("is_goalie"):
-            goalie_count = sum(
-                1 for c in enriched if c.get("rosterSection") == "goalies"
-            )
-            # Goalies-minors only accepts prospects too.
-            if goalie_count < 4 or not cand.get("minor_eligible"):
-                cand["rosterSection"] = "goalies"
-            else:
-                cand["rosterSection"] = "goalies_minors"
-        else:
-            bench_count = sum(
-                1 for c in enriched if c.get("rosterSection") == "bench"
-            )
-            if bench_count < 6:
+        if sec in ("forward", "defense", "starting", "goalie"):
+            slot = str(ln.get("slot") or cand["position"]).rstrip("0123456789")
+            assigned_counts[slot] = assigned_counts.get(slot, 0) + 1
+            if sec != "goalie" and assigned_counts[slot] > int(display_active.get(slot, 0)):
                 cand["rosterSection"] = "bench"
-            elif cand.get("minor_eligible"):
-                cand["rosterSection"] = "minors"
             else:
-                # Veteran with no bench spot — keep on bench so the page
-                # doesn't fabricate an illegal minors placement. The
-                # over-cap is a legitimate "Bench over limit" warning.
-                cand["rosterSection"] = "bench"
-        assigned_ids.add(cand["id"])
-
-    # Honor team.lineup overrides (commissioner-set sections like ir, ir+, taxi).
-    lineup = team.get("lineup") or {}
-    for cand in enriched:
-        ln = lineup.get(cand["id"])
-        if not ln or not ln.get("section"):
-            continue
-        sec = ln["section"].lower()
-        if sec == "minors":
-            cand["rosterSection"] = (
-                "goalies_minors" if cand.get("is_goalie") else "minors"
-            )
-        elif sec == "ir":
-            cand["rosterSection"] = "ir"
+                cand["rosterSlotId"] = f"{slot}{assigned_counts[slot]}"
+        elif sec == "minors" and cand.get("is_goalie"):
+            cand["rosterSection"] = "goalies_minors"
 
     total_fpts = round(sum(p["fantasy_points"] for p in enriched), 2)
     total_live = round(sum(p["live"]["fpts"] for p in enriched), 2)
@@ -654,6 +647,8 @@ async def get_roster_detail(team_id: str, request: Request):
         "losses": team.get("losses", 0),
         "ties": team.get("ties", 0),
         "salary_used": team.get("salary_used", 0.0),
+        "retained_salary_total": financial["retained_total"],
+        "financial_season_year": applicable_season(league),
         "season_fpts": total_fpts,
         "live_fpts": total_live,
         "players": enriched,
@@ -675,14 +670,10 @@ def _synthesize_player_salary(p: dict, config: Optional[dict] = None) -> float:
     # (232N.63 — moved BEFORE the calculate_fantasy_points dep read so
     # tests / paths that seed inline `contract.aav` don't need the
     # scoring service wired in).
-    explicit = (
-        (p.get("contract") or {}).get("aav")
-        or (p.get("contract") or {}).get("salary")
-        or p.get("salary")
-        or p.get("cap_hit")
-    )
-    if explicit:
-        return float(explicit)
+    for explicit in ((p.get("contract") or {}).get("aav"),
+                     (p.get("contract") or {}).get("salary"), p.get("salary"), p.get("cap_hit")):
+        if explicit is not None:
+            return float(explicit)
 
     calculate_fantasy_points = _deps["calculate_fantasy_points"]
 
@@ -712,75 +703,14 @@ def _synthesize_player_salary(p: dict, config: Optional[dict] = None) -> float:
 
 
 async def _recompute_team_salary_used(team_id: str) -> float:
-    """Sum the synthesized cap hit across every player on the team's
-    roster + any salary_retentions the team is paying for other teams'
-    players. Persists the result to `team.salary_used` so subsequent
-    /compliance + /roster reads return the live number.
-
-    Iter 232N.63 — Applies the league's `minors_cap_treatment` policy
-    to any player whose lineup entry has ``section='minors'``:
-      • full    → 100% AAV (default, legacy)
-      • default → league.default_rookie_aav
-      • tiered  → 50% for prospects, 100% for veterans
-      • none    → 0
-    """
-    from utils.cap_treatment import (
-        _player_is_in_minors, apply_minors_treatment,
-    )
+    from services.salary_policy import payroll
     db = _deps["db"]
     team = await db.teams.find_one({"_id": ObjectId(team_id)})
     if not team:
         return 0.0
-    roster_obj_ids = []
-    for pid in (team.get("roster") or []):
-        try:
-            roster_obj_ids.append(ObjectId(pid))
-        except Exception:
-            pass
-    rostered_players = []
-    if roster_obj_ids:
-        rostered_players = await db.players.find(
-            {"_id": {"$in": roster_obj_ids}},
-            {"contract": 1, "salary": 1, "cap_hit": 1, "position": 1,
-             "player_type": 1, "points": 1, "games_played": 1,
-             "goals": 1, "assists": 1, "shots": 1, "saves": 1,
-             "wins": 1, "losses": 1, "overtime_losses": 1,
-             "goals_against": 1, "shutouts": 1, "plus_minus": 1,
-             "penalty_minutes": 1, "power_play_points": 1,
-             "power_play_goals": 1, "short_handed_goals": 1,
-             "short_handed_points": 1, "game_winning_goals": 1,
-             # 232N.63 — need age + is_prospect for tiered treatment
-             "age": 1, "is_prospect": 1},
-        ).to_list(200)
-
-    config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
-    # 232N.63 — league cap-treatment settings
-    league = await db.leagues.find_one(
-        {"_id": ObjectId(team["league_id"])},
-        {"minors_cap_treatment": 1, "default_rookie_aav": 1},
-    ) or {}
-    treatment = league.get("minors_cap_treatment") or "full"
-    default_rookie_aav = int(league.get("default_rookie_aav") or 950_000)
-    lineup = team.get("lineup") or {}
-
-    used = 0.0
-    for p in rostered_players:
-        base = _synthesize_player_salary(p, config)
-        in_minors = _player_is_in_minors(p, lineup)
-        used += apply_minors_treatment(
-            p,
-            base_aav=base,
-            is_in_minors=in_minors,
-            treatment=treatment,
-            default_rookie_aav=default_rookie_aav,
-        )
-    retentions = team.get("salary_retentions") or []
-    used += sum(float(r.get("amount") or 0.0) for r in retentions)
-    await db.teams.update_one(
-        {"_id": ObjectId(team_id)},
-        {"$set": {"salary_used": float(used)}},
-    )
-    return float(used)
+    used = (await payroll(db, team))["used"]
+    await db.teams.update_one({"_id": team["_id"]}, {"$set": {"salary_used": used}})
+    return used
 
 
 
@@ -841,6 +771,7 @@ async def get_player_lineup_history_endpoint(player_id: str, request: Request, l
 
 
 @router.post("/roster/{team_id}/add")
+@serialize_finances(lambda: _deps["db"])
 async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
@@ -873,6 +804,10 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
 
     if input.player_id in current_roster:
         raise HTTPException(status_code=400, detail="Player already on roster")
+
+    # The league lease covers availability validation through membership writes.
+    if await db.teams.find_one({"league_id": team["league_id"], "roster": input.player_id}):
+        raise HTTPException(409, "Player is already owned by another team. Refresh available players.")
 
     # ── Transactions-config gates (iter 117) ────────────────────────
     # Season/week caps, injured/minors filters, lock-at-first-game,
@@ -938,45 +873,10 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
                     ),
                 )
 
-    # ── Salary-cap pre-check ────────────────────────────────────────
-    cap_enabled = bool(league.get("salary_cap_enabled"))
-    salary_cap = league.get("salary_cap")
-    if cap_enabled and salary_cap:
-        config = await db.scoring_configs.find_one({"league_id": team["league_id"]})
-        new_player_salary = _synthesize_player_salary(player, config)
-        roster_obj_ids = []
-        for pid in current_roster:
-            try:
-                roster_obj_ids.append(ObjectId(pid))
-            except Exception:
-                pass
-        rostered_players = []
-        if roster_obj_ids:
-            rostered_players = await db.players.find(
-                {"_id": {"$in": roster_obj_ids}},
-                {"contract": 1, "salary": 1, "cap_hit": 1, "position": 1,
-                 "player_type": 1, "points": 1, "games_played": 1,
-                 "goals": 1, "assists": 1, "shots": 1, "saves": 1,
-                 "wins": 1, "losses": 1, "overtime_losses": 1,
-                 "goals_against": 1, "shutouts": 1, "plus_minus": 1,
-                 "penalty_minutes": 1, "power_play_points": 1,
-                 "power_play_goals": 1, "short_handed_goals": 1,
-                 "short_handed_points": 1, "game_winning_goals": 1},
-            ).to_list(200)
-        current_used = sum(_synthesize_player_salary(p, config) for p in rostered_players)
-        retentions = team.get("salary_retentions") or []
-        retention_total = sum(float(r.get("amount") or 0.0) for r in retentions)
-        projected_used = current_used + new_player_salary + retention_total
-        if projected_used > float(salary_cap):
-            over_by = projected_used - float(salary_cap)
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Add denied: over the salary cap by ${over_by:,.0f}. "
-                    f"Adding {player['name']} (${new_player_salary:,.0f}) would put you at "
-                    f"${projected_used:,.0f} vs ${float(salary_cap):,.0f} cap."
-                ),
-            )
+    from services.salary_policy import payroll
+    projected = await payroll(db, team, league, roster=current_roster + [input.player_id])
+    if league.get("salary_cap_enabled") and projected["used"] > float(league.get("salary_cap") or 0):
+        raise HTTPException(400, "Add denied: over the salary cap")
 
     await db.teams.update_one(
         {"_id": ObjectId(team_id)},
@@ -1032,6 +932,7 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
 
 
 @router.post("/roster/{team_id}/drop")
+@serialize_finances(lambda: _deps["db"])
 async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
     db = _deps["db"]
     get_current_user = _deps["get_current_user"]
@@ -1067,7 +968,7 @@ async def drop_from_roster(team_id: str, input: RosterAction, request: Request):
 
     await db.teams.update_one(
         {"_id": ObjectId(team_id)},
-        {"$pull": {"roster": input.player_id}},
+        {"$pull": {"roster": input.player_id}, "$unset": {f"lineup.{input.player_id}": ""}},
     )
 
     # ── Historical scoring: log roster drop ──────────────────────

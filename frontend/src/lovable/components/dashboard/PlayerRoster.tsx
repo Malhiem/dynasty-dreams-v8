@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { lineupAssignment } from "./player-roster/lineupAssignment";
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Save, Undo2, Settings, Megaphone, Shield } from "lucide-react";
@@ -90,7 +91,7 @@ import {
   formatSalary,
   // Iter 186 — relocated component-domain helpers
   getContractTypeColor,
-  getRosterViolations,
+  getRosterViolations as defaultRosterViolations,
   canOwnerFixViolations,
   // leaf components (real implementations live here too — iter185)
   TrendIndicator,
@@ -274,6 +275,17 @@ const PlayerRoster = ({
   const isRealTeamId = useMemo(() => /^[a-f0-9]{24}$/i.test(teamId), [teamId]);
   const [livePlayers, setLivePlayers] = useState<Player[] | null>(null);
   const [liveLoading, setLiveLoading] = useState(false);
+  const [rosterLoadError, setRosterLoadError] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const dirtyRoster = useRef(false);
+  useEffect(() => {
+    if (!isRealTeamId) return;
+    const refresh = () => { if (!dirtyRoster.current) setRefreshVersion(v => v + 1); };
+    const timer = setInterval(refresh, 5000);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    return () => { clearInterval(timer); window.removeEventListener("focus", refresh); window.removeEventListener("online", refresh); };
+  }, [teamId, isRealTeamId]);
 
   useEffect(() => {
     if (!isRealTeamId) {
@@ -284,7 +296,7 @@ const PlayerRoster = ({
     setLiveLoading(true);
     api.get(`/roster/${teamId}/detail`)
       .then(({ data }) => {
-        if (cancelled) return;
+        if (cancelled || dirtyRoster.current) return;
         const raw = data?.players || [];
         const shaped: Player[] = raw.map((p: any, idx: number) => ({
           id: p.id,
@@ -321,12 +333,13 @@ const PlayerRoster = ({
           // Iter 232N.7 — passthrough for the mover trend badge.
           trends: p.trends || null,
         }));
-        setLivePlayers(shaped);
+        setRosterLoadError(false);
+        setLivePlayers(previous => JSON.stringify(previous) === JSON.stringify(shaped) ? previous : shaped);
       })
-      .catch((e) => { console.error("roster detail load failed", e); setLivePlayers([]); })
+      .catch((e) => { if (!cancelled) { console.error("roster detail load failed", e); setRosterLoadError(true); } })
       .finally(() => { if (!cancelled) setLiveLoading(false); });
     return () => { cancelled = true; };
-  }, [teamId, isRealTeamId, refreshKey]);
+  }, [teamId, isRealTeamId, refreshKey, refreshVersion]);
 
   // ── Ownership map: { player_id: {league_pct, league_owned, ...} } ──
   // Fetched once we know every roster player; bumps with refreshKey so adds
@@ -427,6 +440,8 @@ const PlayerRoster = ({
     return () => { cancelled = true; };
   }, [leagueId]);
 
+  const getRosterViolations = useCallback((list: Player[]) => defaultRosterViolations(list, LEAGUE_ROSTER_SLOTS, sectionConfig), [LEAGUE_ROSTER_SLOTS, sectionConfig]);
+
   // ── News map: { player_id: {news_headline, news_summary, news_signal, ...} } ──
   // Powers the inline news icon next to each player's name. The icon opens
   // a small in-app modal (no external browser hop) from NewsSignalIcon.
@@ -459,6 +474,7 @@ const PlayerRoster = ({
 
   // Load saved roster from localStorage if available
   const loadSavedRoster = useCallback((tid: string, fallback: Player[]): Player[] => {
+    if (/^[a-f0-9]{24}$/i.test(tid)) return fallback;
     try {
       const stored = localStorage.getItem(`roster_${tid}`);
       if (stored) {
@@ -496,14 +512,11 @@ const PlayerRoster = ({
     toastShownRef.current = false; // reset toast guard so new team's ineligibility re-evaluates
   }, [teamRoster, teamId, loadSavedRoster]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
-  const [emergencyChangesUsed, setEmergencyChangesUsed] = useState(() => {
-    try {
-      return parseInt(localStorage.getItem(`emergency_changes_${teamId}`) || "0", 10);
-    } catch { return 0; }
-  });
-  const emergencyChangesAllowed = 2; // from league settings (mock)
-  const emergencyChangesRemaining = Math.max(0, emergencyChangesAllowed - emergencyChangesUsed);
-  const isRosterLocked = true; // mock: current week rosters are locked (weekly lock)
+  const [saveAttempt, setSaveAttempt] = useState(0);
+  dirtyRoster.current = hasUnsavedChanges;
+  const emergencyChangesAllowed = emergencyBudget?.enabled ? emergencyBudget.budget : 0;
+  const emergencyChangesRemaining = emergencyBudget?.remaining || 0;
+  const isRosterLocked = !!lockStatus?.locked;
   const [tradeModalOpen, setTradeModalOpen] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
   const [cardPlayer, setCardPlayer] = useState<Player | null>(null);
@@ -560,7 +573,7 @@ const PlayerRoster = ({
       if (saveToastId.current) toast.dismiss(saveToastId.current);
       
       const violations = getRosterViolations(players);
-      const isLegal = violations.length === 0;
+      const isLegal = violations.length === 0 || activeLeagueFromHook?.allow_illegal_rosters === true;
 
       saveToastId.current = toast(
         isLegal ? "Roster changes pending" : "⚠️ Illegal roster — fix required before saving",
@@ -573,8 +586,7 @@ const PlayerRoster = ({
             ? {
                 label: "Save Roster",
                 onClick: async () => {
-                  setSavedPlayers([...players]);
-                  persistRoster(teamId, players);
+
                   // Persist active lineup to backend so % Start reflects this team.
                   // We map each player's local rosterSection (forward/defense/
                   // goalie/bench/ir/minors) to the team's lineup map.
@@ -583,8 +595,7 @@ const PlayerRoster = ({
                     try {
                       const lineup: Record<string, { section: string; slot: string }> = {};
                       players.forEach((p: any) => {
-                        const section = (p.rosterSection || "bench").toString();
-                        lineup[String(p.id)] = { section, slot: p.position || section.toUpperCase().slice(0, 3) };
+                        lineup[String(p.id)] = lineupAssignment(p);
                       });
                       const { data } = await api.post(`/teams/${teamId}/lineup`, { lineup });
                       saveOk = true;
@@ -614,6 +625,7 @@ const PlayerRoster = ({
                         );
                       }
                     } catch (e: any) {
+                      setSaveAttempt(value => value + 1);
                       const detail = e?.response?.data?.detail;
                       // ── Iter 108: Polished emergency-eligibility denial toast ──
                       if (typeof detail === "string" && detail.startsWith("Emergency swap denied for ")) {
@@ -643,14 +655,16 @@ const PlayerRoster = ({
                           },
                         );
                       } else if (detail) {
-                        toast.error(`Lineup save blocked: ${detail}`, { duration: 8000 });
+                        toast.error(`Lineup save blocked: ${typeof detail === "string" ? detail : detail.message || "Roster validation failed"}`, { duration: 8000 });
                       } else {
                         console.warn("lineup save failed", e);
-                        toast.error("Lineup save failed. Please try again.", { duration: 6000 });
+                        toast.error("Unable to confirm lineup save. Reload to check whether it saved before trying again.", { duration: 6000 });
                       }
                     }
                   }
                   if (saveOk) {
+                    setSavedPlayers([...players]);
+                    if (!isRealTeamId) persistRoster(teamId, players);
                     setHasUnsavedChanges(false);
                     toast.success("Roster saved successfully!");
                   }
@@ -673,7 +687,7 @@ const PlayerRoster = ({
         saveToastId.current = undefined;
       }
     }
-  }, [hasUnsavedChanges, players, savedPlayers]);
+  }, [hasUnsavedChanges, players, savedPlayers, activeLeagueFromHook, getRosterViolations, teamId, isRealTeamId, saveAttempt]);
 
   const handleOpenTrade = (player: Player) => {
     if (onTradePlayer) {
@@ -706,9 +720,10 @@ const PlayerRoster = ({
   };
 
   const handleToggleHighlight = useCallback((playerId: number) => {
-    setHighlightedPlayerId(prev => {
+    const prev = highlightedPlayerId;
       if (prev === null || prev === playerId) {
-        return prev === playerId ? null : playerId;
+        setHighlightedPlayerId(prev === playerId ? null : playerId);
+        return;
       }
 
       // Attempt roster spot swap
@@ -746,7 +761,7 @@ const PlayerRoster = ({
         const currentViolationCount = getRosterViolations(currentPlayers).length;
         const newViolationCount = getRosterViolations(updated).length;
 
-        if (currentViolationCount > 0 && newViolationCount >= currentViolationCount) {
+        if (activeLeagueFromHook?.allow_illegal_rosters !== true && currentViolationCount > 0 && newViolationCount >= currentViolationCount) {
           // This move doesn't fix anything — deny it
           const violations = getRosterViolations(currentPlayers);
           const violationReasons = violations.map(v => `${v.player.name}: ${v.reason}`).join(". ");
@@ -773,9 +788,8 @@ const PlayerRoster = ({
         return updated;
       });
 
-      return null;
-    });
-  }, []);
+    setHighlightedPlayerId(null);
+  }, [highlightedPlayerId, LEAGUE_ROSTER_SLOTS, getRosterViolations, isTeamRosterPage, activeLeagueFromHook]);
 
   // ── Move highlighted player to a section (bench/IR) ──
   const handleMoveToSection = useCallback((targetSection: RosterSection) => {
@@ -839,7 +853,7 @@ const PlayerRoster = ({
 
       return null;
     });
-  }, []);
+  }, [sectionConfig, getRosterViolations]);
 
   // Get the highlighted player's eligible positions
   const highlightedPlayer = highlightedPlayerId
@@ -899,6 +913,10 @@ const PlayerRoster = ({
       )}
     >
     <>
+      {rosterLoadError && <div role="alert" className="p-3 border border-destructive rounded">
+        Unable to load roster. Displayed data may be stale.
+        <Button variant="outline" onClick={() => setRefreshVersion(v => v + 1)}>Retry</Button>
+      </div>}
       <div className="stat-card p-0 overflow-hidden">
         {/* ── Iter 103/187: Lineup Lock Status Banner ── */}
         <LineupLockBanner lockStatus={lockStatus} />

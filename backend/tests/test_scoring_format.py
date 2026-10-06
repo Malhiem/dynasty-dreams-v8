@@ -17,8 +17,8 @@ import os
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
 # Test credentials from /app/memory/test_credentials.md
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 # Test league IDs from review request
 STAT_CHASERS_ROTO_LEAGUE_ID = "69e46af167999bfb85c39629"  # scoring_format=rotisserie
@@ -62,7 +62,7 @@ def auth_headers(auth_token):
 
 class TestScoringFormatAPI:
     """Test scoring format API endpoints"""
-    
+
     def test_get_league_returns_scoring_format(self, auth_headers):
         """GET /api/leagues/{id} should return scoring_format field"""
         response = requests.get(
@@ -73,7 +73,7 @@ class TestScoringFormatAPI:
         data = response.json()
         assert "scoring_format" in data, f"scoring_format not in response: {data.keys()}"
         print(f"✓ GET league returns scoring_format: {data['scoring_format']}")
-    
+
     def test_stat_chasers_roto_has_rotisserie_format(self, auth_headers):
         """Stat Chasers Roto league should have scoring_format=rotisserie"""
         response = requests.get(
@@ -86,7 +86,7 @@ class TestScoringFormatAPI:
         assert data["scoring_format"] in ["rotisserie", "roto"], \
             f"Expected rotisserie, got {data['scoring_format']}"
         print(f"✓ Stat Chasers Roto has scoring_format: {data['scoring_format']}")
-    
+
     def test_frozen_dynasty_has_h2h_format(self, auth_headers):
         """Frozen Dynasty league should have scoring_format=head_to_head (maps to h2h-points in UI)"""
         response = requests.get(
@@ -99,7 +99,7 @@ class TestScoringFormatAPI:
         assert data["scoring_format"] in ["head_to_head", "h2h-points", "h2h_points"], \
             f"Expected head_to_head or h2h-points, got {data['scoring_format']}"
         print(f"✓ Frozen Dynasty has scoring_format: {data['scoring_format']}")
-    
+
     def test_update_scoring_format_to_points(self, auth_headers):
         """PUT /api/leagues/{id} with scoring_format='points' should update and persist"""
         # First, get current format
@@ -110,7 +110,7 @@ class TestScoringFormatAPI:
         assert get_response.status_code == 200
         original_format = get_response.json()["scoring_format"]
         print(f"Original format: {original_format}")
-        
+
         # Update to 'points'
         put_response = requests.put(
             f"{BASE_URL}/api/leagues/{STAT_CHASERS_ROTO_LEAGUE_ID}",
@@ -122,7 +122,7 @@ class TestScoringFormatAPI:
         assert put_data.get("scoring_format") == "points", \
             f"PUT response should have scoring_format=points, got {put_data.get('scoring_format')}"
         print(f"✓ PUT response shows scoring_format: {put_data.get('scoring_format')}")
-        
+
         # Verify persistence with GET
         verify_response = requests.get(
             f"{BASE_URL}/api/leagues/{STAT_CHASERS_ROTO_LEAGUE_ID}",
@@ -133,7 +133,7 @@ class TestScoringFormatAPI:
         assert verify_data["scoring_format"] == "points", \
             f"GET after PUT should return 'points', got {verify_data['scoring_format']}"
         print(f"✓ GET after PUT confirms persistence: {verify_data['scoring_format']}")
-        
+
         # Restore original format
         restore_response = requests.put(
             f"{BASE_URL}/api/leagues/{STAT_CHASERS_ROTO_LEAGUE_ID}",
@@ -142,7 +142,7 @@ class TestScoringFormatAPI:
         )
         assert restore_response.status_code == 200
         print(f"✓ Restored original format: {original_format}")
-    
+
     def test_update_scoring_format_all_formats(self, auth_headers):
         """Test that all 5 scoring formats can be saved"""
         # Get original format first
@@ -152,7 +152,7 @@ class TestScoringFormatAPI:
         )
         assert get_response.status_code == 200
         original_format = get_response.json()["scoring_format"]
-        
+
         for fmt in SCORING_FORMATS:
             # Update to this format
             put_response = requests.put(
@@ -162,7 +162,7 @@ class TestScoringFormatAPI:
             )
             assert put_response.status_code == 200, \
                 f"Failed to update to {fmt}: {put_response.status_code} - {put_response.text}"
-            
+
             # Verify with GET
             verify_response = requests.get(
                 f"{BASE_URL}/api/leagues/{STAT_CHASERS_ROTO_LEAGUE_ID}",
@@ -172,7 +172,7 @@ class TestScoringFormatAPI:
             assert verify_response.json()["scoring_format"] == fmt, \
                 f"Expected {fmt}, got {verify_response.json()['scoring_format']}"
             print(f"✓ Format '{fmt}' saved and persisted successfully")
-        
+
         # Restore original format
         requests.put(
             f"{BASE_URL}/api/leagues/{STAT_CHASERS_ROTO_LEAGUE_ID}",
@@ -180,7 +180,7 @@ class TestScoringFormatAPI:
             json={"scoring_format": original_format}
         )
         print(f"✓ Restored original format: {original_format}")
-    
+
     def test_update_same_format_no_change(self, auth_headers):
         """Clicking the same format that is already selected should work (idempotent)"""
         # Get current format
@@ -190,7 +190,7 @@ class TestScoringFormatAPI:
         )
         assert get_response.status_code == 200
         current_format = get_response.json()["scoring_format"]
-        
+
         # Update to the same format
         put_response = requests.put(
             f"{BASE_URL}/api/leagues/{STAT_CHASERS_ROTO_LEAGUE_ID}",
@@ -201,7 +201,7 @@ class TestScoringFormatAPI:
         assert put_response.status_code == 200, \
             f"Idempotent update failed: {put_response.status_code} - {put_response.text}"
         print(f"✓ Idempotent update to same format '{current_format}' succeeded")
-    
+
     def test_update_nonexistent_league_returns_404(self, auth_headers):
         """PUT to non-existent league should return 404"""
         fake_league_id = "000000000000000000000000"
@@ -213,7 +213,7 @@ class TestScoringFormatAPI:
         assert put_response.status_code == 404, \
             f"Expected 404 for non-existent league, got {put_response.status_code}"
         print(f"✓ Non-existent league returns 404")
-    
+
     def test_update_invalid_league_id_returns_error(self, auth_headers):
         """PUT with invalid league ID format should return error"""
         invalid_league_id = "invalid-id-format"
@@ -230,7 +230,7 @@ class TestScoringFormatAPI:
 
 class TestScoringFormatUnauthorized:
     """Test scoring format API without proper authorization"""
-    
+
     def test_update_without_auth_returns_401(self):
         """PUT without authentication should return 401"""
         put_response = requests.put(

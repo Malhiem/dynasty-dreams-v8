@@ -13,26 +13,34 @@ import api from "@/lib/api";
 import { fmtMoney } from "./_shared";
 
 export function SalaryCapCard({ league, reloadLeague }: any) {
+  const [adherence, setAdherence] = useState(league?.salary_adherence_mode || "informal");
+  const [irCharge, setIrCharge] = useState(league?.ir_salary_charge_pct ?? 100);
+  const [target, setTarget] = useState(league?.draft_roster_target ?? ((league?.roster_spots || 20) + (league?.bench_spots || 0) + (league?.minors_spots || 0)));
+  useEffect(() => {
+    setAdherence(league?.salary_adherence_mode || "informal");
+    setIrCharge(league?.ir_salary_charge_pct ?? 100);
+    setTarget(league?.draft_roster_target ?? ((league?.roster_spots || 20) + (league?.bench_spots || 0) + (league?.minors_spots || 0)));
+  }, [league]);
   const [enabled, setEnabled] = useState(!!league?.salary_cap_enabled);
-  const [amount, setAmount] = useState<number>(league?.salary_cap || 82500000);
+  const [amount, setAmount] = useState<number>(league?.salary_cap ?? 82500000);
   // Iter 111 — future-year caps + tentative flags
-  const [yr1, setYr1] = useState<number>(league?.salary_cap_year_plus_1 || (league?.salary_cap || 82500000));
-  const [yr2, setYr2] = useState<number>(league?.salary_cap_year_plus_2 || (league?.salary_cap || 82500000));
+  const [yr1, setYr1] = useState<number>(league?.salary_cap_year_plus_1 ?? (league?.salary_cap ?? 82500000));
+  const [yr2, setYr2] = useState<number>(league?.salary_cap_year_plus_2 ?? (league?.salary_cap ?? 82500000));
   const [yr1Tentative, setYr1Tentative] = useState(!!league?.salary_cap_year_plus_1_tentative);
   const [yr2Tentative, setYr2Tentative] = useState(!!league?.salary_cap_year_plus_2_tentative);
   // Iter 120 — Cap Floor (mirrors the ceiling). Default seeds at 70% of
   // the current ceiling — typical of pro leagues. The LM can edit before
   // saving; doesn't write until enabled is on.
   const [floorEnabled, setFloorEnabled] = useState(!!league?.cap_floor_enabled);
-  const [floor, setFloor] = useState<number>(league?.cap_floor || Math.round((league?.salary_cap || 82500000) * 0.7));
-  const [floorYr1, setFloorYr1] = useState<number>(league?.cap_floor_year_plus_1 || Math.round((league?.salary_cap_year_plus_1 || league?.salary_cap || 82500000) * 0.7));
-  const [floorYr2, setFloorYr2] = useState<number>(league?.cap_floor_year_plus_2 || Math.round((league?.salary_cap_year_plus_2 || league?.salary_cap || 82500000) * 0.7));
+  const [floor, setFloor] = useState<number>(league?.cap_floor ?? Math.round((league?.salary_cap ?? 82500000) * 0.7));
+  const [floorYr1, setFloorYr1] = useState<number>(league?.cap_floor_year_plus_1 ?? Math.round((league?.salary_cap_year_plus_1 ?? league?.salary_cap ?? 82500000) * 0.7));
+  const [floorYr2, setFloorYr2] = useState<number>(league?.cap_floor_year_plus_2 ?? Math.round((league?.salary_cap_year_plus_2 ?? league?.salary_cap ?? 82500000) * 0.7));
   const [floorYr1Tentative, setFloorYr1Tentative] = useState(!!league?.cap_floor_year_plus_1_tentative);
   const [floorYr2Tentative, setFloorYr2Tentative] = useState(!!league?.cap_floor_year_plus_2_tentative);
   // Iter 232N.62 — Draft cap view settings (default rookie AAV +
   // treatment of minors against cap)
   const [defaultRookieAav, setDefaultRookieAav] = useState<number>(
-    league?.default_rookie_aav || 950_000,
+    league?.default_rookie_aav ?? 950_000,
   );
   const [minorsCapTreatment, setMinorsCapTreatment] = useState<string>(
     league?.minors_cap_treatment || "full",
@@ -40,18 +48,18 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     setEnabled(!!league?.salary_cap_enabled);
-    setAmount(league?.salary_cap || 82500000);
-    setYr1(league?.salary_cap_year_plus_1 || (league?.salary_cap || 82500000));
-    setYr2(league?.salary_cap_year_plus_2 || (league?.salary_cap || 82500000));
+    setAmount(league?.salary_cap ?? 82500000);
+    setYr1(league?.salary_cap_year_plus_1 ?? (league?.salary_cap ?? 82500000));
+    setYr2(league?.salary_cap_year_plus_2 ?? (league?.salary_cap ?? 82500000));
     setYr1Tentative(!!league?.salary_cap_year_plus_1_tentative);
     setYr2Tentative(!!league?.salary_cap_year_plus_2_tentative);
     setFloorEnabled(!!league?.cap_floor_enabled);
-    setFloor(league?.cap_floor || Math.round((league?.salary_cap || 82500000) * 0.7));
-    setFloorYr1(league?.cap_floor_year_plus_1 || Math.round((league?.salary_cap_year_plus_1 || league?.salary_cap || 82500000) * 0.7));
-    setFloorYr2(league?.cap_floor_year_plus_2 || Math.round((league?.salary_cap_year_plus_2 || league?.salary_cap || 82500000) * 0.7));
+    setFloor(league?.cap_floor ?? Math.round((league?.salary_cap ?? 82500000) * 0.7));
+    setFloorYr1(league?.cap_floor_year_plus_1 ?? Math.round((league?.salary_cap_year_plus_1 ?? league?.salary_cap ?? 82500000) * 0.7));
+    setFloorYr2(league?.cap_floor_year_plus_2 ?? Math.round((league?.salary_cap_year_plus_2 ?? league?.salary_cap ?? 82500000) * 0.7));
     setFloorYr1Tentative(!!league?.cap_floor_year_plus_1_tentative);
     setFloorYr2Tentative(!!league?.cap_floor_year_plus_2_tentative);
-    setDefaultRookieAav(league?.default_rookie_aav || 950_000);
+    setDefaultRookieAav(league?.default_rookie_aav ?? 950_000);
     setMinorsCapTreatment(league?.minors_cap_treatment || "full");
   }, [league?.id, league?.salary_cap_enabled, league?.salary_cap, league?.salary_cap_year_plus_1, league?.salary_cap_year_plus_2, league?.salary_cap_year_plus_1_tentative, league?.salary_cap_year_plus_2_tentative, league?.cap_floor_enabled, league?.cap_floor, league?.cap_floor_year_plus_1, league?.cap_floor_year_plus_2, league?.cap_floor_year_plus_1_tentative, league?.cap_floor_year_plus_2_tentative, league?.default_rookie_aav, league?.minors_cap_treatment]);
 
@@ -65,17 +73,20 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
     setSaving(true);
     try {
       await api.put(`/leagues/${league.id}/admin/cap-settings`, {
+        salary_adherence_mode: adherence,
+        ir_salary_charge_pct: Number(irCharge),
+        draft_roster_target: Number(target),
         salary_cap_enabled: enabled,
         salary_cap: enabled ? amount : null,
         salary_cap_year_plus_1: enabled ? yr1 : null,
         salary_cap_year_plus_2: enabled ? yr2 : null,
         salary_cap_year_plus_1_tentative: yr1Tentative,
         salary_cap_year_plus_2_tentative: yr2Tentative,
-        // Iter 120 — Cap Floor (only meaningful when ceiling is on)
-        cap_floor_enabled: enabled && floorEnabled,
-        cap_floor: enabled && floorEnabled ? floor : null,
-        cap_floor_year_plus_1: enabled && floorEnabled ? floorYr1 : null,
-        cap_floor_year_plus_2: enabled && floorEnabled ? floorYr2 : null,
+        // Floor can be enabled independently of the ceiling.
+        cap_floor_enabled: floorEnabled,
+        cap_floor: floorEnabled ? floor : null,
+        cap_floor_year_plus_1: floorEnabled ? floorYr1 : null,
+        cap_floor_year_plus_2: floorEnabled ? floorYr2 : null,
         cap_floor_year_plus_1_tentative: floorYr1Tentative,
         cap_floor_year_plus_2_tentative: floorYr2Tentative,
         // Iter 232N.62 — Draft cap view settings
@@ -178,10 +189,8 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
           </div>
         )}
 
-        {/* Iter 120 — Cap Floor (parallels the ceiling). Only meaningful
-            when the ceiling is enabled; backend clears these fields if
-            the ceiling is turned off in the same save. */}
-        {enabled && (
+        {/* Minimum payroll can be configured without a ceiling. */}
+        {(
           <div className="rounded-md border border-border p-4 space-y-3" data-testid="rules-schedule-cap-floor-block">
             <div className="flex items-center gap-3">
               <Switch
@@ -257,7 +266,7 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
           </div>
         )}
         {/* Iter 232N.62 — Draft-room cap view settings */}
-        {enabled && (
+        {(enabled || floorEnabled) && (
           <div className="pt-3 border-t border-border/40 space-y-3">
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
               Draft-room cap view
@@ -305,6 +314,21 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
             </div>
           </div>
         )}
+        <div className="space-y-3 border-t border-border pt-3">
+          <label className="block">Draft salary adherence
+            <select aria-label="Draft salary adherence" value={adherence} onChange={e => setAdherence(e.target.value)} className="ml-2 bg-secondary p-2 rounded">
+              <option value="strict">Strict</option><option value="informal">Informal</option>
+            </select>
+          </label>
+          <p className="text-xs text-muted-foreground">Strict blocks selections that cannot complete within salary bounds. Informal warns and allows post-draft adjustments.</p>
+          <label className="block">Required draft roster size (excludes IR)
+            <input aria-label="Required draft roster size" type="number" min="1" max="200" value={target} onChange={e => setTarget(e.target.value)} className="ml-2 bg-secondary p-2 rounded w-24" />
+          </label>
+          <label className="block">Salary charged on IR (%)
+            <input aria-label="Salary charged on IR (%)" type="number" min="0" max="100" value={irCharge} onChange={e => setIrCharge(e.target.value)} className="ml-2 bg-secondary p-2 rounded w-24" />
+          </label>
+          <p className="text-xs text-muted-foreground">100% charges full salary; 0% exempts IR. IR relief can also reduce payroll below the floor.</p>
+        </div>
         <div className="flex justify-end">
           <Button size="sm" onClick={save} disabled={saving} data-testid="rules-schedule-cap-save">
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4 mr-1" />}

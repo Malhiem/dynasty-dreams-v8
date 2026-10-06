@@ -98,7 +98,7 @@ def effective_cap_hit(
 ) -> float:
     """One-liner used by callers that already have `player` + `team.lineup`
     + `league`. Combines full-AAV resolution + minors treatment."""
-    default_rookie_aav = int(league.get("default_rookie_aav") or 950_000)
+    default_rookie_aav = int(league.get("default_rookie_aav", 950_000))
     treatment = league.get("minors_cap_treatment") or "full"
     base = resolve_full_aav(player, default_rookie_aav=default_rookie_aav)
     in_minors = _player_is_in_minors(player, lineup)

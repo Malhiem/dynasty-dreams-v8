@@ -29,7 +29,7 @@ BASE = _backend_url()
 
 def _db_sync():
     client = AsyncIOMotorClient(os.environ["MONGO_URL"])
-    return client[os.environ.get("DB_NAME", "test_database")]
+    return client[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
 
 
 async def _login(client, email, password):
@@ -45,8 +45,8 @@ async def test_week_at_a_glance_excludes_archived_and_test_leagues():
     Cleans up after itself."""
     db = _db_sync()
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@gmail.com", "Chris2026!")
-        user = await db.users.find_one({"email": "chriszarek@gmail.com"})
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
+        user = await db.users.find_one({"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")})
         uid = str(user["_id"])
 
         # Snapshot the baseline count.
@@ -134,8 +134,8 @@ async def test_week_at_a_glance_includes_co_owner_teams():
     """A co-owner of a team should also see it in their own dashboard."""
     db = _db_sync()
     async with AsyncClient(base_url=BASE, timeout=20) as client:
-        token = await _login(client, "chriszarek@live.com", "Chris2026!")
-        live_user = await db.users.find_one({"email": "chriszarek@live.com"})
+        token = await _login(client, os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password"))
+        live_user = await db.users.find_one({"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com")})
         live_uid = str(live_user["_id"])
 
         baseline = len((await client.get(
@@ -145,7 +145,7 @@ async def test_week_at_a_glance_includes_co_owner_teams():
 
         # Build a real (non-test) league + team owned by someone else,
         # with chriszarek1 as co-owner.
-        primary = await db.users.find_one({"email": "chriszarek@gmail.com"})
+        primary = await db.users.find_one({"email": os.environ["ADMIN_EMAIL"]})
         league = await db.leagues.insert_one({
             "name": "Iter230g_co_owner_league_keep_me",
             "season": "2025-2026",

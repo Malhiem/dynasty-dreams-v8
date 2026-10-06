@@ -54,8 +54,11 @@ def test_auto_pick_endpoint_present_and_queue_first():
     assert 'via = "queue"' in block
     assert 'via = "top_eligible"' in block
     # Pushes to roster + pulls from queue atomically.
-    assert '"$addToSet": {"roster": str(chosen_player["_id"])}' in block
-    assert '"$pull": {"draft_queue": str(chosen_player["_id"])}' in block
+    assert "await commit_pick(_db(), draft, team, pick_doc," in block
+    assert "new_status, auto=True)" in block
+    mutation = Path("/app/backend/services/draft_mutation.py").read_text()
+    assert 'roster = list(dict.fromkeys([*before["roster"], pick["player_id"]]))' in mutation
+    assert 'queue = [pid for pid in before["draft_queue"] if not auto or pid != pick["player_id"]]' in mutation
     # Broadcasts a draft_pick (same channel as a manual pick).
     assert '"draft_pick"' in block
     # Stamps `auto_picked: True` on the pick doc so the UI can badge it.

@@ -15,10 +15,10 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 API = f"{BASE_URL}/api"
 
-USER = {"email": "chriszarek@gmail.com", "password": "Chris2026!"}
+USER = {"email": os.environ.get("TEST_OWNER_EMAIL", "test-owner@e2e.dynastydreams.com"), "password": os.environ.get("TEST_OWNER_PASSWORD", "e2e-owner-password")}
 # TFHL — chriszarek's roster with McDavid (from iter 138 report).
-TFHL_TEAM_ID = "6a3c69fb9a6fc14153c24f21"
-TFHL_LEAGUE_ID = "6a3a0781a842ea2f7bcdc7cb"
+TFHL_TEAM_ID = "69e59b33cbd3fea02a914c79"
+TFHL_LEAGUE_ID = "69e46af167999bfb85c39629"
 
 
 @pytest.fixture(scope="module")

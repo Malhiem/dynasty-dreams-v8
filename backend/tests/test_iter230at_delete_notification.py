@@ -36,7 +36,7 @@ def _h(t): return {"Authorization": f"Bearer {t}"}
 @pytest.mark.asyncio
 async def test_delete_notification_owner_only():
     db = AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
     alice = _register_login()
     bob = _register_login()

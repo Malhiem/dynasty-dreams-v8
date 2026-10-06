@@ -21,8 +21,8 @@ BASE_URL = os.environ.get(
     "REACT_APP_BACKEND_URL",
     "https://dynasty-preview.preview.emergentagent.com",
 ).rstrip("/")
-ADMIN_EMAIL = "admin@dynastydreams.com"
-ADMIN_PASSWORD = "Admin123!"
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "e2e-admin-password")
 
 
 @pytest.fixture(scope="module")
@@ -80,7 +80,7 @@ def test_create_sandbox(admin_session):
 def test_create_rejects_over_cap(admin_session):
     r = admin_session.post(
         f"{BASE_URL}/api/admin/test-sandbox/leagues",
-        json={"preset_key": "nhl_redraft_12", "num_teams": 21},
+        json={"preset_key": "nhl_redraft_12", "num_teams": 33},
         timeout=15,
     )
     assert r.status_code in (400, 422), r.status_code

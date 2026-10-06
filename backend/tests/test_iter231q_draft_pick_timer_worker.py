@@ -30,7 +30,7 @@ from services.draft_pick_timer_worker import run_once, draft_pick_timer_loop
 
 def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[
-        os.environ.get("DB_NAME", "test_database")
+        os.environ.get("DB_NAME", os.environ["DB_NAME"])
     ]
 
 
