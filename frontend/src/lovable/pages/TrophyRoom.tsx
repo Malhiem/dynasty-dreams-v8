@@ -2,13 +2,12 @@
 import "./trophy-room/TrophyRoom.css";
 import FranchiseRecords from "./trophy-room/FranchiseRecords";
 import { seasonPlayerAwards } from "./history/awardRecords";
-import { useHistoryRequest } from "./history/useHistoryRequest";
+import { useTrophyRoomHistory } from "./trophy-room/useTrophyRoomHistory";
 import { HistoryStatus, FilteredAwardsEmpty } from "./history/HistoryStatus";
-import { useCallback, useMemo, useState } from "react";
-import { recordedSeasonYears, selectSeasonYears } from "./trophy-room/seasonFilters";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { franchiseSeasonYears, recordedSeasonYears, selectSeasonYears } from "./trophy-room/seasonFilters";
 import { useNavigate, useParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
-import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Crown, Trophy, Star, Shield, Award, Medal, Zap, TurtleIcon, RefreshCw, Handshake, ListChecks } from "lucide-react";
@@ -193,10 +192,11 @@ const DraftAwardCard = ({ entry }: { entry: any }) => {
 
 export default function TrophyRoom() {
   const { teamId } = useParams<{ teamId?: string }>();
-  const { league: activeLeague } = useActiveLeague();
+  const { league: activeLeague, leagueId, switchLeague } = useActiveLeague();
+  const resolveLeague = useCallback((id: string) => {if (id !== leagueId) switchLeague(id);}, [leagueId, switchLeague]);
   return (
     <AppLayout>
-      <TrophyRoomView leagueId={activeLeague?.id} teamId={teamId} leagueName={activeLeague?.name} />
+      <TrophyRoomView leagueId={activeLeague?.id} teamId={teamId} leagueName={activeLeague?.name} onLeagueResolved={resolveLeague} />
     </AppLayout>
   );
 }
@@ -206,33 +206,26 @@ export function TrophyRoomView({
   teamId,
   leagueName,
   embedded = false,
+  onLeagueResolved,
 }: {
   leagueId?: string | null;
   teamId?: string | null;
   leagueName?: string | null;
   embedded?: boolean;
+  onLeagueResolved?: (id: string) => void;
 }) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<"all" | "recent">("all");
   // Iter 232N.84 — Multi-season filter. `null` = every year, otherwise
   // clamp banners + trophies to just the picked season year.
   const [yearFilter, setYearFilter] = useState<number | null>(null);
-  const loadLeague = useCallback((signal: AbortSignal) => api.get(`/leagues/${leagueId}/trophy-room`, {signal}).then(res => res.data), [leagueId]);
-  const loadTeam = useCallback((signal: AbortSignal) => api.get(`/teams/${teamId}/trophy-room`, {signal}).then(res => res.data), [teamId]);
-  const loadDrafts = useCallback((signal: AbortSignal) => api.get(`/leagues/${leagueId}/draft-hall-of-awards`, {signal}).then(res => res.data?.drafts || []), [leagueId]);
-  const leagueRequest = useHistoryRequest<TrophyData>(leagueId || null, loadLeague);
-  const teamRequest = useHistoryRequest<any>(leagueId && teamId ? `${leagueId}:${teamId}` : null, loadTeam);
-  const draftRequest = useHistoryRequest<any[]>(leagueId && !teamId ? leagueId : null, loadDrafts);
-  const data = leagueRequest.data;
-  const teamData = teamRequest.data;
+  const {data, teamData, draftRequest, loading, error, retry} = useTrophyRoomHistory(leagueId, teamId, onLeagueResolved);
   const hallOfAwards = draftRequest.data || [];
-  const loading = leagueRequest.loading || teamRequest.loading;
-  const error = leagueRequest.error || teamRequest.error;
-  const retry = () => {leagueRequest.retry(); teamRequest.retry();};
+  useEffect(() => {setFilter("all"); setYearFilter(null);}, [teamId || leagueId]);
   const filtersActive = filter !== "all" || yearFilter !== null;
   const resetFilters = () => {setFilter("all"); setYearFilter(null);};
 
-  const availableYears = useMemo(() => recordedSeasonYears(data), [data]);
+  const availableYears = useMemo(() => teamId ? franchiseSeasonYears(teamData) : recordedSeasonYears(data), [teamId, teamData, data]);
   const visibleYears = useMemo(() => selectSeasonYears(availableYears, filter === "recent", yearFilter), [availableYears, filter, yearFilter]);
   const allBanners = useMemo(() => data?.team_banners
     .flatMap(tb => tb.banners.map(b => ({ ...b, team_name: tb.team_name, team_id: tb.team_id })))
@@ -289,7 +282,7 @@ export function TrophyRoomView({
           </div>
         </div>
 
-        {!leagueId && <p role="status">Select a league to view its history.</p>}
+        {!leagueId && !teamId && <p role="status">Select a league to view its history.</p>}
         <HistoryStatus loading={loading} error={error} retry={retry} />
 
         {teamData?.historical_franchise && !loading && !error && <p className="text-center text-xs py-2">Archived franchise — showing saved season history.</p>}

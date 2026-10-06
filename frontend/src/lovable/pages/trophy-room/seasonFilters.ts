@@ -19,3 +19,13 @@ export function recordedSeasonYears(data: History | null): number[] {
 export function selectSeasonYears(years: number[], recent: boolean, selected: number | null): Set<number> {
   return new Set((recent ? years.slice(0, 3) : years).filter(year => selected == null || year === selected));
 }
+
+export function franchiseSeasonYears(data: {
+  seasons_played?: Array<{year: number | string}>;
+  banners?: Array<{year: number | string}>;
+  individual_awards?: Array<{year: number | string}>;
+} | null): number[] {
+  return [...new Set([
+    ...(data?.seasons_played || []), ...(data?.banners || []), ...(data?.individual_awards || []),
+  ].map(row => Number(row.year)))].filter(Number.isFinite).sort((a, b) => b - a);
+}

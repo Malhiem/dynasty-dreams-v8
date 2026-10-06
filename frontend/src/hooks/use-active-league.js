@@ -80,7 +80,9 @@ export function useActiveLeague() {
         const ordered = _applyOrder(data || [], effectiveOrder);
         setMyLeagues(ordered);
         let id = localStorage.getItem(STORAGE_KEY) || leagueId;
-        if (!id || !(ordered || []).some(l => l.id === id)) {
+        // A direct link may resolve an authorized league while this request is pending.
+        // Preserve that newer selection instead of replacing it with the list default.
+        if (!id || (id === leagueId && !(ordered || []).some(l => l.id === id))) {
           id = ordered?.[0]?.id || null;
           if (id) {
             try { localStorage.setItem(STORAGE_KEY, id); } catch (e) { /* noop */ }
