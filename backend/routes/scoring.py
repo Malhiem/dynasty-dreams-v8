@@ -8,6 +8,7 @@ from typing import Optional
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+from pymongo.errors import DuplicateKeyError
 
 from routes.league_guards import require_league_member
 
@@ -27,6 +28,7 @@ class ScoringConfigCreate(BaseModel):
     skater_scoring: dict
     goalie_scoring: dict
     roto_categories: list = []
+    expected_revision: Optional[int] = None
 
 
 @router.post("/scoring/config")
@@ -38,7 +40,7 @@ async def save_scoring_config(input: ScoringConfigCreate, request: Request):
     league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
-    if league["commissioner_id"] != user["_id"]:
+    if str(league["commissioner_id"]) != str(user["_id"]) and str(user["_id"]) not in [str(x) for x in league.get("co_commissioners", [])]:
         raise HTTPException(status_code=403, detail="Only commissioner can update scoring")
 
     config_doc = {
@@ -50,13 +52,23 @@ async def save_scoring_config(input: ScoringConfigCreate, request: Request):
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
 
-    await db.scoring_configs.update_one(
-        {"league_id": input.league_id},
-        {"$set": config_doc},
-        upsert=True
-    )
-
-    return {"message": "Scoring config saved"}
+    current = await db.scoring_configs.find_one({"league_id": input.league_id})
+    revision = (current or {}).get("revision", 0)
+    if input.expected_revision is not None and input.expected_revision != revision:
+        raise HTTPException(status_code=409, detail="Scoring changed since you loaded it. Reload the saved settings before trying again.")
+    config_doc["revision"] = revision + 1
+    if current:
+        query = {"_id": current["_id"], "$or": [{"revision": revision}, {"revision": {"$exists": False}}]} if revision == 0 else {"_id": current["_id"], "revision": revision}
+        saved = await db.scoring_configs.update_one(query, {"$set": config_doc})
+        if saved.matched_count != 1:
+            raise HTTPException(status_code=409, detail="Scoring changed since you loaded it. Reload the saved settings before trying again.")
+    else:
+        config_doc["_id"] = ObjectId(input.league_id)
+        try:
+            await db.scoring_configs.insert_one(config_doc)
+        except DuplicateKeyError:
+            raise HTTPException(status_code=409, detail="Scoring changed since you loaded it. Reload the saved settings before trying again.")
+    return {"message": "Scoring config saved", "revision": config_doc["revision"]}
 
 
 @router.get("/scoring/config")
@@ -68,6 +80,7 @@ async def get_scoring_config(league_id: str, request: Request):
     if not config:
         return {
             "league_id": league_id,
+            "revision": 0,
             "skater_scoring": DEFAULT_SKATER_SCORING,
             "goalie_scoring": DEFAULT_GOALIE_SCORING,
             "roto_categories": ["goals", "assists", "plus_minus", "power_play_points", "shots", "penalty_minutes", "wins", "save_pct", "goals_against_avg", "shutouts"]

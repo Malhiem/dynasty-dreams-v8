@@ -53,6 +53,18 @@ class UserRole(str, Enum):
 
 
 # ─── LeagueCreate / LeagueResponse Pydantic models (extracted iter 109) ───
+class PlayerPoolSettings(BaseModel):
+    selection_mode: Literal["all", "conference", "custom"] = "all"
+    include_entire_nhl: bool = True
+    teams: List[str] = Field(default_factory=list)
+    eastern: bool = True
+    western: bool = True
+    locked: bool = False
+    include_minors: bool = True
+    include_unsigned: bool = False
+    duplicate_players: Literal["not-used", "entire-league", "across-divisions"] = "not-used"
+
+
 class LeagueCreate(BaseModel):
     name: str
     sport: str = "nhl"
@@ -159,6 +171,9 @@ class LeagueResponse(BaseModel):
     ir_slots: Optional[int] = None
     ir_plus_slots: Optional[int] = None
     taxi_squad_size: Optional[int] = None
+    prospect_max_age: Optional[int] = None
+    prospect_max_career_games: Optional[int] = None
+    player_pool_config: Optional[dict] = None
     position_limits: Optional[dict] = None
     position_breakdown: Optional[dict] = None
     enforce_position_maxes: Optional[bool] = None
@@ -393,6 +408,9 @@ def _league_to_response(league: dict) -> LeagueResponse:
         ir_slots=league.get("ir_slots"),
         ir_plus_slots=league.get("ir_plus_slots"),
         taxi_squad_size=league.get("taxi_squad_size"),
+        prospect_max_age=league.get("prospect_max_age"),
+        prospect_max_career_games=league.get("prospect_max_career_games"),
+        player_pool_config=league.get("player_pool_config"),
         position_limits=league.get("position_limits"),
         position_breakdown=league.get("position_breakdown"),
         enforce_position_maxes=league.get("enforce_position_maxes"),
@@ -2079,6 +2097,9 @@ class LeagueUpdate(BaseModel):
     ir_slots: Optional[int] = Field(default=None, ge=0, le=15)
     ir_plus_slots: Optional[int] = Field(default=None, ge=0, le=10)
     taxi_squad_size: Optional[int] = Field(default=None, ge=0, le=100)
+    prospect_max_age: Optional[int] = Field(default=None, ge=16, le=30)
+    prospect_max_career_games: Optional[int] = Field(default=None, ge=0, le=500)
+    player_pool_config: Optional[PlayerPoolSettings] = None
     position_limits: Optional[dict] = None  # e.g. {"C": 4, "LW": 4, "RW": 4, "D": 6, "G": 3}
     # Iter 176 — Position Breakdown: per-section position caps.
     #   {"active": {"S": 18, "G": 2, ...}, "bench": {...}, "minors": {...}}
@@ -2174,7 +2195,7 @@ _LEAGUE_UPDATE_ALLOWED = {
     "consolation_uses_playoff_schedule",
     # Iter 81: extended roster controls
     "ir_slots", "ir_plus_slots", "taxi_squad_size", "position_limits",
-    "position_breakdown",
+    "position_breakdown", "prospect_max_age", "prospect_max_career_games", "player_pool_config",
     "enforce_position_maxes", "min_active_players", "min_games_played",
     "prorate_min_max_by_period", "allow_illegal_rosters", "ir_eligibility_modes",
     # Iter 100: roster lock + lineup lock + NHL stats window
@@ -2441,6 +2462,10 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
                         f"(teams not in the playoffs). Currently {c_teams}."
                     ),
                 )
+
+    if "player_pool_config" in update:
+        from services.player_pool import apply_pool_settings
+        await apply_pool_settings(db, league, update["player_pool_config"], update)
 
     if update:
         await db.leagues.update_one({"_id": league["_id"]}, {"$set": update})

@@ -156,6 +156,10 @@ async def get_waiver_players(
         if combined:
             query["_id"] = {"$nin": list(combined)}
 
+    if league_id:
+        from services.player_pool import pool_query
+        pool_league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+        query = {"$and": [query, pool_query(pool_league or {})]}
     skip = (page - 1) * limit
     players = await db.players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
     total = await db.players.count_documents(query)
@@ -344,6 +348,9 @@ async def precheck_waiver_claim(
     player = await db.players.find_one({"_id": ObjectId(player_id)})
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
+    from services.player_pool import require_pool_player
+    pool_league = await db.leagues.find_one({"_id": ObjectId(team["league_id"])})
+    await require_pool_player(db, pool_league, player_id)
 
     # ── Roster space ──
     roster_ids = team.get("roster", []) or []
@@ -510,6 +517,9 @@ async def place_waiver_claim(input: WaiverClaimCreate, request: Request):
     player = await db.players.find_one({"_id": ObjectId(input.player_id)})
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
+    from services.player_pool import require_pool_player
+    pool_league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
+    await require_pool_player(db, pool_league, input.player_id)
 
     team_budget = await db.waiver_budgets.find_one({
         "team_id": str(team["_id"]),

@@ -802,6 +802,9 @@ async def add_to_roster(team_id: str, input: RosterAction, request: Request):
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
 
+    from services.player_pool import require_pool_player
+    await require_pool_player(db, league, input.player_id)
+
     if input.player_id in current_roster:
         raise HTTPException(status_code=400, detail="Player already on roster")
 

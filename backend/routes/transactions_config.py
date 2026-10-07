@@ -327,6 +327,11 @@ async def update_transactions_config(league_id: str, payload: TransactionsConfig
     teams = await db.teams.find({"league_id": league_id}, {"_id": 1}).to_list(60)
     team_ids = {str(t["_id"]) for t in teams}
     cfg_dict = payload.model_dump()
+    # Keep legacy configurations readable, but reject out-of-range new writes.
+    for period, maximum in (("season", 600), ("week", 100)):
+        for field, value in cfg_dict["claim_limits"][period].items():
+            if value is not None and not 0 <= value <= maximum:
+                raise HTTPException(status_code=400, detail=f"{period} {field} claim limit must be between 0 and {maximum}, or null for unlimited")
     _validate_manual_priority(cfg_dict, team_ids)
     _validate_waiver_claim_limits(cfg_dict)
     _validate_waiver_manual_priority(cfg_dict, team_ids)

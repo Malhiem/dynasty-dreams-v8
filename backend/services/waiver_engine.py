@@ -27,6 +27,7 @@ Public API:
     next scheduled processing time (used by the UI).
 """
 from __future__ import annotations
+from fastapi import HTTPException
 from services.financial_lock import serialize_finances
 
 import logging
@@ -140,6 +141,13 @@ async def _finalize_winner(
     team_id = winner["team_id"]
     player_id = winner["player_id"]
     drop_player_id = winner.get("drop_player_id")
+    from services.player_pool import require_pool_player
+    latest_league = await db.leagues.find_one({"_id": ObjectId(league_id)})
+    try:
+        await require_pool_player(db, latest_league, player_id)
+    except HTTPException:
+        return False
+
 
     # ── Path A: real MongoDB transaction (production replica set) ──
     client = getattr(db, "client", None)
@@ -366,6 +374,13 @@ async def process_pending_claims(
             # Enforce one-pick-per-team (top_then_next policy)
             if one_per_team and cand_team_id in teams_already_won:
                 skipped_this_pass.append(cand)
+                continue
+
+            from services.player_pool import require_pool_player
+            try:
+                await require_pool_player(db, league, player_id)
+            except HTTPException as exc:
+                denied.append((cand, exc.detail))
                 continue
 
             # Position-limit pre-check

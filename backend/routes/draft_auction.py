@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from services.financial_lock import serialize_finances
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -76,6 +77,7 @@ class AuctionBidRequest(BaseModel):
 
 
 @router.post("/drafts/{draft_id}/auction/nominate")
+@serialize_finances(_db)
 async def auction_nominate(draft_id: str, input: AuctionNominateRequest, request: Request):
     """Nominate a player for auction bidding."""
     user = await _get_user(request)
@@ -101,6 +103,10 @@ async def auction_nominate(draft_id: str, input: AuctionNominateRequest, request
     player = await _db().players.find_one({"_id": ObjectId(input.player_id)})
     if not player:
         raise HTTPException(status_code=404, detail="Player not found")
+
+    from services.player_pool import require_pool_player
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    await require_pool_player(_db(), league, input.player_id)
 
     drafted_ids = [p.get("player_id") for p in draft.get("picks", [])]
     if input.player_id in drafted_ids:
@@ -147,6 +153,7 @@ async def auction_nominate(draft_id: str, input: AuctionNominateRequest, request
 
 
 @router.post("/drafts/{draft_id}/auction/bid")
+@serialize_finances(_db)
 async def auction_bid(draft_id: str, input: AuctionBidRequest, request: Request):
     """Place a bid on the current auction."""
     user = await _get_user(request)
@@ -202,6 +209,7 @@ async def auction_bid(draft_id: str, input: AuctionBidRequest, request: Request)
 
 
 @router.post("/drafts/{draft_id}/auction/resolve")
+@serialize_finances(_db)
 async def auction_resolve(draft_id: str, request: Request):
     """Resolve current auction - timer expired, winner gets player."""
     user = await _get_user(request)
@@ -220,6 +228,9 @@ async def auction_resolve(draft_id: str, request: Request):
     winner_team_id = auction["current_bidder_team_id"]
     winning_bid = auction["current_bid"]
     player_id = auction["player_id"]
+    from services.player_pool import require_pool_player
+    league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    await require_pool_player(_db(), league, player_id)
 
     pick_doc = {
         "round": 0,

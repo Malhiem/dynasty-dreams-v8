@@ -522,6 +522,9 @@ async def get_draft_eligible_players(
             query["_id"] = {"$nin": list(combined)}
 
     skip = (page - 1) * limit
+    from services.player_pool import pool_query
+    league_pool = await _db().leagues.find_one({"_id": ObjectId(league_id_str)})
+    query = {"$and": [query, pool_query(league_pool or {})]}
     players = await _db().players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
     total = await _db().players.count_documents(query)
 

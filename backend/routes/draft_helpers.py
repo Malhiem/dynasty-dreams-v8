@@ -315,6 +315,9 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
     via = "top_eligible"
     team = await _db().teams.find_one({"_id": ObjectId(on_clock_team_id)})
     salary_ctx = await load_context(_db(), draft, team)
+    from services.player_pool import pool_query
+    pool_league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    eligible_pool_query = pool_query(pool_league or {})
     salary_results = {}
     def evaluate_candidate(pid):
         if pid not in salary_results:
@@ -330,7 +333,7 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
             if pid in drafted_ids:
                 continue
             try:
-                cand = await _db().players.find_one({"_id": ObjectId(pid)})
+                cand = await _db().players.find_one({"$and": [{"_id": ObjectId(pid)}, eligible_pool_query]})
             except Exception:
                 continue
             if cand and evaluate_candidate(pid).get("allowed"):
@@ -355,7 +358,7 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
             q = {}
         else:
             q = {"player_type": {"$ne": "prospect"}}
-        async for p in _db().players.find(q).sort([("points", -1), ("name", 1)]):
+        async for p in _db().players.find({"$and": [q, eligible_pool_query]}).sort([("points", -1), ("name", 1)]):
             if str(p["_id"]) in drafted_ids:
                 continue
             if not evaluate_candidate(str(p["_id"])).get("allowed"):

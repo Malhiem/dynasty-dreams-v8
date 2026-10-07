@@ -14,6 +14,10 @@ async def recover(db, draft_id):
 
 async def commit_pick(db, draft, team, pick, lineup, new_status, auto=False):
     """No turn advancement if the roster write fails; journal repairs crashes."""
+    from bson import ObjectId
+    from services.player_pool import require_pool_player
+    league = await db.leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    await require_pool_player(db, league, pick["player_id"])
     before = {"roster": team.get("roster") or [], "lineup": team.get("lineup") or {}, "draft_queue": team.get("draft_queue") or []}
     journal = await db.draft_mutations.insert_one({"draft_id": str(draft["_id"]), "draft_oid": draft["_id"],
         "team_oid": team["_id"], "overall": pick["overall"], "player_id": pick["player_id"], "before_team": before, "status": "pending"})

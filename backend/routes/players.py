@@ -228,6 +228,10 @@ async def get_players(
         if new_id_clause:
             query["_id"] = new_id_clause
 
+    if league_id:
+        from services.player_pool import pool_query
+        query = {"$and": [query, pool_query(league_doc)]}
+
     skip = (page - 1) * limit
     sort_field_map = {
         "points": "points", "goals": "goals", "assists": "assists",

@@ -707,6 +707,9 @@ async def swap_pick_player(draft_id: str, overall: int, payload: SwapPickPlayerR
         raise HTTPException(status_code=404, detail=f"Pick #{overall} not found")
 
     old_pick = picks[target_idx]
+    from services.player_pool import require_pool_player
+    pool_league = await _db().leagues.find_one({"_id": ObjectId(draft["league_id"])})
+    await require_pool_player(_db(), pool_league, payload.new_player_id)
     new_player = await _db().players.find_one({"_id": ObjectId(payload.new_player_id)})
     if not new_player:
         raise HTTPException(status_code=404, detail="Replacement player not found")

@@ -16,7 +16,7 @@ export default function CommissionerAccess({ component: Component }: { component
     setAccess({ key: "", allowed: false });
     if (!user?.id || !leagueId) return;
     api.get(`/leagues/${leagueId}`).then(({ data }) => {
-      if (!cancelled) setAccess({ key, allowed: data.commissioner_id === user.id });
+      if (!cancelled) setAccess({ key, allowed: String(data.commissioner_id) === String(user.id) || (data.co_commissioners || []).some(id => String(id) === String(user.id)) });
     }).catch(() => {
       if (!cancelled) setAccess({ key, allowed: false });
     });

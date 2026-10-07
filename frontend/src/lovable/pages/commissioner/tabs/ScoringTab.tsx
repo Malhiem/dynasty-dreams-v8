@@ -70,8 +70,8 @@ function CategoryRow({ cat, prefix, enabled, points, accentClass, onToggle, onCh
           type="number"
           step="0.1"
           inputMode="decimal"
-          value={points ?? 0}
-          onChange={(e) => onChangePoints(parseFloat(e.target.value) || 0)}
+          value={Number.isFinite(points) ? points : ""}
+          onChange={(e) => onChangePoints(e.target.value === "" ? NaN : Number(e.target.value))}
           className="w-20 h-9 bg-secondary border-border text-center"
           disabled={!enabled}
           data-testid={`scoring-points-${cat.id}`}

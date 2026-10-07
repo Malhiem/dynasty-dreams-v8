@@ -6,7 +6,7 @@ import { scoringCategories } from "../data/commissionerData";
 import ScoringTab from "./ScoringTab";
 
 type Setting = { enabled: boolean; points: number };
-type Config = { skater_scoring: Record<string, number>; goalie_scoring: Record<string, number>; roto_categories: string[] };
+type Config = { revision?: number; skater_scoring: Record<string, number>; goalie_scoring: Record<string, number>; roto_categories: string[] };
 const aliases: Record<string, string> = {
   shots_on_goal: "shots", shorthanded_goals: "short_handed_goals",
   shorthanded_points: "short_handed_points", shorthanded_assists: "short_handed_assists",
@@ -53,7 +53,7 @@ export default function PersistedScoringTab({ activeLeague, reloadLeague, Goalie
     for (const [group, categories] of groups) {
       for (const c of categories) {
         const setting = settings[c.id];
-        if (!Number.isFinite(setting.points)) { setError("Enter a valid number for every scoring category."); return; }
+        if (setting.enabled && !Number.isFinite(setting.points)) { setError("Enter a valid number for every scoring category."); return; }
         delete config[group][originalId(c.id)];
         delete config[group][apiKey(c.id)];
         if (setting.enabled) config[group][apiKey(c.id)] = setting.points;
@@ -61,10 +61,10 @@ export default function PersistedScoringTab({ activeLeague, reloadLeague, Goalie
     }
     setSaving(true); setError("");
     try {
-      await api.post("/scoring/config", { league_id: leagueId,
+      const { data } = await api.post("/scoring/config", { league_id: leagueId, expected_revision: loaded.config.revision || 0,
         skater_scoring: config.skater_scoring, goalie_scoring: config.goalie_scoring,
         roto_categories: config.roto_categories || [] });
-      setLoaded({ leagueId, config });
+      setLoaded({ leagueId, config: { ...config, revision: data.revision } });
       toast.success("Scoring settings saved");
     } catch (e) { setError(formatApiError(e)); }
     finally { setSaving(false); }
@@ -74,7 +74,7 @@ export default function PersistedScoringTab({ activeLeague, reloadLeague, Goalie
     {error} <Button onClick={() => setAttempt(n => n + 1)}>Retry loading scoring</Button>
   </div> : <p role="status">Loading scoring settings…</p>;
   return <>
-    {error && <p role="alert">{error}</p>}
+    {error && <p role="alert">{error} <Button onClick={() => setAttempt(n => n + 1)}>Reload saved scoring</Button></p>}
     <fieldset disabled={saving} aria-busy={saving}>
       <ScoringTab skaterCategories={skaters} goalieCategories={goalies}
         scoringSettings={settings}

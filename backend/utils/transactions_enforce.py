@@ -185,7 +185,7 @@ def _player_is_prospect(player: dict, league: dict) -> bool:
         except Exception:
             age = None
     max_age = int(league.get("prospect_max_age") or 24)
-    max_games = int(league.get("prospect_max_career_games") or 100)
+    max_games = int(league.get("prospect_max_career_games") if league.get("prospect_max_career_games") is not None else 100)
     return (gp <= max_games) and (age is not None and age <= max_age)
 
 
