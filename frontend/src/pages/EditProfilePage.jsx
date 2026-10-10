@@ -9,7 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Save, Camera, Trash2, User as UserIcon } from "lucide-react";
 import { toast } from "sonner";
-import api from "@/lib/api";
+import api, { invalidateApiCache, formatApiError } from "@/lib/api";
+import AccountSecurity from "@/components/AccountSecurity";
 import { useAuth } from "@/contexts/AuthContext";
 
 const SPORT_OPTIONS = [
@@ -38,6 +39,7 @@ export default function EditProfilePage() {
   });
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [currentPassword,setCurrentPassword] = useState("");
 
   useEffect(() => {
     if (!user) return;
@@ -61,12 +63,15 @@ export default function EditProfilePage() {
     e.preventDefault();
     setBusy(true);
     try {
-      const payload = { ...form };
+      const emailChanged = form.email.toLowerCase() !== user.email.toLowerCase();
+      const payload = { ...form, ...(emailChanged ? {current_password:currentPassword} : {}) };
       // Empty strings = leave unchanged (treat as null on backend)
       Object.keys(payload).forEach((k) => { if (payload[k] === "") payload[k] = null; });
       const { data } = await api.put("/users/me/profile", payload);
-      toast.success("Profile updated");
+      toast.success(emailChanged ? "Verify the new email address using the link we sent. Your current address remains active." : "Profile updated");
+      setCurrentPassword("");
       const newUsername = data?.user?.username || form.username;
+      invalidateApiCache();
       if (refreshUser) await refreshUser();
       if (newUsername && user?.username && newUsername !== user.username) {
         // Username changed — bounce them to the new public profile URL
@@ -74,7 +79,7 @@ export default function EditProfilePage() {
         navigate(`/u/${newUsername}`);
       }
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Failed to update profile");
+      toast.error(formatApiError(err));
     } finally {
       setBusy(false);
     }
@@ -96,6 +101,7 @@ export default function EditProfilePage() {
       const { data } = await api.post("/users/me/avatar", fd, { headers: { "Content-Type": "multipart/form-data" } });
       setAvatarPreview(data?.avatar_url || null);
       toast.success("Profile photo updated");
+      invalidateApiCache();
       if (refreshUser) await refreshUser();
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Failed to upload");
@@ -110,6 +116,7 @@ export default function EditProfilePage() {
       await api.delete("/users/me/avatar");
       setAvatarPreview(null);
       toast.success("Profile photo removed");
+      invalidateApiCache();
       if (refreshUser) await refreshUser();
     } catch (err) {
       toast.error("Failed to remove photo");
@@ -172,7 +179,12 @@ export default function EditProfilePage() {
           </CardContent>
         </Card>
 
+        <AccountSecurity />
         <form onSubmit={onSubmit} className="mt-4 space-y-4">
+          {form.email.toLowerCase() !== (user?.email || '').toLowerCase() && <div>
+            <Label htmlFor="email-current-password">Current password to change email</Label>
+            <Input id="email-current-password" type="password" autoComplete="current-password" required value={currentPassword} onChange={e=>setCurrentPassword(e.target.value)} />
+          </div>}
           <Card className="border-white/10 bg-[#141414]">
             <CardHeader>
               <CardTitle className="text-white text-lg">Account</CardTitle>

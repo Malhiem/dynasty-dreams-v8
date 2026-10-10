@@ -271,6 +271,7 @@ async def accept_team_invite(token: str, request: Request):
     if not team:
         raise HTTPException(status_code=404, detail="Team no longer exists")
 
+    from services.profile_attribution import ownership_update
     role = inv.get("role", "owner")
     existing_co = list(team.get("co_owner_ids") or [])
 
@@ -289,6 +290,8 @@ async def accept_team_invite(token: str, request: Request):
             "co_owner_ids": existing_co,
             "is_pending": False,
         }
+        from services.profile_attribution import ownership_update
+        update = ownership_update(team, update)
         await db.teams.update_one({"_id": team["_id"]}, {"$set": update})
         # Bump league.current_teams when this slot was previously vacant.
         if not team.get("owner_id"):
@@ -315,7 +318,7 @@ async def accept_team_invite(token: str, request: Request):
         existing_co.append(user["_id"])
         await db.teams.update_one(
             {"_id": team["_id"]},
-            {"$set": {"co_owner_ids": existing_co}},
+            {"$set": ownership_update(team, {"co_owner_ids": existing_co})},
         )
 
     now = _now()

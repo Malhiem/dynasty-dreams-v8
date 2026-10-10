@@ -1,11 +1,7 @@
-"""Shared XP + level snapshot helper.
+"""Shared level snapshots and idempotent personal-room XP notifications.
 
-Iter 232N.24 — Extracted from routes/users.py so the same formula
-powers both the `/users/me/level` endpoint AND the real-time
-`xp_awarded` toasts fired when a manager completes a qualifying
-action (trade accepted, matchup won, waiver claim won, etc.). Keeps
-the two in lockstep — if we retune the XP curve, both surfaces update
-together.
+Career qualification and historical attribution live in services.profile_career.
+The speed-champion notification deliberately does not add cumulative XP.
 """
 from __future__ import annotations
 
@@ -20,9 +16,7 @@ LEVEL_TITLES = [
     (76, 999, "Stanley Cup Dynasty"),
 ]
 
-# XP earned per qualifying action. Keep in sync with the total-XP
-# formula in `routes/users.py::get_my_level` so the "+25 XP" toast
-# matches what the badge shows after a page refresh.
+# Notification deltas for the qualifying actions in services.profile_career.
 XP_DELTAS = {
     "trade_accepted": 25,
     "matchup_won": 20,
@@ -45,7 +39,7 @@ def _title_for_level(level: int) -> str:
 
 
 def level_from_xp(xp: int) -> dict:
-    """Convert raw XP → level snapshot. Mirrors the loop in users.py."""
+    """Convert raw XP to the shared level snapshot."""
     xp = max(int(xp), 0)
     level = 1
     xp_remaining = xp
@@ -67,34 +61,9 @@ def level_from_xp(xp: int) -> dict:
 
 
 async def compute_user_xp(db, user_id) -> int:
-    """Career XP for a user, using the same formula as /users/me/level."""
-    teams = await db.teams.find({"owner_id": user_id}).to_list(100)
-    total_team_count = len(teams)
-    total_wins = sum(t.get("wins", 0) or 0 for t in teams)
-    total_points_for = sum(t.get("points_for", 0.0) or 0.0 for t in teams)
-    total_live_points = sum(t.get("live_points", 0.0) or 0.0 for t in teams)
-
-    trades_executed = await db.trades.count_documents({
-        "$or": [{"proposer_id": user_id}, {"recipient_id": user_id}],
-        "status": "accepted",
-    })
-    team_ids = [str(t["_id"]) for t in teams]
-    drafts_completed = await db.drafts.count_documents({
-        "participants": {"$in": team_ids},
-        "status": "complete",
-    }) if teams else 0
-    waiver_claims = await db.waiver_claims.count_documents({
-        "team_id": {"$in": team_ids},
-    }) if teams else 0
-
-    return int(
-        total_team_count * 50
-        + total_wins * 20
-        + trades_executed * 25
-        + drafts_completed * 40
-        + waiver_claims * 5
-        + (total_points_for + total_live_points) / 5
-    )
+    """Career XP from the same summary used by both profile endpoints."""
+    from services.profile_career import career_summary
+    return (await career_summary(db, user_id))["xp_total"]
 
 
 async def emit_xp_gain(
@@ -118,18 +87,28 @@ async def emit_xp_gain(
     amount = int(delta if delta is not None else XP_DELTAS.get(source, 0))
     if amount <= 0:
         return None
-    xp = await compute_user_xp(db, user_id)
-    snap = level_from_xp(xp)
-    payload = {
-        "delta": amount,
-        "source": source,
-        "xp_total": xp,
-        "meta": meta or {},
-        **snap,
-    }
+    event_id = (meta or {}).get('trade_id') or (meta or {}).get('draft_id') or (meta or {}).get('claim_id') or (meta or {}).get('matchup_id')
+    notification_key = f'{source}:{event_id}:{user_id}' if event_id else None
+    if notification_key:
+        from pymongo.errors import DuplicateKeyError
+        try:
+            await db.xp_notifications.insert_one({'_id': notification_key})
+        except DuplicateKeyError:
+            return None
     try:
+        xp = await compute_user_xp(db, user_id)
+        snap = level_from_xp(xp)
+        payload = {
+            "delta": amount,
+            "source": source,
+            "xp_total": xp,
+            "meta": meta or {},
+            **snap,
+        }
         await broadcast_fn(f"user_{user_id}", "xp_awarded", payload)
     except Exception:
+        if notification_key:
+            await db.xp_notifications.delete_one({'_id': notification_key})
         return None
     return payload
 
@@ -154,6 +133,17 @@ async def award_draft_completion_bonuses(
         draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
         if not draft:
             return {}
+        if draft.get('status') not in ('complete', 'completed'):
+            return {}
+        from services.profile_career import draft_team_ids, participants_for_teams
+        recipients = draft.get('xp_user_ids')
+        if recipients is None:
+            recipients = await participants_for_teams(db, draft_team_ids(draft))
+            await db.drafts.update_one({'_id': draft['_id'], 'xp_user_ids': {'$exists': False}},
+                                      {'$set': {'xp_user_ids': recipients}})
+        for uid in recipients:
+            await emit_xp_gain(db, uid, source='draft_completed', broadcast_fn=broadcast_fn,
+                               meta={'draft_id': draft_id})
         picks = draft.get("picks") or []
         # Group pick-time samples by team_id.
         buckets: dict[str, list[int]] = {}

@@ -16,6 +16,7 @@ const api = axios.create({
 // 3-5x within a few hundred ms. That used to trigger 429 bursts from the
 // rate limiter. We collapse identical in-flight GETs into one promise and
 // cache the response body for `CACHE_TTL_MS` so rapid re-mounts hit cache.
+let cacheEpoch = 0;
 const INFLIGHT_GETS = new Map();      // key → Promise<AxiosResponse>
 const GET_CACHE = new Map();          // key → { ts, data, status, headers }
 const CACHE_TTL_MS = 30_000;
@@ -31,7 +32,7 @@ const DEDUPABLE_PATTERNS = [
   /\/teams\/mine\/summaries$/,
   /\/leagues\?my_leagues=true/,
   /\/teams\?league_id=[^&]+$/,
-  /\/auth\/me$/,
+
 ];
 function _isDedupableGetUrl(url) {
   if (!url) return false;
@@ -52,12 +53,13 @@ function _cacheKey(config) {
 }
 // Invalidate the cache when external code mutates (e.g. new league created).
 export function invalidateApiCache(pattern) {
-  if (!pattern) { GET_CACHE.clear(); return; }
+  if (!pattern) { cacheEpoch += 1; GET_CACHE.clear(); INFLIGHT_GETS.clear(); return; }
   const re = pattern instanceof RegExp ? pattern : new RegExp(pattern);
   for (const k of [...GET_CACHE.keys()]) if (re.test(k)) GET_CACHE.delete(k);
 }
 
 api.interceptors.request.use((config) => {
+  config._cacheEpoch = cacheEpoch;
   if ((config.method || 'get').toLowerCase() !== 'get') return config;
   const key = _cacheKey(config);
   if (!_isDedupableGetUrl(key)) return config;
@@ -128,7 +130,7 @@ api.interceptors.response.use(
       const cfg = response.config || {};
       if ((cfg.method || 'get').toLowerCase() === 'get' && response.statusText !== 'OK (cached)') {
         const key = _cacheKey(cfg);
-        if (_isDedupableGetUrl(key) && response.status >= 200 && response.status < 300) {
+        if (cfg._cacheEpoch === cacheEpoch && _isDedupableGetUrl(key) && response.status >= 200 && response.status < 300) {
           GET_CACHE.set(key, {
             ts: Date.now(),
             data: response.data,
@@ -154,14 +156,16 @@ api.interceptors.response.use(
 
     // Never try to refresh the refresh endpoint itself
     const isRefreshCall = originalRequest.url && originalRequest.url.includes('/auth/refresh');
+    if (originalRequest._cacheEpoch !== cacheEpoch) return Promise.reject(error);
     if (error.response?.status === 401 && !originalRequest._retry && !isRefreshCall) {
       originalRequest._retry = true;
       try {
         await refreshOnce();
+        if (originalRequest._cacheEpoch !== cacheEpoch) return Promise.reject(error);
         return api(originalRequest);
       } catch (e) {
         // Refresh failed — broadcast so AuthContext can clear user state
-        if (typeof window !== 'undefined') {
+        if (originalRequest._cacheEpoch === cacheEpoch && typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('auth-expired'));
         }
         return Promise.reject(e);

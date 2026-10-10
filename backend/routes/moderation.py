@@ -380,6 +380,8 @@ async def ban_user(user_id: str, request: Request):
             duration_days = int(duration_days)
         except Exception:
             raise HTTPException(status_code=400, detail="duration_days must be int or null")
+        if duration_days < 1:
+            raise HTTPException(400, "duration_days must be positive")
         from datetime import timedelta
         expires_at = (datetime.now(timezone.utc) + timedelta(days=duration_days)).isoformat()
 
@@ -394,10 +396,12 @@ async def ban_user(user_id: str, request: Request):
             "banned_at": datetime.now(timezone.utc).isoformat(),
             "banned_by": str(admin["_id"]),
             "banned_by_email": admin.get("email"),
-        }},
+        }, "$inc": {"token_version": 1}},
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="User not found")
+    from services.account_access import disconnect_sessions
+    await disconnect_sessions(_deps,user_id)
     return {"ok": True, "user_id": user_id, "status": status, "ban_expires_at": expires_at}
 
 

@@ -1,3 +1,4 @@
+from services.profile_attribution import owners
 from services.financial_lock import serialize_finances
 """Trade engine helpers — extracted from server.py (iter 93).
 
@@ -734,6 +735,7 @@ async def _execute_multi_party_trade_impl(trade: dict) -> dict:
             "status": "executed",
             "processed_at": datetime.now(timezone.utc).isoformat(),
             "execution_moves": moves,
+            "xp_user_ids": sorted({uid for team in teams_by_id.values() for uid in owners(team)}),
         }}
     )
 
@@ -801,10 +803,10 @@ async def _execute_multi_party_trade_impl(trade: dict) -> dict:
             "parties": [p.get("team_name") for p in parties],
             "is_multi_party": True,
         }
-        for p in parties:
-            if p.get("owner_id"):
+        for uid in sorted({uid for team in teams_by_id.values() for uid in owners(team)}):
+            if uid:
                 await emit_xp_gain(
-                    _db(), p["owner_id"],
+                    _db(), uid,
                     source="trade_accepted",
                     broadcast_fn=broadcast_fn,
                     meta=meta,
@@ -1033,6 +1035,7 @@ async def _execute_trade_impl(trade: dict) -> dict:
             "status": "executed",
             "processed_at": datetime.now(timezone.utc).isoformat(),
             "execution_moves": moves,
+            "xp_user_ids": sorted(set(owners(proposer)) | set(owners(target))),
         }}
     )
 
@@ -1138,7 +1141,7 @@ async def _execute_trade_impl(trade: dict) -> dict:
             "proposer_team": trade.get("proposer_team_name"),
             "target_team": trade.get("target_team_name"),
         }
-        for uid in (trade.get("proposer_id"), trade.get("target_owner_id")):
+        for uid in sorted(set(owners(proposer)) | set(owners(target))):
             if uid:
                 await emit_xp_gain(
                     _db(), uid,

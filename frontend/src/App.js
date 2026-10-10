@@ -13,6 +13,8 @@ import ProtectedRoute from "@/components/layout/ProtectedRoute";
 import LandingPage from "@/pages/LandingPage";
 import LoginPage from "@/pages/LoginPage";
 import RegisterPage from "@/pages/RegisterPage";
+import PasswordRecoveryPage from "@/pages/PasswordRecoveryPage";
+import VerifyEmailPage from "@/pages/VerifyEmailPage";
 import JoinLeaguePage from "@/pages/JoinLeaguePage";
 import PaymentSuccessPage from "@/pages/PaymentSuccessPage";
 import PaymentSetupPage from "@/pages/PaymentSetupPage";
@@ -105,6 +107,9 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<LoginPage />} />
           <Route path="/register" element={<RegisterPage />} />
+          <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/forgot-password" element={<PasswordRecoveryPage />} />
+          <Route path="/reset-password" element={<PasswordRecoveryPage reset />} />
           <Route path="/join/:code" element={<JoinLeaguePage />} />
           {/* Iter 228y — Slot-locked team invite claim page (public preview, auth required to accept) */}
           <Route path="/team-invites/:token" element={<ClaimTeamInvitePage />} />

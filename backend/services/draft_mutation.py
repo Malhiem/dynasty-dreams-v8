@@ -23,11 +23,15 @@ async def commit_pick(db, draft, team, pick, lineup, new_status, auto=False):
         "team_oid": team["_id"], "overall": pick["overall"], "player_id": pick["player_id"], "before_team": before, "status": "pending"})
     roster = list(dict.fromkeys([*before["roster"], pick["player_id"]]))
     queue = [pid for pid in before["draft_queue"] if not auto or pid != pick["player_id"]]
+    completion = {}
+    if new_status == 'completed':
+        from services.profile_career import draft_team_ids, participants_for_teams
+        completion['xp_user_ids'] = await participants_for_teams(db, draft_team_ids(draft))
     try:
         await db.teams.update_one({"_id": team["_id"]}, {"$set": {"roster": roster, "lineup": lineup, "draft_queue": queue}})
         result = await db.drafts.update_one({"_id": draft["_id"], "current_pick": pick["overall"], "status": "active"}, {
             "$push": {"picks": pick}, "$set": {"current_pick": pick["overall"] + 1, "status": new_status,
-            "salary_blocked": False, "current_pick_started_at": datetime.now(timezone.utc).isoformat()}})
+            **completion, "salary_blocked": False, "current_pick_started_at": datetime.now(timezone.utc).isoformat()}})
         if not result.matched_count:
             raise HTTPException(409, "Draft turn changed before selection committed")
     except Exception:

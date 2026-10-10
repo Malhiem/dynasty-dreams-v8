@@ -1049,6 +1049,8 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                 total += calculate_fantasy_points(player, config)
         return round(total, 1)
 
+    from services.profile_competition import capture_week, award, award_fields
+    await capture_week(db, input.league_id, matchups)
     results = []
     for m in matchups:
         home_score = await calc_team_score(m["home_team_id"])
@@ -1075,6 +1077,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                 "winner": winner,
                 "status": "completed",
                 "simulated_at": datetime.now(timezone.utc).isoformat(),
+                "xp_win_award": award(20, m.get("xp_competition")),
             }}
         )
 
@@ -1150,14 +1153,15 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                 upsert=True,
             )
 
+        win_award = award(20, m.get("xp_competition"))
         if winner == m["home_team_id"]:
             await db.teams.update_one({"_id": ObjectId(m["home_team_id"])},
-                                      {"$inc": {"wins": 1, "points_for": home_score, "points_against": away_score}})
+                                      {"$inc": {"wins": 1, "xp_win_adjustment": win_award["awarded_xp"] - 20, "points_for": home_score, "points_against": away_score}})
             await db.teams.update_one({"_id": ObjectId(m["away_team_id"])},
                                       {"$inc": {"losses": 1, "points_for": away_score, "points_against": home_score}})
         elif winner == m["away_team_id"]:
             await db.teams.update_one({"_id": ObjectId(m["away_team_id"])},
-                                      {"$inc": {"wins": 1, "points_for": away_score, "points_against": home_score}})
+                                      {"$inc": {"wins": 1, "xp_win_adjustment": win_award["awarded_xp"] - 20, "points_for": away_score, "points_against": home_score}})
             await db.teams.update_one({"_id": ObjectId(m["home_team_id"])},
                                       {"$inc": {"losses": 1, "points_for": home_score, "points_against": away_score}})
         else:
@@ -1191,12 +1195,14 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                         "week": int(input.week),
                         "opponent": (losing_team or {}).get("name"),
                         "team_name": winning_name,
+                        "xp_award": win_award,
                     }
                     for uid in [winner_team.get("owner_id")] + list(winner_team.get("co_owner_ids") or []):
                         if uid:
                             await emit_xp_gain(
                                 db, uid,
                                 source="matchup_won",
+                                delta=win_award["awarded_xp"],
                                 broadcast_fn=broadcast_fn,
                                 meta=meta,
                             )
@@ -1262,7 +1268,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
             winner_name = m["home_team_name"] if winner == m["home_team_id"] else m["away_team_name"]
             if bracket == "championship":
                 await db.teams.update_one({"_id": ObjectId(winner)},
-                                          {"$set": {"championship_won_at": now}})
+                                          {"$set": await award_fields(db, winner, {"championship_won_at": now})})
                 # Mark the runner-up so the profile trophy case can show it
                 await db.teams.update_one({"_id": ObjectId(loser_id)},
                                           {"$set": {"playoff_runner_up_at": now}})
@@ -1318,7 +1324,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                 })
             elif bracket == "consolation":
                 await db.teams.update_one({"_id": ObjectId(winner)},
-                                          {"$set": {"consolation_won_at": now}})
+                                          {"$set": await award_fields(db, winner, {"consolation_won_at": now})})
                 applied_steps: list = []
                 prize = (league.get("consolation_prize") or {})
                 if prize.get("type"):
@@ -1356,7 +1362,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                 })
             elif bracket in ("conference_final", "conference"):
                 await db.teams.update_one({"_id": ObjectId(winner)},
-                                          {"$set": {"conference_winner_at": now}})
+                                          {"$set": await award_fields(db, winner, {"conference_winner_at": now})})
                 await db.activity_feed.insert_one({
                     "league_id": input.league_id, "event_type": "conference_awarded",
                     "description": f"🥇 {winner_name} won the conference!",
@@ -1379,7 +1385,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                 })
             elif bracket in ("division_final", "division"):
                 await db.teams.update_one({"_id": ObjectId(winner)},
-                                          {"$set": {"division_winner_at": now}})
+                                          {"$set": await award_fields(db, winner, {"division_winner_at": now})})
                 await db.activity_feed.insert_one({
                     "league_id": input.league_id, "event_type": "division_awarded",
                     "description": f"🏅 {winner_name} won the division!",
@@ -1522,7 +1528,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                     winner_name = winner_team.get("name", "Unknown")
                     await db.teams.update_one(
                         {"_id": winner_team["_id"]},
-                        {"$set": {"division_winner_at": now}},
+                        {"$set": await award_fields(db, winner_id, {"division_winner_at": now})},
                     )
                     await db.activity_feed.insert_one({
                         "league_id": input.league_id,

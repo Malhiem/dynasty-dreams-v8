@@ -18,11 +18,11 @@ export default function RegisterPage() {
   const { register } = useAuth();
   const navigate = useNavigate();
 
-  const usernameValid = /^[a-zA-Z0-9_-]{3,24}$/.test(username);
+  const usernameValid = /^[a-zA-Z0-9_.-]{3,32}$/.test(username);
 
   const passwordChecks = [
-    { label: 'Username 3–24 chars (letters, numbers, _ or -)', valid: usernameValid },
-    { label: 'At least 8 characters', valid: password.length >= 8 },
+    { label: 'Username 3–32 chars (letters, numbers, _ . or -)', valid: usernameValid },
+    { label: 'At least 8 characters, at most 72 UTF-8 bytes', valid: password.length >= 8 && new TextEncoder().encode(password).length <= 72 },
     { label: 'One uppercase letter', valid: /[A-Z]/.test(password) },
     { label: 'One number', valid: /\d/.test(password) },
     { label: 'Passwords match', valid: password === confirmPassword && password.length > 0 },
@@ -32,6 +32,7 @@ export default function RegisterPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (loading) return;
     if (!allChecksPass) {
       setError('Please meet all requirements');
       return;
@@ -78,7 +79,7 @@ export default function RegisterPage() {
           <p className="text-[#A1A1AA] mb-8">Start your dynasty journey</p>
 
           {error && (
-            <div className="bg-[#FF3B30]/20 border border-[#FF3B30]/50 text-[#FF3B30] px-4 py-3 rounded mb-6" data-testid="register-error">
+            <div className="bg-[#FF3B30]/20 border border-[#FF3B30]/50 text-[#FF3B30] px-4 py-3 rounded mb-6" role="alert" data-testid="register-error">
               {error}
             </div>
           )}
@@ -87,6 +88,7 @@ export default function RegisterPage() {
             <div>
               <Label htmlFor="username" className="text-[#A1A1AA]">Username</Label>
               <Input
+                autoComplete="username"
                 id="username"
                 type="text"
                 value={username}
@@ -94,17 +96,18 @@ export default function RegisterPage() {
                 placeholder="Pick a unique username"
                 required
                 minLength={3}
-                maxLength={24}
-                pattern="^[a-zA-Z0-9_-]+$"
+                maxLength={32}
+                pattern="^[a-zA-Z0-9_.-]+$"
                 data-testid="register-username"
                 className="mt-2 bg-[#141414] border-white/10 text-white placeholder:text-[#52525B]"
               />
-              <p className="text-xs text-[#52525B] mt-1">3–24 chars · letters, numbers, underscore or hyphen</p>
+              <p className="text-xs text-[#52525B] mt-1">3–32 chars · letters, numbers, underscore or hyphen</p>
             </div>
 
             <div>
               <Label htmlFor="email" className="text-[#A1A1AA]">Email</Label>
               <Input
+                autoComplete="email"
                 id="email"
                 type="email"
                 value={email}
@@ -120,6 +123,7 @@ export default function RegisterPage() {
               <Label htmlFor="password" className="text-[#A1A1AA]">Password</Label>
               <div className="relative mt-2">
                 <Input
+                  autoComplete="new-password"
                   id="password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
@@ -131,6 +135,7 @@ export default function RegisterPage() {
                 />
                 <button
                   type="button"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-[#A1A1AA] hover:text-white"
                 >
@@ -142,6 +147,7 @@ export default function RegisterPage() {
             <div>
               <Label htmlFor="confirmPassword" className="text-[#A1A1AA]">Confirm Password</Label>
               <Input
+                autoComplete="new-password"
                 id="confirmPassword"
                 type="password"
                 value={confirmPassword}

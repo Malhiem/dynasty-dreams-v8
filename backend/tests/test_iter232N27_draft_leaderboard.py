@@ -157,7 +157,7 @@ async def test_award_draft_speed_bonus_broadcasts_to_owner(db, seeded):
     assert award["winner_team_id"] == seeded["team_a"]
     assert award["meta"]["avg_pick_seconds"] == round((10 + 15 + 12) / 3, 1)
     # Owner should have received one xp_awarded broadcast.
-    matched = [c for c in calls if c[0] == f"user_{seeded['owner_a']}"]
+    matched = [c for c in calls if c[0] == f"user_{seeded['owner_a']}" and c[2]['source'] == 'draft_speed_champion']
     assert len(matched) == 1
     assert matched[0][1] == "xp_awarded"
     assert matched[0][2]["delta"] == 50
@@ -204,6 +204,8 @@ async def test_award_skips_when_no_team_has_three_picks(db):
         db, draft_id=str(draft_id), broadcast_fn=fake_broadcast,
     )
     assert award == {}
-    assert calls == []
+    assert len(calls) == 1
+    assert calls[0][2]['source'] == 'draft_completed'
+    assert calls[0][2]['delta'] == 40
     await db.drafts.delete_one({"_id": draft_id})
     await db.teams.delete_one({"_id": tid})

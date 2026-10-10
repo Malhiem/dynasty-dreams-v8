@@ -13,6 +13,8 @@ async def live_scores(db, league, matchups):
     start, end = week_to_time_range(league, week)
     if not start or not end:
         return matchups
+    from services.profile_competition import capture_week
+    await capture_week(db, lid, [m for m in matchups if m.get('week') == week])
     config = await db.scoring_configs.find_one({"league_id": lid})
     totals = {}
     for matchup in matchups:

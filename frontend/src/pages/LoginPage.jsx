@@ -72,6 +72,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (loading) return;
     setError('');
     setLoading(true);
     try {
@@ -84,7 +85,7 @@ export default function LoginPage() {
       try {
         localStorage.setItem('auth_remember', remember ? 'true' : 'false');
       } catch { /* noop */ }
-      await login(email, password);
+      await login(email, password, remember);
       navigate(from, { replace: true });
     } catch (err) {
       // On failure, allow the auto-clear effect to run again if needed
@@ -125,7 +126,7 @@ export default function LoginPage() {
           <p className="text-[#A1A1AA] mb-8">Sign in to your account to continue</p>
 
           {error && (
-            <div className="bg-[#FF3B30]/20 border border-[#FF3B30]/50 text-[#FF3B30] px-4 py-3 rounded mb-6" data-testid="login-error">
+            <div className="bg-[#FF3B30]/20 border border-[#FF3B30]/50 text-[#FF3B30] px-4 py-3 rounded mb-6" role="alert" data-testid="login-error">
               {error}
             </div>
           )}
@@ -134,6 +135,7 @@ export default function LoginPage() {
             <div>
               <Label htmlFor="email" className="text-[#A1A1AA]">Email</Label>
               <Input
+                autoComplete="email"
                 id="email"
                 type="email"
                 value={email}
@@ -149,6 +151,7 @@ export default function LoginPage() {
               <Label htmlFor="password" className="text-[#A1A1AA]">Password</Label>
               <div className="relative mt-2">
                 <Input
+                  autoComplete="current-password"
                   id="password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
@@ -160,6 +163,7 @@ export default function LoginPage() {
                 />
                 <button
                   type="button"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-[#A1A1AA] hover:text-white"
                 >

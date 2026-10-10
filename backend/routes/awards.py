@@ -156,7 +156,8 @@ async def set_team_awards(league_id: str, team_id: str, payload: TeamAwardUpdate
 
     ops: dict = {}
     if update_set:
-        ops["$set"] = update_set
+        from services.profile_competition import award_fields
+        ops["$set"] = await award_fields(db, team_id, update_set)
     if update_unset:
         ops["$unset"] = update_unset
     if ops:

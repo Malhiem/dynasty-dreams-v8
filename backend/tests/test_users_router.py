@@ -33,7 +33,7 @@ async def test_my_level_no_teams_returns_level_1():
 @pytest.mark.asyncio
 async def test_my_level_accumulates_xp_from_teams_and_wins():
     async with isolated_router_app(users_routes) as ctx:
-        # 2 teams: 5 wins + 10 wins = 15 wins × 20 = 300 + 2 teams × 50 = 100 → xp = 400 (plus PF/5)
+        # 2 teams: 5 wins + 10 wins = 15 wins × 20 = 300 + 2 teams × 50 = 100 → xp = 400; fantasy points award no XP
         await ctx.db.teams.insert_many([
             {"league_id": "L1", "owner_id": "test_user_0001", "name": "T1",
              "wins": 5, "points_for": 500.0},
@@ -42,27 +42,27 @@ async def test_my_level_accumulates_xp_from_teams_and_wins():
         ])
         r = await ctx.client.get("/api/users/me/level")
         body = r.json()
-        # xp = 2*50 + 15*20 + 0 + 0 + 0 + 1200/5 = 100 + 300 + 240 = 640
-        assert body["xp_total"] == 640
+        # xp = 2*50 + 15*20 = 400, regardless of fantasy points
+        assert body["xp_total"] == 400
         assert body["level"] >= 2
         assert body["stats"]["teams_managed"] == 2
         assert body["stats"]["total_wins"] == 15
 
 
 @pytest.mark.asyncio
-async def test_my_level_counts_accepted_trades_and_waivers():
+async def test_my_level_counts_executed_trades_and_won_waivers():
     async with isolated_router_app(users_routes) as ctx:
         team_res = await ctx.db.teams.insert_one({
             "league_id": "L1", "owner_id": "test_user_0001", "name": "T1",
         })
         tid = str(team_res.inserted_id)
         await ctx.db.trades.insert_many([
-            {"proposer_id": "test_user_0001", "status": "accepted"},
-            {"recipient_id": "test_user_0001", "status": "accepted"},
+            {"proposer_id": "test_user_0001", "status": "executed"},
+            {"target_owner_id": "test_user_0001", "status": "executed"},
             {"proposer_id": "test_user_0001", "status": "pending"},  # excluded
         ])
         await ctx.db.waiver_claims.insert_many([
-            {"team_id": tid}, {"team_id": tid}, {"team_id": tid},
+            {"team_id": tid, "status": "won"}, {"team_id": tid, "status": "won"}, {"team_id": tid, "status": "won"},
         ])
         r = await ctx.client.get("/api/users/me/level")
         stats = r.json()["stats"]

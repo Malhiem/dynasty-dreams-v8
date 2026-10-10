@@ -18,7 +18,7 @@ Categories implemented:
   • Account Status: suspend, ban, unban, reinstate, force_logout,
     deactivate, reactivate, delete (soft / hard).
   • Identity & Access: reset_password, verify_email, verify_phone,
-    edit_username, merge_accounts (STUB), unlink_sso, revoke_session.
+    edit_username, merge_accounts, unlink_sso, revoke_session.
   • League/Team: remove_from_league, transfer_commissioner,
     reverse_trade (delegated to admin_platform), reset_team (STUB),
     force_remove_from_draft (STUB).
@@ -150,6 +150,11 @@ async def _audit(
         "mocked": mocked,
         "ts": datetime.now(timezone.utc).isoformat(),
     }
+    if action in {"suspend", "ban_permanent", "deactivate", "delete_hard", "gdpr_delete"}:
+        await _db().users.update_one({"_id":ObjectId(target_user_id)}, {"$inc":{"token_version":1}})
+    if action in {"suspend", "ban_permanent", "deactivate", "delete_hard", "gdpr_delete", "force_logout"}:
+        from services.account_access import disconnect_sessions
+        await disconnect_sessions(_deps,target_user_id)
     res = await _db().admin_user_actions.insert_one(doc)
     return str(res.inserted_id)
 
@@ -354,7 +359,7 @@ async def delete_user(user_id: str, request: Request):
             "deleted_by_admin": admin.get("email"),
         },
          "$unset": {"password_hash": "", "linked_sso_accounts": "",
-                    "recovery_email": "", "security_questions": ""}},
+                    "recovery_email": "", "security_questions": "", "verification_email": "", "verification_hash": "", "verification_expires": "", "username_key": ""}},
     )
     aid = await _audit(admin=admin, target_user_id=user_id, action="delete_hard",
                        reason=reason, prior_state=prior)
@@ -366,26 +371,18 @@ async def delete_user(user_id: str, request: Request):
 # ─────────────────────────────────────────────────────────────────────
 @router.post("/{user_id}/reset-password")
 async def reset_password(user_id: str, request: Request):
-    """Force a password reset. Generates a single-use token, stores it
-    on `password_reset_audit`, and (in production) triggers an email
-    via SendGrid. Returns the token so the admin can confirm it was
-    generated; admin never sees the password itself."""
+    """Issue a working single-use reset link; the audit never stores its secret."""
+    from services.account_access import require_active
+    from services.account_mail import send_link
     admin = await _require_admin(request, "reset_password")
-    await _load_user(user_id)
-    expires = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
-    await _db().password_reset_audit.insert_one({
-        "user_id": user_id, "token_hash": secrets.token_hex(16),
-        "issued_by_admin": admin.get("email"),
-        "issued_at": datetime.now(timezone.utc).isoformat(),
-        "expires_at": expires, "outcome": "issued",
-    })
-    aid = await _audit(admin=admin, target_user_id=user_id, action="reset_password",
-                       metadata={"expires_at": expires}, mocked=True)
-    await _notify_user(user_id=user_id, action="reset_password",
-                       title="Password reset requested by admin",
-                       body="A password reset email has been sent. Use the link to set a new password.")
-    return {"ok": True, "audit_id": aid, "expires_at": expires, "mocked": True,
-            "note": "Email delivery STUBBED — wire SendGrid send_email in production"}
+    user = await _load_user(user_id)
+    require_active(user)
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(timezone.utc) + timedelta(hours=1)
+    await _db().password_reset_tokens.insert_one({"user_id":user_id,"token":token,"used":False,"expires_at":expires})
+    delivered = await send_link(_db(), _deps, user['email'], 'Reset your password', '/reset-password', token)
+    aid = await _audit(admin=admin,target_user_id=user_id,action="reset_password",metadata={"expires_at":expires.isoformat(),"delivered":delivered})
+    return {"ok":True,"audit_id":aid,"expires_at":expires.isoformat(),"delivered":delivered,"mocked":False}
 
 
 @router.post("/{user_id}/verify-email")
@@ -421,7 +418,16 @@ async def edit_username(user_id: str, request: Request):
     if not new_username:
         raise HTTPException(status_code=400, detail="username is required")
     old = u.get("username")
-    await _db().users.update_one({"_id": u["_id"]}, {"$set": {"username": new_username}})
+    import re
+    from pymongo.errors import DuplicateKeyError
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}",new_username):
+        raise HTTPException(400,"Username must be 3-32 chars (letters, numbers, _ . -)")
+    if await _db().users.find_one({"username":{"$regex":"^"+re.escape(new_username)+"$","$options":"i"},"_id":{"$ne":u["_id"]}}):
+        raise HTTPException(409,"Username already taken")
+    try:
+        await _db().users.update_one({"_id":u["_id"]},{"$set":{"username":new_username,"username_key":new_username.lower(),"name":new_username}})
+    except DuplicateKeyError:
+        raise HTTPException(409,"Username already taken")
     await _db().user_audit_log.insert_one({
         "user_id": user_id, "event_type": "username_changed",
         "from_value": old, "to_value": new_username,
@@ -460,23 +466,26 @@ async def merge_accounts(user_id: str, request: Request):
         raise HTTPException(status_code=400, detail="source and target are the same user")
     source = await _load_user(source_id)
     db = _db()
+    if source.get('merged_into_user_id'):
+        if source['merged_into_user_id'] == user_id:
+            return {'ok': True, 'already_merged': True, 'counts': {}}
+        raise HTTPException(status_code=409, detail='Source account was already merged elsewhere')
+    if target.get('merged_into_user_id'):
+        raise HTTPException(status_code=409, detail='Target account is already merged')
+    from services.profile_identity import prepare_merge_credit, transfer_merge_teams, reserve_merge
+    try:
+        await reserve_merge(db, source_id, user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
 
     # Reassignments. We capture row counts for the audit log.
     counts = {}
 
-    counts["teams_owner_id"] = (await db.teams.update_many(
-        {"owner_id": source_id}, {"$set": {"owner_id": user_id}}
-    )).modified_count
-
-    # Append source to teams.owner_history so storytelling can still
-    # reconstruct who-played-where-when.
-    counts["teams_history_appended"] = (await db.teams.update_many(
-        {"owner_id": user_id, "owner_history": {"$not": {"$elemMatch": {"user_id": source_id}}}},
-        {"$push": {"owner_history": {
-            "user_id": source_id, "merged_at": datetime.now(timezone.utc).isoformat(),
-            "merge_reason": reason,
-        }}},
-    )).modified_count
+    counts['teams_owner_id'] = await transfer_merge_teams(
+        db, source_id, user_id, reason=reason, actor_id=admin['_id'])
+    counts['teams_history_appended'] = counts['teams_owner_id']
+    profile_credit = await prepare_merge_credit(db, source_id, user_id)
 
     counts["trades_proposer"] = (await db.trades.update_many(
         {"proposer_team_owner_id": source_id},
@@ -547,7 +556,8 @@ async def merge_accounts(user_id: str, request: Request):
             "trust_score": min(target.get("trust_score") or 100,
                                 source.get("trust_score") or 100),
             "watchlist": bool(target.get("watchlist") or source.get("watchlist")),
-            "merged_from_user_ids": (target.get("merged_from_user_ids") or []) + [source_id],
+            "merged_from_user_ids": sorted(set(target.get("merged_from_user_ids") or []) | {source_id}),
+            f"profile_merged_credits.{source_id}": profile_credit,
         }},
     )
 
@@ -567,6 +577,8 @@ async def merge_accounts(user_id: str, request: Request):
          "$unset": {"password_hash": ""}},
     )
 
+    from services.account_access import disconnect_sessions
+    await disconnect_sessions(_deps,source_id)
     aid = await _audit(admin=admin, target_user_id=user_id, action="merge_accounts",
                        reason=reason,
                        metadata={"source_user_id": source_id, "counts": counts},
@@ -610,6 +622,9 @@ async def revoke_session(user_id: str, request: Request):
     )
     if res.matched_count == 0:
         raise HTTPException(status_code=404, detail="Session not found")
+    await _db().revoked_auth_sessions.update_one({"_id":sid},{"$set":{"expires_at":datetime.now(timezone.utc)+timedelta(days=7)}},upsert=True)
+    from services.account_access import disconnect_sessions
+    await disconnect_sessions(_deps,user_id,sid)
     aid = await _audit(admin=admin, target_user_id=user_id, action="revoke_session",
                        metadata={"session_id": sid})
     return {"ok": True, "audit_id": aid}
@@ -641,6 +656,8 @@ async def remove_from_league(user_id: str, request: Request):
               "owner_removed_at": datetime.now(timezone.utc).isoformat()}
     if handover == "pause":
         await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$set": {"status": "paused"}})
+    from services.profile_attribution import ownership_update
+    update = ownership_update(team, update)
     await db.teams.update_one({"_id": team["_id"]}, {"$set": update})
     aid = await _audit(admin=admin, target_user_id=user_id, action="remove_from_league",
                        reason=reason, prior_state=prior,
@@ -1061,6 +1078,7 @@ async def impersonate(user_id: str, request: Request):
         raise HTTPException(status_code=500, detail="impersonation token issuer not wired")
     token = create_token(
         target_user_id=str(u["_id"]),
+        token_version=int(u.get("token_version") or 0),
         target_email=u.get("email") or "",
         impersonator_id=str(admin.get("_id") or admin.get("id")),
         impersonator_email=admin.get("email") or "",
@@ -1204,7 +1222,7 @@ async def gdpr_delete(user_id: str, request: Request):
             "deletion_basis": "gdpr_ccpa_request",
         },
          "$unset": {"password_hash": "", "linked_sso_accounts": "",
-                    "recovery_email": "", "security_questions": ""}},
+                    "recovery_email": "", "security_questions": "", "verification_email": "", "verification_hash": "", "verification_expires": "", "username_key": ""}},
     )
     aid = await _audit(admin=admin, target_user_id=user_id, action="gdpr_delete",
                        reason=reason, prior_state=prior,

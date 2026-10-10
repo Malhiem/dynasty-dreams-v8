@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
+import api, { invalidateApiCache } from '@/lib/api';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -8,15 +9,17 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null); // null = checking, false = not auth, object = authed
   const [loading, setLoading] = useState(true);
+  const authEpoch = useRef(0);
 
   const checkAuth = useCallback(async () => {
+    const epoch = authEpoch.current;
     try {
-      const { data } = await axios.get(`${BACKEND_URL}/api/auth/me`, {
+      const { data } = await api.get(`/auth/me`, {
         withCredentials: true
       });
-      setUser(data);
+      if (epoch === authEpoch.current) setUser(data);
     } catch (e) {
-      setUser(false);
+      if (epoch === authEpoch.current) setUser(false);
     } finally {
       setLoading(false);
     }
@@ -31,12 +34,15 @@ export function AuthProvider({ children }) {
   // conditions where concurrent 401s right after login would bounce the
   // user back to /login.
   useEffect(() => {
-    const onExpired = () => setUser(false);
+    const onExpired = () => { authEpoch.current += 1; invalidateApiCache(); setUser(false); };
+    const onStorage = (event) => { if (event.key === 'auth_logout') onExpired(); };
+    window.addEventListener('storage', onStorage);
     window.addEventListener('auth-expired', onExpired);
-    return () => window.removeEventListener('auth-expired', onExpired);
+    return () => { window.removeEventListener('auth-expired', onExpired); window.removeEventListener('storage', onStorage); };
   }, []);
 
-  const login = async (email, password) => {
+  const login = async (email, password, remember = false) => {
+    authEpoch.current += 1;
     // Iter 207 — include a device fingerprint hash so the backend can
     // log it into user_login_audit for multi-account detection.
     let device_hash = null;
@@ -45,25 +51,30 @@ export function AuthProvider({ children }) {
       device_hash = await getDeviceHash();
     } catch { /* non-fatal */ }
     const { data } = await axios.post(`${BACKEND_URL}/api/auth/login`,
-      { email, password, device_hash },
+      { email, password, device_hash, remember },
       { withCredentials: true }
     );
+    invalidateApiCache();
     setUser(data);
     return data;
   };
 
   const register = async (email, password, username) => {
+    authEpoch.current += 1;
     const { data } = await axios.post(`${BACKEND_URL}/api/auth/register`,
       { email, password, username },
       { withCredentials: true }
     );
+    invalidateApiCache();
     setUser(data);
     return data;
   };
 
   const logout = async () => {
+    authEpoch.current += 1;
     await axios.post(`${BACKEND_URL}/api/auth/logout`, {}, { withCredentials: true });
-    try { localStorage.removeItem('auth_remember'); } catch { /* noop */ }
+    invalidateApiCache();
+    try { localStorage.setItem('auth_logout', String(Date.now())); localStorage.removeItem('auth_remember'); } catch { /* noop */ }
     // SEC-003 (iter 232h) — Tell the service worker to purge the API
     // cache so a shared-device next-user can't see this user's cached
     // league / standings / matchup data on the login screen before

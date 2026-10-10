@@ -337,6 +337,7 @@ export function AppSidebar() {
                   <button
                     onClick={logout}
                     className="text-[#A1A1AA] hover:text-white transition-colors"
+                    aria-label="Sign out"
                     data-testid="sidebar-logout"
                   >
                     <LogOut className="h-4 w-4" />

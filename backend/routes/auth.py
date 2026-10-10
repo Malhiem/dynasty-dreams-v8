@@ -1,11 +1,14 @@
 """Auth routes — register, login, logout, /me, refresh, forgot/reset password.
 
-Extracted verbatim from server.py via the standard `setup(deps)` pattern.
+Uses the standard `setup(deps)` pattern and shared account policy services.
 All helpers (db, hash_password, verify_password, create_access_token,
 create_refresh_token, get_current_user, JWT secret, cookie config) are
 injected through `_deps`.
 """
 import secrets
+import re
+from pymongo.errors import DuplicateKeyError
+from services.account_access import require_active, require_session
 from utils.refresh_tokens import predates_password_change
 from datetime import datetime, timedelta, timezone
 
@@ -13,6 +16,7 @@ import jwt
 from bson import ObjectId
 from pydantic import ValidationError
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
 _deps: dict = {}
@@ -24,13 +28,22 @@ def setup(deps: dict) -> None:
 
 def _db():     return _deps["db"]
 def _logger(): return _deps["logger"]
+async def _json_body(request):
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(400, "Invalid JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(422, "Expected a JSON object")
+    return body
+
 def _models(): return _deps["auth_models"]  # dict: UserRegister/Login/Response/Role/ForgotPassword/ResetPassword
 
 
 @router.post("/auth/register")
 async def register(request: Request, response: Response):
     M = _models()
-    body = await request.json()
+    body = await _json_body(request)
     try:
         input = M["UserRegister"](**body)
     except ValidationError as exc:
@@ -45,7 +58,7 @@ async def register(request: Request, response: Response):
     UserResponse = M["UserResponse"]
     UserRole = M["UserRole"]
 
-    email = input.email.lower()
+    email = input.email.strip().lower()
     username = input.username.strip()
 
     # SEC P3 — Account-enumeration hardening. Previously the two
@@ -53,7 +66,7 @@ async def register(request: Request, response: Response):
     # letting an attacker enumerate one or the other. Now both
     # collisions return a single generic error.
     existing = await db.users.find_one(
-        {"$or": [{"email": email}, {"username": username}]}
+        {"$or": [{"email": email}, {"username": {"$regex": "^"+re.escape(username)+"$", "$options": "i"}}]}
     )
     if existing:
         raise HTTPException(
@@ -84,16 +97,27 @@ async def register(request: Request, response: Response):
         "email": email,
         "password_hash": hash_password(input.password),
         "username": username,
+        "username_key": username.lower(),
+        "email_verified": False,
         "name": username,
         "role": UserRole.USER.value,
         "subscription": None,
         "created_at": datetime.now(timezone.utc),
     }
-    result = await db.users.insert_one(user_doc)
+    try:
+        result = await db.users.insert_one(user_doc)
+    except DuplicateKeyError:
+        raise HTTPException(400, "Email or username is already in use")
     user_id = str(result.inserted_id)
+    from services.account_verification import issue
+    await issue(db, _deps, {**user_doc, "_id": result.inserted_id})
 
-    access_token = create_access_token(user_id, email)
-    refresh_token = create_refresh_token(user_id)
+    session_id = str(ObjectId())
+    await db.user_sessions.insert_one({"_id":ObjectId(session_id),"user_id":user_id,"issued_at":datetime.now(timezone.utc),
+        "expires_at":datetime.now(timezone.utc)+timedelta(days=7),"revoked":False,"ip":request.client.host if request.client else None,
+        "user_agent":request.headers.get("user-agent")})
+    access_token = create_access_token(user_id, email, session_id=session_id, token_version=int(user_doc.get("token_version") or 0))
+    refresh_token = create_refresh_token(user_id, session_id=session_id, token_version=int(user_doc.get("token_version") or 0))
 
     response.set_cookie(key="access_token", value=access_token, httponly=True,
                         secure=cookie_secure, samesite=cookie_samesite, max_age=43200, path="/")
@@ -110,7 +134,7 @@ async def register(request: Request, response: Response):
 @router.post("/auth/login")
 async def login(request: Request, response: Response):
     M = _models()
-    body = await request.json()
+    body = await _json_body(request)
     try:
         input = M["UserLogin"](**body)
     except ValidationError as exc:
@@ -124,7 +148,7 @@ async def login(request: Request, response: Response):
     cookie_samesite = _deps["COOKIE_SAMESITE"]
     UserResponse = M["UserResponse"]
 
-    email = input.email.lower()
+    email = input.email.strip().lower()
     identifier = f"{request.client.host}:{email}"
 
     attempts = await db.login_attempts.find_one({"identifier": identifier})
@@ -137,7 +161,7 @@ async def login(request: Request, response: Response):
         await db.login_attempts.delete_one({"identifier": identifier})
 
     user = await db.users.find_one({"email": email})
-    if not user or not verify_password(input.password, user["password_hash"]):
+    if not user or not user.get("password_hash") or not verify_password(input.password, user["password_hash"]):
         await db.login_attempts.update_one(
             {"identifier": identifier},
             {
@@ -148,6 +172,7 @@ async def login(request: Request, response: Response):
         )
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    require_active(user)
     await db.login_attempts.delete_one({"identifier": identifier})
 
     # Iter 206 — Account Integrity: block banned users + log IP audit.
@@ -194,27 +219,52 @@ async def login(request: Request, response: Response):
         pass
 
     user_id = str(user["_id"])
-    access_token = create_access_token(user_id, email)
-    refresh_token = create_refresh_token(user_id)
+    session_id = str(ObjectId())
+    await db.user_sessions.insert_one({"_id":ObjectId(session_id),"user_id":user_id,"issued_at":datetime.now(timezone.utc),
+        "expires_at":datetime.now(timezone.utc)+timedelta(days=7),"revoked":False,"ip":request.client.host if request.client else None,
+        "user_agent":request.headers.get("user-agent")})
+    access_token = create_access_token(user_id, email, session_id=session_id, token_version=int(user.get("token_version") or 0))
+    refresh_token = create_refresh_token(user_id, remember=bool(body.get("remember", True)), session_id=session_id, token_version=int(user.get("token_version") or 0))
 
     response.set_cookie(key="access_token", value=access_token, httponly=True,
-                        secure=cookie_secure, samesite=cookie_samesite, max_age=43200, path="/")
+                        secure=cookie_secure, samesite=cookie_samesite, max_age=43200 if body.get("remember", True) else None, path="/")
     response.set_cookie(key="refresh_token", value=refresh_token, httponly=True,
-                        secure=cookie_secure, samesite=cookie_samesite, max_age=604800, path="/")
+                        secure=cookie_secure, samesite=cookie_samesite, max_age=604800 if body.get("remember", True) else None, path="/")
 
     return UserResponse(
         id=user_id, email=user["email"],
         username=user.get("username") or user.get("name", ""),
         name=user.get("username") or user.get("name", ""),
         role=user["role"], created_at=user["created_at"],
+        email_verified=user.get("email_verified",False),
+        pending_email=user.get("verification_email") if user.get("verification_email") != user.get("email") else None,
         access_token=access_token, refresh_token=refresh_token,
     )
 
 
 @router.post("/auth/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    import hashlib
+    tokens = [request.cookies.get("access_token"), request.cookies.get("refresh_token"), request.cookies.get("admin_token_backup")]
+    header = request.headers.get("Authorization", "")
+    if header.startswith("Bearer "): tokens.append(header[7:])
+    for token in set(filter(None, tokens)):
+        try:
+            payload = jwt.decode(token, _deps["get_jwt_secret"](), algorithms=[_deps["JWT_ALGORITHM"]])
+            if payload.get("session_id"):
+                from services.account_access import disconnect_sessions
+                await _db().user_sessions.update_one({"_id":ObjectId(payload["session_id"])},{"$set":{"revoked":True}})
+                await _db().revoked_auth_sessions.update_one({"_id":payload["session_id"]},
+                    {"$set":{"expires_at":datetime.now(timezone.utc)+timedelta(days=7)}},upsert=True)
+            if not payload.get("session_id") and payload.get("sub"):
+                await _db().users.update_one({"_id":ObjectId(payload["sub"])},{"$inc":{"token_version":1}})
+            await _db().revoked_auth_tokens.update_one({"_id": hashlib.sha256(token.encode()).hexdigest()},
+                {"$set": {"expires_at": datetime.fromtimestamp(payload["exp"], tz=timezone.utc)}}, upsert=True)
+        except (jwt.InvalidTokenError, KeyError, ValueError):
+            pass
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("refresh_token", path="/")
+    response.delete_cookie("admin_token_backup", path="/")
     return {"message": "Logged out successfully"}
 
 
@@ -228,9 +278,13 @@ async def get_me(request: Request):
         username=user.get("username") or user.get("name", ""),
         name=user.get("username") or user.get("name", ""),
         role=user["role"], created_at=user["created_at"],
+        email_verified=user.get("email_verified",False),
+        pending_email=user.get("verification_email") if user.get("verification_email") != user.get("email") else None,
     ).model_dump()
     # Extended profile fields (not part of the strict UserResponse model)
     payload.update({
+        "email_verified": user.get("email_verified", False),
+        "pending_email": user.get("verification_email") if user.get("verification_email") != user.get("email") else None,
         "favourite_sport": user.get("favourite_sport"),
         "favourite_team": user.get("favourite_team"),
         "city": user.get("city"),
@@ -277,7 +331,7 @@ async def impersonate_start(request: Request, response: Response):
         raise HTTPException(status_code=403, detail="Admin access required")
     if admin.get("_impersonation_mode"):
         raise HTTPException(status_code=400, detail="Already impersonating — call /auth/impersonate-stop first")
-    body = await request.json()
+    body = await _json_body(request)
     target_id = (body.get("target_user_id") or "").strip()
     reason = (body.get("reason") or "").strip()
     if not target_id:
@@ -309,6 +363,7 @@ async def impersonate_start(request: Request, response: Response):
     imp_mode = "sandbox"
     imp_token = create_impersonation_token(
         target_user_id=str(target["_id"]),
+        token_version=int(target.get("token_version") or 0),
         target_email=target.get("email") or "",
         impersonator_id=str(admin["_id"]),
         impersonator_email=admin.get("email") or "",
@@ -373,13 +428,15 @@ async def refresh_token_endpoint(request: Request, response: Response):
     get_jwt_secret = _deps["get_jwt_secret"]
     jwt_algorithm = _deps["JWT_ALGORITHM"]
 
-    token = request.cookies.get("refresh_token")
+    auth = request.headers.get("Authorization", "")
+    token = auth[7:] if auth.startswith("Bearer ") else request.cookies.get("refresh_token")
+    def rejected(detail):
+        result = JSONResponse(status_code=401,content={"detail":detail})
+        result.delete_cookie("access_token",path="/")
+        result.delete_cookie("refresh_token",path="/")
+        return result
     if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-    if not token:
-        raise HTTPException(status_code=401, detail="No refresh token")
+        return rejected("No refresh token")
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[jwt_algorithm])
         if payload.get("type") != "refresh":
@@ -387,6 +444,13 @@ async def refresh_token_endpoint(request: Request, response: Response):
         user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+
+        import hashlib
+        if await db.revoked_auth_tokens.find_one({"_id": hashlib.sha256(token.encode()).hexdigest()}):
+            raise HTTPException(401, "Session revoked — please sign in again")
+        if payload.get("session_id") and await db.revoked_auth_sessions.find_one({"_id":payload["session_id"]}):
+            raise HTTPException(401, "Session revoked — please sign in again")
+        require_session(user, payload)
 
         # SEC P3 — Reject refresh tokens minted before the user's most
         # recent password change. Stops a stolen 7-day refresh token
@@ -398,25 +462,30 @@ async def refresh_token_endpoint(request: Request, response: Response):
             raise HTTPException(status_code=401, detail="Session revoked — please sign in again")
 
         user_id = str(user["_id"])
-        access_token = create_access_token(user_id, user["email"])
+        access_token = create_access_token(user_id, user["email"], session_id=payload.get("session_id"), token_version=int(user.get("token_version") or 0))
         response.set_cookie(key="access_token", value=access_token, httponly=True,
                             secure=cookie_secure, samesite=cookie_samesite,
-                            max_age=43200, path="/")
+                            max_age=43200 if payload.get("remember",True) else None, path="/")
         return {"message": "Token refreshed", "access_token": access_token, "refresh_token": token}
+    except HTTPException as exc:
+        return rejected(exc.detail)
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Refresh token expired")
+        return rejected("Refresh token expired")
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid refresh token")
+        return rejected("Invalid refresh token")
 
 
 @router.post("/auth/forgot-password")
 async def forgot_password(request: Request):
     M = _models()
-    body = await request.json()
-    input = M["ForgotPassword"](**body)
+    body = await _json_body(request)
+    try:
+        input = M["ForgotPassword"](**body)
+    except ValidationError as exc:
+        raise HTTPException(422, detail=[{"loc": e["loc"], "msg": e["msg"], "type": e["type"]} for e in exc.errors()]) from exc
     db = _db()
     logger = _logger()
-    email = input.email.lower()
+    email = input.email.strip().lower()
 
     # SEC P3 — Rate limit. Per-email (5/h, 1/min) + per-IP (10/h, 3/min)
     # throttle so the endpoint cannot be used to spam the mail provider
@@ -467,15 +536,19 @@ async def forgot_password(request: Request):
         "expires_at": now + timedelta(hours=1),
         "used": False,
     })
-    logger.info(f"Password reset link: /reset-password?token={token}")
+    from services.account_mail import send_link
+    await send_link(db, _deps, email, "Reset your password", "/reset-password", token)
     return {"message": "If an account exists, a reset link has been sent"}
 
 
 @router.post("/auth/reset-password")
 async def reset_password(request: Request, response: Response):
     M = _models()
-    body = await request.json()
-    input = M["ResetPassword"](**body)
+    body = await _json_body(request)
+    try:
+        input = M["ResetPassword"](**body)
+    except ValidationError as exc:
+        raise HTTPException(422, detail=[{"loc": e["loc"], "msg": e["msg"], "type": e["type"]} for e in exc.errors()]) from exc
     db = _db()
     hash_password = _deps["hash_password"]
     token_doc = await db.password_reset_tokens.find_one({"token": input.token, "used": False})
@@ -493,15 +566,73 @@ async def reset_password(request: Request, response: Response):
     # caller's own cookies so the UI flow isn't left in a half-broken
     # state (next request will 401 → redirect to login).
     now = datetime.now(timezone.utc)
-    await db.users.update_one(
-        {"_id": ObjectId(token_doc["user_id"])},
+    account = await db.users.find_one({"_id": ObjectId(token_doc["user_id"])})
+    require_active(account)
+    claimed = await db.password_reset_tokens.update_one({"_id": token_doc["_id"], "used": False}, {"$set": {"used": True}})
+    if not claimed.modified_count:
+        raise HTTPException(400, "Invalid or expired token")
+    changed = await db.users.update_one(
+        {"_id": ObjectId(token_doc["user_id"]), "password_hash": account["password_hash"]},
         {"$set": {
             "password_hash": hash_password(input.new_password),
             "password_changed_at": now.isoformat(),
         }},
     )
-    await db.password_reset_tokens.update_one({"token": input.token}, {"$set": {"used": True}})
+    if not changed.modified_count:
+        raise HTTPException(400, "Invalid or expired token")
+    await db.user_sessions.update_many({"user_id":token_doc["user_id"]},{"$set":{"revoked":True}})
+    await db.password_reset_tokens.update_many({"user_id": token_doc["user_id"]}, {"$set": {"used": True}})
+    from services.account_access import disconnect_sessions
+    await disconnect_sessions(_deps,token_doc["user_id"])
     # Best-effort cookie clear (no harm if the caller wasn't logged in).
     response.delete_cookie("access_token", path="/")
     response.delete_cookie("refresh_token", path="/")
     return {"message": "Password reset successfully"}
+
+
+@router.post('/auth/resend-verification')
+async def resend_verification(request: Request):
+    from services.account_verification import issue
+    user=await _deps['get_current_user'](request)
+    if user.get('email_verified') and not user.get('verification_email'):
+        return {'message':'Email already verified'}
+    await issue(_db(),_deps,user,user.get('verification_email'))
+    return {'message':'Verification email requested'}
+
+@router.post('/auth/verify-email')
+async def verify_email(request: Request):
+    from services.account_verification import complete
+    body=await _json_body(request)
+    token=body.get('token')
+    if not isinstance(token,str) or not token:
+        raise HTTPException(400,'Invalid or expired verification link')
+    user=await complete(_db(),token)
+    if user['email'] != user.get('verification_email'):
+        from services.account_mail import send_notice
+        await send_notice(_db(),_deps,user['email'],'Your account email changed','Your account email was changed. Contact support if you did not request this.')
+    return {'message':'Email verified. You can sign in with the verified address.'}
+
+@router.post('/auth/change-password')
+async def change_password(request: Request, response: Response):
+    from services.account_access import validate_password
+    user=await _deps['get_current_user'](request)
+    body=await _json_body(request)
+    current=body.get('current_password')
+    password=body.get('new_password')
+    if not isinstance(current,str) or not isinstance(password,str):
+        raise HTTPException(422,'Current and new passwords are required')
+    account=await _db().users.find_one({'_id':ObjectId(user['_id'])})
+    if not _deps['verify_password'](current,account.get('password_hash','')):
+        raise HTTPException(400,'Current password is incorrect')
+    try: validate_password(password)
+    except ValueError as exc: raise HTTPException(422,str(exc))
+    result=await _db().users.update_one({'_id':account['_id'],'password_hash':account['password_hash']},
+        {'$set':{'password_hash':_deps['hash_password'](password),'password_changed_at':datetime.now(timezone.utc).isoformat()}})
+    if not result.modified_count: raise HTTPException(409,'Account changed. Please sign in again')
+    await _db().user_sessions.update_many({'user_id':str(account['_id'])},{'$set':{'revoked':True}})
+    await _db().password_reset_tokens.update_many({'user_id':str(account['_id'])},{'$set':{'used':True}})
+    from services.account_access import disconnect_sessions
+    await disconnect_sessions(_deps,user['_id'])
+    response.delete_cookie('access_token',path='/')
+    response.delete_cookie('refresh_token',path='/')
+    return {'message':'Password changed. Please sign in again.'}

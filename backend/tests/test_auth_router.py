@@ -11,11 +11,7 @@ from httpx import AsyncClient
 
 
 def _backend_url():
-    env_path = os.path.join(os.path.dirname(__file__), "..", "..", "frontend", ".env")
-    with open(env_path) as f:
-        for line in f:
-            if line.startswith("REACT_APP_BACKEND_URL="):
-                return line.split("=", 1)[1].strip()
+    return os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
 
 
 BASE = _backend_url()

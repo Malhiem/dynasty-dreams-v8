@@ -215,3 +215,12 @@ settings must match the running API; fixtures verify this by registering a
 fresh user and finding it in that database. Provide the isolated stack's
 `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `JWT_SECRET` for sandbox and token-mode
 checks. Fixtures create and clean up their own accounts and leagues.
+
+
+## 7. Account lifecycle enforcement
+
+`services/account_access.py` provides account status and session checks shared by HTTP, refresh and Socket.IO handshakes. Issued access/refresh tokens carry a session ID and token version. Logout revokes that session; forced logout and inactive-account transitions invalidate the version. Password changes invalidate both access and refresh credentials by issue time. Existing live sockets are disconnected when their session or account is revoked. Failed refresh responses clear cookies through the returned response.
+
+Registration, reset and password-change policy is enforced by the API, not only React. Registration collisions stay generic. A password reset atomically consumes its link and compares the existing credential during the update, preventing concurrent reuse. Email changes require the current password and verification of the destination before changing the login address. Full contracts and isolated acceptance commands are in `docs/account-management.md`.
+
+Account email links must not be logged or returned by ordinary public endpoints. SendGrid delivers them in production; only explicitly disposable E2E stacks may use the captured-mail collection.

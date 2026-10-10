@@ -18,7 +18,7 @@ import socketio
 import asyncio
 import re
 from datetime import datetime, timezone, timedelta
-from pydantic import BaseModel, Field, ConfigDict, EmailStr
+from pydantic import field_validator, BaseModel, Field, ConfigDict, EmailStr
 from typing import List, Optional, Dict, Any
 from enum import Enum
 
@@ -86,15 +86,20 @@ def hash_password(password: str) -> str:
     return hashed.decode("utf-8")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    try:
+        return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    except (ValueError, AttributeError):
+        return False
 
 # JWT Token Management
 def create_access_token(user_id: str, email: str, **extra) -> str:
     payload = {
         "sub": user_id,
         "email": email,
+        "iat": datetime.now(timezone.utc).timestamp(),
         "exp": datetime.now(timezone.utc) + timedelta(minutes=15),
-        "type": "access"
+        "type": "access",
+        "jti": secrets.token_urlsafe(16)
     }
     payload.update(extra)
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
@@ -102,7 +107,7 @@ def create_access_token(user_id: str, email: str, **extra) -> str:
 
 def create_impersonation_token(
     *, target_user_id: str, target_email: str, impersonator_id: str,
-    impersonator_email: str, minutes: int = 15, mode: str = "read_only",
+    impersonator_email: str, minutes: int = 15, mode: str = "read_only", token_version: int = 0,
 ) -> str:
     """Iter 215c — short-lived impersonation token used by admins doing
     'view-as' support investigations.
@@ -122,13 +127,15 @@ def create_impersonation_token(
         "email": target_email,
         "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes),
         "type": "impersonation",
+        "token_version": token_version,
+        "iat": datetime.now(timezone.utc).timestamp(),
         "mode": mode,
         "impersonator_id": impersonator_id,
         "impersonator_email": impersonator_email,
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
-def create_refresh_token(user_id: str) -> str:
+def create_refresh_token(user_id: str, token_version: int = 0, session_id: str = None, remember: bool = True) -> str:
     # SEC P3 — Include `iat` (issued-at). The refresh endpoint compares
     # this against the user's `password_changed_at` so a password reset
     # invalidates every refresh token issued before the change.
@@ -138,6 +145,10 @@ def create_refresh_token(user_id: str) -> str:
         "iat": now.timestamp(),
         "exp": now + timedelta(days=7),
         "type": "refresh",
+        "remember": remember,
+        "session_id": session_id,
+        "jti": secrets.token_urlsafe(16),
+        "token_version": token_version,
     }
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
@@ -167,12 +178,19 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
+        import hashlib
+        if await db.revoked_auth_tokens.find_one({"_id": hashlib.sha256(token.encode()).hexdigest()}):
+            raise HTTPException(401, "Session revoked — please sign in again")
+        if payload.get("session_id") and await db.revoked_auth_sessions.find_one({"_id":payload["session_id"]}):
+            raise HTTPException(401, "Session revoked — please sign in again")
         token_type = payload.get("type")
         if token_type not in ("access", "impersonation"):
             raise HTTPException(status_code=401, detail="Invalid token type")
         user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        from services.account_access import require_session
+        require_session(user, payload)
         user["_id"] = str(user["_id"])
         user.pop("password_hash", None)
         # Iter 215c — surface impersonation context so endpoints can
@@ -219,7 +237,13 @@ class TransactionType(str, Enum):
 class UserRegister(BaseModel):
     email: EmailStr
     password: str
-    username: str = Field(..., min_length=3, max_length=24, pattern=r"^[a-zA-Z0-9_-]+$")
+    username: str = Field(..., min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9_.-]+$")
+
+    @field_validator("password")
+    @classmethod
+    def password_policy(cls, value):
+        from services.account_access import validate_password
+        return validate_password(value)
 
 class UserLogin(BaseModel):
     email: str  # Iter 232x — Use str (not EmailStr) to accept sandbox .local addresses
@@ -230,6 +254,8 @@ class UserLogin(BaseModel):
     device_hash: Optional[str] = None
 
 class UserResponse(BaseModel):
+    email_verified: bool = False
+    pending_email: Optional[str] = None
     id: str
     email: str
     username: str
@@ -245,6 +271,12 @@ class ForgotPassword(BaseModel):
 class ResetPassword(BaseModel):
     token: str
     new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def password_policy(cls, value):
+        from services.account_access import validate_password
+        return validate_password(value)
 
 
 
@@ -343,13 +375,25 @@ async def _authenticate_socket(environ: dict, auth: Optional[dict]) -> Optional[
         return None
     if payload.get("type") not in ("access", "impersonation"):
         return None
+    import hashlib
+    if await db.revoked_auth_tokens.find_one({"_id": hashlib.sha256(token.encode()).hexdigest()}):
+        return None
+    if payload.get("session_id") and await db.revoked_auth_sessions.find_one({"_id":payload["session_id"]}):
+        return None
     uid = payload.get("sub")
     if not uid:
+        return None
+    try:
+        from services.account_access import require_session
+        account = await db.users.find_one({"_id": ObjectId(uid)})
+        require_session(account, payload)
+    except (HTTPException, ValueError):
         return None
     return {
         "user_id": str(uid),
         "email": payload.get("email"),
         "token_type": payload.get("type"),
+        "claims": payload,
     }
 
 
@@ -442,7 +486,7 @@ async def connect(sid, environ, auth=None):
         logger.warning(f"Socket connect rejected (no/invalid token): {sid}")
         raise socketio.exceptions.ConnectionRefusedError("authentication required")
     # Stash the verified user on the session so join_room can trust it.
-    await sio.save_session(sid, {"user_id": user["user_id"], "email": user.get("email")})
+    await sio.save_session(sid, {"user_id": user["user_id"], "email": user.get("email"), "claims": user.get("claims")})
     logger.info(f"Client connected: {sid} (user_id={user['user_id']})")
 
 @sio.event
@@ -485,6 +529,16 @@ async def join_room(sid, data):
         await sio.disconnect(sid)
         return
 
+    try:
+        from services.account_access import require_session
+        account = await db.users.find_one({"_id":ObjectId(user_id)})
+        claims = session.get("claims") or {}
+        require_session(account,claims)
+        if claims.get("session_id") and await db.revoked_auth_sessions.find_one({"_id":claims["session_id"]}):
+            raise HTTPException(401, "Session revoked")
+    except HTTPException:
+        await sio.disconnect(sid)
+        return
     if not await _user_can_join_room(user_id, room_id):
         logger.warning(
             f"join_room denied: user_id={user_id} room_id={room_id} sid={sid}"
@@ -1053,6 +1107,10 @@ async def startup():
     
     # Create indexes
     await db.users.create_index("email", unique=True)
+    await db.users.create_index("username_key", unique=True, partialFilterExpression={"username_key": {"$type": "string"}})
+    await db.user_sessions.create_index("expires_at", expireAfterSeconds=0)
+    await db.revoked_auth_sessions.create_index("expires_at", expireAfterSeconds=0)
+    await db.revoked_auth_tokens.create_index("expires_at", expireAfterSeconds=0)
     await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
     await db.login_attempts.create_index("identifier")
     await db.players.create_index("name")

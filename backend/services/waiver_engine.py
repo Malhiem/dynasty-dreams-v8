@@ -141,6 +141,9 @@ async def _finalize_winner(
     team_id = winner["team_id"]
     player_id = winner["player_id"]
     drop_player_id = winner.get("drop_player_id")
+    from services.profile_attribution import owners
+    credit_team = await db.teams.find_one({'_id': ObjectId(team_id)})
+    credit_users = owners(credit_team or {})
     from services.player_pool import require_pool_player
     latest_league = await db.leagues.find_one({"_id": ObjectId(league_id)})
     try:
@@ -157,7 +160,7 @@ async def _finalize_winner(
                 async with session.start_transaction():
                     await db.waiver_claims.update_one(
                         {"_id": winner["_id"]},
-                        {"$set": {"status": "won", "processed_at": now_iso}},
+                        {"$set": {"status": "won", "processed_at": now_iso, "xp_user_ids": credit_users, "xp_committed": True}},
                         session=session,
                     )
                     if bid > 0:
@@ -204,7 +207,7 @@ async def _finalize_winner(
         # (1) claim status
         await db.waiver_claims.update_one(
             {"_id": winner["_id"]},
-            {"$set": {"status": "won", "processed_at": now_iso}},
+            {"$set": {"status": "won", "processed_at": now_iso, "xp_user_ids": credit_users, "xp_committed": False}},
         )
 
         async def _undo_claim():
@@ -247,11 +250,16 @@ async def _finalize_winner(
             applied.append(_undo_drop)
 
         # (4) add winning player to roster
-        await db.teams.update_one(
+        added = await db.teams.update_one(
             {"_id": ObjectId(team_id)},
             {"$addToSet": {"roster": player_id}},
         )
+        async def _undo_add():
+            if added.modified_count:
+                await db.teams.update_one({'_id': ObjectId(team_id)}, {'$pull': {'roster': player_id}})
+        applied.append(_undo_add)
         # ── Ownership tracking (waiver claim — fallback path) ────
+        await db.waiver_claims.update_one({'_id': winner['_id']}, {'$set': {'xp_committed': True}})
         try:
             from utils.scoring_roster import log_roster_change
             if drop_player_id:
@@ -471,6 +479,16 @@ async def process_pending_claims(
             continue
 
         # Mark losers
+        if broadcast:
+            from utils.xp import emit_xp_gain
+            credited = await db.waiver_claims.find_one({'_id': winner['_id']})
+            for uid in (credited or {}).get('xp_user_ids', []):
+                try:
+                    await emit_xp_gain(db, uid, source='waiver_claim_won', broadcast_fn=broadcast,
+                                       meta={'claim_id': str(winner['_id']), 'player_name': winner.get('player_name')})
+                except Exception as exc:
+                    log.warning(f'waiver XP notification failed: {exc}')
+
         for loser in losers:
             await db.waiver_claims.update_one(
                 {"_id": loser["_id"]},

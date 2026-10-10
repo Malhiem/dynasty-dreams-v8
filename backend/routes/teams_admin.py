@@ -167,3 +167,39 @@ async def set_team_admin_managed(
         "prior": prior,
         "updated_at": now_iso,
     }
+
+
+class OwnershipEditRequest(BaseModel):
+    owner_id: str
+    co_owner_ids: list[str] = Field(default_factory=list)
+    reason: str = Field(min_length=1)
+
+
+@router.post('/admin/teams/{team_id}/ownership')
+async def edit_team_ownership(team_id: str, payload: OwnershipEditRequest, request: Request):
+    """Administrative ownership changes preserve credit automatically."""
+    user = await _get_user(request)
+    if not user or not _is_platform_admin(user):
+        raise HTTPException(status_code=403, detail='Platform admin only')
+    ids = {payload.owner_id, *payload.co_owner_ids}
+    if not ObjectId.is_valid(team_id) or any(not ObjectId.is_valid(uid) for uid in ids):
+        raise HTTPException(status_code=400, detail='Invalid team or user ID')
+    db = _db()
+    if not await db.teams.find_one({'_id': ObjectId(team_id)}):
+        raise HTTPException(status_code=404, detail='Team not found')
+    accounts = await db.users.find({'_id': {'$in': [ObjectId(uid) for uid in ids]}}).to_list(None)
+    if len(accounts) != len(ids) or any(a.get('is_active') is False or a.get('merged_into_user_id') for a in accounts):
+        raise HTTPException(status_code=400, detail='Every owner must be an active user')
+    from services.profile_identity import change_ownership
+    try:
+        await change_ownership(db, team_id, {
+            'owner_id': payload.owner_id,
+            'co_owner_ids': sorted(ids - {payload.owner_id})},
+            reason=payload.reason, actor_id=user['_id'])
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    await db.admin_user_actions.insert_one({
+        'admin_id': str(user['_id']), 'action': 'edit_team_ownership',
+        'reason': payload.reason, 'metadata': {'team_id': team_id, 'owners': sorted(ids)},
+        'ts': datetime.now(timezone.utc).isoformat()})
+    return {'ok': True, 'team_id': team_id}

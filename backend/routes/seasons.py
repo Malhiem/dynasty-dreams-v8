@@ -17,6 +17,7 @@ from typing import List, Optional
 
 from bson import ObjectId
 from services.financial_lock import serialize_finances
+from services.profile_attribution import contributions, next_season_attribution, owners
 from services.season_history import capture_players, capture_standings, champions, historical_rank, tied_leaders
 from services.fantasy_scoring import DEFAULT_SKATER_SCORING, DEFAULT_GOALIE_SCORING, calculate_fantasy_points
 from routes.league_guards import require_league_member
@@ -349,6 +350,10 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
             "logo_abbr": t.get("logo_abbr"),
             "logo_url": t.get("logo_url"),
             "owner_id": t.get("owner_id"),
+            "co_owner_ids": t.get("co_owner_ids") or [],
+            "profile_contributions": contributions(t),
+            "profile_management_excluded_user_ids": t.get("profile_management_excluded_user_ids") or [],
+            "xp_award_details": t.get("xp_award_details") or {},
             "owner_username": (owner or {}).get("username"),
             "owner_name": (owner or {}).get("name"),
             "wins": t.get("wins", 0),
@@ -368,6 +373,7 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
                 "division_winner_at": t.get("division_winner_at"),
                 "conference_winner_at": t.get("conference_winner_at"),
                 "playoffs_reached_at": t.get("playoffs_reached_at"),
+                "playoff_runner_up_at": t.get("playoff_runner_up_at"),
             },
         }
         if t.get("championship_won_at"):
@@ -378,7 +384,16 @@ async def complete_season(league_id: str, payload: CompleteSeasonInput, request:
     champion = next((t['team_name'] for t in teams_snapshot if t['team_id'] in champion_ids), None)
     for ts in teams_snapshot:
         if ts['team_id'] in champion_ids:
-            ts['awards']['championship_won_at'] = ts['awards'].get('championship_won_at') or now.isoformat()
+            if not ts['awards'].get('championship_won_at'):
+                ts['awards']['championship_won_at'] = now.isoformat()
+                from services.profile_competition import award_fields
+                fields = await award_fields(db, ts['team_id'], {'championship_won_at': now.isoformat()})
+                await db.teams.update_one({'_id': ObjectId(ts['team_id'])}, {'$set': fields})
+                refreshed = await db.teams.find_one({'_id': ObjectId(ts['team_id'])})
+                ts['profile_contributions'] = contributions(refreshed)
+                ts['xp_award_details'] = refreshed.get('xp_award_details') or {}
+                for uid in owners(ts):
+                    ts['profile_contributions'].setdefault(uid, {})['championship_won_at'] = ts['awards']['championship_won_at']
 
     # Awards / activity_feed entries from this season
     activity_cursor = db.activity_feed.find({
@@ -486,12 +501,20 @@ async def renew_season(league_id: str, payload: RenewSeasonInput, request: Reque
             detail=f"new_season_year ({new_year}) must be greater than current ({prev_year})",
         )
 
+    # Carry ownership attribution into the new season with a fresh baseline.
+    attribution_teams = await db.teams.find({'league_id': league_id}).to_list(None)
+    for team in attribution_teams:
+        await db.teams.update_one({'_id': team['_id']}, {'$set': {
+            'profile_attribution': next_season_attribution(team, payload.reset_records),
+            'career_user_ids': sorted(set(team.get('career_user_ids') or []) | set(owners(team))),
+        }})
     # Reset team records (keeps rosters)
     if payload.reset_records:
         await db.teams.update_many(
             {"league_id": league_id},
             {"$set": {
                 "wins": 0, "losses": 0, "ties": 0,
+                "xp_win_adjustment": 0, "xp_award_adjustments": {}, "xp_award_details": {},
                 "points_for": 0.0, "points_against": 0.0,
                 "live_points": 0.0,
             }, "$unset": {
@@ -501,6 +524,8 @@ async def renew_season(league_id: str, payload: RenewSeasonInput, request: Reque
                 "consolation_won_at": "",
                 "playoffs_reached_at": "",
                 "previous_rank": "",
+                "xp_last_competition": "",
+                "playoff_runner_up_at": "",
             }},
         )
 
@@ -894,6 +919,10 @@ async def _maybe_auto_snapshot_season(league_id: str):
             "logo_abbr": t.get("logo_abbr"),
             "logo_url": t.get("logo_url"),
             "owner_id": t.get("owner_id"),
+            "co_owner_ids": t.get("co_owner_ids") or [],
+            "profile_contributions": contributions(t),
+            "profile_management_excluded_user_ids": t.get("profile_management_excluded_user_ids") or [],
+            "xp_award_details": t.get("xp_award_details") or {},
             "owner_username": (owner or {}).get("username"),
             "owner_name": (owner or {}).get("name"),
             "wins": t.get("wins", 0),
@@ -913,6 +942,7 @@ async def _maybe_auto_snapshot_season(league_id: str):
                 "division_winner_at": t.get("division_winner_at"),
                 "conference_winner_at": t.get("conference_winner_at"),
                 "playoffs_reached_at": t.get("playoffs_reached_at"),
+                "playoff_runner_up_at": t.get("playoff_runner_up_at"),
             },
         }
         if t.get("championship_won_at"):
@@ -923,7 +953,16 @@ async def _maybe_auto_snapshot_season(league_id: str):
     champion = next((t['team_name'] for t in teams_snapshot if t['team_id'] in champion_ids), None)
     for ts in teams_snapshot:
         if ts['team_id'] in champion_ids:
-            ts['awards']['championship_won_at'] = ts['awards'].get('championship_won_at') or now.isoformat()
+            if not ts['awards'].get('championship_won_at'):
+                ts['awards']['championship_won_at'] = now.isoformat()
+                from services.profile_competition import award_fields
+                fields = await award_fields(db, ts['team_id'], {'championship_won_at': now.isoformat()})
+                await db.teams.update_one({'_id': ObjectId(ts['team_id'])}, {'$set': fields})
+                refreshed = await db.teams.find_one({'_id': ObjectId(ts['team_id'])})
+                ts['profile_contributions'] = contributions(refreshed)
+                ts['xp_award_details'] = refreshed.get('xp_award_details') or {}
+                for uid in owners(ts):
+                    ts['profile_contributions'].setdefault(uid, {})['championship_won_at'] = ts['awards']['championship_won_at']
 
     # Awards
     activity_cursor = db.activity_feed.find({

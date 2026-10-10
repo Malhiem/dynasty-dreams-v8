@@ -120,7 +120,7 @@ export default function ProfilePage() {
     <div data-testid="profile-page" className="min-h-screen bg-[#0A0A0A]">
       {/* Top header */}
       <div className="border-b border-white/5">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3 flex-wrap">
           <Link to="/" className="flex items-center gap-2">
             <Trophy size={22} className="text-[#00D2FF]" />
             <span className="font-heading font-bold tracking-tight text-white">DYNASTY DREAMS</span>
@@ -144,9 +144,9 @@ export default function ProfilePage() {
           <div className="h-24 w-24 rounded-full bg-black/40 border-4 border-white/20 flex items-center justify-center text-4xl font-black text-white">
             {profile.username?.[0]?.toUpperCase()}
           </div>
-          <div className="flex-1 min-w-[220px]">
-            <div className="text-white/70 text-sm mb-1">@{profile.username}</div>
-            <h1 className="font-heading text-4xl sm:text-5xl font-black tracking-tight text-white mb-2">
+          <div className="w-full min-w-0 sm:flex-1 sm:w-auto">
+            <div className="text-white/70 text-sm mb-1 [overflow-wrap:anywhere]">@{profile.username}</div>
+            <h1 className="font-heading text-3xl sm:text-5xl font-black tracking-tight text-white mb-2 [overflow-wrap:anywhere]">
               {profile.display_name.toUpperCase()}
             </h1>
             <div className="flex items-center gap-2 flex-wrap">
@@ -173,6 +173,12 @@ export default function ProfilePage() {
             <div className="text-white/90 text-xs">
               {profile.xp_in_level} / {profile.xp_required_for_next} XP to next level
             </div>
+            {profile.xp_breakdown && (
+              <div className="text-white/70 text-xs mt-2 max-w-xs" data-testid="profile-xp-breakdown">
+                Competitive XP: {profile.xp_breakdown.competitive_awarded_xp} of {profile.xp_breakdown.competitive_base_xp} base
+                <br />Participation XP: {profile.xp_breakdown.participation_xp}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -316,7 +322,7 @@ export default function ProfilePage() {
                 );
                 return (
                   <div
-                    key={`${t.league_id || 'private'}-${t.type}-${t.season_year || idx}`}
+                    key={`${t.earned_by_user_id || 'current'}-${t.league_id || 'private'}-${t.type}-${t.season_year || idx}`}
                     data-testid={`trophy-${t.type}-${idx}`}
                     className={`rounded-xl p-4 bg-gradient-to-br ${palette.bg} border`}
                   >
@@ -336,6 +342,12 @@ export default function ProfilePage() {
                       </Link>
                     ) : (
                       <div data-testid={`trophy-team-static-${idx}`}>{teamInner}</div>
+                    )}
+                    {t.xp_award && t.xp_award.base_xp > 0 && (
+                      <div className="text-white/70 text-xs mt-2">
+                        {t.xp_award.base_xp} XP × {t.xp_award.multiplier} = {t.xp_award.awarded_xp} XP
+                        <div>{t.xp_award.reason}</div>
+                      </div>
                     )}
                     {t.earned_at && (
                       <div className="text-[#52525B] text-[10px] mt-1">

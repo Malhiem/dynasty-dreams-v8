@@ -24,6 +24,7 @@ USERNAME_REGEX = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
 class ProfileUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=32)
     email: Optional[EmailStr] = None
+    current_password: Optional[str] = None
     favourite_sport: Optional[str] = Field(None, max_length=40)
     favourite_team: Optional[str] = Field(None, max_length=80)
     city: Optional[str] = Field(None, max_length=80)
@@ -50,23 +51,6 @@ class ProfileUpdate(BaseModel):
         if not (v.startswith("http://") or v.startswith("https://") or v.startswith("data:image/")):
             raise ValueError("avatar_url must be an http(s) URL or data:image/ URL")
         return v
-
-LEVEL_TITLES = [
-    (1, 5, "Bench Warmer"),
-    (6, 15, "Rink Regular"),
-    (16, 30, "Line Captain"),
-    (31, 50, "Hat Trick Hero"),
-    (51, 75, "Playoff Contender"),
-    (76, 999, "Stanley Cup Dynasty"),
-]
-
-
-def _title_for_level(level: int) -> str:
-    for lo, hi, title in LEVEL_TITLES:
-        if lo <= level <= hi:
-            return title
-    return "Rookie"
-
 
 def setup(deps: dict) -> None:
     _deps.update(deps)
@@ -157,60 +141,16 @@ async def get_my_level(request: Request):
     user = await get_current_user(request)
     user_id = user["_id"]
 
-    teams = await db.teams.find({"owner_id": user_id}).to_list(100)
-    total_team_count = len(teams)
-    total_wins = sum(t.get("wins", 0) or 0 for t in teams)
-    total_points_for = sum(t.get("points_for", 0.0) or 0.0 for t in teams)
-    total_live_points = sum(t.get("live_points", 0.0) or 0.0 for t in teams)
-
-    trades_executed = await db.trades.count_documents({
-        "$or": [{"proposer_id": user_id}, {"recipient_id": user_id}],
-        "status": "accepted",
-    })
-    drafts_completed = await db.drafts.count_documents({
-        "participants": {"$in": [str(t["_id"]) for t in teams]},
-        "status": "complete",
-    }) if teams else 0
-    waiver_claims = await db.waiver_claims.count_documents({
-        "team_id": {"$in": [str(t["_id"]) for t in teams]},
-    }) if teams else 0
-
-    xp = int(
-        total_team_count * 50
-        + total_wins * 20
-        + trades_executed * 25
-        + drafts_completed * 40
-        + waiver_claims * 5
-        + (total_points_for + total_live_points) / 5
-    )
-
-    level = 1
-    xp_remaining = xp
-    while True:
-        cost = 100 + level * 50
-        if xp_remaining < cost:
-            break
-        xp_remaining -= cost
-        level += 1
-    xp_to_next = (100 + level * 50) - xp_remaining
-
+    from services.profile_career import career_summary
+    from utils.xp import level_from_xp
+    summary = await career_summary(db, user_id)
+    stats = summary['stats']
     return {
-        "user_id": str(user_id),
-        "level": level,
-        "title": _title_for_level(level),
-        "xp_total": xp,
-        "xp_in_level": xp_remaining,
-        "xp_to_next_level": xp_to_next,
-        "xp_required_for_next": 100 + level * 50,
-        "progress_pct": round((xp_remaining / (100 + level * 50)) * 100, 1),
-        "stats": {
-            "teams_managed": total_team_count,
-            "total_wins": total_wins,
-            "trades_accepted": trades_executed,
-            "drafts_completed": drafts_completed,
-            "waiver_claims": waiver_claims,
-            "total_points_for": round(total_points_for + total_live_points, 2),
-        },
+        'user_id': str(user_id), 'xp_total': summary['xp_total'],
+        'xp_breakdown': summary['xp_breakdown'],
+        **level_from_xp(summary['xp_total']),
+        'stats': {**stats, 'teams_managed': stats['leagues_joined'],
+                  'total_points_for': stats['total_points']},
     }
 
 
@@ -228,42 +168,15 @@ async def get_public_profile(username: str):
 
     user_id = str(user["_id"])
 
-    teams = await db.teams.find({"owner_id": user_id}).to_list(100)
+    teams = await db.teams.find({"$or": [{"owner_id": user_id}, {"co_owner_ids": user_id}]}).to_list(None)
     league_ids = list({t["league_id"] for t in teams})
     leagues = await db.leagues.find(
         {"_id": {"$in": [ObjectId(lid) for lid in league_ids]}}
-    ).to_list(100)
+    ).to_list(None)
     leagues_by_id = {str(l["_id"]): l for l in leagues}
 
-    # Snapshot points-for ranks per (league, season_year) — used for the
-    # regular-season top-3 trophies. Map[league_id][season_year] -> [team_id ranked desc by PF].
-    rank_index: dict = {}
-    async for snap in db.league_seasons.find(
-        {"league_id": {"$in": league_ids}},
-        {"league_id": 1, "season_year": 1, "teams": 1},
-    ):
-        lid = snap["league_id"]
-        yr = snap.get("season_year")
-        ranked = sorted(
-            snap.get("teams") or [],
-            key=lambda x: float(x.get("points_for") or 0.0),
-            reverse=True,
-        )
-        rank_index.setdefault(lid, {})[yr] = [t.get("team_id") for t in ranked]
-
     team_cards = []
-    trophies = []
     active_leagues = []
-    championships_won = 0
-    division_titles = 0
-    conference_titles = 0
-    consolations_won = 0
-    runner_ups = 0
-    playoff_appearances = 0
-    regular_season_top3 = 0
-    total_wins = total_losses = total_ties = 0
-    total_points_for = 0.0
-
     for t in teams:
         lg = leagues_by_id.get(t["league_id"]) or {}
         league_is_private = bool(lg.get("is_private"))
@@ -273,7 +186,7 @@ async def get_public_profile(username: str):
         league_teams = await db.teams.find(
             {"league_id": t["league_id"]},
             {"_id": 1, "points_for": 1, "live_points": 1},
-        ).to_list(100)
+        ).to_list(None)
         ranked = sorted(
             league_teams,
             key=lambda x: (x.get("points_for", 0.0) or 0.0) + (x.get("live_points", 0.0) or 0.0),
@@ -281,23 +194,12 @@ async def get_public_profile(username: str):
         )
         rank = next((i + 1 for i, x in enumerate(ranked) if x["_id"] == t["_id"]), None)
 
-        total_wins += t.get("wins", 0) or 0
-        total_losses += t.get("losses", 0) or 0
-        total_ties += t.get("ties", 0) or 0
-        total_points_for += (t.get("points_for", 0.0) or 0.0) + (t.get("live_points", 0.0) or 0.0)
-
-        champ_at = t.get("championship_won_at")
-        div_at = t.get("division_winner_at")
-        conf_at = t.get("conference_winner_at")
-        cons_at = t.get("consolation_won_at")
-        runner_at = t.get("playoff_runner_up_at")
-        playoffs_at = t.get("playoffs_reached_at")
-        if champ_at: championships_won += 1
-        if div_at: division_titles += 1
-        if conf_at: conference_titles += 1
-        if cons_at: consolations_won += 1
-        if runner_at: runner_ups += 1
-        if playoffs_at: playoff_appearances += 1
+        champ_at = t.get('championship_won_at')
+        div_at = t.get('division_winner_at')
+        conf_at = t.get('conference_winner_at')
+        cons_at = t.get('consolation_won_at')
+        runner_at = t.get('playoff_runner_up_at')
+        playoffs_at = t.get('playoffs_reached_at')
 
         # Hide league name + don't render a link for private leagues
         league_display = lg.get("name") if not league_is_private else "Private League"
@@ -330,60 +232,6 @@ async def get_public_profile(username: str):
         if is_active:
             active_leagues.append(team_card)
 
-        # ─── Trophy case entries: playoff winner + runner-up + regular season top 3 ───
-        # Only emit a single playoff trophy per team (winner OR runner-up,
-        # not both) so the trophy case is clean.
-        _trophy_base = {
-            "league_id": team_card["league_id"],
-            "league_name": league_display,
-            "league_is_private": league_is_private,
-            "team_id": str(t["_id"]),
-            "team_name": t["name"],
-        }
-        if champ_at:
-            trophies.append({**_trophy_base, "label": "Playoff Champion",
-                             "type": "championship", "place": 1, "earned_at": champ_at})
-        elif runner_at:
-            trophies.append({**_trophy_base, "label": "Playoff Runner-Up",
-                             "type": "runner_up", "place": 2, "earned_at": runner_at})
-        if conf_at:
-            trophies.append({**_trophy_base, "label": "Conference Champion",
-                             "type": "conference", "earned_at": conf_at})
-        if div_at:
-            trophies.append({**_trophy_base, "label": "Division Champion",
-                             "type": "division", "earned_at": div_at})
-        if cons_at:
-            trophies.append({**_trophy_base, "label": "Consolation Winner",
-                             "type": "consolation", "earned_at": cons_at})
-
-        # ─── Per-completed-season Regular-Season Top 3 ───
-        for yr, team_order in (rank_index.get(t["league_id"]) or {}).items():
-            try:
-                pos = team_order.index(str(t["_id"]))
-            except ValueError:
-                continue
-            if pos == 0:
-                regular_season_top3 += 1
-                trophies.append({**_trophy_base, "label": f"Regular Season 1st ({yr})",
-                                 "type": "regular_season_first", "place": 1,
-                                 "season_year": yr})
-            elif pos == 1:
-                regular_season_top3 += 1
-                trophies.append({**_trophy_base, "label": f"Regular Season 2nd ({yr})",
-                                 "type": "regular_season_second", "place": 2,
-                                 "season_year": yr})
-            elif pos == 2:
-                regular_season_top3 += 1
-                trophies.append({**_trophy_base, "label": f"Regular Season 3rd ({yr})",
-                                 "type": "regular_season_third", "place": 3,
-                                 "season_year": yr})
-
-    # Sort trophies by `earned_at` desc (no date trophies go last)
-    def _trophy_sort_key(tr):
-        dt = tr.get("earned_at") or tr.get("season_year")
-        return (0, dt) if dt else (1, "")
-    trophies.sort(key=_trophy_sort_key, reverse=True)
-
     lifetime_best: Optional[dict] = None
     if teams:
         from live_scoring_worker import _fantasy_points_from_live
@@ -414,70 +262,16 @@ async def get_public_profile(username: str):
                             "fpts": round(fpts, 2),
                         }
 
-    trades_executed = await db.trades.count_documents({
-        "$or": [{"proposer_id": user_id}, {"recipient_id": user_id}],
-        "status": "accepted",
-    })
-    drafts_completed = await db.drafts.count_documents({
-        "participants": {"$in": [str(t["_id"]) for t in teams]},
-        "status": "complete",
-    }) if teams else 0
-    waiver_claims = await db.waiver_claims.count_documents({
-        "team_id": {"$in": [str(t["_id"]) for t in teams]},
-    }) if teams else 0
-
-    xp = int(
-        len(teams) * 50
-        + total_wins * 20
-        + trades_executed * 25
-        + drafts_completed * 40
-        + waiver_claims * 5
-        + total_points_for / 5
-        + championships_won * 500
-        + conference_titles * 250
-        + division_titles * 150
-        + consolations_won * 100
-        + playoff_appearances * 75
-    )
-    level = 1
-    xp_rem = xp
-    while True:
-        cost = 100 + level * 50
-        if xp_rem < cost:
-            break
-        xp_rem -= cost
-        level += 1
-
+    from services.profile_career import career_summary
+    from utils.xp import level_from_xp
+    summary = await career_summary(db, user_id)
     return {
-        "username": user.get("username"),
-        "display_name": user.get("name") or user.get("username"),
-        "member_since": user.get("created_at"),
-        "level": level,
-        "title": _title_for_level(level),
-        "xp_in_level": xp_rem,
-        "xp_required_for_next": 100 + level * 50,
-        "progress_pct": round((xp_rem / (100 + level * 50)) * 100, 1),
-        "stats": {
-            "leagues_joined": len(teams),
-            "total_wins": total_wins,
-            "total_losses": total_losses,
-            "total_ties": total_ties,
-            "total_points": round(total_points_for, 2),
-            "trades_accepted": trades_executed,
-            "drafts_completed": drafts_completed,
-            "waiver_claims": waiver_claims,
-            "championships_won": championships_won,
-            "conference_titles": conference_titles,
-            "division_titles": division_titles,
-            "consolations_won": consolations_won,
-            "runner_ups": runner_ups,
-            "regular_season_top3": regular_season_top3,
-            "playoff_appearances": playoff_appearances,
-        },
-        "teams": team_cards,
-        "active_leagues": active_leagues,
-        "trophies": trophies,
-        "lifetime_top_performer": lifetime_best,
+        'username': user.get('username'),
+        'display_name': user.get('name') or user.get('username'),
+        'member_since': user.get('created_at'),
+        'xp_total': summary['xp_total'], 'xp_breakdown': summary['xp_breakdown'], **level_from_xp(summary['xp_total']),
+        'stats': summary['stats'], 'teams': team_cards, 'active_leagues': active_leagues,
+        'trophies': summary['trophies'], 'lifetime_top_performer': lifetime_best,
     }
 
 
@@ -497,19 +291,25 @@ async def update_my_profile(payload: ProfileUpdate, request: Request):
     if payload.username is not None and payload.username != user.get("username"):
         clash = await db.users.find_one({
             "username": {"$regex": f"^{re.escape(payload.username)}$", "$options": "i"},
-            "_id": {"$ne": user["_id"]},
+            "_id": {"$ne": ObjectId(user["_id"])},
         })
         if clash:
             raise HTTPException(status_code=409, detail="Username already taken")
         updates["username"] = payload.username
+        updates["username_key"] = payload.username.lower()
+        updates["name"] = payload.username
     if payload.email is not None and payload.email.lower() != (user.get("email") or "").lower():
         clash = await db.users.find_one({
             "email": {"$regex": f"^{re.escape(payload.email)}$", "$options": "i"},
-            "_id": {"$ne": user["_id"]},
+            "_id": {"$ne": ObjectId(user["_id"])},
         })
         if clash:
             raise HTTPException(status_code=409, detail="Email already in use")
-        updates["email"] = payload.email.lower()
+        account = await db.users.find_one({"_id": ObjectId(user["_id"])})
+        if not payload.current_password or not _deps["verify_password"](payload.current_password, account.get("password_hash", "")):
+            raise HTTPException(400, "Current password is required to change email")
+        from services.account_verification import issue
+        await issue(db, _deps, account, payload.email.lower())
     for field in ("favourite_sport", "favourite_team", "city", "province_state", "country", "avatar_url"):
         value = getattr(payload, field)
         if value is not None and value != user.get(field):
@@ -519,7 +319,13 @@ async def update_my_profile(payload: ProfileUpdate, request: Request):
         return {"updated": False, "user": _public_user(user)}
 
     updates["updated_at"] = datetime.now(timezone.utc)
-    await db.users.update_one({"_id": ObjectId(user["_id"])}, {"$set": updates})
+    from pymongo.errors import DuplicateKeyError
+    try:
+        await db.users.update_one({"_id": ObjectId(user["_id"])}, {"$set": updates})
+    except DuplicateKeyError:
+        raise HTTPException(409, "Username already taken")
+    if "username" in updates:
+        await db.account_history.insert_one({"user_id": user["_id"], "action": "username_change", "before": user.get("username"), "after": updates["username"], "at": datetime.now(timezone.utc)})
     fresh = await db.users.find_one({"_id": ObjectId(user["_id"])})
     return {"updated": True, "user": _public_user(fresh)}
 
