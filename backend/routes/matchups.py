@@ -676,11 +676,12 @@ async def get_matchups(league_id: str, request: Request, week: Optional[int] = N
     if week:
         query["week"] = week
     matchups = await db.matchups.find(query).sort("week", 1).to_list(1000)
-    for m in matchups:
-        m["_id"] = str(m["_id"])
     matchups = await _resolve_open_slots(db, league_id, matchups)
     from services.h2h_scoring import live_scores
     matchups = await live_scores(db, league, matchups)
+    # Scoring snapshots query Mongo by _id; serialize only after those writes.
+    for m in matchups:
+        m["_id"] = str(m["_id"])
     return matchups
 
 
@@ -696,11 +697,12 @@ async def get_current_week(league_id: str, request: Request):
     result = await db.matchups.aggregate(pipeline).to_list(1)
     current = result[0]["min_week"] if result else 1
     matchups = await db.matchups.find({"league_id": league_id, "week": current}).to_list(100)
-    for m in matchups:
-        m["_id"] = str(m["_id"])
     matchups = await _resolve_open_slots(db, league_id, matchups)
     from services.h2h_scoring import live_scores
     matchups = await live_scores(db, league, matchups)
+    # Scoring snapshots query Mongo by _id; serialize only after those writes.
+    for m in matchups:
+        m["_id"] = str(m["_id"])
     return {"week": current, "matchups": matchups}
 
 
@@ -979,11 +981,12 @@ async def get_week_results(league_id: str, week: int, request: Request):
     user = await _deps["get_current_user"](request)
     league = await require_league_member(db, user, league_id)
     matchups = await db.matchups.find({"league_id": league_id, "week": week}).to_list(100)
-    for m in matchups:
-        m["_id"] = str(m["_id"])
     matchups = await _resolve_open_slots(db, league_id, matchups)
     from services.h2h_scoring import live_scores
     matchups = await live_scores(db, league, matchups)
+    # Scoring snapshots query Mongo by _id; serialize only after those writes.
+    for m in matchups:
+        m["_id"] = str(m["_id"])
     return matchups
 
 

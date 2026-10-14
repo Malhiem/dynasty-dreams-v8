@@ -16,12 +16,13 @@ interface LeagueAdminTabProps {
   adminSubTab: string;
   setAdminSubTab: (v: string) => void;
   isH2H: boolean;
+  league: any;
 }
 
-export default function LeagueAdminTab({ adminSubTab, setAdminSubTab, isH2H }: LeagueAdminTabProps) {
+export default function LeagueAdminTab({ adminSubTab, setAdminSubTab, isH2H, league }: LeagueAdminTabProps) {
   return (
     <Tabs value={adminSubTab} onValueChange={setAdminSubTab} data-testid="commissioner-league-admin-tab">
-      <TabsList className="bg-secondary border border-border">
+      <TabsList className="bg-secondary border border-border flex flex-wrap h-auto justify-start">
         <TabsTrigger value="teams" className="data-[state=active]:bg-primary/20" data-testid="admin-sub-tab-team-owner-list">
           <Users className="h-4 w-4 mr-2" />
           {/* Iter 231ar — Renamed from "Teams" so the label matches
@@ -59,7 +60,7 @@ export default function LeagueAdminTab({ adminSubTab, setAdminSubTab, isH2H }: L
             </CardContent>
           </Card>
         ) : (
-          <SchedulesTab />
+          <SchedulesTab league={league} />
         )}
       </TabsContent>
       <TabsContent value="season-awards">

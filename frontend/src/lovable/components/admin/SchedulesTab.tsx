@@ -1,735 +1,137 @@
-// @ts-nocheck
-import { useState, useMemo } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Calendar, CalendarDays, Plus, Pencil, Trash2, Trophy, ChevronRight } from "lucide-react";
-import { toast } from "sonner";
+import { useEffect, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import api from '@/lib/api';
+import { toast } from 'sonner';
+import { defaults, generatePeriods, validate, days } from './scheduler/calendar';
 
-interface ScoringPeriod {
-  id: number;
-  startDate: string;
-  endDate: string;
-  label?: string;
-  type: "regular" | "playoff";
-  bracketId?: string;
+const intervalOptions = ['daily', 'weekly', 'biweekly', 'monthly'];
+const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const message = (error: any) => typeof error?.response?.data?.detail === 'string' ? error.response.data.detail : 'Unable to save schedule. Check the calendar and try again.';
+
+function Field({ label, name, value, onChange, type = 'date', options, disabled = false }: any) {
+  const id = `scheduler-${name}`;
+  const classes = 'w-full min-w-0 rounded-md border border-border bg-secondary p-2 text-sm';
+  return <div className="space-y-1 min-w-0"><label htmlFor={id} className="text-sm">{label}</label>
+    {options ? <select id={id} data-testid={id} className={classes} value={value} disabled={disabled} onChange={e => onChange(e.target.value)}>
+      {options.map((option: any) => <option key={option.value ?? option} value={option.value ?? option}>{option.label ?? option}</option>)}
+    </select> : <input id={id} data-testid={id} className={classes} type={type} value={value} disabled={disabled} onChange={e => onChange(e.target.value)} />}
+  </div>;
 }
 
-interface PlayoffBracket {
-  id: string;
-  name: string;
-  rounds: number;
-  teams: number;
+// Keying by league and season prevents old drafts and delayed responses crossing contexts.
+export default function SchedulesTab({ league }: { league: any }) {
+  if (!league?.id) return <p role="status">Select a league to configure its schedule.</p>;
+  const season = Number(league.current_season_year || String(league.season_start_date || new Date().toISOString()).slice(0, 4));
+  return <CalendarEditor key={`${league.id}:${season}`} league={league} season={season} />;
 }
 
-const generatePeriods = (
-  start: string,
-  end: string,
-  interval: string,
-  type: "regular" | "playoff",
-  startId: number = 1,
-  bracketId?: string
-): ScoringPeriod[] => {
-  const periods: ScoringPeriod[] = [];
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  let id = startId;
-  let current = new Date(startDate);
+function CalendarEditor({ league, season }: any) {
+  const [config, setConfig] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [saveError, setSaveError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [editable, setEditable] = useState(false);
+  const [maximum, setMaximum] = useState(Number(league.max_teams || 12));
+  const [retry, setRetry] = useState(0);
+  const editTrigger = useRef<HTMLButtonElement | null>(null);
+  const [editing, setEditing] = useState<any>(null);
+  const [tab, setTab] = useState('regular');
+  const url = `/leagues/${league.id}/scheduler/${season}`;
 
-  const intervalDays = interval === "daily" ? 1 : interval === "weekly" ? 7 : interval === "biweekly" ? 14 : 30;
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setLoadError('');
+    api.get(url).then(({ data }) => {
+      if (cancelled) return;
+      setConfig(data.calendar || defaults(league)); setEditable(data.can_edit); setMaximum(data.max_teams);
+    }).catch(() => { if (!cancelled) setLoadError('Unable to load this season’s schedule. Try again.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [url, retry]);
 
-  while (current < endDate) {
-    const periodEnd = new Date(current);
-    periodEnd.setDate(periodEnd.getDate() + intervalDays - 1);
-    if (periodEnd > endDate) periodEnd.setTime(endDate.getTime());
-
-    periods.push({
-      id,
-      startDate: current.toISOString().split("T")[0],
-      endDate: periodEnd.toISOString().split("T")[0],
-      type,
-      bracketId,
-    });
-
-    current = new Date(periodEnd);
-    current.setDate(current.getDate() + 1);
-    id++;
-  }
-
-  return periods;
-};
-
-const formatDate = (dateStr: string) => {
-  const d = new Date(dateStr + "T00:00:00");
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-};
-
-const getDays = (start: string, end: string) => {
-  const s = new Date(start);
-  const e = new Date(end);
-  return Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-};
-
-const SchedulesTab = () => {
-  const [subTab, setSubTab] = useState("regular");
-
-  // Regular season config
-  const [seasonStart, setSeasonStart] = useState("2025-10-07");
-  const [seasonEnd, setSeasonEnd] = useState("2026-03-29");
-  const [scoringInterval, setScoringInterval] = useState("weekly");
-  const [startDay, setStartDay] = useState("monday");
-  const [mergeWeeks, setMergeWeeks] = useState("1");
-  const [schedulingStrategy, setSchedulingStrategy] = useState("even");
-  const [matchupsPerPeriod, setMatchupsPerPeriod] = useState("1");
-
-  // Playoff config
-  const [playoffStart, setPlayoffStart] = useState("2026-03-30");
-  const [playoffEnd, setPlayoffEnd] = useState("2026-04-14");
-  const [playoffInterval, setPlayoffInterval] = useState("weekly");
-
-  // Scoring periods
-  const [regularPeriods, setRegularPeriods] = useState<ScoringPeriod[]>(
-    generatePeriods("2025-10-07", "2026-03-29", "weekly", "regular")
-  );
-  const [playoffPeriods, setPlayoffPeriods] = useState<ScoringPeriod[]>(
-    generatePeriods("2026-03-30", "2026-04-14", "weekly", "playoff")
-  );
-
-  // Playoff brackets
-  const [brackets, setBrackets] = useState<PlayoffBracket[]>([
-    { id: "championship", name: "Championship Bracket", rounds: 3, teams: 8 },
-  ]);
-  const [newBracketName, setNewBracketName] = useState("");
-
-  // Edit modal
-  const [editingPeriod, setEditingPeriod] = useState<ScoringPeriod | null>(null);
-  const [editStart, setEditStart] = useState("");
-  const [editEnd, setEditEnd] = useState("");
-
-  // Bracket dialog
-  const [bracketDialogOpen, setBracketDialogOpen] = useState(false);
-  const [editingBracket, setEditingBracket] = useState<PlayoffBracket | null>(null);
-  const [bracketName, setBracketName] = useState("");
-  const [bracketRounds, setBracketRounds] = useState("3");
-  const [bracketTeams, setBracketTeams] = useState("8");
-
-  const numTeams = 12;
-
-  const regenerateRegular = () => {
-    const periods = generatePeriods(seasonStart, seasonEnd, scoringInterval, "regular");
-    const merge = parseInt(mergeWeeks);
-    if (merge > 1 && periods.length >= merge) {
-      const merged: ScoringPeriod = {
-        id: 1,
-        startDate: periods[0].startDate,
-        endDate: periods[merge - 1].endDate,
-        type: "regular",
-      };
-      const rest = periods.slice(merge).map((p, i) => ({ ...p, id: i + 2 }));
-      setRegularPeriods([merged, ...rest]);
-    } else {
-      setRegularPeriods(periods);
-    }
-    toast.success("Regular season periods regenerated");
+  if (loading) return <p role="status">Loading schedule…</p>;
+  if (loadError) return <div role="alert">{loadError} <Button onClick={() => setRetry(v => v + 1)}>Retry</Button></div>;
+  if (!config) return null;
+  const disabled = saving || !editable;
+  const { errors, warnings } = validate(config, maximum);
+  const change = (field: string, value: any) => { setConfig((c: any) => ({ ...c, [field]: value })); setSaveError(''); };
+  const regenerate = (kind: string) => {
+    try {
+      const regular = kind === 'regular';
+      change(regular ? 'regularPeriods' : 'playoffPeriods', generatePeriods(
+        regular ? config.seasonStart : config.playoffStart, regular ? config.seasonEnd : config.playoffEnd,
+        regular ? config.scoringInterval : config.playoffInterval, kind, config.startDay, regular ? config.mergeWeeks : 1));
+    } catch (error: any) { setSaveError(error.message); }
   };
-
-  const regeneratePlayoffs = () => {
-    const periods = generatePeriods(playoffStart, playoffEnd, playoffInterval, "playoff");
-    setPlayoffPeriods(periods);
-    toast.success("Playoff periods regenerated");
+  const save = async () => {
+    if (disabled || errors.length) return;
+    setSaving(true); setSaveError('');
+    try { await api.put(url, config); toast.success('Schedule saved'); }
+    catch (error: any) { setSaveError(message(error)); }
+    finally { setSaving(false); }
   };
-
-  const openEditPeriod = (period: ScoringPeriod) => {
-    setEditingPeriod(period);
-    setEditStart(period.startDate);
-    setEditEnd(period.endDate);
+  const periods = (items: any[]) => <div className="overflow-x-auto">
+    {items.length === 0 ? <p role="status">No scoring periods. Regenerate periods to get started.</p> :
+      <table className="w-full text-sm" data-testid="scheduler-periods"><caption className="sr-only">Scoring periods</caption>
+        <thead><tr>{['Period', 'Start Date', 'End Date', 'Days', 'Actions'].map(h => <th scope="col" key={h} className="p-2 text-left">{h}</th>)}</tr></thead>
+        <tbody>{items.map(p => <tr key={`${p.type}-${p.id}`} className="border-t border-border">
+          <th scope="row" className="p-2 text-left">{p.type} {p.id}</th><td className="p-2 whitespace-nowrap">{p.startDate}</td><td className="p-2 whitespace-nowrap">{p.endDate}</td><td className="p-2">{days(p.startDate, p.endDate)}</td>
+          <td><Button variant="ghost" disabled={disabled} aria-label={`Edit ${p.type} period ${p.id}`} onClick={event => { editTrigger.current = event.currentTarget; setEditing({ ...p }); }}>Edit</Button></td>
+        </tr>)}</tbody></table>}
+  </div>;
+  const field = (label: string, name: string, type = 'date', options?: any[]) => <Field label={label} name={name} type={type} options={options} value={config[name]} disabled={disabled} onChange={(v: any) => change(name, type === 'number' ? Number(v) : v)} />;
+  const editError = editing && (!editing.startDate || !editing.endDate || editing.endDate < editing.startDate) ? 'Choose both dates, with end on or after start.' : '';
+  const applyEdit = () => {
+    if (!editing || editError) return;
+    const key = editing.type === 'regular' ? 'regularPeriods' : 'playoffPeriods';
+    const next = { ...config, [key]: config[key].map((p: any) => p.id === editing.id ? editing : p) };
+    const validation = validate(next, maximum);
+    if (validation.errors.length) { setSaveError(validation.errors[0]); return; }
+    setConfig(next); setEditing(null); setSaveError('');
   };
-
-  const saveEditPeriod = () => {
-    if (!editingPeriod) return;
-    const update = (periods: ScoringPeriod[]) =>
-      periods.map((p) => (p.id === editingPeriod.id && p.type === editingPeriod.type ? { ...p, startDate: editStart, endDate: editEnd } : p));
-    if (editingPeriod.type === "regular") {
-      setRegularPeriods(update);
-    } else {
-      setPlayoffPeriods(update);
-    }
-    setEditingPeriod(null);
-    toast.success(`Period ${editingPeriod.id} updated`);
-  };
-
-  const openBracketDialog = (bracket?: PlayoffBracket) => {
-    if (bracket) {
-      setEditingBracket(bracket);
-      setBracketName(bracket.name);
-      setBracketRounds(bracket.rounds.toString());
-      setBracketTeams(bracket.teams.toString());
-    } else {
-      setEditingBracket(null);
-      setBracketName("");
-      setBracketRounds("3");
-      setBracketTeams("4");
-    }
-    setBracketDialogOpen(true);
-  };
-
-  const saveBracket = () => {
-    if (!bracketName.trim()) return;
-    if (editingBracket) {
-      setBrackets((prev) =>
-        prev.map((b) =>
-          b.id === editingBracket.id
-            ? { ...b, name: bracketName, rounds: parseInt(bracketRounds), teams: parseInt(bracketTeams) }
-            : b
-        )
-      );
-      toast.success(`"${bracketName}" updated`);
-    } else {
-      const newBracket: PlayoffBracket = {
-        id: `bracket-${Date.now()}`,
-        name: bracketName,
-        rounds: parseInt(bracketRounds),
-        teams: parseInt(bracketTeams),
-      };
-      setBrackets((prev) => [...prev, newBracket]);
-      toast.success(`"${bracketName}" created`);
-    }
-    setBracketDialogOpen(false);
-  };
-
-  const deleteBracket = (id: string) => {
-    setBrackets((prev) => prev.filter((b) => b.id !== id));
-    toast.success("Bracket removed");
-  };
-
-  // Combined projection
-  const allPeriods = useMemo(() => {
-    const combined: (ScoringPeriod & { globalIndex: number; sectionLabel: string })[] = [];
-    regularPeriods.forEach((p, i) => {
-      combined.push({ ...p, globalIndex: i + 1, sectionLabel: "Regular Season" });
-    });
-    playoffPeriods.forEach((p, i) => {
-      combined.push({ ...p, globalIndex: regularPeriods.length + i + 1, sectionLabel: "Playoffs" });
-    });
-    return combined;
-  }, [regularPeriods, playoffPeriods]);
-
-  const totalRegularDays = regularPeriods.reduce((sum, p) => sum + getDays(p.startDate, p.endDate), 0);
-  const totalPlayoffDays = playoffPeriods.reduce((sum, p) => sum + getDays(p.startDate, p.endDate), 0);
-
-  const PeriodTable = ({ periods, type }: { periods: ScoringPeriod[]; type: "regular" | "playoff" }) => (
-    <div className="max-h-[400px] overflow-y-auto">
-      <Table>
-        <TableHeader>
-          <TableRow className="border-border">
-            <TableHead className="text-muted-foreground w-[70px]">Period</TableHead>
-            <TableHead className="text-muted-foreground">Start Date</TableHead>
-            <TableHead className="text-muted-foreground">End Date</TableHead>
-            <TableHead className="text-muted-foreground text-right w-[70px]">Days</TableHead>
-            <TableHead className="text-muted-foreground text-right w-[70px]">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {periods.map((period) => {
-            const days = getDays(period.startDate, period.endDate);
-            return (
-              <TableRow key={`${type}-${period.id}`} className="border-border">
-                <TableCell className="font-medium text-sm">{period.id}</TableCell>
-                <TableCell className="text-sm">{formatDate(period.startDate)}</TableCell>
-                <TableCell className="text-sm">{formatDate(period.endDate)}</TableCell>
-                <TableCell className="text-right tabular-nums text-sm">
-                  <span className={days < 5 ? "text-yellow-400 font-medium" : "text-muted-foreground"}>
-                    {days}d
-                  </span>
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditPeriod(period)}>
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </div>
-  );
-
-  return (
-    <div className="space-y-6">
-      <Tabs value={subTab} onValueChange={setSubTab}>
-        <TabsList className="bg-secondary border border-border">
-          <TabsTrigger value="regular" className="data-[state=active]:bg-primary/20">
-            <Calendar className="h-4 w-4 mr-2" />
-            Regular Season
-          </TabsTrigger>
-          <TabsTrigger value="playoffs" className="data-[state=active]:bg-primary/20">
-            <Trophy className="h-4 w-4 mr-2" />
-            Playoffs
-          </TabsTrigger>
-          <TabsTrigger value="projection" className="data-[state=active]:bg-primary/20">
-            <CalendarDays className="h-4 w-4 mr-2" />
-            Full Schedule Projection
-          </TabsTrigger>
-        </TabsList>
-
-        {/* ── Regular Season ── */}
-        <TabsContent value="regular" className="space-y-6">
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="h-5 w-5 text-primary" />
-                Regular Season Dates
-              </CardTitle>
-              <CardDescription>Set the start and end dates for the regular season</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Beginning Scoring Period</Label>
-                  <Input type="date" value={seasonStart} onChange={(e) => setSeasonStart(e.target.value)} className="bg-secondary border-border" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Ending Scoring Period</Label>
-                  <Input type="date" value={seasonEnd} onChange={(e) => setSeasonEnd(e.target.value)} className="bg-secondary border-border" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CalendarDays className="h-5 w-5 text-primary" />
-                Scoring Period Configuration
-              </CardTitle>
-              <CardDescription>Define how the regular season is divided into scoring periods</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>Scoring Period Interval</Label>
-                  <Select value={scoringInterval} onValueChange={setScoringInterval}>
-                    <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="biweekly">Bi-Weekly</SelectItem>
-                      <SelectItem value="monthly">Monthly</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Scoring Period Start Day</Label>
-                  <Select value={startDay} onValueChange={setStartDay}>
-                    <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((day) => (
-                        <SelectItem key={day} value={day}>{day.charAt(0).toUpperCase() + day.slice(1)}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Merge First N Weeks</Label>
-                  <Select value={mergeWeeks} onValueChange={setMergeWeeks}>
-                    <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="1">1 Week (No Merge)</SelectItem>
-                      <SelectItem value="2">2 Weeks</SelectItem>
-                      <SelectItem value="3">3 Weeks</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <Separator />
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Scheduling Strategy</Label>
-                  <Select value={schedulingStrategy} onValueChange={setSchedulingStrategy}>
-                    <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="even">Evenly distributed</SelectItem>
-                      <SelectItem value="division">Within division</SelectItem>
-                      <SelectItem value="conference">Within conference</SelectItem>
-                      <SelectItem value="set-division">Set # vs division teams</SelectItem>
-                      <SelectItem value="set-conference">Set # vs conference teams</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Matchups per Scoring Period</Label>
-                  <Select value={matchupsPerPeriod} onValueChange={setMatchupsPerPeriod}>
-                    <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {Array.from({ length: numTeams }, (_, i) => i + 1).map((n) => (
-                        <SelectItem key={n} value={n.toString()}>{n}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Button onClick={regenerateRegular} variant="outline" size="sm">Regenerate Periods</Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Regular Season Scoring Periods</CardTitle>
-                  <CardDescription>
-                    {regularPeriods.length} periods · {totalRegularDays} total days · Click edit to adjust individual periods
-                  </CardDescription>
-                </div>
-                <Badge variant="secondary" className="text-xs">
-                  {regularPeriods.length} periods
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <PeriodTable periods={regularPeriods} type="regular" />
-              <p className="text-xs text-muted-foreground mt-3">
-                Periods shorter than 5 days are highlighted in yellow.
-              </p>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ── Playoffs ── */}
-        <TabsContent value="playoffs" className="space-y-6">
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Trophy className="h-5 w-5 text-primary" />
-                Playoff Dates
-              </CardTitle>
-              <CardDescription>Set the start and end dates for the playoff period</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Playoff Beginning Scoring Period</Label>
-                  <Input type="date" value={playoffStart} onChange={(e) => setPlayoffStart(e.target.value)} className="bg-secondary border-border" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Playoff Ending Scoring Period</Label>
-                  <Input type="date" value={playoffEnd} onChange={(e) => setPlayoffEnd(e.target.value)} className="bg-secondary border-border" />
-                </div>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Playoff Scoring Interval</Label>
-                  <Select value={playoffInterval} onValueChange={setPlayoffInterval}>
-                    <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="daily">Daily</SelectItem>
-                      <SelectItem value="weekly">Weekly</SelectItem>
-                      <SelectItem value="biweekly">Bi-Weekly</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="flex justify-end">
-                <Button onClick={regeneratePlayoffs} variant="outline" size="sm">Regenerate Playoff Periods</Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Playoff Scoring Periods</CardTitle>
-                  <CardDescription>
-                    {playoffPeriods.length} periods · {totalPlayoffDays} total days
-                  </CardDescription>
-                </div>
-                <Badge variant="secondary" className="text-xs">
-                  {playoffPeriods.length} periods
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <PeriodTable periods={playoffPeriods} type="playoff" />
-            </CardContent>
-          </Card>
-
-          {/* Playoff Brackets */}
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <Trophy className="h-5 w-5 text-primary" />
-                    Playoff Brackets
-                  </CardTitle>
-                  <CardDescription>Create and manage playoff brackets (championship, consolation, loser's bracket, etc.)</CardDescription>
-                </div>
-                <Button size="sm" onClick={() => openBracketDialog()}>
-                  <Plus className="h-4 w-4 mr-1" /> Add Bracket
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {brackets.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-6">No brackets configured. Add one to get started.</p>
-              ) : (
-                <div className="space-y-3">
-                  {brackets.map((bracket) => (
-                    <div key={bracket.id} className="flex items-center justify-between p-3 rounded-lg bg-secondary/50 border border-border">
-                      <div className="flex items-center gap-3">
-                        <Trophy className="h-4 w-4 text-primary" />
-                        <div>
-                          <p className="font-medium text-sm">{bracket.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {bracket.teams} teams · {bracket.rounds} rounds
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openBracketDialog(bracket)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        {bracket.id !== "championship" && (
-                          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteBracket(bracket.id)}>
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ── Full Schedule Projection ── */}
-        <TabsContent value="projection" className="space-y-6">
-          <Card className="bg-card border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <CalendarDays className="h-5 w-5 text-primary" />
-                Full Season Schedule Projection
-              </CardTitle>
-              <CardDescription>
-                Review all scoring periods across the entire season to ensure no gaps or overlaps exist
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-3 gap-4 mb-4">
-                <div className="p-3 rounded-lg bg-secondary/50 border border-border text-center">
-                  <p className="text-2xl font-bold">{regularPeriods.length}</p>
-                  <p className="text-xs text-muted-foreground">Regular Season Periods</p>
-                </div>
-                <div className="p-3 rounded-lg bg-secondary/50 border border-border text-center">
-                  <p className="text-2xl font-bold">{playoffPeriods.length}</p>
-                  <p className="text-xs text-muted-foreground">Playoff Periods</p>
-                </div>
-                <div className="p-3 rounded-lg bg-secondary/50 border border-border text-center">
-                  <p className="text-2xl font-bold">{totalRegularDays + totalPlayoffDays}</p>
-                  <p className="text-xs text-muted-foreground">Total Days</p>
-                </div>
-              </div>
-
-              {/* Gap / overlap warnings */}
-              {(() => {
-                const warnings: string[] = [];
-                const checkGaps = (periods: ScoringPeriod[], label: string) => {
-                  for (let i = 1; i < periods.length; i++) {
-                    const prevEnd = new Date(periods[i - 1].endDate);
-                    const currStart = new Date(periods[i].startDate);
-                    const diff = Math.round((currStart.getTime() - prevEnd.getTime()) / (1000 * 60 * 60 * 24));
-                    if (diff > 1) warnings.push(`${label}: ${diff - 1} day gap between Period ${periods[i - 1].id} and ${periods[i].id}`);
-                    if (diff < 1) warnings.push(`${label}: Overlap between Period ${periods[i - 1].id} and ${periods[i].id}`);
-                  }
-                };
-                checkGaps(regularPeriods, "Regular Season");
-                checkGaps(playoffPeriods, "Playoffs");
-                // Check transition
-                if (regularPeriods.length > 0 && playoffPeriods.length > 0) {
-                  const lastReg = new Date(regularPeriods[regularPeriods.length - 1].endDate);
-                  const firstPlay = new Date(playoffPeriods[0].startDate);
-                  const diff = Math.round((firstPlay.getTime() - lastReg.getTime()) / (1000 * 60 * 60 * 24));
-                  if (diff > 1) warnings.push(`${diff - 1} day gap between Regular Season and Playoffs`);
-                  if (diff < 1) warnings.push(`Overlap between Regular Season and Playoffs`);
-                }
-                if (warnings.length === 0) return null;
-                return (
-                  <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 space-y-1">
-                    <p className="text-sm font-medium text-yellow-400">⚠ Schedule Warnings</p>
-                    {warnings.map((w, i) => (
-                      <p key={i} className="text-xs text-yellow-400/80">• {w}</p>
-                    ))}
-                  </div>
-                );
-              })()}
-
-              <div className="max-h-[500px] overflow-y-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="border-border">
-                      <TableHead className="text-muted-foreground w-[50px]">#</TableHead>
-                      <TableHead className="text-muted-foreground w-[120px]">Phase</TableHead>
-                      <TableHead className="text-muted-foreground">Start Date</TableHead>
-                      <TableHead className="text-muted-foreground">End Date</TableHead>
-                      <TableHead className="text-muted-foreground text-right w-[70px]">Days</TableHead>
-                      <TableHead className="text-muted-foreground text-right w-[70px]">Edit</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {allPeriods.map((period, idx) => {
-                      const days = getDays(period.startDate, period.endDate);
-                      const showSectionHeader = idx === 0 || period.sectionLabel !== allPeriods[idx - 1].sectionLabel;
-                      return (
-                        <>
-                          {showSectionHeader && (
-                            <TableRow key={`header-${period.sectionLabel}`} className="border-border bg-secondary/30">
-                              <TableCell colSpan={6} className="py-2">
-                                <div className="flex items-center gap-2">
-                                  {period.type === "regular" ? (
-                                    <Calendar className="h-4 w-4 text-primary" />
-                                  ) : (
-                                    <Trophy className="h-4 w-4 text-primary" />
-                                  )}
-                                  <span className="font-semibold text-sm">{period.sectionLabel}</span>
-                                  <Badge variant="outline" className="text-xs">
-                                    {period.type === "regular" ? regularPeriods.length : playoffPeriods.length} periods
-                                  </Badge>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          )}
-                          <TableRow key={`${period.type}-${period.id}`} className="border-border">
-                            <TableCell className="text-sm tabular-nums text-muted-foreground">{period.globalIndex}</TableCell>
-                            <TableCell>
-                              <Badge variant={period.type === "regular" ? "secondary" : "default"} className="text-xs">
-                                {period.type === "regular" ? `Week ${period.id}` : `Playoff ${period.id}`}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-sm">{formatDate(period.startDate)}</TableCell>
-                            <TableCell className="text-sm">{formatDate(period.endDate)}</TableCell>
-                            <TableCell className="text-right tabular-nums text-sm">
-                              <span className={days < 5 ? "text-yellow-400 font-medium" : "text-muted-foreground"}>
-                                {days}d
-                              </span>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEditPeriod(period)}>
-                                <Pencil className="h-3.5 w-3.5" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        </>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-
-      <div className="flex justify-end gap-3">
-        <Button variant="outline">Reset to Defaults</Button>
-        <Button>Save Schedule</Button>
-      </div>
-
-      {/* Edit Period Dialog */}
-      <Dialog open={!!editingPeriod} onOpenChange={(open) => !open && setEditingPeriod(null)}>
-        <DialogContent className="bg-card border-border">
-          <DialogHeader>
-            <DialogTitle>
-              Edit {editingPeriod?.type === "regular" ? "Regular Season" : "Playoff"} Period {editingPeriod?.id}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Start Date</Label>
-              <Input type="date" value={editStart} onChange={(e) => setEditStart(e.target.value)} className="bg-secondary border-border" />
-            </div>
-            <div className="space-y-2">
-              <Label>End Date</Label>
-              <Input type="date" value={editEnd} onChange={(e) => setEditEnd(e.target.value)} className="bg-secondary border-border" />
-            </div>
-            {editStart && editEnd && (
-              <p className="text-sm text-muted-foreground">
-                Duration: <span className="font-medium text-foreground">{getDays(editStart, editEnd)} days</span>
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingPeriod(null)}>Cancel</Button>
-            <Button onClick={saveEditPeriod}>Save Changes</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Bracket Dialog */}
-      <Dialog open={bracketDialogOpen} onOpenChange={setBracketDialogOpen}>
-        <DialogContent className="bg-card border-border">
-          <DialogHeader>
-            <DialogTitle>{editingBracket ? "Edit Bracket" : "Create Playoff Bracket"}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>Bracket Name</Label>
-              <Input
-                value={bracketName}
-                onChange={(e) => setBracketName(e.target.value)}
-                placeholder="e.g. Consolation Bracket"
-                className="bg-secondary border-border"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Number of Teams</Label>
-                <Select value={bracketTeams} onValueChange={setBracketTeams}>
-                  <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {[2, 4, 6, 8, 10, 12].map((n) => (
-                      <SelectItem key={n} value={n.toString()}>{n} teams</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Number of Rounds</Label>
-                <Select value={bracketRounds} onValueChange={setBracketRounds}>
-                  <SelectTrigger className="bg-secondary border-border"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {[1, 2, 3, 4].map((n) => (
-                      <SelectItem key={n} value={n.toString()}>{n} round{n > 1 ? "s" : ""}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBracketDialogOpen(false)}>Cancel</Button>
-            <Button onClick={saveBracket}>{editingBracket ? "Save" : "Create"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-};
-
-export default SchedulesTab;
+  return <section className="space-y-4 min-w-0" data-testid="scheduler">
+    <h2 className="text-lg font-semibold">{league.name} · {season} season calendar</h2>
+    <p className="text-sm text-muted-foreground">Save scoring period dates and bracket plans for this season. Live opponent matchups are generated separately in League Setup.</p>
+    {!editable && <p role="status">Only league administrators can edit this calendar.</p>}
+    <Tabs value={tab} onValueChange={setTab}>
+      <TabsList className="flex flex-wrap h-auto justify-start gap-1">
+        <TabsTrigger value="regular">Regular Season</TabsTrigger><TabsTrigger value="playoffs">Playoffs</TabsTrigger><TabsTrigger value="projection">Full Schedule Projection</TabsTrigger>
+      </TabsList>
+      <TabsContent value="regular"><Card><CardHeader><CardTitle>Regular Season Dates</CardTitle></CardHeader><CardContent className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">{field('Beginning Scoring Period', 'seasonStart')}{field('Ending Scoring Period', 'seasonEnd')}
+          {field('Scoring Period Interval', 'scoringInterval', 'text', intervalOptions)}
+          <Field label="Scoring Period Start Day" name="startDay" value={config.startDay} options={weekdays.map((label, value) => ({ label, value }))} disabled={disabled} onChange={(v: string) => change('startDay', Number(v))} />
+          <Field label="Merge First N Periods" name="mergeWeeks" value={config.mergeWeeks} options={[1, 2, 3]} disabled={disabled} onChange={(v: string) => change('mergeWeeks', Number(v))} />
+          {field(`Opponents per scoring period (1–${maximum - 1})`, 'matchupsPerPeriod', 'number')}
+        </div><Button disabled={disabled} onClick={() => regenerate('regular')}>Regenerate Regular Periods</Button>
+        {periods(config.regularPeriods)}
+      </CardContent></Card></TabsContent>
+      <TabsContent value="playoffs"><Card><CardHeader><CardTitle>Playoff Dates and Brackets</CardTitle></CardHeader><CardContent className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">{field('Playoff Start Date', 'playoffStart')}{field('Playoff End Date', 'playoffEnd')}{field('Playoff Scoring Interval', 'playoffInterval', 'text', intervalOptions)}</div>
+        <Button disabled={disabled} onClick={() => regenerate('playoff')}>Regenerate Playoff Periods</Button>{periods(config.playoffPeriods)}
+        {!config.brackets.length && <p>No brackets configured. Add one to get started.</p>}
+        {config.brackets.map((b: any, i: number) => <div className="grid gap-3 sm:grid-cols-3 border border-border rounded p-3" key={b.id}>
+          {[['Name', 'name', 'text'], ['Teams', 'teams', 'number'], ['Rounds', 'rounds', 'number']].map(([label, key, type]) => <Field key={key} label={`Bracket ${i + 1} ${label}`} name={`bracket-${i}-${key}`} type={type} value={b[key]} disabled={disabled} onChange={(v: string) => change('brackets', config.brackets.map((item: any, idx: number) => idx === i ? { ...item, [key]: type === 'number' ? Number(v) : v } : item))} />)}
+          <Button variant="outline" disabled={disabled} aria-label={`Remove bracket ${i + 1}`} onClick={() => change('brackets', config.brackets.filter((_: any, idx: number) => idx !== i))}>Remove Bracket</Button>
+        </div>)}
+        <Button disabled={disabled || config.brackets.length >= 50} onClick={() => change('brackets', [...config.brackets, { id: String(Date.now()) + Math.random().toString(36).slice(2), name: 'New Bracket', teams: 2, rounds: 1 }])}>Add Bracket</Button>
+      </CardContent></Card></TabsContent>
+      <TabsContent value="projection"><Card><CardHeader><CardTitle>Full Season Schedule Projection</CardTitle></CardHeader><CardContent>{periods([...config.regularPeriods, ...config.playoffPeriods])}</CardContent></Card></TabsContent>
+    </Tabs>
+    {errors.length > 0 && <div role="alert" className="text-destructive">{errors.map((e: string) => <p key={e}>{e}</p>)}</div>}
+    {warnings.length > 0 && <div role="status" className="text-amber-400">{warnings.map((w: string, i: number) => <p key={i}>{w}</p>)}</div>}
+    {saveError && <p role="alert">{saveError}</p>}
+    <div className="flex flex-wrap justify-end gap-3"><Button variant="outline" disabled={disabled} onClick={() => { setConfig(defaults(league)); setSaveError(''); }}>Reset to Defaults</Button>
+      <Button disabled={disabled || errors.length > 0} onClick={save}>{saving ? 'Saving…' : 'Save Schedule'}</Button></div>
+    <Dialog open={Boolean(editing)} onOpenChange={open => !open && setEditing(null)}><DialogContent onCloseAutoFocus={event => { event.preventDefault(); editTrigger.current?.focus(); }}>
+      <DialogHeader><DialogTitle>Edit {editing?.type} Period {editing?.id}</DialogTitle><DialogDescription>Adjust this period within the season. Overlapping dates are rejected.</DialogDescription></DialogHeader>
+      {editing && <><Field label="Start Date" name="edit-start" value={editing.startDate} onChange={(v: string) => { setEditing({ ...editing, startDate: v }); setSaveError(''); }} /><Field label="End Date" name="edit-end" value={editing.endDate} onChange={(v: string) => { setEditing({ ...editing, endDate: v }); setSaveError(''); }} /></>}
+      {(editError || saveError) && <p role="alert">{editError || saveError}</p>}
+      <DialogFooter><Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button><Button disabled={Boolean(editError) || disabled} onClick={applyEdit}>Save Changes</Button></DialogFooter>
+    </DialogContent></Dialog>
+  </section>;
+}

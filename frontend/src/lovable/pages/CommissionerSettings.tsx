@@ -66,7 +66,7 @@ const CommissionerSettings = ({ leagueContext }) => {
   const VALID_TABS = new Set([
     "league-setup", "player-pool", "rosters", "divisions", "rules-schedule",
     "salary-cap-contracts", "scoring", "draft", "tanking", "roster-monitor",
-    "prospects", "constitution", "audit",
+    "prospects", "constitution", "audit", "admin",
   ]);
   const initialTab = (() => {
     const raw = searchParams.get("tab");
@@ -682,6 +682,7 @@ const CommissionerSettings = ({ leagueContext }) => {
               adminSubTab={adminSubTab}
               setAdminSubTab={setAdminSubTab}
               isH2H={isH2H}
+              league={activeLeague}
             />
           </TabsContent>
         </Tabs>

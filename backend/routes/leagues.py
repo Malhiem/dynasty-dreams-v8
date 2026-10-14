@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from utils.roster_rules import check_position_breakdown_within_caps
 from routes.league_guards import require_league_member, verify_team_in_league
 from services.financial_lock import serialize_finances
+from services.scheduler_calendar import Calendar as SchedulerCalendar
 
 router = APIRouter()
 _deps: dict = {}
@@ -3071,3 +3072,46 @@ async def propagate_roster_shape(league_id: str, request: Request):
             "minors_spots": minors_spots,
         },
     }
+
+
+# Scoring calendar plans are separate from the live opponent matchup generator.
+@router.get("/leagues/{league_id}/scheduler/{season}")
+async def get_scheduler_calendar(league_id: str, season: int, request: Request):
+    from services.scheduler_calendar import can_edit, season_year
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    league = await require_league_member(db, user, league_id)
+    if season != season_year(league):
+        raise HTTPException(status_code=409, detail="The active season changed. Reload the scheduler.")
+    return {"calendar": (league.get("scheduler_calendars") or {}).get(str(season)),
+            "season": season, "can_edit": can_edit(league, user), "max_teams": int(league.get("max_teams") or 12)}
+
+
+@router.put("/leagues/{league_id}/scheduler/{season}")
+async def save_scheduler_calendar(league_id: str, season: int, payload: SchedulerCalendar, request: Request):
+    from services.scheduler_calendar import can_edit, season_year
+    db = _deps["db"]
+    user = await _deps["get_current_user"](request)
+    league = await require_league_member(db, user, league_id)
+    if not can_edit(league, user):
+        raise HTTPException(status_code=403, detail="Only league administrators can save schedules")
+    if season != season_year(league):
+        raise HTTPException(status_code=409, detail="The active season changed. Reload the scheduler.")
+    if league.get("scoring_format") not in ("head_to_head", "h2h-points", "h2h-categories"):
+        raise HTTPException(status_code=400, detail="Matchup scheduling requires Head-to-Head scoring")
+    maximum = int(league.get("max_teams") or 12)
+    if payload.matchupsPerPeriod >= maximum or any(b.teams > maximum for b in payload.brackets):
+        raise HTTPException(status_code=400, detail="Opponent and bracket counts must fit the league team count")
+    if any(b.rounds > len(payload.playoffPeriods) for b in payload.brackets):
+        raise HTTPException(status_code=400, detail="Each bracket round needs a playoff scoring period")
+    calendar = payload.model_dump(mode="json")
+    result = await db.leagues.update_one(
+        {"_id": league["_id"], "current_season_year": league.get("current_season_year"),
+         "scoring_format": league.get("scoring_format"), "max_teams": league.get("max_teams")},
+        {"$set": {f"scheduler_calendars.{season}": calendar},
+         "$push": {"audit_log": {"action": "scheduler_calendar_saved", "season": season,
+                                 "by": str(user["_id"]), "at": datetime.now(timezone.utc).isoformat()}}},
+    )
+    if not result.matched_count:
+        raise HTTPException(status_code=409, detail="League settings changed. Reload the scheduler.")
+    return {"calendar": calendar, "season": season}
