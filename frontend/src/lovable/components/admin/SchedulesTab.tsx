@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import api from '@/lib/api';
+import CombinedSchedule from './scheduler/CombinedSchedule';
 import { toast } from 'sonner';
 import { defaults, generatePeriods, validate, days } from './scheduler/calendar';
 
@@ -22,13 +23,13 @@ function Field({ label, name, value, onChange, type = 'date', options, disabled 
 }
 
 // Keying by league and season prevents old drafts and delayed responses crossing contexts.
-export default function SchedulesTab({ league }: { league: any }) {
+export default function SchedulesTab({ league, reloadLeague }: { league: any; reloadLeague?: () => void }) {
   if (!league?.id) return <p role="status">Select a league to configure its schedule.</p>;
   const season = Number(league.current_season_year || String(league.season_start_date || new Date().toISOString()).slice(0, 4));
-  return <CalendarEditor key={`${league.id}:${season}`} league={league} season={season} />;
+  return <CalendarEditor key={`${league.id}:${season}`} league={league} season={season} reloadLeague={reloadLeague} />;
 }
 
-function CalendarEditor({ league, season }: any) {
+function CalendarEditor({ league, season, reloadLeague }: any) {
   const [config, setConfig] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -95,11 +96,11 @@ function CalendarEditor({ league, season }: any) {
   };
   return <section className="space-y-4 min-w-0" data-testid="scheduler">
     <h2 className="text-lg font-semibold">{league.name} · {season} season calendar</h2>
-    <p className="text-sm text-muted-foreground">Save scoring period dates and bracket plans for this season. Live opponent matchups are generated separately in League Setup.</p>
+    <p className="text-sm text-muted-foreground">Save scoring period dates and bracket plans for this season. Use Opponent Schedule below to generate and apply live weekly matchups.</p>
     {!editable && <p role="status">Only league administrators can edit this calendar.</p>}
     <Tabs value={tab} onValueChange={setTab}>
       <TabsList className="flex flex-wrap h-auto justify-start gap-1">
-        <TabsTrigger value="regular">Regular Season</TabsTrigger><TabsTrigger value="playoffs">Playoffs</TabsTrigger><TabsTrigger value="projection">Full Schedule Projection</TabsTrigger>
+        <TabsTrigger value="regular">Regular Season</TabsTrigger><TabsTrigger value="playoffs">Playoffs</TabsTrigger><TabsTrigger value="projection">Full Schedule Projection</TabsTrigger><TabsTrigger value="opponents">Opponent Schedule</TabsTrigger>
       </TabsList>
       <TabsContent value="regular"><Card><CardHeader><CardTitle>Regular Season Dates</CardTitle></CardHeader><CardContent className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">{field('Beginning Scoring Period', 'seasonStart')}{field('Ending Scoring Period', 'seasonEnd')}
@@ -121,6 +122,7 @@ function CalendarEditor({ league, season }: any) {
         <Button disabled={disabled || config.brackets.length >= 50} onClick={() => change('brackets', [...config.brackets, { id: String(Date.now()) + Math.random().toString(36).slice(2), name: 'New Bracket', teams: 2, rounds: 1 }])}>Add Bracket</Button>
       </CardContent></Card></TabsContent>
       <TabsContent value="projection"><Card><CardHeader><CardTitle>Full Season Schedule Projection</CardTitle></CardHeader><CardContent>{periods([...config.regularPeriods, ...config.playoffPeriods])}</CardContent></Card></TabsContent>
+      <TabsContent value="opponents"><CombinedSchedule key={url} leagueId={league.id} onApplied={reloadLeague} /></TabsContent>
     </Tabs>
     {errors.length > 0 && <div role="alert" className="text-destructive">{errors.map((e: string) => <p key={e}>{e}</p>)}</div>}
     {warnings.length > 0 && <div role="status" className="text-amber-400">{warnings.map((w: string, i: number) => <p key={i}>{w}</p>)}</div>}

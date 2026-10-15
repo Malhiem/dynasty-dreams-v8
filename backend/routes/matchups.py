@@ -9,6 +9,8 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from routes import awards as awards_module
+from routes import scheduler as scheduler_routes
+from services.schedule_store import season_query, season as schedule_season
 from routes.league_guards import require_league_member, verify_team_in_league
 
 router = APIRouter()
@@ -17,6 +19,7 @@ _deps: dict = {}
 
 def setup(deps: dict) -> None:
     _deps.update(deps)
+    scheduler_routes.setup(deps)
 
 
 # ─── Pydantic ─────────────────────────────────────────────────
@@ -313,235 +316,26 @@ def _build_division_pairings(teams: list, cfg: dict) -> list:
     return pairings
 
 
-def _distribute_to_weeks(pairings: list, team_ids: list, num_weeks: int) -> list:
-    """Spread pairings across weeks so each team plays at most once per week.
-
-    Greedy: iterate pairings in random order, placing each in the earliest
-    week where neither team already has a game. If all weeks are full,
-    evenly overflow the earliest weeks (rare for normal configs).
-    """
-    import random as _random
-    weeks: list[list] = [[] for _ in range(num_weeks)]
-    teams_in_week: list[set] = [set() for _ in range(num_weeks)]
-
-    shuffled = pairings[:]
-    _random.shuffle(shuffled)
-
-    placed = []
-    unplaced = []
-    for home, away in shuffled:
-        placed_flag = False
-        for w in range(num_weeks):
-            if home not in teams_in_week[w] and away not in teams_in_week[w]:
-                weeks[w].append((home, away))
-                teams_in_week[w].add(home)
-                teams_in_week[w].add(away)
-                placed.append((w + 1, home, away))
-                placed_flag = True
-                break
-        if not placed_flag:
-            unplaced.append((home, away))
-    # Overflow: append leftovers into the sparsest weeks round-robin
-    if unplaced:
-        for home, away in unplaced:
-            w = min(range(num_weeks), key=lambda x: len(weeks[x]))
-            weeks[w].append((home, away))
-            placed.append((w + 1, home, away))
-    return placed  # list of (week, home, away)
-
-
 # ─── Endpoints ───────────────────────────────────────────────
 @router.post("/matchups/generate-schedule")
 async def generate_schedule(input: GenerateScheduleRequest, request: Request):
-    """Commissioner generates the full season schedule."""
-    db = _deps["db"]
-    get_current_user = _deps["get_current_user"]
-
-    user = await get_current_user(request)
-    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
-    is_commish = (
-        league.get("commissioner_id") == user["_id"]
-        or user["_id"] in (league.get("co_commissioners") or [])
-    )
-    if not is_commish:
-        raise HTTPException(
-            status_code=403,
-            detail="Only the commissioner (or a co-commissioner) can generate the schedule.",
-        )
-
-    teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
-    # Iter 225 — Allow generating with empty placeholder slots.
-    # Previously we required ≥2 teams which blocked commissioners from
-    # finishing the setup wizard before all invitees joined. Now we pad
-    # with virtual "Open Slot N" teams up to `league.max_teams`. The
-    # placeholders are NOT stored in the `teams` collection — they only
-    # appear in matchup rows with a synthetic team_id (`open_slot_{n}`)
-    # that the UI treats as "TBD" / "Open Slot" until a real team fills it.
-    max_teams_target = int(league.get("max_teams") or 0)
-    actual_team_count = len(teams)
-
-    placeholder_count = 0
-    if max_teams_target > actual_team_count:
-        placeholder_count = max_teams_target - actual_team_count
-        for i in range(placeholder_count):
-            slot_num = actual_team_count + i + 1
-            teams.append({
-                "_id": f"open_slot_{slot_num}",
-                "name": f"Open Slot {slot_num}",
-                "is_open_slot": True,
-            })
-
-    if len(teams) < 2:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Need at least 2 teams to generate a schedule — this league has {actual_team_count} team{'s' if actual_team_count != 1 else ''} "
-                f"and max_teams={max_teams_target or 'unset'}. "
-                "Bump `max_teams` to at least 2 or invite more managers first."
-            ),
-        )
-
-    team_ids = [str(t["_id"]) for t in teams]
-    team_map = {str(t["_id"]): t["name"] for t in teams}
-    scoring_format = league.get("scoring_format", "head_to_head")
-
-    # Resolve schedule length from league config when caller omits it,
-    # so league administration is the single source of truth.
-    num_weeks = input.num_weeks
-    if num_weeks is None:
-        num_weeks = int(league.get("regular_season_weeks") or 18)
-
-    # Iter 225 — Season-window + NHL-window sanity check. Errors block,
-    # warnings are returned to the UI so the commissioner can choose to
-    # proceed anyway (warnings don't fail; errors do).
-    s_errors, s_warnings = _season_schedule_warnings(
-        season_start=league.get("season_start_date"),
-        season_end=league.get("season_end_date"),
-        matchup_length_days=int(league.get("matchup_length_days") or 7),
-        num_weeks=num_weeks,
-    )
-    if s_errors:
-        raise HTTPException(
-            status_code=400,
-            detail={"message": "Schedule doesn't fit the configured season.", "errors": s_errors},
-        )
-
-    # ── Iter 100: opponents_per_matchup_period (1..N-1) ───────────────
-    # When > 1, each team plays N opponents per scoring period. We achieve
-    # this by stacking the base schedule N times (each pass adds a fresh
-    # opponent for every team in every week). Bounded to N-1 (can't play
-    # more unique opponents than exist).
-    # Iter 219 — Honour `matchups_per_week` (set on league creation) as
-    # the primary source; fall back to legacy `opponents_per_matchup_period`
-    # for backward compat with previously-created leagues.
-    opponents_per_period = int(
-        league.get("matchups_per_week")
-        or league.get("opponents_per_matchup_period")
-        or 1
-    )
-    max_opponents = max(1, len(teams) - 1)
-    opponents_per_period = max(1, min(opponents_per_period, max_opponents))
-
-    # Division-aware? Only opt-in via league.schedule_config AND ≥2 distinct
-    # divisions configured. Otherwise fall back to vanilla round-robin.
-    schedule_cfg = league.get("schedule_config")
-    div_names = {t.get("division") for t in teams if t.get("division")}
-    use_divisional = bool(schedule_cfg) and len(div_names) >= 2
-
-    full_schedule: list = []
-    if use_divisional:
-        pairings = _build_division_pairings(teams, schedule_cfg)
-        distributed = _distribute_to_weeks(pairings, team_ids, num_weeks)
-        for week, home_id, away_id in distributed:
-            if week > num_weeks:
-                continue
-            full_schedule.append({
-                "week": week,
-                "home_team_id": home_id,
-                "home_team_name": team_map.get(home_id, ""),
-                "away_team_id": away_id,
-                "away_team_name": team_map.get(away_id, ""),
-                "home_score": 0,
-                "away_score": 0,
-                "status": "scheduled",
-                "winner": None,
-            })
-    else:
-        base_schedule = generate_round_robin(team_ids)
-        # Stack N copies of the round-robin to hit `opponents_per_period`.
-        for pass_idx in range(opponents_per_period):
-            week = 1
-            cycle = itertools.cycle(base_schedule)
-            # Skip ahead per pass so passes don't all start at round 0.
-            for _ in range(pass_idx):
-                next(cycle)
-            while week <= num_weeks:
-                round_matchups = next(cycle)
-                _random.shuffle(round_matchups)
-                for home_id, away_id in round_matchups:
-                    full_schedule.append({
-                        "week": week,
-                        "home_team_id": home_id,
-                        "home_team_name": team_map.get(home_id, ""),
-                        "away_team_id": away_id,
-                        "away_team_name": team_map.get(away_id, ""),
-                        "home_score": 0,
-                        "away_score": 0,
-                        "status": "scheduled",
-                        "winner": None,
-                    })
-                week += 1
-
-        # ── Dedup safety: remove duplicate opponents in same week ──
-        # Each (week, team_pair) must appear at most once.
-        seen: set = set()
-        deduped: list = []
-        for m in full_schedule:
-            pair = tuple(sorted([m["home_team_id"], m["away_team_id"]]))
-            key = (m["week"], pair)
-            if key not in seen:
-                seen.add(key)
-                deduped.append(m)
-        full_schedule = deduped
-
-    await db.matchups.delete_many({"league_id": input.league_id})
-    if full_schedule:
-        for m in full_schedule:
-            m["league_id"] = input.league_id
-            m["scoring_format"] = scoring_format
-        await db.matchups.insert_many(full_schedule)
-
-    # ── Iter 101: append playoff bracket + consolation bracket ──
-    # Honors `playoff_format`, `playoff_seeding_method`, and `playoff_custom_matchups`
-    # so the bracket UI on /standings (Playoffs tab) renders the configured ladder.
-    bracket_matchups: list = []
-    bracket_matchups.extend(_build_playoff_bracket(league, teams, is_consolation=False))
-    if league.get("consolation_enabled"):
-        bracket_matchups.extend(_build_playoff_bracket(league, teams, is_consolation=True))
-    if bracket_matchups:
-        for m in bracket_matchups:
-            m["league_id"] = input.league_id
-            m["scoring_format"] = scoring_format
-            m["home_team_name"] = team_map.get(m.get("home_team_id") or "", "TBD")
-            m["away_team_name"] = team_map.get(m.get("away_team_id") or "", "TBD")
-            m["home_score"] = 0
-            m["away_score"] = 0
-            m["status"] = "scheduled"
-            m["winner"] = None
-        await db.matchups.insert_many(bracket_matchups)
-
-    return {
-        "message": f"Generated {len(full_schedule)} matchups for {num_weeks} weeks",
-        "weeks": num_weeks,
-        "mode": "division_aware" if use_divisional else "round_robin",
-        "opponents_per_period": 1 if use_divisional else opponents_per_period,
-        "playoff_matchups": len([m for m in bracket_matchups if m.get("is_playoff")]),
-        "consolation_matchups": len([m for m in bracket_matchups if m.get("is_consolation")]),
-        "placeholder_team_slots": placeholder_count,
-        "warnings": s_warnings,
-    }
+    """Legacy entry point uses the same validated, transaction-safe combined engine."""
+    from services.combined_scheduler import defaults
+    from services.schedule_store import apply_preview
+    user, ctx = await scheduler_routes.authorized(request, input.league_id)
+    settings = defaults(ctx["league"], ctx["teams"])
+    if input.num_weeks is not None:
+        settings = settings.model_copy(update={"weeks": input.num_weeks})
+    result = await scheduler_routes.make_preview(_deps["db"], input.league_id, user, ctx, settings)
+    if result["status"] != "feasible":
+        raise HTTPException(400 if result["status"] == "infeasible" else 503, detail=" ".join(result["errors"]))
+    applied = await apply_preview(_deps["db"], input.league_id, result["preview_id"], user)
+    return {**applied, "message": f"Generated {applied['games']} validated matchups", "weeks": settings.weeks,
+            "mode": "combined", "opponents_per_period": settings.games_per_week,
+            "placeholder_team_slots": sum(bool(t.get("is_open_slot")) for t in ctx["teams"]),
+            "playoff_matchups": await _deps["db"].matchups.count_documents({**season_query(input.league_id, schedule_season(ctx["league"])), "is_playoff": True}),
+            "consolation_matchups": await _deps["db"].matchups.count_documents({**season_query(input.league_id, schedule_season(ctx["league"])), "is_consolation": True}),
+            "warnings": []}
 
 
 class PreviewScheduleRequest(BaseModel):
@@ -561,57 +355,30 @@ class PreviewScheduleRequest(BaseModel):
 
 @router.post("/matchups/preview")
 async def preview_schedule(input: PreviewScheduleRequest):
-    """Return a hypothetical round-robin schedule. No DB reads or writes.
-
-    Uses placeholder team names ("Team 1".."Team N") so the create-league wizard
-    can render an at-a-glance grid of who plays whom in each week. Honours
-    `matchups_per_week` by stacking copies of the base round-robin (capped at
-    `max_teams - 1` opponents per period).
-    """
-    n = input.max_teams
-    team_ids = [f"team_{i + 1}" for i in range(n)]
-    team_map = {tid: f"Team {i + 1}" for i, tid in enumerate(team_ids)}
-
-    max_opponents = max(1, n - 1)
-    opponents_per_period = max(1, min(input.matchups_per_week, max_opponents))
-
-    base_schedule = generate_round_robin(team_ids)
-    preview: list = []
-    for pass_idx in range(opponents_per_period):
-        week = 1
-        cycle = itertools.cycle(base_schedule)
-        for _ in range(pass_idx):
-            next(cycle)
-        while week <= input.num_weeks:
-            round_matchups = next(cycle)
-            for home_id, away_id in round_matchups:
-                preview.append({
-                    "week": week,
-                    "home_team_id": home_id,
-                    "home_team_name": team_map[home_id],
-                    "away_team_id": away_id,
-                    "away_team_name": team_map[away_id],
-                })
-            week += 1
-    # Bucket by week for easy UI rendering
-    by_week: dict[int, list] = {w: [] for w in range(1, input.num_weeks + 1)}
-    for m in preview:
-        by_week[m["week"]].append(m)
-    return {
-        "weeks": [
-            {"week": w, "matchups": by_week[w]}
-            for w in range(1, input.num_weeks + 1)
-        ],
-        "matchups_per_week": opponents_per_period,
-        "team_count": n,
-        "total_matchups": len(preview),
-        "warnings": _season_schedule_warnings(
-            season_start=input.season_start,
-            season_end=input.season_end,
-            matchup_length_days=input.matchup_length_days,
-            num_weeks=input.num_weeks,
-        )[1],
-    }
+    """Wizard preview uses the same weekly constraint engine without live writes."""
+    from services.combined_scheduler import Settings, solve
+    from starlette.concurrency import run_in_threadpool
+    import asyncio
+    teams = [{"_id": f"team_{i + 1}", "name": f"Team {i + 1}"} for i in range(input.max_teams)]
+    settings = Settings(weeks=input.num_weeks, games_per_week=input.matchups_per_week)
+    try:
+        await asyncio.wait_for(scheduler_routes._solvers.acquire(), timeout=1)
+    except TimeoutError:
+        raise HTTPException(429, "Other schedules are being generated. Try again shortly.")
+    try:
+        result = await run_in_threadpool(solve, teams, settings, (), 4)
+    except ImportError as exc:
+        raise HTTPException(503, "The schedule solver is not installed on this server") from exc
+    finally:
+        scheduler_routes._solvers.release()
+    if result["status"] != "feasible":
+        raise HTTPException(400 if result["status"] == "infeasible" else 503, result)
+    errors, warnings = _season_schedule_warnings(season_start=input.season_start, season_end=input.season_end,
+        matchup_length_days=input.matchup_length_days, num_weeks=input.num_weeks)
+    if errors: raise HTTPException(400, {"errors": errors})
+    return {"weeks": [{"week": w, "matchups": [g for g in result["games"] if g["week"] == w]} for w in range(1, input.num_weeks + 1)],
+            "matchups_per_week": input.matchups_per_week, "team_count": input.max_teams,
+            "total_matchups": len(result["games"]), "warnings": warnings}
 
 
 # ── Iter 231ar — Open-slot resolution at read time ─────────────────
@@ -672,10 +439,10 @@ async def get_matchups(league_id: str, request: Request, week: Optional[int] = N
     db = _deps["db"]
     user = await _deps["get_current_user"](request)
     league = await require_league_member(db, user, league_id)
-    query = {"league_id": league_id}
+    query = season_query(league_id, schedule_season(league))
     if week:
         query["week"] = week
-    matchups = await db.matchups.find(query).sort("week", 1).to_list(1000)
+    matchups = await db.matchups.find(query).sort("week", 1).to_list(15000)
     matchups = await _resolve_open_slots(db, league_id, matchups)
     from services.h2h_scoring import live_scores
     matchups = await live_scores(db, league, matchups)
@@ -691,12 +458,12 @@ async def get_current_week(league_id: str, request: Request):
     user = await _deps["get_current_user"](request)
     league = await require_league_member(db, user, league_id)
     pipeline = [
-        {"$match": {"league_id": league_id, "status": "scheduled"}},
+        {"$match": {**season_query(league_id, schedule_season(league)), "status": "scheduled"}},
         {"$group": {"_id": None, "min_week": {"$min": "$week"}}},
     ]
     result = await db.matchups.aggregate(pipeline).to_list(1)
     current = result[0]["min_week"] if result else 1
-    matchups = await db.matchups.find({"league_id": league_id, "week": current}).to_list(100)
+    matchups = await db.matchups.find({**season_query(league_id, schedule_season(league)), "week": current}).to_list(15000)
     matchups = await _resolve_open_slots(db, league_id, matchups)
     from services.h2h_scoring import live_scores
     matchups = await live_scores(db, league, matchups)
@@ -980,7 +747,7 @@ async def get_week_results(league_id: str, week: int, request: Request):
     db = _deps["db"]
     user = await _deps["get_current_user"](request)
     league = await require_league_member(db, user, league_id)
-    matchups = await db.matchups.find({"league_id": league_id, "week": week}).to_list(100)
+    matchups = await db.matchups.find({**season_query(league_id, schedule_season(league)), "week": week}).to_list(15000)
     matchups = await _resolve_open_slots(db, league_id, matchups)
     from services.h2h_scoring import live_scores
     matchups = await live_scores(db, league, matchups)
@@ -1010,10 +777,10 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         raise HTTPException(status_code=403, detail="Only commissioner can simulate")
 
     matchups = await db.matchups.find({
-        "league_id": input.league_id,
+        **season_query(input.league_id, schedule_season(league)),
         "week": input.week,
         "status": "scheduled",
-    }).to_list(100)
+    }).to_list(15000)
     if not matchups:
         raise HTTPException(status_code=400, detail="No scheduled matchups for this week")
 
@@ -1420,7 +1187,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         })
 
     if scoring_format == "all_play":
-        all_teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
+        all_teams = await db.teams.find({"league_id": input.league_id}).to_list(15000)
         scores = {str(t["_id"]): await calc_team_score(str(t["_id"])) for t in all_teams}
         for team_id, score in scores.items():
             ap_wins = sum(1 for oid, oscore in scores.items() if oid != team_id and score > oscore)
@@ -1429,7 +1196,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                                       {"$inc": {"wins": ap_wins, "losses": ap_losses}})
 
     if scoring_format == "guillotine":
-        all_teams = await db.teams.find({"league_id": input.league_id, "eliminated": {"$ne": True}}).to_list(100)
+        all_teams = await db.teams.find({"league_id": input.league_id, "eliminated": {"$ne": True}}).to_list(15000)
         scores = []
         for t in all_teams:
             s = await calc_team_score(str(t["_id"]))
@@ -1448,7 +1215,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         playoff_query = {"league_id": input.league_id, "$or": [{"is_playoff": True}, {"is_consolation": True}]}
         started = await db.matchups.count_documents({**playoff_query, "status": {"$in": ["completed", "in_progress"]}})
         if not started:
-            final_teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
+            final_teams = await db.teams.find({"league_id": input.league_id}).to_list(15000)
             for consolation in (False, True):
                 prefix = "consolation_" if consolation else "playoff_"
                 if league.get(f"{prefix}seeding_method") == "custom":
@@ -1459,7 +1226,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
                     continue
                 query = {"league_id": input.league_id, "week": first_round[0]["week"],
                          "is_consolation": consolation, "bracket_round": 1}
-                existing = await db.matchups.find(query).sort("_id", 1).to_list(100)
+                existing = await db.matchups.find(query).sort("_id", 1).to_list(15000)
                 for saved, final in zip(existing, first_round):
                     await db.matchups.update_one({"_id": saved["_id"], "status": "scheduled"}, {"$set": {
                         "home_team_id": final["home_team_id"], "away_team_id": final["away_team_id"]}})
@@ -1485,7 +1252,7 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         last_rs_week = rs_agg[0]["max_week"] if rs_agg else None
 
         if last_rs_week is not None and input.week >= last_rs_week:
-            all_league_teams = await db.teams.find({"league_id": input.league_id}).to_list(100)
+            all_league_teams = await db.teams.find({"league_id": input.league_id}).to_list(15000)
             divisions_seen = {t.get("division") for t in all_league_teams if t.get("division")}
             if len(divisions_seen) >= 2:
                 now = datetime.now(timezone.utc)
@@ -1575,3 +1342,6 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
         logger.warning(f"Auto-snapshot skipped: {e}")
 
     return {"week": input.week, "results": results, "matchups_simulated": len(matchups)}
+
+
+router.include_router(scheduler_routes.router)

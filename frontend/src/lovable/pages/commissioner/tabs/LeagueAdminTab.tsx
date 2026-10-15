@@ -17,9 +17,10 @@ interface LeagueAdminTabProps {
   setAdminSubTab: (v: string) => void;
   isH2H: boolean;
   league: any;
+  reloadLeague?: () => void;
 }
 
-export default function LeagueAdminTab({ adminSubTab, setAdminSubTab, isH2H, league }: LeagueAdminTabProps) {
+export default function LeagueAdminTab({ adminSubTab, setAdminSubTab, isH2H, league, reloadLeague }: LeagueAdminTabProps) {
   return (
     <Tabs value={adminSubTab} onValueChange={setAdminSubTab} data-testid="commissioner-league-admin-tab">
       <TabsList className="bg-secondary border border-border flex flex-wrap h-auto justify-start">
@@ -60,7 +61,7 @@ export default function LeagueAdminTab({ adminSubTab, setAdminSubTab, isH2H, lea
             </CardContent>
           </Card>
         ) : (
-          <SchedulesTab league={league} />
+          <SchedulesTab league={league} reloadLeague={reloadLeague} />
         )}
       </TabsContent>
       <TabsContent value="season-awards">

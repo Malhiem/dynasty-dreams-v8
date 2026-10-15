@@ -1,12 +1,13 @@
 """Dated, ownership-aware live matchup totals and category outcomes."""
 from utils.game_allocation import allocate_team_period_fpts, allocate_team_period_roto_stats
 from utils.scoring_roster import week_to_time_range
+from services.schedule_store import season_query, season as schedule_season
 
 
 async def live_scores(db, league, matchups):
     """Derive only the current open week's scores; preserve closed/future rows."""
     lid = str(league["_id"])
-    earliest = await db.matchups.find_one({"league_id": lid, "status": {"$in": ["scheduled", "in_progress"]}}, sort=[("week", 1)])
+    earliest = await db.matchups.find_one({**season_query(lid, schedule_season(league)), "status": {"$in": ["scheduled", "in_progress"]}}, sort=[("week", 1)])
     if not earliest:
         return matchups
     week = earliest["week"]

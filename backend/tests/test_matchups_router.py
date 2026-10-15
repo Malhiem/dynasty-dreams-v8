@@ -99,3 +99,18 @@ async def test_get_matchups_empty_league_returns_empty_list():
         r = await ctx.client.get(f"/api/matchups/{lid}")
         assert r.status_code == 200
         assert r.json() == []
+
+
+@pytest.mark.asyncio
+async def test_active_season_read_ignores_historical_scheduled_rows():
+    async with isolated_router_app(matchups_routes) as ctx:
+        from bson import ObjectId
+        lid = await seed_league(ctx.db)
+        await ctx.db.leagues.update_one({"_id": ObjectId(lid)}, {"$set": {"current_season_year": 2027}})
+        for season, week in [("2025-26", 1), ("2026-27", 2)]:
+            await ctx.db.matchups.insert_one({"league_id": lid, "season": season, "week": week,
+                "status": "scheduled", "home_team_id": "A", "away_team_id": "B"})
+        rows = (await ctx.client.get(f"/api/matchups/{lid}")).json()
+        assert len(rows) == 1 and rows[0]["season"] == "2026-27"
+        current = (await ctx.client.get(f"/api/matchups/{lid}/current-week")).json()
+        assert current["week"] == 2

@@ -1,6 +1,5 @@
 import { expect, test } from "@playwright/test";
 
-import { CreateLeaguePage } from "../pages/create-league/create-league.page";
 import { LeagueStructurePage } from "../pages/league-structure/league-structure.page";
 import { leagueStructureSelectors } from "../pages/league-structure/league-structure.selectors";
 import { LoginPage } from "../pages/login/login.page";
@@ -15,15 +14,19 @@ test("commissioner can configure the requested regular season and playoff tree",
 }) => {
   const suffix = Date.now();
   const loginPage = new LoginPage(page);
-  const createLeaguePage = new CreateLeaguePage(page);
   const leagueStructurePage = new LeagueStructurePage(page);
 
   await loginPage.goto();
   await loginPage.logIn(adminCredentials);
   await expect(page).toHaveURL(/\/dashboard(?:\?|$)/);
 
-  await createLeaguePage.goto();
-  const league = await createLeaguePage.createPrivateLeague(`E2E Schedule League ${suffix}`);
+  // Isolate schedule settings coverage from the separate league-creation wizard.
+  const created = await page.request.post('/api/leagues', { data: {
+    name: `E2E Schedule League ${suffix}`, sport: 'nhl', format: 'dynasty',
+    scoring_format: 'head_to_head', max_teams: 24, is_private: true,
+  } });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const league = await created.json();
   await leagueStructurePage.goto(league.id);
   await expect(page.getByTestId("divisions-tab")).toBeVisible();
 

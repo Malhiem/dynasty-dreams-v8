@@ -39,10 +39,11 @@ def test_preview_doubles_with_matchups_per_week_2():
     assert all(len(w["matchups"]) == 10 for w in d["weeks"])
 
 
-def test_preview_caps_matchups_per_week_to_n_minus_1():
-    # 4 teams → max opponents per week = 3. Send the largest accepted value.
-    d = _preview({"max_teams": 4, "matchups_per_week": 31, "num_weeks": 2})
-    assert d["matchups_per_week"] == 3
+def test_preview_rejects_more_opponents_than_exist():
+    response = requests.post(f"{API_URL}/api/matchups/preview", json={
+        "max_teams": 4, "matchups_per_week": 31, "num_weeks": 2,
+    })
+    assert response.status_code == 400  # Requirements are never silently clamped.
 
 
 def test_preview_no_db_writes_idempotent():

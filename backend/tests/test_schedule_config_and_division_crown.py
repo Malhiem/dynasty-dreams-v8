@@ -98,34 +98,24 @@ def test_schedule_config_validation_range():
 
 
 def test_generate_schedule_reports_mode():
-    """When divisions + config are set, generate-schedule returns mode='division_aware'."""
+    """The legacy generation entry point shares the combined model."""
+    import uuid
     s = _login(COMMISH_EMAIL, COMMISH_PASS)
-    lid = _pick_commish_league(s)
-
-    # Ensure divisions are set (from prior tests or assign here)
-    teams = s.get(f"{BASE_URL}/api/teams?league_id={lid}").json()
-    if len(teams) < 4:
-        pytest.skip("Need ≥4 teams for division-aware test")
-
-    assignments = []
-    for i, t in enumerate(teams[:8]):
-        div = ["Atlantic", "Metropolitan", "Central", "Pacific"][i % 4]
-        conf = "Eastern" if div in ("Atlantic", "Metropolitan") else "Western"
-        assignments.append({"team_id": t["id"], "division": div, "conference": conf})
-    s.put(f"{BASE_URL}/api/leagues/{lid}/divisions", json={"assignments": assignments})
-
-    s.put(
-        f"{BASE_URL}/api/leagues/{lid}/schedule-config",
-        json={"intra_division_games": 2, "intra_conference_games": 1, "inter_conference_games": 1},
-    )
-
-    r = s.post(f"{BASE_URL}/api/matchups/generate-schedule", json={
-        "league_id": lid, "num_weeks": 14,
+    created = s.post(f"{BASE_URL}/api/leagues", json={
+        "name": f"TEST_CombinedMode_{uuid.uuid4().hex}", "sport": "nhl", "format": "dynasty",
+        "scoring_format": "head_to_head", "max_teams": 4, "is_private": True,
     })
-    # May fail with 400 if schedule already exists in a locked state; but should 200 when commissioner
-    assert r.status_code == 200, r.text
-    data = r.json()
-    assert data.get("mode") in ("division_aware", "round_robin")
+    assert created.status_code == 200, created.text
+    lid = created.json()["id"]
+    updated = s.put(f"{BASE_URL}/api/leagues/{lid}", json={
+        "regular_season_weeks": 4, "opponents_per_matchup_period": 1,
+        "season_start_date": "2026-10-07", "season_end_date": "2026-11-03", "playoffs_enabled": False,
+    })
+    assert updated.status_code == 200, updated.text
+    response = s.post(f"{BASE_URL}/api/matchups/generate-schedule", json={"league_id": lid, "num_weeks": 4})
+    assert response.status_code == 200, response.text
+    assert response.json()["mode"] == "combined"
+    assert response.json()["games"] == 8
 
 
 def test_build_division_pairings_unit():

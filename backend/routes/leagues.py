@@ -112,6 +112,7 @@ class LeagueResponse(BaseModel):
     commissioner_id: str
     commissioner_name: str
     co_commissioners: List[str] = []
+    admin_ids: List[str] = []
     salary_cap_enabled: bool
     salary_cap: Optional[float]
     draft_type: str
@@ -327,6 +328,7 @@ async def create_league(input: LeagueCreate, request: Request):
         current_teams=1,
         commissioner_id=league_doc["commissioner_id"],
         commissioner_name=league_doc["commissioner_name"],
+        admin_ids=league_doc.get("admin_ids", []) or [],
         co_commissioners=league_doc.get("co_commissioners", []) or [],
         salary_cap_enabled=league_doc["salary_cap_enabled"],
         salary_cap=league_doc["salary_cap"],
@@ -355,6 +357,7 @@ def _league_to_response(league: dict) -> LeagueResponse:
         current_teams=league.get("current_teams", 0),
         commissioner_id=league["commissioner_id"],
         commissioner_name=league["commissioner_name"],
+        admin_ids=league.get("admin_ids", []) or [],
         co_commissioners=league.get("co_commissioners", []) or [],
         salary_cap_enabled=league["salary_cap_enabled"],
         salary_cap=league.get("salary_cap"),
@@ -555,6 +558,7 @@ async def get_leagues(
     query = {
         "$or": [
             {"commissioner_id": user["_id"]},
+            {"admin_ids": user["_id"]},
             {"_id": {"$in": member_object_ids}},
         ]
     }
@@ -1097,6 +1101,7 @@ async def update_schedule_config(league_id: str, input: ScheduleConfig, request:
         {"_id": ObjectId(league_id)},
         {
             "$set": {"schedule_config": cfg},
+            "$unset": {"combined_schedule_settings": ""},
             "$push": {"audit_log": {
                 "action": "schedule_config_updated",
                 "by": user.get("email"),
@@ -2229,7 +2234,7 @@ _LEAGUE_UPDATE_ALLOWED = {
 @router.put("/leagues/{league_id}")
 @serialize_finances(lambda: _deps["db"])
 async def update_league(league_id: str, payload: LeagueUpdate, request: Request):
-    """Commissioner / co-commissioner only: update mutable league settings.
+    """League commissioner, co-commissioner or administrator: update mutable settings.
 
     Sparse payload — only provided keys are written; the response echoes the
     full canonical config so the UI cache can stay in sync without a follow-up
@@ -2245,10 +2250,10 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
         raise HTTPException(status_code=404, detail="League not found")
     is_comm = league["commissioner_id"] == user["_id"]
     co_comms = league.get("co_commissioners", []) or []
-    if not (is_comm or user["_id"] in co_comms):
+    if not (is_comm or user["_id"] in co_comms or user["_id"] in (league.get("admin_ids") or [])):
         raise HTTPException(
             status_code=403,
-            detail="Only commissioners can update league settings",
+            detail="Only league administrators can update league settings",
         )
 
     update: dict = {}
@@ -2266,6 +2271,13 @@ async def update_league(league_id: str, payload: LeagueUpdate, request: Request)
         if new_val != old_val:
             update[field] = new_val
             diff[field] = {"from": old_val, "to": new_val}
+
+    # Both legacy entry points and the combined scheduler use the same weekly capacity.
+    if body.get("opponents_per_matchup_period") is not None:
+        capacity = int(body["opponents_per_matchup_period"])
+        if league.get("matchups_per_week") != capacity:
+            update["matchups_per_week"] = capacity
+            diff["matchups_per_week"] = {"from": league.get("matchups_per_week"), "to": capacity}
 
     # Iter 232N.83 — Enforce the max_teams > 32 → duplicate-mode gate on
     # both create + update paths so admins can't sneak a 100-team league

@@ -683,6 +683,7 @@ const CommissionerSettings = ({ leagueContext }) => {
               setAdminSubTab={setAdminSubTab}
               isH2H={isH2H}
               league={activeLeague}
+              reloadLeague={reloadLeague}
             />
           </TabsContent>
         </Tabs>

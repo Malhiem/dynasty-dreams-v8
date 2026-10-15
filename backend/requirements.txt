@@ -141,3 +141,6 @@ zipp==3.23.0
 
 # PDF text verification used by the security export regression tests.
 pypdf>=5,<7
+
+# Combined weekly/opponent scheduling; compatible with protobuf 5.29.x.
+ortools==9.12.4544
