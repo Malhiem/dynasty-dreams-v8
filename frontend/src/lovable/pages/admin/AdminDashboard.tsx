@@ -12,6 +12,7 @@
  *
  * All routes are admin-role gated via /api/admin/platform/*.
  */
+import "./admin-dashboard.css";
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
@@ -82,6 +83,13 @@ import { DetailGrid, DetailRow, StatusPill, SyncStat } from "./components/_share
 export default function AdminDashboard() {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const [wideNavigation, setWideNavigation] = useState(() => window.matchMedia("(min-width: 1024px)").matches);
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1024px)");
+    const update = () => setWideNavigation(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
   const [metrics, setMetrics] = useState(null);
   const [actions, setActions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -143,7 +151,7 @@ export default function AdminDashboard() {
   if (user.role !== "admin") return null;
 
   return (
-    <div className="min-h-screen bg-background text-foreground" data-testid="admin-dashboard-page">
+    <div className="admin-dashboard min-h-screen bg-background text-foreground" data-testid="admin-dashboard-page">
       <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-3">
@@ -173,10 +181,10 @@ export default function AdminDashboard() {
         {/* Iter 210 — Real-time critical alerts (Sync + Server Ops + Dead Leagues) */}
         <CriticalAlertBanner />
 
-        <Tabs defaultValue="overview" orientation="vertical" className="flex gap-6" data-testid="admin-tabs-root">
+        <Tabs defaultValue="overview" orientation={wideNavigation ? "vertical" : "horizontal"} className="flex flex-col lg:flex-row gap-6 min-w-0" data-testid="admin-tabs-root">
           {/* Vertical sidebar nav */}
           <TabsList
-            className="flex flex-col items-stretch h-auto bg-secondary/20 p-2 rounded-lg shrink-0 w-56 sticky top-4 self-start gap-1"
+            className="flex flex-row lg:flex-col justify-start items-center lg:items-stretch h-auto bg-secondary/20 p-2 rounded-lg shrink-0 w-full lg:w-56 lg:sticky lg:top-4 self-start gap-1 overflow-x-auto"
             data-testid="admin-sidebar-nav"
           >
             <SidebarTab value="overview" icon={BarChart3} label="Overview" testid="admin-tab-overview" />
@@ -207,7 +215,7 @@ export default function AdminDashboard() {
           </TabsList>
 
           {/* Right content pane */}
-          <div className="flex-1 min-w-0">
+          <div className="admin-content flex-1 min-w-0 w-full">
 
           {/* ─── Overview tab ─── */}
           <TabsContent value="overview" className="space-y-6 mt-0">
@@ -388,7 +396,7 @@ function SidebarTab({ value, icon: Icon, label, testid }) {
     <TabsTrigger
       value={value}
       data-testid={testid}
-      className="justify-start gap-2 px-3 py-2 text-sm h-9 w-full data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:border-l-2 data-[state=active]:border-primary rounded-md text-left text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-colors"
+      className="justify-start gap-2 px-3 py-2 text-sm h-9 w-auto lg:w-full shrink-0 data-[state=active]:bg-primary/15 data-[state=active]:text-primary data-[state=active]:border-l-2 data-[state=active]:border-primary rounded-md text-left text-muted-foreground hover:text-foreground hover:bg-secondary/40 transition-colors"
     >
       <Icon className="h-4 w-4 shrink-0" />
       <span className="truncate">{label}</span>

@@ -316,7 +316,7 @@ export default function AttentionFeedPanel({
               size="sm"
               onClick={load}
               disabled={loading}
-              data-testid="attention-feed-compact-refresh"
+              aria-label="Refresh attention feed" data-testid="attention-feed-compact-refresh"
               className="h-7 shrink-0"
             >
               <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
@@ -392,7 +392,7 @@ export default function AttentionFeedPanel({
               size="sm"
               onClick={load}
               disabled={loading}
-              data-testid="attention-feed-refresh"
+              aria-label="Refresh attention feed" data-testid="attention-feed-refresh"
               className="h-8"
             >
               <RefreshCw

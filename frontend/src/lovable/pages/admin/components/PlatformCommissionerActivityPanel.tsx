@@ -264,7 +264,7 @@ export default function PlatformCommissionerActivityPanel() {
               size="sm"
               onClick={fetchActivity}
               disabled={loading}
-              data-testid="platform-commish-activity-refresh"
+              aria-label="Refresh commissioner activity" data-testid="platform-commish-activity-refresh"
               className="h-7"
             >
               <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />

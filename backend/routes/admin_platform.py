@@ -656,9 +656,9 @@ def _md_to_platypus(md: str, story: list, *, h2, h3, body, mono) -> None:
     """Tiny markdown→platypus translator: H2/H3, paragraphs, ul, fenced
     code, inline `code`. Mirrors the frontend renderer so the PDF and
     the dashboard panel stay visually consistent. Tables get rendered
-    as preformatted text (acceptable — they're only used once in the
-    threat-model intro)."""
-    from reportlab.platypus import Paragraph, Preformatted, Spacer
+    as wrapped cells so long content stays inside the page frame."""
+    from reportlab.platypus import Paragraph, Spacer
+    from services.admin_pdf_layout import wrapped_code, markdown_table
 
     lines = md.split("\n")
     i = 0
@@ -682,7 +682,7 @@ def _md_to_platypus(md: str, story: list, *, h2, h3, body, mono) -> None:
                 buf.append(lines[i])
                 i += 1
             i += 1
-            story.append(Preformatted("\n".join(buf) or " ", mono))
+            story.extend(wrapped_code("\n".join(buf) or " ", mono))
             story.append(Spacer(1, 4))
             continue
         if ln.startswith("### "):
@@ -721,7 +721,7 @@ def _md_to_platypus(md: str, story: list, *, h2, h3, body, mono) -> None:
             while i < len(lines) and lines[i].strip().startswith("|"):
                 tbl_buf.append(lines[i])
                 i += 1
-            story.append(Preformatted("\n".join(tbl_buf), mono))
+            story.append(markdown_table(tbl_buf, body, _inline_md))
             story.append(Spacer(1, 4))
             continue
         if stripped == "---" or stripped == "***":

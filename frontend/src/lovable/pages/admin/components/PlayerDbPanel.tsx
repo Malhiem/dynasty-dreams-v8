@@ -363,7 +363,7 @@ export default function PlayerDbPanel() {
               <Button
                 variant="outline" size="sm" onClick={load}
                 disabled={loading} className="h-8"
-                data-testid="player-db-reload-btn"
+                aria-label="Refresh player database" data-testid="player-db-reload-btn"
               >
                 <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
               </Button>
@@ -501,7 +501,7 @@ export default function PlayerDbPanel() {
                         variant="ghost" size="sm"
                         onClick={() => setEditing(p)}
                         className="h-6 w-6 p-0"
-                        data-testid={`player-db-edit-${p.id}`}
+                        aria-label={`Edit ${p.name}`} data-testid={`player-db-edit-${p.id}`}
                       >
                         <Pencil className="h-3 w-3" />
                       </Button>
@@ -509,7 +509,7 @@ export default function PlayerDbPanel() {
                         variant="ghost" size="sm"
                         onClick={() => deletePlayer(p)}
                         className="h-6 w-6 p-0 text-rose-300 hover:text-rose-400"
-                        data-testid={`player-db-delete-${p.id}`}
+                        aria-label={`Delete ${p.name}`} data-testid={`player-db-delete-${p.id}`}
                       >
                         <Trash2 className="h-3 w-3" />
                       </Button>

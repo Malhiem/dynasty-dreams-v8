@@ -83,9 +83,9 @@ const Banner = ({ banner, onClick }: { banner: BannerData; onClick?: () => void 
 };
 
 const TrophyDisplay = ({ trophy, year }: { trophy: any; year?: number | string }) => {
+  const navigate = useNavigate();
   if (!trophy) return null;
   const Icon = TROPHY_ICON[trophy.label] || Trophy;
-  const navigate = useNavigate();
   const slug = (trophy.label || "").toLowerCase().replace(/\s+/g, "-");
   return (
     <button

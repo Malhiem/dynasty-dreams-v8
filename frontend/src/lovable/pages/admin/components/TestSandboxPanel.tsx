@@ -285,7 +285,7 @@ export default function TestSandboxPanel() {
             size="sm"
             onClick={load}
             disabled={loading}
-            data-testid="test-sandbox-refresh"
+            aria-label="Refresh test sandbox" data-testid="test-sandbox-refresh"
             className="h-8"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
@@ -324,7 +324,7 @@ export default function TestSandboxPanel() {
               size="sm"
               onClick={copyPassword}
               className="h-6 shrink-0"
-              data-testid="test-sandbox-copy-password"
+              aria-label="Copy sandbox password" data-testid="test-sandbox-copy-password"
             >
               <Copy className="h-3 w-3" />
             </Button>

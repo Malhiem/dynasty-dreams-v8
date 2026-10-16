@@ -195,25 +195,26 @@ async def feature_adoption(request: Request, days: int = Query(30, ge=1, le=180)
         {"key": "draft_room", "path_regex": "^/drafts/", "event": "draft_pick_made"},
     ]
     out = []
-    total_users = await db.users.count_documents({"role": {"$ne": "admin"}})
+    eligible = [str(u["_id"]) async for u in db.users.find({"role": {"$ne": "admin"}}, {"_id": 1})]
+    total_users = len(eligible)
     for f in features:
         # Discovered: unique users hitting the path
         discovered_ids = set()
         async for v in db.analytics_pageviews.find(
-            {"ts": {"$gte": since}, "path": {"$regex": f["path_regex"]}, "user_id": {"$ne": None}},
+            {"ts": {"$gte": since}, "path": {"$regex": f["path_regex"]}, "user_id": {"$in": eligible}},
             {"user_id": 1},
         ):
             discovered_ids.add(v["user_id"])
         # Used (fired the event)
         used_ids = set()
         async for e in db.analytics_events.find(
-            {"ts": {"$gte": since}, "event_name": f["event"]}, {"user_id": 1},
+            {"ts": {"$gte": since}, "event_name": f["event"], "user_id": {"$in": eligible}}, {"user_id": 1},
         ):
             used_ids.add(e["user_id"])
         # Returned (>=2 uses)
         ret_counts: Counter = Counter()
         async for e in db.analytics_events.find(
-            {"ts": {"$gte": since}, "event_name": f["event"]}, {"user_id": 1},
+            {"ts": {"$gte": since}, "event_name": f["event"], "user_id": {"$in": eligible}}, {"user_id": 1},
         ):
             ret_counts[e["user_id"]] += 1
         returned_ids = {uid for uid, cnt in ret_counts.items() if cnt >= 2}
@@ -241,14 +242,16 @@ async def onboarding_funnel(request: Request, days: int = Query(60, ge=1, le=365
     await _require_admin(request)
     db = _db()
     since = datetime.now(timezone.utc) - timedelta(days=days)
-    since_iso = since.isoformat()
-    total = await db.users.count_documents({"role": {"$ne": "admin"}, "created_at": {"$gte": since_iso}})
+    # Registration stores BSON datetimes; legacy ISO strings are normalized for this cohort.
+    cohort = {"role": {"$ne": "admin"}, "$expr": {"$gte": [
+        {"$convert": {"input": "$created_at", "to": "date", "onError": None, "onNull": None}}, since]}}
+    total = await db.users.count_documents(cohort)
 
     email_verified = await db.users.count_documents({
-        "role": {"$ne": "admin"}, "created_at": {"$gte": since_iso}, "email_verified": True,
+        **cohort, "email_verified": True,
     })
     profile_set = await db.users.count_documents({
-        "role": {"$ne": "admin"}, "created_at": {"$gte": since_iso},
+        **cohort,
         "$or": [{"avatar_url": {"$exists": True, "$ne": None}},
                 {"favourite_team": {"$exists": True, "$ne": None}}],
     })
@@ -259,7 +262,7 @@ async def onboarding_funnel(request: Request, days: int = Query(60, ge=1, le=365
             user_ids_with_team.add(t["owner_id"])
     new_user_ids = set()
     async for u in db.users.find(
-        {"role": {"$ne": "admin"}, "created_at": {"$gte": since_iso}}, {"_id": 1},
+        cohort, {"_id": 1},
     ):
         new_user_ids.add(str(u["_id"]))
     joined_league = len(new_user_ids & user_ids_with_team)

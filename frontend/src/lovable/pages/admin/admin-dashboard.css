@@ -1,0 +1,13 @@
+/* Keep administrative panels bounded; wide tables scroll in their own region. */
+.admin-dashboard .admin-content, .admin-dashboard [role="tabpanel"] { min-width: 0; max-width: 100%; }
+.admin-content :where(pre, code, p, span) { overflow-wrap: anywhere; }
+.admin-content pre { white-space: pre-wrap; overflow-x: auto; max-width: 100%; }
+.admin-content .overflow-x-auto { max-width: 100%; min-width: 0; }
+@media (max-width: 1023px) {
+  .admin-content .flex { flex-wrap: wrap; min-width: 0; }
+  .admin-content [class*="col-span"] { grid-column: auto / span 1; }
+  .admin-content .grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+  .admin-content :where(input, textarea, button, select) { max-width: 100%; }
+  .admin-content :where(.shrink-0, .rounded-lg, .rounded-md) { min-width: 0; max-width: 100%; }
+  .admin-content table { display: block; width: 100%; max-width: 100%; overflow-x: auto; }
+}

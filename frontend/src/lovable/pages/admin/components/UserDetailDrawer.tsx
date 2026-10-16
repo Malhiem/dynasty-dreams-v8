@@ -6,25 +6,31 @@
  * `AdminActionHistorySection` (the per-user audit-trail rail) since it is
  * only used inside the drawer.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import api from "@/lib/api";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { DetailGrid, DetailRow, StatusPill } from "./_shared";
 import { AdminActionsPanel } from "./AdminActionsPanel";
 import { UserExtensionsSection } from "./UserExtensionsSection";
 
-export function UserDetailDrawer({ loading, detail, onClose, onRefresh, onRowsRefresh }) {
+export function UserDetailDrawer({ loading, detail, error, onClose, onRefresh, onRowsRefresh }) {
+  const opener = useRef(document.activeElement);
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-stretch justify-end" onClick={onClose} data-testid="user-detail-drawer">
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent data-testid="user-detail-drawer" className="left-auto right-0 top-0 h-dvh w-full max-w-[760px] translate-x-0 translate-y-0 overflow-y-auto p-0"
+        onCloseAutoFocus={(event) => { event.preventDefault(); if (opener.current?.isConnected) (opener.current as HTMLElement).focus(); }}>
+      <DialogDescription className="sr-only">Administrative account details and actions for {detail?.email || "the selected user"}.</DialogDescription>
       <div
         className="w-full max-w-[760px] bg-background border-l border-border h-full overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="p-5 border-b border-border flex items-center justify-between sticky top-0 bg-background z-10">
-          <h3 className="text-base font-semibold">User detail</h3>
+          <DialogTitle asChild><h3 className="text-base font-semibold">User detail</h3></DialogTitle>
           <Button variant="outline" size="sm" onClick={onClose} data-testid="user-detail-close">Close</Button>
         </div>
         {loading && <div className="p-6 text-sm text-muted-foreground">Loading user…</div>}
+        {!loading && error && <div role="alert" className="p-5"><p>{error}</p><Button onClick={onRefresh}>Retry details</Button></div>}
         {!loading && detail && (
           <div className="p-5 space-y-6 text-sm">
             <section className="space-y-2" data-testid="user-detail-identity">
@@ -146,7 +152,8 @@ export function UserDetailDrawer({ loading, detail, onClose, onRefresh, onRowsRe
           </div>
         )}
       </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -4,7 +4,7 @@
  * + per-user drilldown via UserDetailDrawer.
  * Extracted from AdminDashboard.tsx during Iter 223 refactor.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -24,9 +24,15 @@ export function UsersPanel() {
   const [selected, setSelected] = useState(null);
   const [selectedDetail, setSelectedDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+  const [listError, setListError] = useState("");
+
+  const listRequest = useRef(0);
+  const detailRequest = useRef(0);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const request = ++listRequest.current;
+    setLoading(true); setListError("");
     try {
       const q = new URLSearchParams();
       if (query.trim()) q.set("q", query.trim());
@@ -34,32 +40,38 @@ export function UsersPanel() {
       q.set("limit", String(limit));
       q.set("skip", String(skip));
       const { data } = await api.get(`/admin/platform/users?${q.toString()}`);
+      if (request !== listRequest.current) return;
       setRows(data.users || []);
       setTotal(data.total || 0);
     } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Failed to load users");
+      if (request === listRequest.current) {
+        setListError("Could not load users. Retry to refresh this list.");
+        if ([401, 403].includes(e?.response?.status)) { setRows([]); setTotal(0); detailRequest.current++; setSelected(null); setSelectedDetail(null); }
+      }
     } finally {
-      setLoading(false);
+      if (request === listRequest.current) setLoading(false);
     }
   }, [query, statusFilter, skip]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); return () => { listRequest.current++; }; }, [load]);
+  useEffect(() => () => { detailRequest.current++; }, []);
 
   const openDetail = async (userId) => {
+    const request = ++detailRequest.current;
     setSelected(userId);
     setSelectedDetail(null);
-    setDetailLoading(true);
+    setDetailLoading(true); setDetailError("");
     try {
       const { data } = await api.get(`/admin/platform/users/${userId}`);
-      setSelectedDetail(data);
+      if (request === detailRequest.current) setSelectedDetail(data);
     } catch (e: any) {
-      toast.error(e?.response?.data?.detail || "Failed to load user details");
+      if (request === detailRequest.current) setDetailError("Could not load user details. Retry to refresh this account.");
     } finally {
-      setDetailLoading(false);
+      if (request === detailRequest.current) setDetailLoading(false);
     }
   };
 
-  const closeDetail = () => { setSelected(null); setSelectedDetail(null); };
+  const closeDetail = () => { detailRequest.current++; setSelected(null); setSelectedDetail(null); };
 
   return (
     <section className="space-y-4" data-testid="users-section">
@@ -94,6 +106,7 @@ export function UsersPanel() {
         </div>
       </div>
 
+      {listError && <div role="alert"><p>{listError}</p><Button onClick={load} disabled={loading}>Retry users</Button></div>}
       <div className="rounded-lg border border-border overflow-x-auto">
         <table className="w-full text-sm" data-testid="users-table">
           <thead className="bg-secondary/40">
@@ -111,7 +124,7 @@ export function UsersPanel() {
             {loading && (
               <tr><td colSpan={7} className="px-3 py-6 text-center text-xs text-muted-foreground">Loading…</td></tr>
             )}
-            {!loading && rows.length === 0 && (
+            {!loading && !listError && rows.length === 0 && (
               <tr><td colSpan={7} className="px-3 py-6 text-center text-xs text-muted-foreground">No users match</td></tr>
             )}
             {!loading && rows.map((u: any) => (
@@ -122,7 +135,11 @@ export function UsersPanel() {
                 data-testid={`users-row-${u.id}`}
               >
                 <td className="px-3 py-2 font-medium text-primary hover:underline" data-testid={`users-view-${u.id}`}>
-                  {u.username || u.name || "—"}
+                  <button type="button" className="rounded text-left underline-offset-2 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"
+                    aria-label={`View details for ${u.username || u.name || u.email}`}
+                    onClick={(event) => { event.stopPropagation(); openDetail(u.id); }}>
+                    {u.username || u.name || "—"}
+                  </button>
                 </td>
                 <td className="px-3 py-2 text-muted-foreground max-w-[240px] truncate" title={u.email}>
                   {u.email}
@@ -174,6 +191,7 @@ export function UsersPanel() {
       {selected && (
         <UserDetailDrawer
           loading={detailLoading}
+          error={detailError}
           detail={selectedDetail}
           onClose={closeDetail}
           onRefresh={() => openDetail(selected)}

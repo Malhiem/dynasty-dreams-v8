@@ -283,7 +283,7 @@ export default function MetricExplorerPanel() {
               size="sm"
               onClick={loadData}
               disabled={loadingData || !selectedMetric}
-              data-testid="metric-explorer-refresh"
+              aria-label="Refresh selected metric" data-testid="metric-explorer-refresh"
               className="h-8"
             >
               <RefreshCw

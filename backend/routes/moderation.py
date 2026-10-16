@@ -540,29 +540,11 @@ async def admin_resolve_appeal(appeal_id: str, request: Request):
     action = payload.get("action")
     if action not in ("approved", "denied"):
         raise HTTPException(status_code=400, detail="action must be approved|denied")
-    appeal = await _db().user_appeals.find_one({"_id": oid, "status": "open"})
-    if not appeal:
-        raise HTTPException(status_code=404, detail="Appeal not found or already resolved")
-    note = (payload.get("note") or "").strip()[:1000]
-    await _db().user_appeals.update_one(
-        {"_id": oid},
-        {"$set": {
-            "status": action,
-            "resolved_at": datetime.now(timezone.utc).isoformat(),
-            "resolved_by_email": admin.get("email"),
-            "resolution_note": note,
-        }},
-    )
-    if action == "approved":
-        try:
-            await _db().users.update_one(
-                {"_id": ObjectId(appeal["user_id"])},
-                {"$set": {"status": "active"},
-                 "$unset": {"ban_reason_code": "", "ban_reason": "", "ban_expires_at": ""}},
-            )
-        except Exception:
-            pass
-    return {"ok": True, "appeal_id": appeal_id, "status": action}
+    from services.admin_mutations import resolve_appeal
+    note = payload.get("note", "")
+    if not isinstance(note, str) or len(note) > 1000:
+        raise HTTPException(400, "note must be at most 1000 characters")
+    return await resolve_appeal(_db(), admin, oid, action, note.strip())
 
 
 

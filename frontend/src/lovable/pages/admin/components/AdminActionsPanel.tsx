@@ -9,7 +9,7 @@
  *   • FieldRenderer                  — input/textarea/select/number/checkbox
  *   • ActionGroup / ActionBtn        — visual layout primitives
  */
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,8 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+
+const newOperationKey = () => Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
 
 const REASON_CODES = [
   { value: "harassment", label: "Harassment" },
@@ -107,12 +109,13 @@ const ACTION_CONFIGS = {
   },
   merge_accounts: {
     title: "Merge accounts", tone: "danger", path: "/merge-accounts",
-    description: "STUBBED — audit-only. Source user data merged INTO this target account.",
+    description: "Transfers source ownership, history and credits into this account. The source account is disabled. This data transfer cannot be undone.",
+    requireConfirm: true,
     fields: [
       { name: "source_user_id", label: "Source user id", type: "text", required: true },
       { name: "reason", label: "Reason", type: "textarea" },
     ],
-    success: "Merge queued",
+    success: "Accounts merged",
   },
   unlink_sso: {
     title: "Unlink SSO provider", tone: "warn", path: "/unlink-sso",
@@ -307,10 +310,14 @@ export function AdminActionsPanel({ userId, userEmail, userStatus, permissionTie
   const [active, setActive] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const open = (key) => setActive(key);
+  const operation = useRef({ key: "", payload: "" });
+  const submitting = useRef(false);
+  const open = (key) => { operation.current = { key: newOperationKey(), payload: "" }; setActive(key); };
   const close = () => setActive(null);
 
   const submit = async (cfg, values) => {
+    if (submitting.current) return;
+    submitting.current = true;
     setBusy(true);
     try {
       const body = { ...(cfg.extraBody || {}), ...values };
@@ -332,7 +339,11 @@ export function AdminActionsPanel({ userId, userEmail, userStatus, permissionTie
           window.dispatchEvent(new Event("auth-impersonation-started"));
         } catch { /* noop */ }
       } else {
-        res = await api.post(`/admin/platform/users/${userId}${cfg.path}`, body);
+        const payload = JSON.stringify(body);
+        if (operation.current.payload && operation.current.payload !== payload) operation.current.key = newOperationKey();
+        operation.current.payload = payload;
+        res = await api.post(`/admin/platform/users/${userId}${cfg.path}`, body,
+          cfg.path === "/promo-credit" ? { headers: { "Idempotency-Key": operation.current.key } } : undefined);
       }
       const note = res.data?.mocked ? " (MOCKED)" : "";
       toast.success((cfg.success || "Action complete") + note);
@@ -344,6 +355,7 @@ export function AdminActionsPanel({ userId, userEmail, userStatus, permissionTie
     } catch (e: any) {
       toast.error(e?.response?.data?.detail || "Action failed");
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   };
@@ -459,7 +471,7 @@ function ActionDialog({ config, userEmail, busy, onClose, onSubmit }) {
     for (const f of config.fields || []) {
       if (f.required) {
         const v = values[f.name];
-        if (v === undefined || v === null || v === "") return false;
+        if (v === undefined || v === null || v === "" || typeof v === "string" && !v.trim()) return false;
       }
     }
     if (config.requireConfirm && !acknowledged) return false;

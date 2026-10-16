@@ -192,11 +192,12 @@ async def suspend_user(user_id: str, request: Request):
     admin = await _require_admin(request, "suspend")
     u = await _load_user(user_id)
     payload = await request.json()
-    days = int(payload.get("duration_days") or 0)
-    if days < 1:
-        raise HTTPException(status_code=400, detail="duration_days must be >= 1")
+    days = payload.get("duration_days")
+    if type(days) is not int or not 1 <= days <= 3650:
+        raise HTTPException(status_code=400, detail="duration_days must be an integer from 1 to 3650")
     reason_code = (payload.get("reason_code") or "other").strip()
-    reason = (payload.get("reason") or "").strip()
+    from services.admin_mutations import required_reason
+    reason = required_reason(payload)
     expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
     prior = {"status": u.get("status"), "ban_expires_at": u.get("ban_expires_at")}
     await _db().users.update_one(
@@ -1016,24 +1017,9 @@ async def promo_credit(user_id: str, request: Request):
     """Body: { amount_cents: int (positive=add, negative=remove),
               currency: 'usd', note: str }"""
     admin = await _require_admin(request, "promo_credit")
-    u = await _load_user(user_id)
-    payload = await request.json()
-    amt = int(payload.get("amount_cents") or 0)
-    if amt == 0:
-        raise HTTPException(status_code=400, detail="amount_cents must be non-zero")
-    cur = (payload.get("currency") or "usd").lower()
-    prior = {"promo_credits_cents": u.get("promo_credits_cents") or 0}
-    new_balance = (u.get("promo_credits_cents") or 0) + amt
-    await _db().users.update_one(
-        {"_id": u["_id"]},
-        {"$set": {"promo_credits_cents": new_balance, "promo_currency": cur}},
-    )
-    aid = await _audit(admin=admin, target_user_id=user_id, action="promo_credit",
-                       reason=(payload.get("note") or ""),
-                       metadata={"amount_cents": amt, "currency": cur,
-                                 "new_balance_cents": new_balance},
-                       prior_state=prior)
-    return {"ok": True, "audit_id": aid, "new_balance_cents": new_balance}
+    await _load_user(user_id)
+    from services.admin_mutations import credit
+    return await credit(_db(), admin, user_id, await request.json(), request.headers.get("Idempotency-Key"))
 
 
 @router.post("/{user_id}/void-payout")
@@ -1167,7 +1153,11 @@ async def export_data(user_id: str, request: Request):
             "phone": u.get("phone"),
             "created_at": _iso(u.get("created_at")),
             "status": u.get("status"),
-            "linked_sso_accounts": u.get("linked_sso_accounts") or [],
+            "linked_sso_accounts": [
+                {key: link[key] for key in ("provider", "subject", "email", "linked_at") if key in link}
+                if isinstance(link, dict) else {"provider": str(link)}
+                for link in (u.get("linked_sso_accounts") or [])
+            ],
             "warnings": u.get("warnings") or [],
             "chargeback_flags": u.get("chargeback_flags") or [],
         },
@@ -1245,7 +1235,8 @@ async def set_permission_tier(user_id: str, request: Request):
     u = await _load_user(user_id)
     payload = await request.json()
     tier = (payload.get("tier") or "").strip()
-    reason = (payload.get("reason") or "").strip()
+    from services.admin_mutations import required_reason
+    reason = required_reason(payload)
     if tier not in ("user", "moderator", "admin", "senior_admin"):
         raise HTTPException(status_code=400, detail="invalid tier")
     # Sync the legacy `role` field too — moderator/admin/senior_admin all
