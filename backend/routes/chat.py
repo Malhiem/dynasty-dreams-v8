@@ -703,8 +703,10 @@ async def post_message(channel_id: str, payload: dict, request: Request):
         "metadata": payload.get("metadata") or {},
         "created_at": datetime.now(timezone.utc),
     }
-    res = await db.chat_messages.insert_one(msg)
-    msg["_id"] = res.inserted_id
+    from services.chat_submission import persist_message
+    msg, created = await persist_message(db, msg, payload.get("client_message_id"))
+    if not created:
+        return _serialize(msg)
 
     # Iter 206 — Content Moderation Phase 2: scan against banned keywords.
     try:
@@ -719,7 +721,7 @@ async def post_message(channel_id: str, payload: dict, request: Request):
                 context={
                     "channel_id": channel_id,
                     "league_id": chan["league_id"],
-                    "message_id": str(res.inserted_id),
+                    "message_id": str(msg["_id"]),
                     "sender_name": sender_name,
                 },
                 matched_word=match["matched_word"],

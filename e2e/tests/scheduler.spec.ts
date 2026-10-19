@@ -191,12 +191,13 @@ test('switching league and active season never reuses another calendar draft', a
   await result(await a.commissioner.api.put(`/api/leagues/${second.id}/scheduler/2026`, { data: next }));
   await open(page, first.id);
   await page.getByLabel('Opponents per scoring period (1–7)').fill('3');
+  const menu=page.getByRole('button',{name:'Toggle navigation menu',exact:true});
+  if(await menu.isVisible())await menu.click();
   await page.getByTestId('current-league-dropdown-trigger').click();
   await page.getByTestId(`current-league-option-${second.id}`).click();
   await expect(page).toHaveURL(`/leagues/${second.id}`);
-  await page.getByRole('link', { name: 'League Administration', exact: true }).click();
-  await page.getByRole('tab', { name: 'League Administration', exact: true }).click();
-  await page.getByRole('tab', { name: 'Schedules', exact: true }).click();
+  await page.keyboard.press('Escape');await page.keyboard.press('Escape');
+  await open(page, second.id);
   await expect(page.getByLabel('Opponents per scoring period (1–7)')).toHaveValue('2');
   expect((await result(await a.commissioner.api.get(`/api/leagues/${first.id}/scheduler/2026`))).calendar.matchupsPerPeriod).toBe(1);
   await database(db => db.collection('leagues').updateOne({ _id: new ObjectId(second.id) }, { $set: { current_season_year: 2027 } }));

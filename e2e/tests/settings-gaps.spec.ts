@@ -79,15 +79,15 @@ test('G09 duplicate-player pool setting survives reload',async({page})=>{
  await expect(select).toContainText('Entire League');const saved=page.waitForResponse(r=>r.request().method()==='PUT'&&r.url().endsWith(`/leagues/${l.id}`));await page.getByTestId('player-pool-save').click();expect((await saved).ok()).toBe(true);await page.reload();await expect(select).toContainText('Entire League');
 });
 const tabs=[['league-setup','League Setup'],['player-pool','Player Pool'],['rosters','Rosters'],['divisions','League Structure'],['rules-schedule','Transactions'],['salary-cap-contracts','Salary Cap & Contracts'],['scoring','Scoring'],['draft','Draft'],['tanking','Tank Monitor'],['roster-monitor','Roster Monitor'],['admin','League Administration'],['audit-log','Audit Log']];
-test('G10 all desktop Settings tabs render without uncaught page errors',async({page},info)=>{
+test('G10 all responsive Settings sections render without uncaught page errors',async({page},info)=>{
  const l=await league(a);const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await open(page,l.id,a.commissioner,'league-setup');
- for(const [,label] of tabs){await page.getByRole('tab',{name:label,exact:true}).click();await expect(page.getByRole('tabpanel').first()).toBeVisible();await info.attach(label,{body:await page.screenshot(),contentType:'image/png'});}
+ for(const [value,label] of tabs){const mobile=page.getByTestId('commissioner-settings-mobile-tab-select');if((page.viewportSize()?.width ?? 1280)<768){await mobile.selectOption(value);}else await page.getByRole('tab',{name:label,exact:true}).click();await expect(page.getByRole('tabpanel').first()).toBeVisible();await info.attach(label,{body:await page.screenshot(),contentType:'image/png'});}
  expect(errors).toEqual([]);
 });
 test('G11 mobile selector reaches every Settings tab and scoring saves',async({page},info)=>{
  const l=await league(a);await page.setViewportSize({width:390,height:844});await open(page,l.id,a.commissioner,'league-setup');
- for(const [value] of tabs){await page.getByTestId('commissioner-settings-mobile-tab-select').click();await page.getByTestId(`commissioner-settings-mobile-tab-${value}`).click();await expect(page.getByRole('tabpanel').first()).toBeVisible();}
- await page.getByTestId('commissioner-settings-mobile-tab-select').click();await page.getByTestId('commissioner-settings-mobile-tab-scoring').click();
+ for(const [value] of tabs){await page.getByTestId('commissioner-settings-mobile-tab-select').selectOption(value);await expect(page.getByRole('tabpanel').first()).toBeVisible();}
+ await page.getByTestId('commissioner-settings-mobile-tab-select').selectOption('scoring');
  const p=new PermissionPage(page);await expect(p.selectors.goals(page)).toHaveValue('1');await p.saveGoals('3');
  await expect.poll(async()=>(await result(await a.commissioner.api.get(`/api/scoring/config?league_id=${l.id}`))).skater_scoring.goals).toBe(3);
  await info.attach('mobile-scoring',{body:await page.screenshot(),contentType:'image/png'});

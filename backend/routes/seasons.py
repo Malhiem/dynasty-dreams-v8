@@ -529,8 +529,9 @@ async def renew_season(league_id: str, payload: RenewSeasonInput, request: Reque
             }},
         )
 
-    # Wipe matchups for the new season — fresh slate
-    await db.matchups.delete_many({"league_id": league_id})
+    # Generated Roto games/results are season-scoped history; keep the completed bracket.
+    if not league.get("roto_generated_history"):
+        await db.matchups.delete_many({"league_id": league_id})
 
     # Bump league
     await db.leagues.update_one(
@@ -540,6 +541,8 @@ async def renew_season(league_id: str, payload: RenewSeasonInput, request: Reque
             "current_season_status": "in_progress",
             "setup_wizard_complete": False,  # encourage re-running wizard with prefilled values
             "season_renewed_at": now,
+            **({"season": f"{new_year}-{str(new_year+1)[-2:]}", "roto_scoring_periods": [],
+                "roto_champion_team_id": None, "roto_champion_team_ids": []} if league.get("roto_generated_history") else {}),
         }, "$push": {"audit_log": {
             "action": "season_renewed",
             "by": user.get("email"),

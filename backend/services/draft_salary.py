@@ -112,6 +112,20 @@ def feasible_completion(slots, options, lower, upper, limit=30000):
         return lower <= 0 <= upper
     if upper < 0 or len(options) < len(slots):
         return False
+    if len(slots) == 1:
+        # The final vacancy is an exact linear scan, not a combinatorial search.
+        slot = slots[0]
+        return any(slot in charges and lower <= charges[slot] <= upper for _, charges in options)
+    # At most len(slots) distinct players from an identical cost/position group
+    # can be used. Keep that many representatives without changing feasibility.
+    groups = Counter()
+    distinct = []
+    for pid, charges in options:
+        shape = tuple(sorted(charges.items()))
+        if charges and groups[shape] < len(slots):
+            distinct.append((pid, charges))
+            groups[shape] += 1
+    options = distinct
     slots = tuple(sorted(slots, key=lambda s: sum(s in charges for _, charges in options)))
     target = max(0, lower) / max(1, len(slots))
     options = tuple(sorted(options, key=lambda item: abs(min(item[1].values(), default=0) - target)))

@@ -322,6 +322,12 @@ async def generate_schedule(input: GenerateScheduleRequest, request: Request):
     """Legacy entry point uses the same validated, transaction-safe combined engine."""
     from services.combined_scheduler import defaults
     from services.schedule_store import apply_preview
+    user = await _deps["get_current_user"](request)
+    from routes.league_guards import require_league_member
+    league = await require_league_member(_deps["db"], user, input.league_id)
+    if league.get("scoring_format") == "rotisserie":
+        from services.roto_schedule import generate
+        return await generate(_deps["db"], input.league_id, user, input.num_weeks)
     user, ctx = await scheduler_routes.authorized(request, input.league_id)
     settings = defaults(ctx["league"], ctx["teams"])
     if input.num_weeks is not None:
@@ -770,9 +776,11 @@ async def simulate_week(input: SimulateWeekRequest, request: Request):
     broadcast_to_room = _deps["broadcast_to_room"]
 
     user = await get_current_user(request)
-    league = await db.leagues.find_one({"_id": ObjectId(input.league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
+    from routes.league_guards import require_league_member
+    league = await require_league_member(db, user, input.league_id)
+    if league.get("scoring_format") == "rotisserie":
+        from services.roto_schedule import finalize
+        return await finalize(db, input.league_id, input.week, user)
     if league["commissioner_id"] != user["_id"]:
         raise HTTPException(status_code=403, detail="Only commissioner can simulate")
 

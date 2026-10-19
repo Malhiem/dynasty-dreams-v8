@@ -1,0 +1,13 @@
+# Generated Rotisserie seasons
+
+The commissioner Schedules page saves dated calendar plans, then its Rotisserie Season tab generates live scoring periods and the enabled playoff workflow. POST `/api/leagues/{id}/roto/generate` is also available. The legacy `/api/matchups/generate-schedule` dispatches Rotisserie requests to the same engine. Regular periods never create opponents or H2H matchups.
+
+Saved calendar dates take precedence. Without a saved calendar, explicit league season dates, period length and regular/playoff weeks generate the dates. A zero Rotisserie cadence creates one full regular-season period; positive cadence groups weeks. Playoffs require both league and Rotisserie playoff toggles. Disabled playoffs create no playoff periods or games.
+
+Generated elimination supports power-of-two actual team fields, high-versus-low or adjacent seeding, and one dated period per round. Eight teams generate four games, then two, then the final. All regular scoring periods must be finalized before playoffs start. First-round seeds are frozen from accumulated finalized regular category points, with stable team ID ordering for tied seed positions. Playoff scores use the existing category engine and historical ownership/active-lineup allocation. Higher category points win; an exact game tie advances the higher original seed. Category ties retain the league split/high setting. No H2H fantasy-point or win/loss standings substitute for Roto scoring.
+
+Condensed Rotisserie remains a category-table playoff, without opponent games. Its configured fresh totals and seed bonuses use the existing Rotisserie engine. Equal championship totals remain shared leaders. Finalize every generated period before completing a season; elimination history uses the actual final winner, while retaining regular Roto points for standings.
+
+Only league administrators may generate or finalize; members may read. Unknown, future or unresolved rounds are rejected before scoring writes. Missing historical ownership requires backfill rather than awarding invented zero-stat results. Generated live recomputes are read-only previews. Finalization and advancement share a MongoDB snapshot transaction; concurrent/lost-response retries return the finalized result without duplicate advancement or awards. Identical generation reuses the season; changed generation cannot replace begun scoring. Transactional MongoDB is required, as for H2H Apply.
+
+Calendar-plan brackets are projections; playoff format, enabled toggles and field size remain governed by League Scoring settings. Custom elimination ladders, non-power-of-two byes and a separately generated consolation bracket are not implemented by this Rotisserie workflow and are rejected or excluded explicitly.

@@ -94,6 +94,7 @@ async def _team_stat_totals(db, league_id: str, period: Optional[int], periods: 
     if not league:
         return {}
 
+    generated = league.get("roto_scoring_periods") or []
     # Resolve which weeks/periods to compute
     weeks_to_compute = []
     if periods is not None:
@@ -103,7 +104,7 @@ async def _team_stat_totals(db, league_id: str, period: Optional[int], periods: 
     else:
         # Full season: compute all weeks up to current_week
         cw = int(league.get("current_week") or 1)
-        weeks_to_compute = list(range(1, cw + 1))
+        weeks_to_compute = [p["id"] for p in generated if p["type"] == "regular"] if generated else list(range(1, cw + 1))
 
     category_keys = [c["key"] for c in ALL_CATEGORIES]
 
@@ -115,12 +116,20 @@ async def _team_stat_totals(db, league_id: str, period: Optional[int], periods: 
 
         has_period_data = False
         for w in weeks_to_compute:
-            ps, pe = week_to_time_range(league, w)
+            entry = next((p for p in generated if p["id"] == w), None)
+            if entry:
+                from datetime import timedelta
+                ps = datetime.fromisoformat(entry["startDate"]).replace(tzinfo=timezone.utc)
+                pe = datetime.fromisoformat(entry["endDate"]).replace(tzinfo=timezone.utc) + timedelta(days=1)
+            else:
+                ps, pe = week_to_time_range(league, w)
             if ps and pe:
                 has_period_data = True
                 period_stats = await allocate_team_period_roto_stats(
                     db, tid, league_id, ps, pe, category_keys,
                 )
+                if generated and period_stats.get("uncertain"):
+                    raise HTTPException(409, "Historical roster ownership must be backfilled before generated Rotisserie scoring")
                 for k in category_keys:
                     agg[k] = round(float(agg.get(k, 0)) + float(period_stats.get(k, 0)), 3)
 
@@ -231,6 +240,9 @@ async def compute_period(
     league = await db.leagues.find_one({"_id": ObjectId(league_id)})
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
+    if league.get("roto_generated_history") and not league.get("roto_scoring_periods"):
+        teams = await db.teams.find({"league_id": league_id}).to_list(100)
+        return {"period": period, "categories": [], "totals": {str(t["_id"]): {"team_name": t.get("name"), "total_points": 0} for t in teams}, "num_teams": len(teams), "awaiting_generation": True}
     cats = league.get("roto_categories") or DEFAULT_ROTO_CATEGORIES
     tiebreak = league.get("roto_tiebreak") or "split"
     team_totals = await _team_stat_totals(db, league_id, period, periods=periods)
@@ -283,9 +295,13 @@ async def compute_season(db, league_id: str) -> dict:
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
 
+    if league.get("roto_generated_history") and not league.get("roto_scoring_periods"):
+        return {**await compute_period(db, league_id), "periods_closed": 0}
+
     # ── Condensed-roto fresh totals ─────────────────────────────
     fresh = (
         bool(league.get("playoffs_enabled"))
+        and (not league.get("roto_generated_history") or bool(league.get("roto_playoffs_enabled")))
         and league.get("playoff_format") == "condensed_roto"
         and bool(league.get("playoff_roto_fresh_totals"))
     )
@@ -293,7 +309,7 @@ async def compute_season(db, league_id: str) -> dict:
         start = league.get("playoff_start_week")
         end = league.get("playoff_end_week")
         if start is not None and end is not None:
-            playoff_periods = list(range(int(start), int(end) + 1))
+            playoff_periods = [p["id"] for p in league.get("roto_scoring_periods", []) if p["type"] == "playoff"] or list(range(int(start), int(end) + 1))
             result = await compute_period(
                 db, league_id, period=None, periods=playoff_periods,
             )
@@ -309,6 +325,14 @@ async def compute_season(db, league_id: str) -> dict:
             if seed_bonuses and result.get("totals"):
                 # Determine seeds from regular-season standings
                 reg_result = await compute_period(db, league_id, period=None)
+                if league.get("roto_scoring_periods"):
+                    from services.schedule_store import season
+                    rows = await db.roto_period_results.find({"league_id": league_id, "season": season(league), "closed": True, "period_type": "regular"}).to_list(366)
+                    accumulated = {}
+                    for row in rows:
+                        for tid,t in row["totals"].items():
+                            accumulated.setdefault(tid,{"total_points":0})["total_points"] += t["total_points"]
+                    if rows: reg_result["totals"] = accumulated
                 reg_sorted = sorted(
                     reg_result.get("totals", {}).items(),
                     key=lambda x: -x[1].get("total_points", 0),
@@ -329,10 +353,16 @@ async def compute_season(db, league_id: str) -> dict:
                 result["seed_bonuses_applied"] = True
             return result
 
+    scope = {"league_id": league_id, "closed": True}
+    if league.get("playoff_format") == "playoff_tree":
+        scope["period_type"] = {"$ne": "playoff"}
+    if league.get("roto_generated_history"):
+        from services.schedule_store import season
+        scope["season"] = season(league)
     periods = await db.roto_period_results.find(
-        {"league_id": league_id, "closed": True},
+        scope,
         sort=[("period", 1)],
-    ).to_list(200)
+    ).to_list(366)
     if not periods:
         # No closed periods → return live full-season snapshot.
         result = await compute_period(db, league_id, period=None)
@@ -426,7 +456,7 @@ async def roto_standings(league_id: str, request: Request):
 @router.get("/leagues/{league_id}/roto/matchup")
 async def roto_matchup(
     league_id: str, request: Request,
-    period: Optional[int] = Query(None, ge=0, le=52),
+    period: Optional[int] = Query(None, ge=0, le=366),
 ):
     """Live per-team category stats for the requested scoring period."""
     user = await _require_user(request)
@@ -436,7 +466,7 @@ async def roto_matchup(
 
 
 class RecomputeRequest(BaseModel):
-    period: Optional[int] = Field(None, ge=0, le=52)
+    period: Optional[int] = Field(None, ge=0, le=366)
     close: bool = False
 
 
@@ -451,8 +481,17 @@ async def roto_recompute(
     league = await require_league_member(db, user, league_id)
     is_commissioner = str(league.get("commissioner_id")) == str(user.get("_id"))
     is_admin = user.get("role") in ("admin", "senior_admin")
-    if not is_commissioner and not is_admin:
+    from services.scheduler_calendar import can_edit
+    if not is_commissioner and not is_admin and not can_edit(league, user):
         raise HTTPException(status_code=403, detail="Commissioner only")
+    if league.get("roto_scoring_periods"):
+        from services.roto_schedule import finalize
+        if input.close:
+            if input.period is None: raise HTTPException(400, "Choose a generated scoring period to finalize")
+            return await finalize(db, league_id, input.period, user)
+        # Preview remains read-only. Only finalization persists generated scoring.
+        if not any(p["id"] == input.period for p in league["roto_scoring_periods"]): raise HTTPException(400, "Choose a generated scoring period")
+        return {"ok": True, "closed": False, **await compute_period(db, league_id, period=input.period)}
     # If condensed_roto + fresh totals, scope to playoff weeks
     fresh = (
         league.get("playoff_format") == "condensed_roto"
@@ -493,3 +532,20 @@ async def roto_recompute(
             (None, {"team_name": None, "total_points": 0}),
         )[1],
     }
+
+
+@router.get("/leagues/{league_id}/roto/schedule")
+async def roto_schedule(league_id: str, request: Request):
+    user = await _require_user(request)
+    league = await require_league_member(_deps["db"], user, league_id)
+    from services.schedule_store import season
+    closed = await _deps["db"].roto_period_results.find({"league_id": league_id, "season": season(league), "closed": True}, {"period": 1}).to_list(366)
+    ids = {p["period"] for p in closed}
+    return {"periods": [{**p, "closed": p["id"] in ids} for p in league.get("roto_scoring_periods") or []]}
+
+
+@router.post("/leagues/{league_id}/roto/generate")
+async def roto_generate(league_id: str, request: Request):
+    user = await _require_user(request)
+    from services.roto_schedule import generate
+    return await generate(_deps["db"], league_id, user)

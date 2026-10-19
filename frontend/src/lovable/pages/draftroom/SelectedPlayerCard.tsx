@@ -55,7 +55,7 @@ export default function SelectedPlayerCard({
 }) {
   if (!player) {
     return (
-      <Card className="border-border border-dashed bg-secondary/20 h-full min-h-[200px]" data-testid="draft-room-selected-card-empty">
+      <Card className="border-border border-dashed bg-secondary/20 flex-1 min-h-[200px]" data-testid="draft-room-selected-card-empty">
         <CardContent className="h-full py-4 px-5 flex flex-col items-center justify-center gap-2 text-sm text-muted-foreground">
           <Trophy className="h-6 w-6 text-muted-foreground/40" />
           <p className="text-center">Tap any player in the eligible list to preview their card here.</p>
@@ -78,10 +78,10 @@ export default function SelectedPlayerCard({
   const adp = player.adp ?? player.ranking;
   return (
     <Card
-      className="border-primary/30 bg-gradient-to-r from-primary/5 to-transparent h-full min-h-[200px]"
+      className="border-primary/30 bg-gradient-to-r from-primary/5 to-transparent flex-1 min-w-0 min-h-[200px]"
       data-testid={`draft-room-selected-card-${player.id}`}
     >
-      <CardContent className="p-4 h-full flex flex-col gap-3">
+      <CardContent className="p-4 flex flex-col gap-3">
         {/* Header: headshot · name+meta · close */}
         <div className="flex items-start gap-3">
           <div
@@ -155,7 +155,7 @@ export default function SelectedPlayerCard({
           <Button
             size="sm"
             variant="ghost"
-            className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground shrink-0"
+            className="h-11 w-11 p-0 text-muted-foreground hover:text-foreground shrink-0"
             onClick={onClose}
             data-testid="draft-room-selected-card-close"
             aria-label="Close card"
@@ -178,11 +178,11 @@ export default function SelectedPlayerCard({
         </div>
 
         {/* Action row — pinned to the bottom of the card */}
-        <div className="flex items-center gap-1.5 mt-auto">
+        <div className="flex flex-wrap items-center gap-2 mt-auto">
           <Button
             size="sm"
             variant="outline"
-            className="h-8 gap-1 flex-1"
+            className="min-h-11 h-auto gap-1 min-w-0 flex-1"
             onClick={() => onToggleShortlist?.(player.id)}
             data-testid="draft-room-selected-card-shortlist"
             aria-pressed={isShortlisted}
@@ -193,7 +193,7 @@ export default function SelectedPlayerCard({
           <Button
             size="sm"
             variant="outline"
-            className="h-8 gap-1 flex-1"
+            className="min-h-11 h-auto gap-1 min-w-0 flex-1"
             onClick={() => onToggleQueue?.(player.id)}
             data-testid="draft-room-selected-card-queue"
             aria-pressed={isQueued}
@@ -204,7 +204,7 @@ export default function SelectedPlayerCard({
           {canPick && (
             <Button
               size="sm"
-              className="h-8 gap-1.5 bg-primary hover:bg-primary/90 flex-1"
+              className="min-h-11 h-auto gap-1.5 bg-primary hover:bg-primary/90 basis-full md:basis-0 flex-1"
               disabled={!isOnTheClock || player.salary_validation?.allowed === false}
               onClick={() => onDraftPlayer?.(player)}
               data-testid="draft-room-selected-card-draft-btn"

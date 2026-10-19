@@ -22,7 +22,7 @@ test("strict salary feasibility rejects illegal API picks without mutation and s
     expect(after.picks).toEqual(before.picks);expect(after.current_pick).toBe(before.current_pick);expect(after.current_pick_started_at).toBe(before.current_pick_started_at);
     const room=new DraftSalaryPage(page);await room.open(f.league.id);
     await expect(room.payroll()).toContainText("$46,000,000");await expect(room.positions()).toContainText("Active 1/3");
-    await expect(room.candidate(ids[0])).toHaveAttribute("data-salary-blocked","true");
+    await room.search(f.candidates[0].name);await expect(room.candidate(ids[0])).toHaveAttribute("data-salary-blocked","true");
     await room.teamSelect().selectOption(String(f.teams[1]._id));await expect(room.positions()).toContainText("Active 0/3");
     await info.attach("salary-api-evidence",{body:JSON.stringify(data,null,2),contentType:"application/json"});
     await page.screenshot({path:info.outputPath("salary-totals.png"),fullPage:true});
@@ -46,7 +46,7 @@ test("direct IR drafting is salary exempt and activation is blocked in Strict mo
     const playerId=String(f.candidates[1]._id);
     const active=await page.request.post(`/api/drafts/${f.draft.id}/pick`,{data:{player_id:playerId,destination:"ACT",expected_pick:1}});expect(active.status()).toBe(409);
     const room=new DraftSalaryPage(page);await room.open(f.league.id);
-    await room.choose(playerId);await room.destination().selectOption("IR");await expect(room.confirm()).toBeEnabled();await room.confirm().click();
+    await room.choose(playerId,f.candidates[1].name);await room.destination().selectOption("IR");await expect(room.confirm()).toBeEnabled();await room.confirm().click();
     await expect(room.payroll()).toContainText("$58,000,000");await expect(room.positions()).toContainText("IR 1/1");
     const picked=await(await page.request.get(`/api/drafts/${f.draft.id}`)).json();expect(picked.picks[0].destination).toBe("IR");
     const move=await page.request.post(`/api/drafts/${f.draft.id}/roster-move`,{data:{team_id:String(f.teams[0]._id),player_id:playerId,destination:"ACT"}});expect(move.status()).toBe(409);

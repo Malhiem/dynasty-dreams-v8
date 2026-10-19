@@ -1,3 +1,4 @@
+import {generatedFixture} from '../support/roto-generation';
 import { expect, test } from "@playwright/test";
 import { LoginPage } from "../pages/login/login.page";
 import { LeagueScoringPage } from "../pages/league-scoring/league-scoring.page";
@@ -64,8 +65,11 @@ test("Disabled playoffs preserve a full-season schedule with no playoff matchups
   expect(response.ok()).toBeTruthy();
   const rows = await response.json();
   expect(rows.filter((m: { is_playoff?: boolean }) => m.is_playoff)).toHaveLength(0);
-  expect(Math.min(...rows.map((m: { week: number }) => m.week))).toBe(1);
-  expect(Math.max(...rows.map((m: { week: number }) => m.week))).toBe(weeks.length);
+  expect(rows).toHaveLength(0);
+  const calendar = await (await page.request.get(`/api/leagues/${league.id}/roto/schedule`)).json();
+  expect(calendar.periods).toHaveLength(weeks.length);
+  expect(calendar.periods[0].startDate).toBe(first.start_date);
+  expect(calendar.periods[calendar.periods.length-1].endDate).toBe(last.end_date);
 });
 
 test("Two closed weeks accumulate once and exclude open weeks", async ({ page }, info) => {
@@ -83,15 +87,13 @@ test("Two closed weeks accumulate once and exclude open weeks", async ({ page },
 });
 
 test("Generated elimination playoffs advance 8 to 4 to 2 to champion through scored weeks", async ({ page }, info) => {
-  const league = await createCondensedFixture(page.request);
-  const configured = await page.request.put(`/api/leagues/${league.id}`, { data: { max_teams: 8,
-    playoff_format: "playoff_tree", playoff_teams: 8, playoff_start_week: 26, playoff_end_week: 28,
-    playoff_rounds: 3, playoff_seeding_method: "high_vs_low" } });
-  expect(configured.ok()).toBeTruthy();
+  const league = await generatedFixture(page.request);
   const generated = await page.request.post("/api/matchups/generate-schedule", { data: { league_id: league.id } });
   expect(generated.ok()).toBeTruthy();
+  const regular = await page.request.post(`/api/leagues/${league.id}/roto/recompute`, {data:{period:1,close:true}});
+  expect(regular.ok()).toBeTruthy();
   let previousWinners: string[] = [];
-  for (const [week, count] of [[26, 4], [27, 2], [28, 1]]) {
+  for (const [week, count] of [[2, 4], [3, 2], [4, 1]]) {
     const before = await (await page.request.get(`/api/matchups/${league.id}/results?week=${week}`)).json();
     await info.attach(`week-${week}-before`, { body: JSON.stringify(before), contentType: "application/json" });
     const playoffs = before.filter((m: { is_playoff?: boolean }) => m.is_playoff);
@@ -104,7 +106,7 @@ test("Generated elimination playoffs advance 8 to 4 to 2 to champion through sco
     previousWinners = after.filter((m: { is_playoff?: boolean }) => m.is_playoff).map((m: { home_team_id: string; away_team_id: string; home_score: number; away_score: number }) => m.home_score > m.away_score ? m.home_team_id : m.away_team_id);
     expect(new Set(previousWinners).size).toBe(count);
   }
-  const completed = await page.request.post(`/api/leagues/${league.id}/complete-season`, { data: { season_year: 2026 } });
+  const completed = await page.request.post(`/api/leagues/${league.id}/complete-season`, { data: { season_year: 2025 } });
   expect(completed.ok()).toBeTruthy();
   expect((await completed.json()).champion).toBe(league.teams.find(t => t.id === previousWinners[0])!.name);
 });

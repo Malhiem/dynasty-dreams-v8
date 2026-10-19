@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import LeaveLeagueDialog from '@/components/LeaveLeagueDialog';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '@/lib/api';
 import { toast } from 'sonner';
@@ -46,7 +47,11 @@ function fmtScoring(v) {
 
 export default function MyLeaguesOrderedList() {
   const [leagues, setLeagues] = useState([]);
+  const [leaving, setLeaving] = useState(null);
+  const leaveReturnFocus = useRef(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [retry, setRetry] = useState(0);
   // Iter 231i — Surface a "Recently hidden" indicator so accidental
   // swipe-to-hide actions remain obvious + recoverable from the
   // Dashboard without users having to hunt through Settings.
@@ -77,6 +82,15 @@ export default function MyLeaguesOrderedList() {
   const customizingLayout = useSortableCustomize();
 
   useEffect(() => {
+    const refresh = () => setRetry(value => value + 1);
+    const storage = event => { if (event.key === 'dd_leagues_revision') refresh(); };
+    window.addEventListener('dd:leagues-changed', refresh);window.addEventListener('storage', storage);
+    return () => {window.removeEventListener('dd:leagues-changed', refresh);window.removeEventListener('storage', storage);};
+  }, []);
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setLoadError(false);
     // Iter 230am — Fetch leagues + the server-side order preference
     // in parallel. Server order wins; localStorage is the fallback.
     Promise.all([
@@ -84,6 +98,7 @@ export default function MyLeaguesOrderedList() {
       api.get('/notifications/preferences').catch(() => ({ data: null })),
     ])
       .then(([leaguesRes, prefsRes]) => {
+        if (!active) return;
         const data = leaguesRes.data;
         const serverOrder = prefsRes.data?.league_order;
         // Iter 231i — Track the count of currently-hidden leagues so
@@ -108,9 +123,10 @@ export default function MyLeaguesOrderedList() {
         ];
         setLeagues(ordered);
       })
-      .catch(() => setLeagues([]))
-      .finally(() => setLoading(false));
-  }, []);
+      .catch(() => { if (active) setLoadError(true); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [retry]);
 
   const onDragStart = (e, id) => {
     setDragId(id);
@@ -214,7 +230,11 @@ export default function MyLeaguesOrderedList() {
     );
   }
 
-  if (!leagues.length) return null;
+  if (loadError) return <section className="surface p-6 mb-8" aria-label="My leagues">
+    <p role="alert">Unable to load your leagues. Please try again.</p>
+    <button type="button" className="mt-3 rounded border px-3 py-2" onClick={() => setRetry(value => value + 1)}>Retry loading leagues</button>
+  </section>;
+  if (!leagues.length) return <section className="surface p-6 mb-8" aria-label="My leagues"><h2>My Leagues</h2><p>You have no visible leagues yet.</p></section>;
 
   return (
     <div data-testid="my-leagues-ordered" className="mb-8">
@@ -303,6 +323,7 @@ export default function MyLeaguesOrderedList() {
                     <UsersIcon size={10} />
                     {lg.current_teams}/{lg.max_teams}
                   </span>
+                  {lg.commissioner_vacant && <Badge variant="outline">Commissioner vacant</Badge>}
                   {lg.status && (
                     <>
                       <span className="text-[#52525B]">·</span>
@@ -337,7 +358,8 @@ export default function MyLeaguesOrderedList() {
                     type="button"
                     data-testid={`my-leagues-menu-btn-${lg.id}`}
                     aria-label="League options"
-                    className="h-7 w-7 rounded-md text-[#52525B] hover:text-white hover:bg-white/5 flex items-center justify-center shrink-0 transition-colors"
+                    onClick={event => { leaveReturnFocus.current = event.currentTarget; }}
+                    className="h-11 w-11 rounded-md text-[#52525B] hover:text-white hover:bg-white/5 flex items-center justify-center shrink-0 transition-colors"
                     onPointerDown={(e) => e.stopPropagation()}
                     draggable={false}
                   >
@@ -364,6 +386,7 @@ export default function MyLeaguesOrderedList() {
                     <EyeOff size={14} className="mr-2" />
                     Hide from my dashboard
                   </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setLeaving(lg)} className="min-h-11 text-rose-300 cursor-pointer" data-testid={`my-leagues-leave-${lg.id}`}>Leave league</DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>
@@ -399,6 +422,7 @@ export default function MyLeaguesOrderedList() {
           );
         })}
       </div>
+      <LeaveLeagueDialog league={leaving} onClose={() => setLeaving(null)} returnFocus={leaveReturnFocus} onLeft={id => {setLeagues(previous => previous.filter(league => league.id !== id));setLeaving(null);}} />
     </div>
   );
 }

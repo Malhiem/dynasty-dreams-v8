@@ -1,110 +1,68 @@
-/**
- * Iter 229d — `useDraftEligiblePlayers`
- * Extracted from DraftRoom.tsx. Fetches the eligible-players list for
- * the active draft and overlays `drafted=true` for any player whose id
- * already appears in the backend `picks[]`. Falls back to the caller's
- * default (mock) list when the API fails so the Draft Room never
- * renders blank during commissioner setup flows.
- *
- * Iter 231ak — Paginate the request so the full eligible pool is
- * available client-side. Previously the hook only fetched the first
- * 100 rows (sorted by points DESC), which made the 1,368 backfilled
- * prospects appear as ~17 visible rows because NHL skaters dominated
- * the head of the list. Now we drain every page (200 per request) up
- * to a safety cap so the Eligible tab always reflects the true pool.
- */
-import { useEffect } from "react";
+/** Draft-scoped eligible pool. Exact searches use the server while the full pool loads. */
+import {useCallback,useEffect,useRef,useState} from "react";
 import api from "@/lib/api";
-import type { DraftEligiblePlayer } from "@/lovable/pages/draftroom/types";
+import type {DraftEligiblePlayer} from "@/lovable/pages/draftroom/types";
 
-type ApiPlayer = Partial<DraftEligiblePlayer> & {
-  headshot?: string;
-  headshot_url?: string;
-  nhl_id?: string;
-  team_name?: string;
-  player_type?: string;
-  minor_eligible?: boolean;
-};
+type ApiPlayer = Partial<DraftEligiblePlayer> & {headshot?:string;nhl_id?:string;team_name?:string;player_type?:string;minor_eligible?:boolean};
+interface DraftLike {_id?:string;picks?:Array<{player_id?:string}>}
+const PAGE_SIZE=200;
 
-interface DraftLike {
-  _id?: string;
-  picks?: Array<{ player_id?: string }>;
+function player(p:ApiPlayer,drafted:Set<string>):DraftEligiblePlayer{
+ return {id:String(p.id??""),name:String(p.name??""),position:String(p.position??""),nhlTeam:p.nhlTeam||"—",age:p.age||0,
+  league:p.league||"NHL",gp:p.gp||0,g:p.g||0,a:p.a||0,pts:p.pts||0,ranking:p.ranking||0,drafted:drafted.has(String(p.id)),
+  ...(p.headshot?{headshot:p.headshot,headshot_url:p.headshot}:{}),...(p.nhl_id?{nhl_id:p.nhl_id}:{}),
+  ...(p.team_name?{team_name:p.team_name}:{}),...(p.player_type?{player_type:p.player_type}:{}),
+  minor_eligible:!!p.minor_eligible,status_flags:(p as any).status_flags||null,
+ } as unknown as DraftEligiblePlayer;
 }
 
-const PAGE_SIZE = 200;
-// Safety cap: 50 pages × 200 rows = 10,000 players. Today's eligible
-// pool is ~3,400 (2,027 NHL + 1,368 prospects); the cap protects
-// against a runaway loop if the API ever misreports `pages`.
-const MAX_PAGES = 50;
-
-export function useDraftEligiblePlayers(
-  currentDraft: DraftLike | null,
-  setPlayers: (players: DraftEligiblePlayer[]) => void,
-) {
-  useEffect(() => {
-    if (!currentDraft?._id) return;
-    let cancelled = false;
-
-    async function loadAll() {
-      const all: ApiPlayer[] = [];
-      let page = 1;
-      let totalPages = 1;
-      try {
-        while (page <= totalPages && page <= MAX_PAGES) {
-          const res = await api.get(
-            `/drafts/${currentDraft!._id}/eligible-players?limit=${PAGE_SIZE}&page=${page}`,
-          );
-          if (cancelled) return;
-          const rows: ApiPlayer[] = (res.data?.players || []) as ApiPlayer[];
-          totalPages = Number(res.data?.pages || 1);
-          if (rows.length === 0) break;
-          all.push(...rows);
-          if (rows.length < PAGE_SIZE) break;
-          page += 1;
-        }
-      } catch {
-        // keep caller's default list
-        return;
-      }
-
-      if (cancelled || all.length === 0) return;
-      const draftedIds = new Set(
-        (currentDraft!.picks || [])
-          .map((p) => p.player_id)
-          .filter(Boolean)
-          .map((v) => String(v)),
-      );
-      setPlayers(
-        all.map((p) => ({
-          id: String(p.id ?? ""),
-          name: String(p.name ?? ""),
-          position: String(p.position ?? ""),
-          nhlTeam: p.nhlTeam || "—",
-          age: p.age || 0,
-          league: p.league || "NHL",
-          gp: p.gp || 0,
-          g: p.g || 0,
-          a: p.a || 0,
-          pts: p.pts || 0,
-          ranking: p.ranking || 0,
-          drafted: draftedIds.has(String(p.id)),
-          // Pass-through fields the SelectedPlayerCard / Eligible row read.
-          // We cast to `any` because DraftEligiblePlayer is intentionally
-          // narrow and these extras are presentation-only.
-          ...(p.headshot ? { headshot: p.headshot, headshot_url: p.headshot } : {}),
-          ...(p.nhl_id ? { nhl_id: p.nhl_id } : {}),
-          ...(p.team_name ? { team_name: p.team_name } : {}),
-          ...(p.player_type ? { player_type: p.player_type } : {}),
-          minor_eligible: !!p.minor_eligible,
-          // Iter 232N — Passthrough for the player status badge row.
-          status_flags: (p as any).status_flags || null,
-        }) as unknown as DraftEligiblePlayer),
-      );
+export function useDraftEligiblePlayers(currentDraft:DraftLike|null,setPlayers:(players:DraftEligiblePlayer[])=>void,searchQuery=""){
+ const latest=useRef(currentDraft);latest.current=currentDraft;
+ const pool=useRef<{id?:string;rows:Map<string,ApiPlayer>}>({rows:new Map()});
+ const [loading,setLoading]=useState(false),[error,setError]=useState(""),[revision,setRevision]=useState(0);
+ const retry=useCallback(()=>setRevision(value=>value+1),[]);
+ useEffect(()=>{
+  const id=currentDraft?._id;if(!id){setLoading(false);setError("");return;}
+  if(pool.current.id!==id){pool.current={id,rows:new Map()};setPlayers([]);}
+  let cancelled=false;const controller=new AbortController();setLoading(true);setError("");
+  const publish=()=>{
+   if(cancelled||latest.current?._id!==id||pool.current.id!==id)return;
+   const drafted=new Set((latest.current.picks||[]).map(p=>String(p.player_id||"")));
+   setPlayers([...pool.current.rows.values()].map(p=>player(p,drafted)));
+  };
+  async function load(){
+   const seen=new Set<string>();let page=1,totalPages=1;
+   try{
+    while(page<=totalPages){
+     const params=new URLSearchParams({limit:String(PAGE_SIZE),page:String(page)});
+     if(searchQuery.trim())params.set("search",searchQuery.trim());
+     const {data}=await api.get(`/drafts/${id}/eligible-players?${params}`,{signal:controller.signal});
+     if(cancelled||latest.current?._id!==id)return;
+     const rows:ApiPlayer[]=data?.players||[];totalPages=Number(data?.pages||1);
+     if(!Number.isSafeInteger(totalPages)||totalPages<1)throw Error("Invalid player pagination");
+     if(!rows.length)break;
+     let added=0;
+     for(const p of rows){
+      const pid=String(p.id||"");if(!pid||seen.has(pid))continue;seen.add(pid);added++;
+      const previous=pool.current.rows.get(pid);
+      // Search-local ranks must not reorder the full pool after clearing search.
+      const ranking=searchQuery.trim()?previous?.ranking??Number.MAX_SAFE_INTEGER:p.ranking;
+      pool.current.rows.set(pid,{...p,ranking});
+     }
+     if(!added)throw Error("Player pagination did not advance");
+     if(page===1)publish();
+     if(rows.length<PAGE_SIZE)break;page++;
     }
-
-    loadAll();
-    return () => { cancelled = true; };
-  }, [currentDraft?._id]);
+    publish();
+   }catch(e:any){
+    if(cancelled||latest.current?._id!==id)return;
+    if(e.response?.status===401||e.response?.status===403){pool.current.rows.clear();setPlayers([]);}
+    setError("Unable to load eligible players. Retry to refresh the player pool.");
+   }finally{if(!cancelled&&latest.current?._id===id)setLoading(false);}
+  }
+  const timer=window.setTimeout(()=>void load(),searchQuery.trim()?250:0);
+  return()=>{cancelled=true;window.clearTimeout(timer);controller.abort();};
+ },[currentDraft?._id,searchQuery,revision]);
+ return {loading,error,retry};
 }
-
 export default useDraftEligiblePlayers;

@@ -247,6 +247,8 @@ export function NotificationsPanel() {
         className="relative text-[#A1A1AA] hover:text-white"
         onClick={() => setOpen(!open)}
         data-testid="notifications-btn"
+        aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`}
+        aria-expanded={open}
       >
         <Bell className="h-5 w-5" />
         {unreadCount > 0 && (

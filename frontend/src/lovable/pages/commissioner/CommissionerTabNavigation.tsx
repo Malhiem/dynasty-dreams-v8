@@ -1,5 +1,4 @@
 import { TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Users, Trophy, Shield, Target, LayoutGrid, AlertTriangle, ClipboardCheck, ScrollText, UserCog, Sliders, DollarSign } from "lucide-react";
 
 // Iter 231an — Single source of truth for the Commissioner Settings
@@ -27,28 +26,12 @@ export default function CommissionerTabNavigation({ activeTab, onTabChange }: { 
               required heavy horizontal scrolling; a native-feeling
               dropdown gives one-tap access to every section. */}
           <div className="md:hidden">
-            <Select value={activeTab} onValueChange={onTabChange}>
-              <SelectTrigger
-                className="w-full bg-secondary border border-border h-11"
-                data-testid="commissioner-settings-mobile-tab-select"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {COMMISSIONER_TABS.map(({ value, icon: Icon, label }) => (
-                  <SelectItem
-                    key={value}
-                    value={value}
-                    data-testid={`commissioner-settings-mobile-tab-${value}`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <Icon className="h-4 w-4" />
-                      {label}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <label htmlFor="commissioner-settings-section" className="sr-only">Settings section</label>
+            <select id="commissioner-settings-section" aria-label="Settings section"
+              className="w-full min-h-11 rounded-md bg-secondary text-secondary-foreground border border-border px-3 text-sm"
+              data-testid="commissioner-settings-mobile-tab-select" value={activeTab} onChange={event => onTabChange(event.target.value)}>
+              {COMMISSIONER_TABS.map(({value,label}) => <option key={value} value={value}>{label}</option>)}
+            </select>
           </div>
 
           {/* Desktop tab strip — hidden on mobile to reclaim the

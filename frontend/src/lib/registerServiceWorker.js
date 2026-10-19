@@ -25,7 +25,7 @@ export function registerServiceWorker() {
 
   window.addEventListener("load", () => {
     navigator.serviceWorker
-      .register(SW_URL, { scope: "/" })
+      .register(SW_URL, { scope: "/", updateViaCache: "none" })
       .then((reg) => {
         // If a new SW is already waiting (page was refreshed but the
         // user hasn't navigated yet), activate it now.

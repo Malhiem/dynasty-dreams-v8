@@ -50,6 +50,12 @@ async def capture_standings(db, league, teams):
     winner_ids = [t['team_id'] for t in flagged]
     if league.get('scoring_format') == 'rotisserie':
         from routes.roto import compute_season
+        if league.get('roto_scoring_periods'):
+            from services.schedule_store import season
+            expected = {p['id'] for p in league['roto_scoring_periods']}
+            closed = await db.roto_period_results.find({'league_id':str(league['_id']), 'season':season(league), 'closed':True}).to_list(366)
+            if not expected.issubset({p['period'] for p in closed}):
+                raise HTTPException(409, 'Finalize all generated Rotisserie periods before completing the season')
         try:
             result = await compute_season(db, str(league['_id']))
             totals = result.get('totals') or {}
@@ -62,7 +68,11 @@ async def capture_standings(db, league, teams):
             leaders = [t['team_id'] for t in tied_leaders(teams, lambda t:t['roto_total_points'], 'team_id')]
             if len(winner_ids) > 1 and set(winner_ids) != set(leaders):
                 raise HTTPException(409, 'Conflicting Roto championship flags; resolve before completion')
-            if not winner_ids:
+            if league.get('roto_scoring_periods') and league.get('playoff_format') == 'playoff_tree' and league.get('playoffs_enabled') and league.get('roto_playoffs_enabled'):
+                champion = league.get('roto_champion_team_id')
+                if not champion: raise HTTPException(409, 'Finalize the Rotisserie championship before completing the season')
+                winner_ids = [champion]
+            elif not winner_ids:
                 winner_ids = leaders
         except HTTPException:
             raise

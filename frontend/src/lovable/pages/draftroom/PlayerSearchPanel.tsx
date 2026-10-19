@@ -13,6 +13,7 @@
  * (setQueue, setShortlist, toggleShortlist, toggleQueue, removeFromQueue,
  * setSelectedPlayerId) are forwarded via callback props.
  */
+import { useEffect, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -82,6 +83,8 @@ export default function PlayerSearchPanel({
   resolveCapHit,
   myTeamCap,
 }) {
+  const [visibleCount, setVisibleCount] = useState(50);
+  useEffect(() => setVisibleCount(50), [searchQuery, positionFilter, typeFilter, undraftedOnly]);
   return (
     <Tabs defaultValue="eligible" className="w-full">
       <TabsList className="w-full grid grid-cols-3">
@@ -247,7 +250,7 @@ export default function PlayerSearchPanel({
 
         <ScrollArea className="h-[400px]">
           <div className="space-y-1">
-            {filteredPlayers.map((player) => {
+            {filteredPlayers.slice(0, visibleCount).map((player) => {
               const isOnBlock = tradeBlockPlayerIds.has(String(player.id));
               const isQueued = queue.includes(player.id);
               const isShortlisted = shortlist.includes(player.id);
@@ -425,6 +428,7 @@ export default function PlayerSearchPanel({
                 </div>
               );
             })}
+            {filteredPlayers.length > visibleCount && <Button variant="outline" className="w-full" onClick={() => setVisibleCount(count => count + 50)}>Show more players ({filteredPlayers.length - visibleCount} remaining)</Button>}
           </div>
         </ScrollArea>
       </TabsContent>

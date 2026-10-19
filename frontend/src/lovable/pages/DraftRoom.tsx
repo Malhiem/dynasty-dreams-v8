@@ -309,7 +309,7 @@ export default function DraftRoom() {
   // Replaces the mock list when a draft exists; the SelectedPlayerCard
   // will then render real NHL stats + headshot.
   // Iter 229d — extracted into a dedicated hook.
-  useDraftEligiblePlayers(currentDraft, setPlayers);
+  const eligiblePool = useDraftEligiblePlayers(currentDraft, setPlayers, searchQuery);
 
   // Iter 170h — Commissioner check (drives undo/swap UI + ability to
   // pick for any team). `isLeagueManager` is kept for backward-compat
@@ -559,7 +559,7 @@ export default function DraftRoom() {
   // Iter 229h — `handleDraftPlayer` extracted into `useDraftPickHandler`.
   // Located here (post-state-init) so all setters are defined.
   const [salaryPlayer, setSalaryPlayer] = useState(null);
-  const salaryState = useDraftSalaryState(currentDraft?._id, players, currentDraft?.current_pick);
+  const salaryState = useDraftSalaryState(currentDraft?._id, filteredPlayers, currentDraft?.current_pick);
   const { handleDraftPlayer: commitDraftPlayer, handleSimulatePick } = useDraftPickHandler({
     currentDraft,
     isDraftActive,
@@ -915,6 +915,8 @@ export default function DraftRoom() {
 
           {/* ── Bottom section: PlayerSearch · TruncatedRoster · DraftChat ──
               Iter 229j — extracted to DraftRoomBottomGrid. */}
+          {eligiblePool.error && <div role="alert">{eligiblePool.error} <Button className="min-h-11" variant="outline" onClick={eligiblePool.retry}>Retry players</Button></div>}
+          {eligiblePool.loading && <p role="status">Loading eligible players…</p>}
           <DraftRoomBottomGrid
             filteredPlayers={filteredPlayers.map(p => ({...p, salary_validation: salaryState.eligibility[p.id]}))}
             searchQuery={searchQuery}

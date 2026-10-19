@@ -6,7 +6,13 @@ export class DraftSalaryPage {
   async open(id:string){await actions.open(this.page,id);}
   async move(name:string,destination:string){await actions.move(this.page,name,destination);}
   async changeDestination(name:string,destination:string){await selectors(this.page).rosterDestination(name).selectOption(destination);}
-  async choose(id:string){await actions.choose(this.page,id);}
+  async search(name:string){await actions.search(this.page,name);}
+  async choose(id:string,name?:string){await actions.choose(this.page,id,name);}
+  async preview(id:string,name?:string){await actions.preview(this.page,id,name);}
+  draftButton(){return selectors(this.page).draftButton();}
+  pickRejected(){return selectors(this.page).pickRejected();}
+  rows(){return selectors(this.page).rows();}
+  loadMore(){return actions.loadMore(this.page);}
   overview(){return selectors(this.page).overview();}
   payroll(){return selectors(this.page).payroll();}
   positions(){return selectors(this.page).positions();}

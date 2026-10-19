@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 export default function DraftSalarySelection({ draftId, player, onClose, onConfirm }) {
   const [options, setOptions] = useState(null);
   const [destination, setDestination] = useState("");
+  const submitting = useRef(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -23,19 +24,20 @@ export default function DraftSalarySelection({ draftId, player, onClose, onConfi
   }, [draftId, player]);
   const result = options?.[destination];
   const confirm = async () => {
-    setBusy(true);
+    if (submitting.current || !result?.allowed) return;
+    submitting.current = true; setBusy(true);
     try { if (await onConfirm(player, destination)) onClose(); }
-    finally { setBusy(false); }
+    finally { submitting.current = false; setBusy(false); }
   };
-  return <Dialog open={!!player} onOpenChange={open => !open && onClose()}><DialogContent>
+  return <Dialog open={!!player} onOpenChange={open => !open && !submitting.current && onClose()}><DialogContent>
     <DialogHeader><DialogTitle>Draft {player?.name}</DialogTitle></DialogHeader>
-    {!options ? <p>Checking salary and roster eligibility…</p> : <>
-      <label>Roster destination <select aria-label="Draft roster destination" value={destination} onChange={e => setDestination(e.target.value)} className="bg-secondary rounded p-2">
+    {!options ? <p role="status">Checking salary and roster eligibility…</p> : <>
+      <label>Roster destination <select aria-label="Draft roster destination" value={destination} onChange={e => setDestination(e.target.value)} className="bg-secondary text-secondary-foreground min-h-11 rounded p-2">
         {Object.keys(options).map(s => <option key={s} value={s}>{s}</option>)}
       </select></label>
       {result && <p>Salary charge: ${Number(result.charge || 0).toLocaleString()} · {result.mode} adherence</p>}
       {result?.message && <p role="alert">{result.message}</p>}
-      <Button disabled={busy || !result?.allowed} onClick={confirm} data-testid="draft-salary-confirm">{busy ? "Selecting…" : "Confirm draft selection"}</Button>
+      <Button aria-busy={busy} disabled={busy || !result?.allowed} onClick={confirm} data-testid="draft-salary-confirm">{busy ? "Selecting…" : "Confirm draft selection"}</Button>
     </>}
   </DialogContent></Dialog>;
 }

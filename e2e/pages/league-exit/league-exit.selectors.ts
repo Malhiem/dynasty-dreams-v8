@@ -1,0 +1,2 @@
+import type {Page} from '@playwright/test';
+export const selectors=(page:Page,id:string)=>({menu:()=>page.getByTestId(`my-leagues-menu-btn-${id}`),leave:()=>page.getByTestId(`my-leagues-leave-${id}`),row:()=>page.getByTestId(`my-leagues-row-${id}`),dialog:()=>page.getByRole('dialog',{name:/^Leave /}),stay:()=>page.getByRole('button',{name:'Stay in league',exact:true}),confirm:()=>page.getByRole('button',{name:'Leave league',exact:true})});

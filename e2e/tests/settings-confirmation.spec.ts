@@ -27,8 +27,8 @@ test('C03 claim input clamps above maximum and API rejects invalid payload atomi
 });
 for(const role of ['manager','outsider'] as const)test(`C04 ${role} cannot update league or generate schedules using explicit fixtures`,async()=>{
  const l=await league(a);const before=await database(db=>db.collection('leagues').findOne({_id:new ObjectId(l.id)}));
- for(const data of [{roster_spots:30},{trade_veto_threshold_pct:99}]){const r=await a[role].api.put(`/api/leagues/${l.id}`,{data});expect(r.status()).toBe(403);expect((await r.json()).detail.toLowerCase()).toContain('commissioner');}
- const r=await a[role].api.post('/api/matchups/generate-schedule',{data:{league_id:l.id,num_weeks:18}});expect(r.status()).toBe(403);expect((await r.json()).detail.toLowerCase()).toContain('commissioner');
+ for(const data of [{roster_spots:30},{trade_veto_threshold_pct:99}]){const r=await a[role].api.put(`/api/leagues/${l.id}`,{data});expect(r.status()).toBe(403);expect((await r.json()).detail.toLowerCase()).toMatch(/administrators|member/);}
+ const r=await a[role].api.post('/api/matchups/generate-schedule',{data:{league_id:l.id,num_weeks:18}});expect(r.status()).toBe(403);expect((await r.json()).detail.toLowerCase()).toMatch(/administrators|member/);
  const after=await database(db=>db.collection('leagues').findOne({_id:new ObjectId(l.id)}));expect(after).toEqual(before);
  expect(await database(db=>db.collection('matchups').countDocuments({league_id:l.id}))).toBe(0);
 });

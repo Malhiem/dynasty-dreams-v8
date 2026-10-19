@@ -411,6 +411,7 @@ async def get_draft_stats(draft_id: str):
 @router.get("/drafts/{draft_id}/eligible-players")
 async def get_draft_eligible_players(
     draft_id: str,
+    request: Request,
     search: Optional[str] = None,
     position: Optional[str] = None,
     undrafted_only: bool = False,
@@ -429,9 +430,16 @@ async def get_draft_eligible_players(
       • Sorts by `points DESC` and stamps a 1-based `ranking` so the
         Draft Board can show the same ordering across pages.
     """
-    draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
+    user = await _deps["get_current_user"](request)
+    try:
+        draft_oid = ObjectId(draft_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid draft ID")
+    draft = await _db().drafts.find_one({"_id": draft_oid})
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    from routes.league_guards import require_league_member
+    authorized_league = await require_league_member(_db(), user, draft.get("league_id") or "")
 
     # Get already-drafted player IDs (in THIS draft only)
     drafted_ids = [p["player_id"] for p in draft.get("picks", []) if p.get("player_id")]
@@ -523,9 +531,9 @@ async def get_draft_eligible_players(
 
     skip = (page - 1) * limit
     from services.player_pool import pool_query
-    league_pool = await _db().leagues.find_one({"_id": ObjectId(league_id_str)})
+    league_pool = authorized_league
     query = {"$and": [query, pool_query(league_pool or {})]}
-    players = await _db().players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
+    players = await _db().players.find(query).sort([("points", -1), ("_id", 1)]).skip(skip).limit(limit).to_list(limit)
     total = await _db().players.count_documents(query)
 
     result = []

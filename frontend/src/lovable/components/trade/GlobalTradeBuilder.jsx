@@ -241,7 +241,7 @@ export default function GlobalTradeBuilder() {
 
   return (
     <div
-      className="fixed bottom-4 right-4 z-50 w-[440px] max-h-[88vh] flex flex-col rounded-xl border border-border bg-card shadow-2xl shadow-primary/5 animate-in slide-in-from-bottom-4 duration-300"
+      className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] sm:bottom-4 right-2 sm:right-4 z-50 w-[calc(100vw-1rem)] sm:w-[440px] max-h-[calc(100dvh-8rem)] sm:max-h-[88vh] flex flex-col rounded-xl border border-border bg-card shadow-2xl shadow-primary/5 animate-in slide-in-from-bottom-4 duration-300"
       data-testid="global-trade-builder"
     >
       {/* Header */}
@@ -264,6 +264,7 @@ export default function GlobalTradeBuilder() {
           variant="ghost" size="icon" className="h-7 w-7"
           onClick={() => builder.setCollapsed(!builder.collapsed)}
           data-testid="tb-toggle-collapse"
+          aria-label={builder.collapsed ? "Expand trade builder" : "Collapse trade builder"}
         >
           {builder.collapsed ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </Button>
@@ -272,13 +273,14 @@ export default function GlobalTradeBuilder() {
           className="h-7 w-7 text-muted-foreground hover:text-destructive"
           onClick={builder.closeBuilder}
           data-testid="tb-close"
+          aria-label="Close trade builder"
         >
           <X className="h-4 w-4" />
         </Button>
       </div>
 
       {!builder.collapsed && (
-        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-3 space-y-3">
           {/* Partner sections */}
           {partners.map((partner, idx) => {
             const ownAssets = builder.assets.filter((a) => a.player.ownerTeamId === partner.id);

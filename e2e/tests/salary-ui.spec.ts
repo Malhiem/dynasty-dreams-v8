@@ -8,12 +8,12 @@ test('P01 C01 browser saves salary cap and future values',async({page})=>{
  const l=await salaryLeague(a);await page.context().addCookies((await a.commissioner.api.storageState()).cookies);const p=new SalaryPage(page);await p.goto(l.id);
  await expect(p.selectors.amount(page)).toHaveValue('100,000,000');await p.selectors.amount(page).fill('99000000');await p.selectors.next(page).fill('104000000');
  const save=page.waitForResponse(r=>r.request().method()==='PUT'&&r.url().endsWith('/admin/cap-settings'));await p.selectors.saveCap(page).click();expect((await save).ok()).toBe(true);
- await page.reload();await p.selectors.tab(page).click();await expect(p.selectors.amount(page)).toHaveValue('99,000,000');await expect(p.selectors.next(page)).toHaveValue('104,000,000');
+ await page.reload();await p.selectTab();await expect(p.selectors.amount(page)).toHaveValue('99,000,000');await expect(p.selectors.next(page)).toHaveValue('104,000,000');
 });
 test('P01 C06 browser saves retention slots and maximum',async({page})=>{
  const l=await salaryLeague(a);await page.context().addCookies((await a.commissioner.api.storageState()).cookies);const p=new SalaryPage(page);await p.goto(l.id);
  await p.selectors.slots(page).fill('2');await p.selectors.maxPct(page).fill('40');const saving=page.waitForResponse(r=>r.request().method()==='PUT'&&new URL(r.url()).pathname===`/api/leagues/${l.id}`);await p.selectors.saveRetention(page).click();expect((await saving).ok()).toBe(true);
- await page.reload();await p.selectors.tab(page).click();await expect(p.selectors.slots(page)).toHaveValue('2');await expect(p.selectors.maxPct(page)).toHaveValue('40');
+ await page.reload();await p.selectTab();await expect(p.selectors.slots(page)).toHaveValue('2');await expect(p.selectors.maxPct(page)).toHaveValue('40');
 });
 for(const role of ['manager','outsider'] as const)test(`P02 ${role} salary administration controls hidden`,async({page})=>{
  const l=await salaryLeague(a);await page.context().addCookies((await a[role].api.storageState()).cookies);const p=new SalaryPage(page);
@@ -22,7 +22,7 @@ for(const role of ['manager','outsider'] as const)test(`P02 ${role} salary admin
 test('A07 browser preserves permitted zero rookie charge after reload',async({page})=>{
  const l=await salaryLeague(a);await page.context().addCookies((await a.commissioner.api.storageState()).cookies);const p=new SalaryPage(page);await p.goto(l.id);await p.selectors.rookie(page).fill('0');
  const saving=page.waitForResponse(r=>r.request().method()==='PUT'&&r.url().endsWith('/admin/cap-settings'));await p.selectors.saveCap(page).click();expect((await saving).ok()).toBe(true);
- await page.reload();await p.selectors.tab(page).click();await expect(p.selectors.rookie(page)).toHaveValue('0');
+ await page.reload();await p.selectTab();await expect(p.selectors.rookie(page)).toHaveValue('0');
 });
 test('U02 failed salary save displays error and supports retry',async({page})=>{
  const l=await salaryLeague(a);await page.context().addCookies((await a.commissioner.api.storageState()).cookies);const p=new SalaryPage(page);await p.goto(l.id);await p.selectors.amount(page).fill('99000000');
@@ -71,7 +71,7 @@ for(const policy of ['receiver_pays','league_waives'])test(`F03 administration s
  await page.getByTestId('rules-schedule-retention-forgiveness').selectOption(policy);
  const saved=page.waitForResponse(r=>r.request().method()==='PUT'&&r.url().endsWith(`/leagues/${l.id}`));
  await p.selectors.saveRetention(page).click();expect((await saved).ok()).toBe(true);
- await page.reload();await p.selectors.tab(page).click();
+ await page.reload();await p.selectTab();
  await expect(page.getByTestId('rules-schedule-retention-forgiveness')).toHaveValue(policy);
  expect((await result(await a.commissioner.api.get(`/api/leagues/${l.id}`))).retention_forgiveness_policy).toBe(policy);
 });

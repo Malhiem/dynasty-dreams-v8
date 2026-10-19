@@ -48,7 +48,7 @@ export default function LeagueAdminTab({ adminSubTab, setAdminSubTab, isH2H, lea
         <TeamsTab />
       </TabsContent>
       <TabsContent value="schedules">
-        {!isH2H ? (
+        {!isH2H && league?.scoring_format !== "rotisserie" ? (
           <Card className="bg-card border-border opacity-50">
             <CardContent className="py-12 text-center space-y-2">
               <Calendar className="h-8 w-8 text-muted-foreground mx-auto" />

@@ -1,0 +1,2 @@
+import type {Page} from '@playwright/test';
+export const selectors=(page:Page)=>({tab:()=>page.getByRole('tab',{name:'Rotisserie Season',exact:true}),generate:()=>page.getByRole('button',{name:'Generate Rotisserie season',exact:true}),finalize:()=>page.getByRole('button',{name:'Finalize regular period 1',exact:true}),status:()=>page.getByRole('status').filter({hasText:'Scoring period finalized.'})});

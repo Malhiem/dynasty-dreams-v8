@@ -224,3 +224,15 @@ checks. Fixtures create and clean up their own accounts and leagues.
 Registration, reset and password-change policy is enforced by the API, not only React. Registration collisions stay generic. A password reset atomically consumes its link and compares the existing credential during the update, preventing concurrent reuse. Email changes require the current password and verification of the destination before changing the login address. Full contracts and isolated acceptance commands are in `docs/account-management.md`.
 
 Account email links must not be logged or returned by ordinary public endpoints. SendGrid delivers them in production; only explicitly disposable E2E stacks may use the captured-mail collection.
+
+
+## Mobile web worker cache boundary
+
+The service worker must not cache or return authenticated API responses. API reads reauthorize on the network, including league/team/standings reads; shared URL-keyed caches cannot partition accounts or revoke previously cached access. Worker activation and logout purge remove legacy `dd-api-*` caches. Only public shell/assets may be served offline. Navigation uses current network HTML when available; missing JavaScript must never receive an HTML fallback. See `docs/mobile-offline-and-updates.md` and its isolated policy regression command.
+
+
+### Self-service league exit and generated Rotisserie scoring
+
+`POST /api/leagues/{id}/leave` authenticates the caller and removes only that caller's membership. Its required `expected_user_id` binds retries to the initiating account; it is not an administrative removal target. Read-only impersonation retains the global write denial. No successor/commissioner acceptance, payment, roster or season policy blocks leaving, including the last commissioner. Role/ownership cleanup, caller-scoped receipt and audit share a transaction. Revoked sessions lose the departed league/draft rooms while other subscriptions remain; API guards use current membership.
+
+Generated Rotisserie schedules and finalization require league administrative authority, not a hidden UI permission. Regular calendar periods create no opponents. Scoring/advancement/awards share the transaction snapshot and repeated finalization cannot re-award a result. Finalized or locked history cannot be replaced. Large-pool salary optimizations preserve exact distinct-player and destination-cost constraints; resource exhaustion remains an unknown result, never an implicit authorization to pick.

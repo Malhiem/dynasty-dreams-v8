@@ -1,3 +1,4 @@
+import RotisserieSeason from './scheduler/RotisserieSeason';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,7 +15,7 @@ const message = (error: any) => typeof error?.response?.data?.detail === 'string
 
 function Field({ label, name, value, onChange, type = 'date', options, disabled = false }: any) {
   const id = `scheduler-${name}`;
-  const classes = 'w-full min-w-0 rounded-md border border-border bg-secondary p-2 text-sm';
+  const classes = 'w-full min-w-0 rounded-md border border-border bg-secondary text-secondary-foreground min-h-11 p-2 text-sm';
   return <div className="space-y-1 min-w-0"><label htmlFor={id} className="text-sm">{label}</label>
     {options ? <select id={id} data-testid={id} className={classes} value={value} disabled={disabled} onChange={e => onChange(e.target.value)}>
       {options.map((option: any) => <option key={option.value ?? option} value={option.value ?? option}>{option.label ?? option}</option>)}
@@ -57,6 +58,7 @@ function CalendarEditor({ league, season, reloadLeague }: any) {
   if (loading) return <p role="status">Loading schedule…</p>;
   if (loadError) return <div role="alert">{loadError} <Button onClick={() => setRetry(v => v + 1)}>Retry</Button></div>;
   if (!config) return null;
+  const roto = league.scoring_format === "rotisserie";
   const disabled = saving || !editable;
   const { errors, warnings } = validate(config, maximum);
   const change = (field: string, value: any) => { setConfig((c: any) => ({ ...c, [field]: value })); setSaveError(''); };
@@ -96,18 +98,18 @@ function CalendarEditor({ league, season, reloadLeague }: any) {
   };
   return <section className="space-y-4 min-w-0" data-testid="scheduler">
     <h2 className="text-lg font-semibold">{league.name} · {season} season calendar</h2>
-    <p className="text-sm text-muted-foreground">Save scoring period dates and bracket plans for this season. Use Opponent Schedule below to generate and apply live weekly matchups.</p>
+    <p className="text-sm text-muted-foreground">{roto ? "Save calendar dates, then use Rotisserie Season to generate scoring periods and enabled playoffs." : "Save scoring period dates and bracket plans for this season. Use Opponent Schedule below to generate and apply live weekly matchups."}</p>
     {!editable && <p role="status">Only league administrators can edit this calendar.</p>}
     <Tabs value={tab} onValueChange={setTab}>
       <TabsList className="flex flex-wrap h-auto justify-start gap-1">
-        <TabsTrigger value="regular">Regular Season</TabsTrigger><TabsTrigger value="playoffs">Playoffs</TabsTrigger><TabsTrigger value="projection">Full Schedule Projection</TabsTrigger><TabsTrigger value="opponents">Opponent Schedule</TabsTrigger>
+        <TabsTrigger value="regular">Regular Season</TabsTrigger><TabsTrigger value="playoffs">Playoffs</TabsTrigger><TabsTrigger value="projection">Full Schedule Projection</TabsTrigger><TabsTrigger value="opponents">{roto ? "Rotisserie Season" : "Opponent Schedule"}</TabsTrigger>
       </TabsList>
       <TabsContent value="regular"><Card><CardHeader><CardTitle>Regular Season Dates</CardTitle></CardHeader><CardContent className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">{field('Beginning Scoring Period', 'seasonStart')}{field('Ending Scoring Period', 'seasonEnd')}
           {field('Scoring Period Interval', 'scoringInterval', 'text', intervalOptions)}
           <Field label="Scoring Period Start Day" name="startDay" value={config.startDay} options={weekdays.map((label, value) => ({ label, value }))} disabled={disabled} onChange={(v: string) => change('startDay', Number(v))} />
           <Field label="Merge First N Periods" name="mergeWeeks" value={config.mergeWeeks} options={[1, 2, 3]} disabled={disabled} onChange={(v: string) => change('mergeWeeks', Number(v))} />
-          {field(`Opponents per scoring period (1–${maximum - 1})`, 'matchupsPerPeriod', 'number')}
+          {!roto && field(`Opponents per scoring period (1–${maximum - 1})`, 'matchupsPerPeriod', 'number')}
         </div><Button disabled={disabled} onClick={() => regenerate('regular')}>Regenerate Regular Periods</Button>
         {periods(config.regularPeriods)}
       </CardContent></Card></TabsContent>
@@ -122,7 +124,7 @@ function CalendarEditor({ league, season, reloadLeague }: any) {
         <Button disabled={disabled || config.brackets.length >= 50} onClick={() => change('brackets', [...config.brackets, { id: String(Date.now()) + Math.random().toString(36).slice(2), name: 'New Bracket', teams: 2, rounds: 1 }])}>Add Bracket</Button>
       </CardContent></Card></TabsContent>
       <TabsContent value="projection"><Card><CardHeader><CardTitle>Full Season Schedule Projection</CardTitle></CardHeader><CardContent>{periods([...config.regularPeriods, ...config.playoffPeriods])}</CardContent></Card></TabsContent>
-      <TabsContent value="opponents"><CombinedSchedule key={url} leagueId={league.id} onApplied={reloadLeague} /></TabsContent>
+      <TabsContent value="opponents">{roto ? <RotisserieSeason key={url} leagueId={league.id} onApplied={reloadLeague} readOnly={!editable} /> : <CombinedSchedule key={url} leagueId={league.id} onApplied={reloadLeague} />}</TabsContent>
     </Tabs>
     {errors.length > 0 && <div role="alert" className="text-destructive">{errors.map((e: string) => <p key={e}>{e}</p>)}</div>}
     {warnings.length > 0 && <div role="status" className="text-amber-400">{warnings.map((w: string, i: number) => <p key={i}>{w}</p>)}</div>}

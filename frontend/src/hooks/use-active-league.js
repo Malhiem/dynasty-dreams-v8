@@ -82,7 +82,8 @@ export function useActiveLeague() {
         let id = localStorage.getItem(STORAGE_KEY) || leagueId;
         // A direct link may resolve an authorized league while this request is pending.
         // Preserve that newer selection instead of replacing it with the list default.
-        if (!id || (id === leagueId && !(ordered || []).some(l => l.id === id))) {
+        // A capped/stale list is not evidence that the explicitly selected league is invalid.
+        if (!id) {
           id = ordered?.[0]?.id || null;
           if (id) {
             try { localStorage.setItem(STORAGE_KEY, id); } catch (e) { /* noop */ }
@@ -132,7 +133,10 @@ export function useActiveLeague() {
         setMyTeam(mine);
         // Keep myTeamsByLeague in sync for the active league.
         setMyTeamsByLeague(prev => ({ ...prev, [leagueId]: mine }));
-      } catch (e) { console.error('active league load', e); }
+      } catch (e) {
+        if (!cancelled && [401,403,404].includes(e?.response?.status)) { setLeague(null); setLeagueTeams([]); setMyTeam(null); }
+        console.error('active league load', e);
+      }
     };
     load();
     return () => { cancelled = true; };
@@ -146,7 +150,10 @@ export function useActiveLeague() {
 
   useEffect(() => {
     const onSelection = (event) => setLeagueId(event.detail.leagueId);
-    const onStorage = (event) => { if (event.key === STORAGE_KEY) setLeagueId(event.newValue); };
+    const onStorage = (event) => {
+      if (event.key === STORAGE_KEY) setLeagueId(event.newValue);
+      if (event.key === 'dd_leagues_revision') { invalidateApiCache(/./); setTeamsReloadKey(key => key + 1); }
+    };
     window.addEventListener("dd:active-league-changed", onSelection);
     window.addEventListener("storage", onStorage);
     return () => {
@@ -187,7 +194,15 @@ export function useActiveLeague() {
   useSocket(
     meId ? `user_${meId}` : null,
     {
-      team_membership_changed: () => {
+      team_membership_changed: (payload) => {
+        if (payload?.action === 'left' && payload.user_id === meId) {
+          invalidateApiCache(/./);
+          setMyLeagues(previous => previous.filter(value => value.id !== payload.league_id));
+          if (leagueId === payload.league_id) {
+            try { localStorage.removeItem(STORAGE_KEY); } catch { /* noop */ }
+            setLeagueId(null); setLeague(null); setLeagueTeams([]); setMyTeam(null);
+          }
+        }
         try { invalidateApiCache(/leagues\?my_leagues=true/); } catch { /* noop */ }
         reloadMyLeagues();
       },

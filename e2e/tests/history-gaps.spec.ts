@@ -61,7 +61,7 @@ for(const route of ['/league-history','/trophy-room']) {
     const gate=new Promise<void>(r=>release=r),entered=new Promise<void>(r=>started=r),done=new Promise<void>(r=>finished=r);
     await page.route(`**/api/leagues/${a.id}/trophy-room`,async r=>{const response=await r.fetch();started();await gate;try{await r.fulfill({response});}catch{}finally{finished();}});
     await p.open(a.id,route);await entered;
-    await p.ui.leaguePicker().click();await p.ui.leagueOption(b.id).click();
+    const menu=page.getByRole('button',{name:'Toggle navigation menu',exact:true});if(await menu.isVisible())await menu.click();await p.ui.leaguePicker().click();await p.ui.leagueOption(b.id).click();await page.keyboard.press('Escape');await page.keyboard.press('Escape');
     if(route==='/league-history')await expect(p.ui.historyRow(b.teams[0].id)).toBeVisible();
     else await expect(p.ui.teamCard(b.teams[0].id)).toBeVisible();
     release();await done;

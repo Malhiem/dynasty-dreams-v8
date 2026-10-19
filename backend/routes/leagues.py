@@ -111,6 +111,7 @@ class LeagueResponse(BaseModel):
     current_teams: int
     commissioner_id: str
     commissioner_name: str
+    commissioner_vacant: bool = False
     co_commissioners: List[str] = []
     admin_ids: List[str] = []
     salary_cap_enabled: bool
@@ -355,10 +356,11 @@ def _league_to_response(league: dict) -> LeagueResponse:
         scoring_format=league["scoring_format"],
         max_teams=league["max_teams"],
         current_teams=league.get("current_teams", 0),
-        commissioner_id=league["commissioner_id"],
-        commissioner_name=league["commissioner_name"],
-        admin_ids=league.get("admin_ids", []) or [],
-        co_commissioners=league.get("co_commissioners", []) or [],
+        commissioner_id=str(league.get("commissioner_id") or ""),
+        commissioner_name=league.get("commissioner_name") or "Vacant",
+        commissioner_vacant=not bool(league.get("commissioner_id")),
+        admin_ids=[str(value) for value in league.get("admin_ids") or []],
+        co_commissioners=[str(value) for value in league.get("co_commissioners") or []],
         salary_cap_enabled=league["salary_cap_enabled"],
         salary_cap=league.get("salary_cap"),
         draft_type=league["draft_type"],
@@ -526,7 +528,10 @@ async def get_leagues(
     )
 
     # Resolve the user's own league ids (team membership + commissioner roles)
-    user_teams = await db.teams.find({"owner_id": user["_id"]}, {"league_id": 1}).to_list(500)
+    identities = [str(user["_id"])]
+    if ObjectId.is_valid(str(user["_id"])):
+        identities.append(ObjectId(str(user["_id"])))
+    user_teams = await db.teams.find({"$or": [{"owner_id": {"$in": identities}}, {"co_owner_ids": {"$in": identities}}]}, {"league_id": 1}).to_list(None)
     member_league_ids = list({t["league_id"] for t in user_teams})
     member_object_ids = []
     for lid in member_league_ids:
@@ -557,12 +562,14 @@ async def get_leagues(
     # Default + my_leagues=true → membership-scoped results only
     query = {
         "$or": [
-            {"commissioner_id": user["_id"]},
-            {"admin_ids": user["_id"]},
+            {"commissioner_id": {"$in": identities}},
+            {"owner_id": {"$in": identities}},
+            {"admin_ids": {"$in": identities}},
+            {"co_commissioners": {"$in": identities}},
             {"_id": {"$in": member_object_ids}},
         ]
     }
-    leagues = await db.leagues.find(query).to_list(200)
+    leagues = await db.leagues.find(query).sort([("created_at", -1), ("_id", -1)]).to_list(200)
     # Iter 230al — Opt-in filters used by the league switcher / "My
     # Leagues" surfaces so users don't see archived or automated-test
     # artefacts in their day-to-day view. Backend tests + admin tools
@@ -596,6 +603,22 @@ async def get_league(league_id: str, request: Request):
     user = await _deps["get_current_user"](request)
     league = await require_league_member(db, user, league_id)
     return _league_to_response(league)
+
+
+class LeaveLeagueRequest(BaseModel):
+    expected_user_id: str = Field(min_length=1, max_length=100)
+
+
+@router.post("/leagues/{league_id}/leave")
+async def leave_current_league(league_id: str, payload: LeaveLeagueRequest, request: Request):
+    # Authenticate before resource lookup. The target user is never caller-selected.
+    user = await _deps["get_current_user"](request)
+    if payload.expected_user_id != str(user["_id"]):
+        raise HTTPException(409, "Your account changed. Reopen the leave dialog before trying again.")
+    from services.league_exit import leave_league, evict_league_rooms
+    result = await leave_league(_deps["db"], league_id, user["_id"])
+    await evict_league_rooms(_deps["db"], _deps.get("sio"), league_id, user["_id"])
+    return result
 
 
 # ─── Pydantic ─────────────────────────────────────────────────
@@ -3109,7 +3132,7 @@ async def save_scheduler_calendar(league_id: str, season: int, payload: Schedule
         raise HTTPException(status_code=403, detail="Only league administrators can save schedules")
     if season != season_year(league):
         raise HTTPException(status_code=409, detail="The active season changed. Reload the scheduler.")
-    if league.get("scoring_format") not in ("head_to_head", "h2h-points", "h2h-categories"):
+    if league.get("scoring_format") not in ("head_to_head", "h2h-points", "h2h-categories", "rotisserie"):
         raise HTTPException(status_code=400, detail="Matchup scheduling requires Head-to-Head scoring")
     maximum = int(league.get("max_teams") or 12)
     if payload.matchupsPerPeriod >= maximum or any(b.teams > maximum for b in payload.brackets):

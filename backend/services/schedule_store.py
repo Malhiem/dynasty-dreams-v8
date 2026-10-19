@@ -22,12 +22,12 @@ GAME_FIELDS = ["_id", "week", "home_team_id", "away_team_id", "status", "home_sc
 
 
 def season(league):
-    # Keep the existing live matchup season contract, including legacy fallbacks.
+    # Explicit labels win; current_season_year is the season start year, as in scheduler calendars.
     if league.get("season"):
         return str(league["season"])
     if league.get("current_season_year"):
         year = int(league["current_season_year"])
-        return f"{year - 1}-{str(year)[-2:]}"
+        return f"{year}-{str(year + 1)[-2:]}"
     from routes.analytics import _current_season
     return _current_season()
 

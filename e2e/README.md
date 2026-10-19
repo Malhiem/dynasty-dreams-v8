@@ -100,3 +100,17 @@ does not satisfy actual progression. Fixtures set Rotisserie through the API;
 these tests do not demonstrate that the scoring-format UI saves successfully.
 Run with the documented evidence-preserving Compose command, substituting
 `rotisserie-playoffs.spec.ts` for the spec filter.
+
+
+### Mobile recovery and worker regression coverage
+
+The draft paging fixture keeps strict salary rules enabled and seeds a known feasible completion before draft creation. Its normal clicks, actual pick, reload, and negative salary checks run at default, 320px, 430px and landscape sizes. `draft-write-recovery.spec.ts` injects failures before and after commit and checks authoritative reconciliation without duplicate advancement. `mobile-calendar-style.spec.ts` records actual computed contrast for native fields in both themes and enlarged text. These are browser checks, not physical-device or screen-reader certification.
+
+`mobile-worker-browser.spec.ts` requires `MOBILE_WORKER_BROWSER_ISOLATED=1` and a secure test origin, and otherwise records an explicit skip. In the disposable `http://web` Compose network, the dedicated Chromium harness supplies `--unsafely-treat-insecure-origin-as-secure=http://web` only for that origin. Never use that flag for production browsing. Keep one worker and avoid overlapping mutating suites. The worker tests verify private cache isolation and current HTML/offline-asset handling; they do not represent actual home-screen installation on Safari/Android.
+
+From the repository root, `node frontend/scripts/service-worker.test.cjs` runs the worker-source cache/network policy regressions without a database. The bounded fixture transaction worker remains test-only and is not evidence of production worker startup.
+
+
+### Controlled service-worker browser checks
+
+Inside the disposable E2E runner/Compose network, with `E2E_BASE_URL=http://web H2H_ISOLATED=1`, run `npx playwright test --config=playwright.worker.config.ts`. This dedicated configuration starts a loopback-only HTTP proxy inside the runner, giving Chromium a genuinely trustworthy localhost origin for service-worker APIs. Fixture/auth API contexts still use `http://web`; only browser cookies are scoped to localhost. No host ports, production settings or browser security overrides are required. The normal suite leaves these two lifecycle checks explicitly skipped unless the dedicated harness is selected. This is controlled Chromium coverage, not physical Safari installation or a full two-deployment asset migration test.

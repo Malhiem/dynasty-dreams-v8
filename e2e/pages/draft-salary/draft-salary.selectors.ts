@@ -1,5 +1,9 @@
 import type { Page } from "@playwright/test";
 export const selectors = (page:Page) => ({
+  pickRejected: () => page.getByText('Pick not applied',{exact:true}),
+  search: () => page.getByPlaceholder("Search players...",{exact:true}).filter({visible:true}),
+  rows: () => page.getByTestId(/^draft-room-eligible-row-/).filter({visible:true}),
+  more: () => page.getByRole("button",{name:/^Show more players/}).filter({visible:true}),
   overview: () => page.getByTestId("draft-roster-overview"),
   payroll: () => page.getByTestId("draft-team-payroll"),
   positions: () => page.getByTestId("draft-team-positions"),

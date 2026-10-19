@@ -591,3 +591,11 @@ html.light .recharts-tooltip-item { color: #0F172A !important; }
 /* Where chart series rely on `--ice-glow`, the light-mode HSL block at
    the top of this file already redefines that token, so the gradient
    strokes stay sensible (cyan-on-white). */
+
+/* Native form controls must use the active theme, including Safari popups. */
+:root { color-scheme: dark; }
+.light { color-scheme: light; }
+select option, select optgroup {
+  color: hsl(var(--foreground));
+  background-color: hsl(var(--background));
+}

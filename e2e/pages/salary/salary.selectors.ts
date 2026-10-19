@@ -6,6 +6,7 @@ export const selectors={
  percentage:(p:Page,id:string)=>p.getByTestId(`tb-asset-${id}`).getByRole('slider'),
  capHit:(p:Page)=>p.getByTestId('cap-overview-card-hit'),
  dead:(p:Page)=>p.getByTestId('cap-overview-card-dead'),
+ mobilePicker:(p:Page)=>p.getByTestId('commissioner-settings-mobile-tab-select'),
  tab:(p:Page)=>p.getByRole('tab',{name:'Salary Cap & Contracts',exact:true}),
  cap:(p:Page)=>p.getByTestId('rules-schedule-salary-cap-card'),
  retention:(p:Page)=>p.getByTestId('rules-schedule-retention-card'),
