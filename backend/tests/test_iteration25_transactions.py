@@ -79,7 +79,8 @@ class TestLeagueTransactions:
     def test_transactions_only_supported_types(self, admin_session, ice_kings_id):
         r = admin_session.get(f"{API}/leagues/{ice_kings_id}/transactions?limit=100")
         assert r.status_code == 200
-        allowed = {"roster_add", "roster_drop", "waiver_won", "trade_executed", "lineup_change"}
+        # waiver_lost is a documented activity type (routes/activity.py) emitted by the waiver engine.
+        allowed = {"roster_add", "roster_drop", "waiver_won", "waiver_lost", "trade_executed", "lineup_change"}
         for tx in r.json()["transactions"]:
             assert tx["type"] in allowed, f"unexpected type {tx['type']}"
             # required keys

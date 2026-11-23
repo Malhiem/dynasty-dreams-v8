@@ -511,8 +511,7 @@ async def upload_team_logo(team_id: str, request: Request, file: UploadFile = Fi
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
     if len(raw) > MAX_LOGO_BYTES:
-        # 413 Payload Too Large (was 400). Clients only display `detail`, so no UI change.
-        raise HTTPException(status_code=413, detail="Image too large. Max size is 1 MB.")
+        raise HTTPException(status_code=400, detail="Image too large. Max size is 1 MB.")
 
     try:
         from PIL import Image
