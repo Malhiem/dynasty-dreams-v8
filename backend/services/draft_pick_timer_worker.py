@@ -30,20 +30,18 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 
+from services.draft_clock import (
+    effective_pick_seconds,
+    is_within_clock_window,
+    parse_iso,
+    pick_clock_expired,
+    trade_voting_pause_active,
+)
+
 logger = logging.getLogger("draft_pick_timer_worker")
 
 
-def _parse_iso(value):
-    if not value:
-        return None
-    try:
-        s = str(value).replace("Z", "+00:00")
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:
-        return None
+_parse_iso = parse_iso
 
 
 async def _apply_hibernation_grace(db, now: datetime, interval_seconds: int) -> int:
@@ -156,46 +154,7 @@ def _team_owners_present_in_draft_room(draft_id: str, team: dict | None) -> bool
     return False
 
 
-async def _is_within_clock_window(draft: dict, now: datetime) -> bool:
-    """Iter 231y — Time-of-day clock window guard.
-
-    A draft can optionally restrict its pick clock to a daily window
-    (e.g. 9am-9pm in the league's local timezone) so timeouts don't
-    fire overnight. Honours `clock_starts_at` / `clock_stops_at`
-    (HH:MM strings) in `clock_timezone` (IANA name, default UTC).
-
-    Returns True when no window is configured (legacy default) OR
-    when `now` falls inside the configured window. Returns False to
-    signal the worker should skip this draft on this pass.
-    """
-    starts = draft.get("clock_starts_at")
-    stops = draft.get("clock_stops_at")
-    if not starts and not stops:
-        return True  # No window configured — clock runs 24/7 (legacy default).
-    tz_name = draft.get("clock_timezone") or "UTC"
-    try:
-        from zoneinfo import ZoneInfo
-        local_now = now.astimezone(ZoneInfo(tz_name))
-    except Exception:
-        local_now = now
-    cur_minutes = local_now.hour * 60 + local_now.minute
-
-    def _parse_hhmm(s):
-        try:
-            h, m = str(s).split(":")[:2]
-            return int(h) * 60 + int(m)
-        except Exception:
-            return None
-
-    start_min = _parse_hhmm(starts) if starts else 0
-    stop_min = _parse_hhmm(stops) if stops else 24 * 60
-    if start_min is None or stop_min is None:
-        return True  # Malformed window — fail open (don't block picks).
-    if start_min <= stop_min:
-        # Same-day window (e.g. 09:00–21:00).
-        return start_min <= cur_minutes < stop_min
-    # Window crosses midnight (e.g. 21:00–06:00).
-    return cur_minutes >= start_min or cur_minutes < stop_min
+_is_within_clock_window = is_within_clock_window
 
 
 async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
@@ -330,49 +289,13 @@ async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
         if not started:
             counts["skipped"] += 1
             continue
-        # Iter 231y — `time_per_pick` is the canonical field set by
-        # `create_draft` (CreateDraftRequest); `pick_time_seconds` is
-        # the legacy alias some older drafts have. Honour BOTH in that
-        # order — without this, TFHL Inaugural Draft (configured for
-        # 4-hour picks via `time_per_pick: 14400`) was being timed out
-        # after just 60s because `pick_time_seconds` was None and the
-        # worker fell back to the 60s default.
-        pick_time = int(
-            draft.get("time_per_pick")
-            or draft.get("pick_time_seconds")
-            or 60
-        )
-        # Iter 232N.26 — Personal timer cap. Runs concurrently with the
-        # main pick clock; whichever expires first triggers auto-pick.
-        # Stored as an int (seconds) or None (feature disabled).
-        personal_cap = draft.get("personal_pick_timer_seconds")
-        try:
-            personal_cap = int(personal_cap) if personal_cap else None
-        except (TypeError, ValueError):
-            personal_cap = None
-        # Iter 232N.26 — Pause the personal timer while ANY trade in
-        # this league is under review (pending vote / veto window).
-        # The main pick clock is UNAFFECTED — commissioners can still
-        # rely on the league-wide cap so the draft never stalls
-        # forever. Only the tighter personal cap sits out.
-        trade_voting_pause = False
-        league_id = draft.get("league_id")
-        if personal_cap and league_id:
-            try:
-                trade_voting_pause = await db.trades.count_documents({
-                    "league_id": league_id,
-                    "status": {"$in": ["pending_review", "under_review", "pending_veto"]},
-                }) > 0
-            except Exception:
-                trade_voting_pause = False
-        effective_seconds = pick_time
-        used_personal = False
-        if personal_cap and not trade_voting_pause and personal_cap < pick_time:
-            effective_seconds = personal_cap
-            used_personal = True
-        # 3s grace so the worker isn't racing the frontend's own auto-pick.
-        deadline = started.timestamp() + effective_seconds + 3
-        if now.timestamp() < deadline:
+        # The pick-clock rules (time_per_pick / legacy pick_time_seconds, the
+        # personal timer cap, the trade-vote pause and the 3s grace) live in
+        # services/draft_clock.py so POST /drafts/{id}/auto-pick enforces
+        # exactly the same deadline.
+        trade_voting_pause = await trade_voting_pause_active(db, draft)
+        _, used_personal = effective_pick_seconds(draft, trade_voting_pause)
+        if not pick_clock_expired(draft, now, trade_voting_pause):
             continue
         counts["expired"] += 1
         try:
@@ -388,7 +311,8 @@ async def run_once(db, *, draft_ids_filter: list[str] | None = None) -> dict:
                 fire_source = "defer_offline_timeout"
             else:
                 fire_source = source_default_for_timeout()
-            await perform_one_auto_pick(str(draft["_id"]), source=fire_source)
+            await perform_one_auto_pick(str(draft["_id"]), source=fire_source,
+                                        expected_pick=draft.get("current_pick"))
             counts["picked"] += 1
         except Exception as e:
             counts["errors"] += 1

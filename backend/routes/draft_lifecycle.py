@@ -26,11 +26,20 @@ from datetime import datetime, timezone
 
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
 
 from routes.draft_helpers import (
     early_start_clock_msg,
     perform_one_auto_pick,
     seed_draft_picks_for_draft,
+)
+from routes.league_guards import is_league_manager, require_league_member
+from services.draft_clock import (
+    BROWSER_CLOCK_SKEW_SECONDS,
+    effective_pick_seconds,
+    is_within_clock_window,
+    pick_clock_expired,
+    trade_voting_pause_active,
 )
 
 
@@ -466,18 +475,67 @@ async def start_draft(draft_id: str, request: Request, early_start: bool = False
 # ─── POST /drafts/{draft_id}/auto-pick ─────────────────────────────────
 
 
+class AutoPickRequest(BaseModel):
+    # The pick number the caller saw on the clock. Lets the server ignore a
+    # stale or duplicate request instead of auto-picking the next team's turn.
+    expected_pick: int | None = None
+
+
 @router.post("/drafts/{draft_id}/auto-pick")
-async def auto_pick_for_on_clock_team(draft_id: str, request: Request):
-    """Auto-pick for whoever is on the clock when their timer expires.
+async def auto_pick_for_on_clock_team(draft_id: str, request: Request, body: AutoPickRequest | None = None):
+    """Auto-pick for whoever is on the clock once their timer has run out.
 
     Resolution order:
       1. The on-clock team's `team.draft_queue` (first undrafted entry)
       2. The top-ranked undrafted player (eligible-players ordering)
 
-    Anyone (manager) can fire this — the backend resolves the right
-    team via the stored `team_map` so a missed pick can be skipped
-    even when the absent manager isn't logged in.
+    Any member of the league may call this (so an absent manager's missed
+    pick is skipped even when they aren't logged in), but only once the pick
+    clock has actually expired, by the same rules the timer worker applies
+    (`services/draft_clock.py`). The league commissioner, co-commissioners and
+    platform admins may skip a pick early. Everyone else gets 403 (not a
+    member) or 409 (clock still running / paused / pick already advanced).
     """
-    await _get_user(request)  # auth required, but no role check
-    pick_doc = await perform_one_auto_pick(draft_id, source="timeout")
+    user = await _get_user(request)
+    db = _db()
+    try:
+        draft = await db.drafts.find_one({"_id": ObjectId(draft_id)})
+    except Exception:
+        draft = None
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    league_id = draft.get("league_id")
+    if not league_id:
+        raise HTTPException(status_code=400, detail="Draft has no league_id")
+
+    # Membership first: outsiders learn nothing about the draft's clock state.
+    league = await require_league_member(db, user, str(league_id))
+
+    current_pick = draft.get("current_pick")
+    expected_pick = body.expected_pick if body else None
+    if expected_pick is not None and current_pick != expected_pick:
+        raise HTTPException(status_code=409, detail="Pick already advanced")
+    if draft.get("status") != "active":
+        raise HTTPException(status_code=400, detail="Draft is not active")
+
+    source = "timeout"
+    now = datetime.now(timezone.utc)
+    pause = await trade_voting_pause_active(db, draft)
+    # The caller is a browser firing at its own countdown zero, so allow a little
+    # clock skew instead of making it wait out the worker's grace period.
+    expired = pick_clock_expired(draft, now, pause, grace_seconds=-BROWSER_CLOCK_SKEW_SECONDS)
+    if is_league_manager(user, league):
+        if not expired:
+            source = "commissioner_skip"  # explicit early skip; keep the audit trail honest
+    else:
+        if draft.get("timer_paused"):
+            raise HTTPException(status_code=409, detail="Pick clock is paused")
+        if not expired:
+            raise HTTPException(status_code=409, detail="Pick clock has not expired")
+        if not await is_within_clock_window(draft, now):
+            raise HTTPException(status_code=409, detail="Pick clock is outside its daily window")
+    if expired and effective_pick_seconds(draft, pause)[1]:
+        source = "personal_timeout"  # the tighter personal cap is what ran out
+
+    pick_doc = await perform_one_auto_pick(draft_id, source=source, expected_pick=current_pick)
     return {"pick": pick_doc, "via": pick_doc.get("auto_pick_via")}

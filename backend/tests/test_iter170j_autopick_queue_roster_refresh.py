@@ -53,9 +53,15 @@ def test_auto_pick_endpoint_present_and_queue_first():
     assert 'queue = list((team or {}).get("draft_queue") or [])' in block
     assert 'via = "queue"' in block
     assert 'via = "top_eligible"' in block
-    # Pushes to roster + pulls from queue atomically.
-    assert '"$addToSet": {"roster": str(chosen_player["_id"])}' in block
-    assert '"$pull": {"draft_queue": str(chosen_player["_id"])}' in block
+    # Pushes to roster + pulls from queue in one team write. Iter 231 moved
+    # that write into `services/draft_mutation.commit_pick` (journaled, so a
+    # crash can't leave the roster and the draft out of step); the auto-pick
+    # path calls it with auto=True so the picked player leaves the queue.
+    assert "await commit_pick(" in block and "auto=True" in block
+    mutation = Path("/app/backend/services/draft_mutation.py").read_text()
+    assert 'roster = list(dict.fromkeys([*before["roster"], pick["player_id"]]))' in mutation
+    assert 'queue = [pid for pid in before["draft_queue"] if not auto or pid != pick["player_id"]]' in mutation
+    assert '"roster": roster' in mutation and '"draft_queue": queue' in mutation
     # Broadcasts a draft_pick (same channel as a manual pick).
     assert '"draft_pick"' in block
     # Stamps `auto_picked: True` on the pick doc so the UI can badge it.
@@ -91,7 +97,9 @@ def test_draftroom_auto_pick_on_timeout():
     assert "lastAutoFireRef.current = null" in src
     assert "lastAutoFireRef.current === currentPick" in src
     # POST to /auto-pick when timer expires and a real draft is active.
-    assert "api.post(`/drafts/${currentDraftId}/auto-pick`)" in src
+    # Iter 233 — the body names the pick this countdown belonged to
+    # (`expected_pick`) so the server can ignore a stale/duplicate request.
+    assert "api.post(`/drafts/${currentDraftId}/auto-pick`, { expected_pick: currentPick })" in src
 
 
 def test_draftroom_queue_hydrate_and_persist():

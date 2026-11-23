@@ -78,8 +78,12 @@ export default function usePickTimer({
       try { onTimerExpired?.(currentPick); } catch { /* noop */ }
       return;
     }
-    api.post(`/drafts/${currentDraftId}/auto-pick`).then(() => refreshDraftState()).catch(() => {
-      // ignore — next tick will retry
+    // `expected_pick` tells the server which pick this countdown belonged to, so a
+    // late or duplicate request (several browsers fire at once) can't auto-pick the
+    // NEXT team's turn. The server also rejects it (409) while the clock is running.
+    api.post(`/drafts/${currentDraftId}/auto-pick`, { expected_pick: currentPick }).then(() => refreshDraftState()).catch(() => {
+      // ignore — if another browser, the timer worker or a commissioner already picked,
+      // the next draft-state refresh shows it, and the server-side timer worker is the backstop
     });
   }, [currentDraftId, isDraftActive, currentPick, deferOnExpiry, onTimerExpired, refreshDraftState]);
 
