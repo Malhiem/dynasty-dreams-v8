@@ -20,6 +20,7 @@ die() { echo "backend-tests: $*" >&2; exit 1; }
 # --- tests/isolated_seed.py and are intentionally strict.
 [ "${TEST_SUITE_ISOLATED:-}" = "1" ] || die "TEST_SUITE_ISOLATED must be 1"
 [ "${SECURITY_TEST_ISOLATED:-}" = "1" ] || die "SECURITY_TEST_ISOLATED must be 1"
+[ "${E2E_MODE:-}" = "true" ] || die "E2E_MODE must be true (payments are disabled in the test stack)"
 case "${MONGO_URL:-}" in
   mongodb://mongo:27017|mongodb://mongo:27017/) ;;
   *) die "MONGO_URL must be mongodb://mongo:27017 (got '${MONGO_URL:-}')" ;;

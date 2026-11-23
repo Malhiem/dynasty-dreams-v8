@@ -93,6 +93,19 @@ async def _cleanup(db, seed):
     await db.drafts.delete_one({"_id": ObjectId(seed["draft_id"])})
 
 
+async def _record_pick(db, seed, overall, player_id, team_key="team1_id"):
+    """Record a draft pick the way the app does: the player lands on the team's
+    roster and the pick is stored on the draft document. (The cap view used to
+    sum a separate `draft_picks` collection; it now reports the team's payroll
+    via services.draft_salary.team_summary, so seeding that collection no
+    longer has any effect.)"""
+    team_id = seed[team_key]
+    await db.teams.update_one({"_id": ObjectId(team_id)}, {"$push": {"roster": player_id}})
+    await db.drafts.update_one({"_id": ObjectId(seed["draft_id"])}, {"$push": {"picks": {
+        "overall": overall, "team_id": team_id, "player_id": player_id,
+    }}})
+
+
 @pytest.mark.asyncio
 async def test_non_cap_league_returns_disabled_shape():
     from routes.draft_cap_view import get_draft_cap_status
@@ -125,14 +138,8 @@ async def test_cap_league_sums_picks_and_computes_percent():
         "nhl_id": f"n62_p2_{ObjectId()}",
         "cap_hit": 1_500_000,
     })
-    await db.draft_picks.insert_one({
-        "draft_id": s["draft_id"], "pick_number": 1,
-        "team_id": s["team1_id"], "player_id": str(p1.inserted_id),
-    })
-    await db.draft_picks.insert_one({
-        "draft_id": s["draft_id"], "pick_number": 2,
-        "team_id": s["team1_id"], "player_id": str(p2.inserted_id),
-    })
+    await _record_pick(db, s, 1, str(p1.inserted_id))
+    await _record_pick(db, s, 2, str(p2.inserted_id))
     try:
         r = await get_draft_cap_status(s["draft_id"], _StubReq())
         assert r["salary_cap_enabled"] is True
@@ -166,10 +173,7 @@ async def test_unpriced_player_uses_default_rookie_aav():
         "name": "Unpriced Rookie", "position": "LW",
         "nhl_id": f"n62_unpriced_{ObjectId()}",
     })  # no contract / cap_hit / salary
-    await db.draft_picks.insert_one({
-        "draft_id": s["draft_id"], "pick_number": 1,
-        "team_id": s["team1_id"], "player_id": str(p.inserted_id),
-    })
+    await _record_pick(db, s, 1, str(p.inserted_id))
     try:
         r = await get_draft_cap_status(s["draft_id"], _StubReq())
         my_team = next(t for t in r["teams"] if t["team_id"] == s["team1_id"])
@@ -190,10 +194,7 @@ async def test_over_cap_flag_when_used_exceeds_cap():
         "nhl_id": f"n62_over_{ObjectId()}",
         "contract": {"aav": 7_000_000},
     })
-    await db.draft_picks.insert_one({
-        "draft_id": s["draft_id"], "pick_number": 1,
-        "team_id": s["team1_id"], "player_id": str(p.inserted_id),
-    })
+    await _record_pick(db, s, 1, str(p.inserted_id))
     try:
         r = await get_draft_cap_status(s["draft_id"], _StubReq())
         my = next(t for t in r["teams"] if t["team_id"] == s["team1_id"])

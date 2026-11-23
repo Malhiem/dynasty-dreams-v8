@@ -70,7 +70,10 @@ def test_simulate_pick_stores_full_player_object_not_string():
     handleDraftPlayer (with Simulate Pick as a thin alias), so we
     inspect that unified handler instead."""
     src = _source()
-    handler_block = src.split("const handleDraftPlayer")[1].split("};")[0]
+    # Iter 233 — anchor on the real handler (`= useCallback`) and end at the alias
+    # that follows it; a bare "const handleDraftPlayer" prefix now also matches
+    # other identifiers, and the handler body contains several "};".
+    handler_block = src.split("const handleDraftPlayer = useCallback")[1].split("const handleSimulatePick")[0]
     # Must store the full player object so downstream `.name`,
     # `.position` accesses on the draft-board tile work.
     assert "player: { ...nextPlayer" in handler_block

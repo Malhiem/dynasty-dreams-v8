@@ -27,7 +27,8 @@ def _src() -> str:
 def test_unified_draft_handler_replaces_old_simulate():
     src = _src()
     # Iter 229h — handler was extracted into useDraftPickHandler (useCallback wrapper).
-    assert "const handleDraftPlayer = useCallback(async (chosen?: DraftEligiblePlayer | null) => {" in src
+    # Iter 233 — the handler also takes an optional roster `destination` (salary-cap drafts).
+    assert "const handleDraftPlayer = useCallback(async (chosen?: DraftEligiblePlayer | null, destination?: string) => {" in src
     # Old name kept as a thin alias so the Simulate Pick button binding stays.
     assert "const handleSimulatePick = useCallback(() => { handleDraftPlayer(); }" in src
 

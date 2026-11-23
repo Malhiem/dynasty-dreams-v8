@@ -139,7 +139,12 @@ services:
     environment:
       <<: *e2e-credentials
       DB_NAME: dynasty_dreams_e2e
+      # Tests that `import server` in-process load routes/payments.py, which only
+      # skips the private `emergentintegrations` import when E2E_MODE is set.
+      E2E_MODE: 'true'
       MONGO_URL: mongodb://mongo:27017
+      # `api-proxy` serves /api only (no React build), so SPA tests skip themselves.
+      BACKEND_TESTS_API_ONLY: '1'
       PYTHONDONTWRITEBYTECODE: '1'
       REACT_APP_BACKEND_URL: http://web
       SECURITY_TEST_ISOLATED: '1'

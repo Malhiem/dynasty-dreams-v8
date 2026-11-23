@@ -66,8 +66,9 @@ $C down --volumes --remove-orphans
 - The repo is mounted read-only and copied to `/app` inside the container, because the suite hard-codes `/app/backend`, `/app/frontend/src` and `/app/mobile/src`. The script also writes the gitignored `/app/frontend/.env` and `/app/backend/.env` that some tests read. Nothing is written to your working tree except `test-results/junit.xml`.
 - Tests run serially. They share one database and sweep it between modules, so do not add `-n` parallelism.
 - Do not run `api-proxy` and `web` together; both claim the hostname `web`.
-- `E2E_MODE=true` makes payment endpoints return 503 and the image omits the private `emergentintegrations` package, so `test_payments_router.py` and `test_iter149_seed_and_tradeblock_overlay.py` cannot be imported here, and Stripe webhook tests will fail. Treat those as environment limits, not regressions.
-- `test_draft_salary_feasibility.py` requires a database name containing both "draft" and "disposable"; it fails against `dynasty_dreams_e2e`.
+- `E2E_MODE=true` is set for both the API and the test process. It makes payment endpoints return 503 and lets `import server` work without the private `emergentintegrations` package.
+- `test_draft_salary_feasibility.py` writes to its own `draft_disposable_salary_tests` database on the same Mongo (it insists on a name containing "draft" and "disposable").
+- `BACKEND_TESTS_API_ONLY=1` makes tests that need the React app (e.g. `test_frontend_loads`) skip; the Playwright suite covers those.
 
 ## League Setup / Rotisserie acceptance coverage
 
