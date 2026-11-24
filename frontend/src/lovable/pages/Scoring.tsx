@@ -182,7 +182,7 @@ const Scoring = () => {
             <TabsTrigger value="overview" data-testid="league-info-tab-overview">Overview</TabsTrigger>
             <TabsTrigger value="roster" data-testid="league-info-tab-roster">Roster Rules</TabsTrigger>
             <TabsTrigger value="scoring" data-testid="league-info-tab-scoring">Scoring</TabsTrigger>
-            <TabsTrigger value="salary" data-testid="league-info-tab-salary">Salary Cap</TabsTrigger>
+            {(league as any)?.salary_cap_enabled && <TabsTrigger value="salary" data-testid="league-info-tab-salary">Salary Cap</TabsTrigger>}
             <TabsTrigger value="draft" data-testid="league-info-tab-draft">Draft</TabsTrigger>
             <TabsTrigger value="transactions" data-testid="league-info-tab-transactions">Transactions</TabsTrigger>
             <TabsTrigger value="constitution" data-testid="league-info-tab-constitution">

@@ -280,8 +280,8 @@ const TradePlayerCard = ({
         </div>
       )}
 
-      {/* Salary retention */}
-      <div className="px-3 py-2 border-t border-border/50">
+      {/* Salary retention (cap leagues only) */}
+      {capEnabled && <div className="px-3 py-2 border-t border-border/50">
         <div className="flex items-center gap-2">
           <Checkbox
             id={`retain-${player.id}`}
@@ -329,7 +329,7 @@ const TradePlayerCard = ({
             </p>
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 };

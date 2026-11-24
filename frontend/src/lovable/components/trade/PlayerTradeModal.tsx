@@ -251,8 +251,8 @@ export const PlayerTradeModal = ({
                     )}
                   </div>
 
-                  {/* Salary Retention Slider */}
-                  <div className="space-y-2 pt-2 border-t border-border/50">
+                  {/* Salary Retention Slider (cap leagues only) */}
+                  {capEnabled && <div className="space-y-2 pt-2 border-t border-border/50">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">
                         Salary Retention
@@ -280,7 +280,7 @@ export const PlayerTradeModal = ({
                       Max 50% retention. You keep cap hit for duration of
                       contract.
                     </p>
-                  </div>
+                  </div>}
                 </div>
               ))}
             </div>

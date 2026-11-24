@@ -30,22 +30,8 @@ const TeamSalaryCap = ({ teamId, refreshKey }: Props) => {
     return () => { cancelled = true; };
   }, [resolvedTeamId, refreshKey]);
 
-  // ── Cap-disabled empty state ───────────────────────────────────
-  if (compliance && !compliance.salary_cap_enabled) {
-    return (
-      <div className="stat-card p-0 overflow-hidden" data-testid="team-salary-cap-card">
-        <div className="p-6 border-b border-border">
-          <div className="flex items-center gap-2">
-            <DollarSign className="h-5 w-5 text-muted-foreground" />
-            <h3 className="text-lg font-semibold">Salary Cap</h3>
-          </div>
-        </div>
-        <div className="p-6 text-sm text-muted-foreground">
-          Salary cap is <span className="font-semibold text-foreground">disabled</span> for this league. Commissioners can enable it in League Administration → Rosters.
-        </div>
-      </div>
-    );
-  }
+  // No cap, no salary section: the whole card is hidden when the cap is off.
+  if (compliance && !compliance.salary_cap_enabled) return null;
 
   if (loading || !compliance) {
     return (

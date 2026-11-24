@@ -912,7 +912,7 @@ const Team = () => {
                 salary_retention_pref: teamRecord?.salary_retention_pref || "no_preference",
                 _players: rosterPlayers,
               }}
-              league={league ? { id: league.id, name: league.name } : null}
+              league={league ? { id: league.id, name: league.name, salary_cap_enabled: (league as any).salary_cap_enabled } : null}
               isOwnTeam={!!isOwnTeam}
               reloadKey={tradeBlockReloadKey}
               onItemsChange={(items) => {
