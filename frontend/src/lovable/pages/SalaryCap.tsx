@@ -444,7 +444,19 @@ const SalaryCap = () => {
 
   return (
     <AppLayout>
-        <div className="container py-8 space-y-6">
+      <div className="relative" data-testid="salary-cap-page">
+        {!capEnabled && (
+          <div className="absolute inset-0 z-20 flex items-start justify-center pt-40 px-4" data-testid="salary-cap-disabled-overlay">
+            <div role="status" className="rounded-lg border border-border bg-card px-6 py-5 text-center shadow-2xl max-w-md">
+              <p className="text-base font-semibold">Salary cap has been disabled in league settings</p>
+            </div>
+          </div>
+        )}
+        <div
+          className={`container py-8 space-y-6${!capEnabled ? " pointer-events-none select-none opacity-30 grayscale blur-[5px]" : ""}`}
+          aria-hidden={!capEnabled || undefined}
+          {...(!capEnabled ? { inert: "" as any } : {})}
+        >
           <LeagueContextBanner title="Salary Cap" kpiLabel="Teams on roster" kpiValue={leagueTeamsCount} primaryHref="/commissioner" primaryLabel="Manage in Commissioner" />
         <div>
           <h1 className="text-2xl font-bold">Salary Cap Management</h1>
@@ -1088,6 +1100,7 @@ const SalaryCap = () => {
             </CardContent>
           </Card>
         )}
+        </div>
       </div>
       {/* Iter 232N.41 — Player-card drilldown modal */}
       {cardPlayer && (

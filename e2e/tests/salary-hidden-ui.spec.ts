@@ -34,3 +34,24 @@ test('roster hides player salary and the Cap Hit view when the league has no cap
   await expect(page.getByTestId('team-retention-no_preference')).toHaveCount(0);
   await page.screenshot({path:info.outputPath('roster-cap-off.png'),fullPage:true});
 });
+
+test('salary cap page is greyed out with a notice when the league has no cap',async({page},info)=>{
+  const l=await salaryLeague(a);
+  await a.commissioner.api.put(`/api/leagues/${l.id}/admin/cap-settings`,{data:{salary_cap_enabled:false}});
+  await page.context().addCookies((await a.manager.api.storageState()).cookies);
+  await page.addInitScript((id:string)=>localStorage.setItem('dd_active_league_id',id),l.id);
+  await page.goto('/salary-cap');
+  const overlay=page.getByTestId('salary-cap-disabled-overlay');
+  await expect(overlay).toContainText('Salary cap has been disabled in league settings');
+  await expect(page.getByTestId('salary-cap-page').locator('.grayscale')).toHaveCount(1);
+  await page.screenshot({path:info.outputPath('salary-cap-page-disabled.png')});
+});
+
+test('salary cap page has no overlay when the league has a cap',async({page})=>{
+  const l=await salaryLeague(a);
+  await page.context().addCookies((await a.manager.api.storageState()).cookies);
+  await page.addInitScript((id:string)=>localStorage.setItem('dd_active_league_id',id),l.id);
+  await page.goto('/salary-cap');
+  await expect(page.getByTestId('cap-overview-card-limit')).toBeVisible();
+  await expect(page.getByTestId('salary-cap-disabled-overlay')).toHaveCount(0);
+});
