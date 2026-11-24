@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { useState } from "react";
 import { X, ArrowUpDown, ChevronDown, ChevronUp, Send, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -210,6 +211,7 @@ const TradePlayerCard = ({
   displaySettings: TradeBuilderDisplaySettings;
   retentionDisabled?: boolean;
 }) => {
+  const capEnabled = useLeagueCapEnabled();
   const { player, retainSalary, retainedPercentage } = asset;
   const retainedAmount = (player.contract.salary * retainedPercentage) / 100;
   const effectiveSalary = player.contract.salary - retainedAmount;
@@ -268,10 +270,10 @@ const TradePlayerCard = ({
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
-          <span className="font-semibold text-accent">
+{capEnabled && <>          <span className="font-semibold text-accent">
             {retainSalary ? formatSalary(effectiveSalary) : formatSalary(player.contract.salary)}
           </span>
-          <span className="text-muted-foreground">·</span>
+          <span className="text-muted-foreground">·</span></>}
           <span className="text-muted-foreground">{player.contract.yearsRemaining}yr</span>
           <span className="text-muted-foreground">·</span>
           <span className="text-muted-foreground">{player.points} FPTS</span>

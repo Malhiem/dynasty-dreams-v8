@@ -404,7 +404,7 @@ const Analytics = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="points">Point Production</SelectItem>
-                  <SelectItem value="salary">Salary Cap</SelectItem>
+                  {(league as any)?.salary_cap_enabled && <SelectItem value="salary">Salary Cap</SelectItem>}
                   <SelectItem value="position">Position Count</SelectItem>
                 </SelectContent>
               </Select>

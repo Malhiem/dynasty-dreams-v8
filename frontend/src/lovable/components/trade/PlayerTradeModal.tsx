@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { useState } from "react";
 import {
   Dialog,
@@ -90,6 +91,7 @@ export const PlayerTradeModal = ({
   initialPlayer,
   allPlayers,
 }: PlayerTradeModalProps) => {
+  const capEnabled = useLeagueCapEnabled();
   const [selectedTeam, setSelectedTeam] = useState<string>("");
   const [tradeAssets, setTradeAssets] = useState<TradeAsset[]>([
     { player: initialPlayer, retainedPercentage: 0 },
@@ -230,10 +232,10 @@ export const PlayerTradeModal = ({
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <span>{asset.player.position}</span>
                         <span>•</span>
-                        <span className="text-accent">
+{capEnabled && <>                        <span className="text-accent">
                           {formatSalary(asset.player.contract.salary)}
                         </span>
-                        <span>•</span>
+                        <span>•</span></>}
                         <span>{asset.player.contract.yearsRemaining}yr</span>
                       </div>
                     </div>

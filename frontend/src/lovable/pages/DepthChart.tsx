@@ -13,6 +13,7 @@
  * localStorage so the user can revisit and refine. A `Reset` button restores
  * the auto-projected values.
  */
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { useEffect, useMemo, useState } from "react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -99,6 +100,7 @@ const buildSlotPlan = (rosterSpots: number): SlotDef[] => {
 
 // ── Tile (draggable) ──────────────────────────────────────────────
 function PlayerTile({ player, dragId }: any) {
+  const capEnabled = useLeagueCapEnabled();
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: dragId,
     data: { player },
@@ -124,7 +126,7 @@ function PlayerTile({ player, dragId }: any) {
             <MinorEligibleBadge eligible={(player as any).minor_eligible || (player as any).player_type === "prospect"} />
           </p>
           <p className="text-[10px] text-muted-foreground truncate">
-            {player.position} · {fmt(player.contract?.salary || 0)}
+            {player.position}{capEnabled && ` · ${fmt(player.contract?.salary || 0)}`}
           </p>
         </div>
       </div>

@@ -28,9 +28,10 @@ export default function DraftRosterOverview({ draftId, status, error, refresh })
     {error && <p role="alert">Totals may be stale. Reconnecting…</p>}
     {!team ? <p>Loading team totals…</p> : <>
       <div className="flex flex-wrap gap-4" data-testid="draft-team-payroll">
-        <span>Payroll {dollars(team.salary_used)}</span><span>Cap {dollars(team.salary_cap)}</span>
-        <span>{team.remaining < 0 ? "Cap excess" : "Cap space"} {dollars(team.remaining == null ? null : Math.abs(team.remaining))}</span>
-        <span>Floor {dollars(team.salary_floor)}</span><span>Needed for floor {dollars(team.floor_shortfall)}</span>
+        <span>Payroll {dollars(team.salary_used)}</span>
+        {team.salary_cap != null && <><span>Cap {dollars(team.salary_cap)}</span>
+        <span>{team.remaining < 0 ? "Cap excess" : "Cap space"} {dollars(team.remaining == null ? null : Math.abs(team.remaining))}</span></>}
+        {team.salary_cap != null && team.salary_floor != null && <><span>Floor {dollars(team.salary_floor)}</span><span>Needed for floor {dollars(team.floor_shortfall)}</span></>}
         <span>Required vacancies {team.remaining_slots}</span>
       </div>
       <div className="flex flex-wrap gap-3" data-testid="draft-team-positions">

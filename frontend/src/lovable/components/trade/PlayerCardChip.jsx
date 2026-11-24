@@ -4,6 +4,7 @@
  * Renders a compact card: headshot, name, position, NHL team, season stats,
  * fantasy points, salary, and % Owned (per-league + global tooltip).
  */
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { User as UserIcon } from "lucide-react";
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
@@ -14,6 +15,7 @@ import { PlayerTrendBadge } from "@/components/player/PlayerTrendBadge";
 const formatSalary = (s) => `$${((s || 0) / 1_000_000).toFixed(1)}M`;
 
 export function PlayerCardChip({ player, ownership }) {
+  const capEnabled = useLeagueCapEnabled();
   const stats = player?.stats || player?.categoryBreakdown || {};
   const fpts = Math.round(player?.fpts ?? player?.fantasy_points ?? player?.points ?? 0);
 
@@ -67,9 +69,9 @@ export function PlayerCardChip({ player, ownership }) {
           <span><span className="text-primary font-semibold">{fpts}</span> FPts</span>
         </div>
         <div className="flex items-center justify-between mt-1 text-[10px]">
-          <span className="text-amber-400 font-semibold">
+{capEnabled ? (<span className="text-amber-400 font-semibold">
             {formatSalary(player?.contract?.salary || player?.salary || 0)}
-          </span>
+          </span>) : <span />}
           {leagueText && (
             <TooltipProvider>
               <Tooltip>

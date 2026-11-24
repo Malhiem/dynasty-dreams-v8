@@ -113,15 +113,15 @@ test("no legal autopick preserves the turn and resumes after Informal mode is se
 });
 
 
-test("floor-only configuration applies its minimum without a salary ceiling",async({page},info)=>{
+test("no cap means no floor: a floor sent with a disabled cap is dropped",async({page},info)=>{
   const f=await salaryFixture(page.request);
   try{
     await f.restrictToMinorEligible();
     const settings=await page.request.put(`/api/leagues/${f.league.id}/admin/cap-settings`,{data:{salary_cap_enabled:false,cap_floor_enabled:true,cap_floor:70_000_000}});
-    expect(settings.ok(),await settings.text()).toBeTruthy();const saved=await settings.json();expect(saved.salary_cap_enabled).toBe(false);expect(saved.cap_floor_enabled).toBe(true);
+    expect(settings.ok(),await settings.text()).toBeTruthy();const saved=await settings.json();expect(saved.salary_cap_enabled).toBe(false);expect(saved.cap_floor_enabled).toBe(false);expect(saved.cap_floor).toBeNull();
     const ids=f.candidates.map(p=>String(p._id));const result=await page.request.post(`/api/drafts/${f.draft.id}/salary-eligibility`,{data:{player_ids:ids}});expect(result.ok()).toBeTruthy();const data=await result.json();
-    expect(ids.map(id=>data.players[id].allowed)).toEqual([false,false,true,true,true,true]);
-    const room=new DraftSalaryPage(page);await room.open(f.league.id);await expect(room.payroll()).toContainText("Cap Disabled");await expect(room.payroll()).toContainText("Floor $70,000,000");
-    await info.attach("floor-only-eligibility",{body:JSON.stringify(data),contentType:"application/json"});
+    expect(ids.map(id=>data.players[id].allowed)).toEqual(ids.map(()=>true));
+    const room=new DraftSalaryPage(page);await room.open(f.league.id);await expect(room.payroll()).toContainText("Cap Disabled");await expect(room.payroll()).not.toContainText("Floor");
+    await info.attach("no-cap-no-floor-eligibility",{body:JSON.stringify(data),contentType:"application/json"});
   }finally{await f.cleanup();}
 });

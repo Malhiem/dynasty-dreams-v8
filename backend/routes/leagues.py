@@ -1904,8 +1904,11 @@ async def update_cap_settings(league_id: str, payload: CapSettingsUpdate, reques
     if payload.cap_floor_year_plus_2_tentative is not None:
         updates["cap_floor_year_plus_2_tentative"] = bool(payload.cap_floor_year_plus_2_tentative)
 
-    # Preserve legacy disable-both behavior unless floor-only is explicit.
-    if payload.salary_cap_enabled is False and payload.cap_floor_enabled is not True:
+    # No cap, no floor: the floor only exists alongside an enabled cap, so a
+    # disabled cap always wins over any floor settings in the same request, and
+    # a floor cannot be switched on while the league has no cap.
+    cap_will_be_enabled = updates.get("salary_cap_enabled", league.get("salary_cap_enabled"))
+    if payload.salary_cap_enabled is False or (not cap_will_be_enabled and (payload.cap_floor_enabled is not None or payload.cap_floor is not None)):
         updates["cap_floor_enabled"] = False
         updates["cap_floor"] = None
         updates["cap_floor_year_plus_1"] = None
