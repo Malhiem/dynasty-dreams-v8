@@ -1081,6 +1081,8 @@ async def get_team_roster_truncated(
 
     # Pull league scoring config so fantasy_points matches the Rosters page exactly
     config = await db.scoring_configs.find_one({"league_id": team.get("league_id")})
+    from services.cap_visibility import league_cap_enabled
+    cap_enabled = await league_cap_enabled(db, team.get("league_id"))
 
     def _stat_from_bucket(p: dict, key: str, default: float = 0) -> float:
         if not isinstance(p, dict):
@@ -1146,7 +1148,7 @@ async def get_team_roster_truncated(
             "position": pos,
             "fantasy_points": round(fp, 1) if fp else 0,
             "fp_per_game": round(fp_pg, 2) if fp_pg else 0,
-            "cap_hit": p.get("cap_hit") or p.get("salary") or 0,
+            **({"cap_hit": p.get("cap_hit") or p.get("salary") or 0} if cap_enabled else {}),
             "games_played": gp,
             "nhl_team": p.get("team") or p.get("nhl_team") or "",
             "stats": cats,
