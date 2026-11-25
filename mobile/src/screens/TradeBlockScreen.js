@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import { formatMillions, retentionOption } from '../lib/cap';
 import LoadError from '../components/LoadError';
 import { loadFailure } from '../lib/errors';
 
@@ -33,7 +34,16 @@ export default function TradeBlockScreen() {
                 <Text style={s.meta}>{item.position} · {item.nhl_team}{item.points > 0 ? ` · ${item.points} pts` : ''}</Text>
                 <View style={s.tagsRow}>{(item.looking_for || []).map((t, i) => <View key={i} style={s.tag}><Text style={s.tagText}>{t}</Text></View>)}</View>
               </View>
-              <Text style={s.owner}>{item.owner_name}</Text>
+              <View style={s.ownerCol}>
+                <Text style={s.owner}>{item.owner_name}</Text>
+                {/* The server only sends aav for cap leagues: no cap, no salaries. */}
+                {item.aav != null ? <Text style={s.aav} testID="trade-block-aav">{formatMillions(item.aav)}</Text> : null}
+                {item.aav != null && item.salary_retention_pref ? (
+                  <Text style={[s.retention, { color: retentionOption(item.salary_retention_pref).color }]}>
+                    Retention {retentionOption(item.salary_retention_pref).short}
+                  </Text>
+                ) : null}
+              </View>
             </View>
           </View>
         )}
@@ -46,6 +56,9 @@ export default function TradeBlockScreen() {
 }
 
 const s = StyleSheet.create({
+  ownerCol: { alignItems: 'flex-end' },
+  aav: { color: '#fff', fontSize: 12, fontWeight: '700', marginTop: 2 },
+  retention: { fontSize: 10, marginTop: 2 },
   container: { flex: 1, backgroundColor: '#0A0A0A' },
   header: { padding: 20 },
   title: { fontSize: 22, fontWeight: '800', color: '#fff' },
