@@ -150,6 +150,9 @@ def test_owner_can_propose_and_only_members_can_vote(world, security_db):
     assert r.status_code == 200, r.text
     tid = r.json()["trade_id"]
     vote = f"{API_URL}/api/drafts/{world['league']}/pick-trade/{tid}/vote"
+    # the receiving team (com) must accept before the league can vote
+    acc = requests.post(f"{API_URL}/api/drafts/{world['league']}/pick-trade/{tid}/accept", headers=world["com"]["headers"], timeout=20)
+    assert acc.status_code == 200, acc.text
     assert requests.post(vote, json={"choice": "veto"}, headers=world["out"]["headers"], timeout=20).status_code == 403
     assert requests.post(vote, json={"choice": "approve"}, timeout=20).status_code == 401
     assert requests.get(f"{API_URL}/api/drafts/{world['league']}/pick-trade/{tid}", headers=world["out"]["headers"], timeout=20).status_code == 403

@@ -296,6 +296,8 @@ async def propose_in_draft_pick_trade(league_id: str, request: Request):
     receiver_team_id = payload.get("receiver_team_id")
     proposer_assets = payload.get("proposer_assets") or []
     receiver_assets = payload.get("receiver_assets") or []
+    if not isinstance(proposer_assets, list) or not isinstance(receiver_assets, list):
+        raise HTTPException(status_code=400, detail="Trade assets must be lists")
     if not proposer_team_id or not receiver_team_id:
         raise HTTPException(status_code=400, detail="proposer_team_id + receiver_team_id required")
     if not all(isinstance(a, dict) for a in list(proposer_assets) + list(receiver_assets)):
@@ -327,15 +329,11 @@ async def propose_in_draft_pick_trade(league_id: str, request: Request):
     )
     if not acts_for_proposer:
         raise HTTPException(status_code=403, detail="Only the proposing team's owner or a commissioner can propose this trade")
-    # Players on offer must actually be on the roster of the team giving them up.
-    for assets, team in ((proposer_assets, proposer_team), (receiver_assets, receiver_team)):
-        roster = {str(p) for p in team.get("roster") or []}
-        for a in assets:
-            if a.get("type") == "player" and str(a.get("player_id")) not in roster:
-                raise HTTPException(status_code=400, detail="A traded player is not on that team's roster")
+    _check_trade_assets(proposer_assets, receiver_assets, proposer_team, receiver_team)
 
+    # The proposer's acceptance is implied; the trade waits on the receiving
+    # team and only enters the league review window once they accept.
     review_minutes = int(league.get("draft_trade_review_minutes") or 30)
-    review_expires_at = datetime.now(timezone.utc) + timedelta(minutes=max(0, review_minutes))
 
     trade_doc = {
         "league_id": league_id,
@@ -343,8 +341,10 @@ async def propose_in_draft_pick_trade(league_id: str, request: Request):
         "receiver_team_id": receiver_team_id,
         "proposer_assets": proposer_assets,
         "receiver_assets": receiver_assets,
-        "status": "pending_draft_review",
-        "review_expires_at": review_expires_at.isoformat(),
+        "status": "pending_acceptance",
+        "awaiting_team_id": str(receiver_team["_id"]),
+        "last_edited_by_team_id": str(proposer_team["_id"]),
+        "review_expires_at": None,
         "post_review_action": league.get("draft_trade_post_delay_action") or "auto_execute",
         "votes": {"approve": 0, "veto": 0, "voters": [], "choices": {}},
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -363,8 +363,8 @@ async def propose_in_draft_pick_trade(league_id: str, request: Request):
             "type": "draft_chat",
             "kind": "pick_trade_proposed",
             "trade_id": trade_id,
-            "review_expires_at": review_expires_at.isoformat(),
-            "message": f"📈 {proposer_name} proposed a pick trade with {receiver_name}. Review window: {review_minutes} min.",
+            "awaiting_team_id": trade_doc["awaiting_team_id"],
+            "message": f"📈 {proposer_name} proposed a pick trade to {receiver_name}. Waiting for {receiver_name} to respond.",
         })
     except Exception:
         # Broadcast failure is non-fatal — the trade still persists.
@@ -372,10 +372,161 @@ async def propose_in_draft_pick_trade(league_id: str, request: Request):
 
     return {
         "trade_id": trade_id,
-        "status": "pending_draft_review",
-        "review_expires_at": review_expires_at.isoformat(),
+        "status": "pending_acceptance",
+        "awaiting_team_id": trade_doc["awaiting_team_id"],
+        "review_expires_at": None,
         "post_review_action": trade_doc["post_review_action"],
     }
+
+
+def _check_trade_assets(proposer_assets, receiver_assets, proposer_team, receiver_team):
+    """Shared validation for proposing and editing an in-draft pick trade:
+    well-formed assets, at least one pick, and every player on offer on the
+    roster of the team giving them up."""
+    if not isinstance(proposer_assets, list) or not isinstance(receiver_assets, list):
+        raise HTTPException(status_code=400, detail="Trade assets must be lists")
+    if not all(isinstance(a, dict) for a in proposer_assets + receiver_assets):
+        raise HTTPException(status_code=400, detail="Trade assets must be objects")
+    if not any(a.get("type") == "pick" for a in proposer_assets + receiver_assets):
+        raise HTTPException(status_code=400, detail="At least one pick asset required for in-draft trade")
+    for assets, team in ((proposer_assets, proposer_team), (receiver_assets, receiver_team)):
+        roster = {str(p) for p in team.get("roster") or []}
+        for a in assets:
+            if a.get("type") == "player" and str(a.get("player_id")) not in roster:
+                raise HTTPException(status_code=400, detail="A traded player is not on that team's roster")
+
+
+def _acts_for_team(user, team) -> bool:
+    uid = str(user["_id"])
+    return str(team.get("owner_id")) == uid or uid in [str(c) for c in team.get("co_owner_ids") or []]
+
+
+async def _load_awaiting_trade(db, user, league_id, trade_id):
+    """Load a pick trade that is waiting on a team's response and confirm the
+    caller owns (or co-owns) that team. Commissioners cannot answer for a
+    team: consent has to come from the team itself."""
+    try:
+        trade = await db.trades.find_one({"_id": ObjectId(trade_id), "league_id": league_id, "is_in_draft_pick_trade": True})
+    except Exception:
+        trade = None
+    if not trade:
+        raise HTTPException(status_code=404, detail="In-draft pick trade not found")
+    if trade.get("status") != "pending_acceptance":
+        raise HTTPException(status_code=400, detail=f"Trade is not awaiting a response (status={trade.get('status')})")
+    team = await db.teams.find_one({"_id": ObjectId(trade["awaiting_team_id"])})
+    if not team or not _acts_for_team(user, team):
+        raise HTTPException(status_code=403, detail="Only the team this trade is waiting on can respond")
+    return trade, team
+
+
+async def _can_respond(db, user, trade) -> bool:
+    """True when the trade is waiting on a team the caller owns or co-owns."""
+    if trade.get("status") != "pending_acceptance" or not trade.get("awaiting_team_id"):
+        return False
+    try:
+        team = await db.teams.find_one({"_id": ObjectId(trade["awaiting_team_id"])})
+    except Exception:
+        return False
+    return bool(team) and _acts_for_team(user, team)
+
+
+async def _team_names(db, trade):
+    names = {}
+    for key in ("proposer_team_id", "receiver_team_id"):
+        t = await db.teams.find_one({"_id": ObjectId(trade[key])}, {"name": 1})
+        names[key] = (t or {}).get("name") or "A team"
+    return names
+
+
+@router.post("/drafts/{league_id}/pick-trade/{trade_id}/accept", dependencies=[Depends(league_member(_deps))])
+async def accept_in_draft_pick_trade(league_id: str, trade_id: str, request: Request):
+    """The awaited team accepts the trade as it currently stands. The other
+    side's acceptance is implied by having sent or last edited it, so this
+    opens the league review window."""
+    db = _db()
+    user = await _get_user(request)
+    trade, _team = await _load_awaiting_trade(db, user, league_id, trade_id)
+    proposer = await db.teams.find_one({"_id": ObjectId(trade["proposer_team_id"])})
+    receiver = await db.teams.find_one({"_id": ObjectId(trade["receiver_team_id"])})
+    if not proposer or not receiver:
+        raise HTTPException(status_code=404, detail="Team not found")
+    _check_trade_assets(trade.get("proposer_assets") or [], trade.get("receiver_assets") or [], proposer, receiver)
+
+    league = await db.leagues.find_one({"_id": ObjectId(league_id)}) or {}
+    review_minutes = int(league.get("draft_trade_review_minutes") or 30)
+    expires = datetime.now(timezone.utc) + timedelta(minutes=max(0, review_minutes))
+    res = await db.trades.update_one(
+        {"_id": trade["_id"], "status": "pending_acceptance"},
+        {"$set": {"status": "pending_draft_review", "review_expires_at": expires.isoformat(),
+                  "accepted_by": str(user["_id"]), "accepted_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if not res.modified_count:
+        raise HTTPException(status_code=409, detail="Trade changed; reload and try again")
+    try:
+        names = await _team_names(db, trade)
+        await _broadcast(league_id, {
+            "type": "draft_chat", "kind": "pick_trade_accepted", "trade_id": trade_id,
+            "review_expires_at": expires.isoformat(),
+            "message": f"✅ {names['proposer_team_id']} and {names['receiver_team_id']} agreed to a pick trade. Review window: {review_minutes} min.",
+        })
+    except Exception:
+        pass
+    return {"trade_id": trade_id, "status": "pending_draft_review", "review_expires_at": expires.isoformat()}
+
+
+@router.post("/drafts/{league_id}/pick-trade/{trade_id}/decline", dependencies=[Depends(league_member(_deps))])
+async def decline_in_draft_pick_trade(league_id: str, trade_id: str, request: Request):
+    """The awaited team turns the trade down."""
+    db = _db()
+    user = await _get_user(request)
+    trade, _team = await _load_awaiting_trade(db, user, league_id, trade_id)
+    await db.trades.update_one(
+        {"_id": trade["_id"], "status": "pending_acceptance"},
+        {"$set": {"status": "declined", "declined_by": str(user["_id"]), "declined_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    try:
+        await _broadcast(league_id, {"type": "draft_chat", "kind": "pick_trade_declined", "trade_id": trade_id})
+    except Exception:
+        pass
+    return {"trade_id": trade_id, "status": "declined"}
+
+
+@router.post("/drafts/{league_id}/pick-trade/{trade_id}/edit", dependencies=[Depends(league_member(_deps))])
+async def edit_in_draft_pick_trade(league_id: str, trade_id: str, request: Request):
+    """The awaited team counters by changing the assets. The edit counts as
+    their acceptance of the new terms, so the trade goes back to the other
+    team to accept (or decline, or edit again). Body:
+    `{proposer_assets: [...], receiver_assets: [...]}` in the trade's
+    original orientation."""
+    db = _db()
+    user = await _get_user(request)
+    trade, team = await _load_awaiting_trade(db, user, league_id, trade_id)
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Invalid trade payload")
+    p_assets, r_assets = body.get("proposer_assets"), body.get("receiver_assets")
+    proposer = await db.teams.find_one({"_id": ObjectId(trade["proposer_team_id"])})
+    receiver = await db.teams.find_one({"_id": ObjectId(trade["receiver_team_id"])})
+    if not proposer or not receiver:
+        raise HTTPException(status_code=404, detail="Team not found")
+    _check_trade_assets(p_assets, r_assets, proposer, receiver)
+    editor_id = str(team["_id"])
+    other_id = trade["proposer_team_id"] if editor_id == trade["receiver_team_id"] else trade["receiver_team_id"]
+    res = await db.trades.update_one(
+        {"_id": trade["_id"], "status": "pending_acceptance", "awaiting_team_id": editor_id},
+        {"$set": {"proposer_assets": p_assets, "receiver_assets": r_assets,
+                  "awaiting_team_id": other_id, "last_edited_by_team_id": editor_id,
+                  "votes": {"approve": 0, "veto": 0, "voters": [], "choices": {}}},
+         "$inc": {"revision": 1}},
+    )
+    if not res.modified_count:
+        raise HTTPException(status_code=409, detail="Trade changed; reload and try again")
+    try:
+        await _broadcast(league_id, {"type": "draft_chat", "kind": "pick_trade_edited", "trade_id": trade_id,
+                                     "awaiting_team_id": other_id})
+    except Exception:
+        pass
+    return {"trade_id": trade_id, "status": "pending_acceptance", "awaiting_team_id": other_id}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -608,8 +759,14 @@ async def resolve_pick_trade(league_id: str, trade_id: str, request: Request):
     now = datetime.now(timezone.utc)
 
     if decision == "execute":
+        # The commissioner can settle the league review, not stand in for a
+        # team's consent or re-run a finished trade.
+        if trade.get("status") != "pending_draft_review":
+            raise HTTPException(status_code=400, detail=f"Trade cannot be executed (status={trade.get('status')})")
         return await _execute_in_draft_pick_trade(db, trade)
     if decision == "veto":
+        if trade.get("status") not in ("pending_acceptance", "pending_draft_review"):
+            raise HTTPException(status_code=400, detail=f"Trade is already {trade.get('status')}")
         await db.trades.update_one({"_id": trade["_id"]}, {"$set": {"status": "vetoed", "vetoed_at": now.isoformat(), "vetoed_by": uid}})
         return {"trade_id": trade_id, "status": "vetoed"}
     if decision == "extend":
@@ -629,11 +786,11 @@ async def list_pending_pick_trades(league_id: str, request: Request):
     league. Used by the Draft Room on mount so a manager who refreshes
     mid-review still sees the floating review pill."""
     db = _db()
-    await _get_user(request)
+    user = await _get_user(request)
     rows = await db.trades.find({
         "league_id": league_id,
         "is_in_draft_pick_trade": True,
-        "status": "pending_draft_review",
+        "status": {"$in": ["pending_acceptance", "pending_draft_review"]},
     }).to_list(20)
     out = []
     for trade in rows:
@@ -645,6 +802,8 @@ async def list_pending_pick_trades(league_id: str, request: Request):
             "post_review_action": trade.get("post_review_action"),
             "proposer_team_id": trade.get("proposer_team_id"),
             "receiver_team_id": trade.get("receiver_team_id"),
+            "awaiting_team_id": trade.get("awaiting_team_id"),
+            "can_respond": await _can_respond(db, user, trade),
         })
     return {"pending": out}
 
@@ -654,11 +813,12 @@ async def get_in_draft_pick_trade(league_id: str, trade_id: str, request: Reques
     """Return current state of a single in-draft pick trade for polling
     fallback when the WebSocket connection drops."""
     db = _db()
-    await _get_user(request)
+    user = await _get_user(request)
     trade = await db.trades.find_one({"_id": ObjectId(trade_id), "league_id": league_id, "is_in_draft_pick_trade": True})
     if not trade:
         raise HTTPException(status_code=404, detail="Trade not found")
     return {
+        "can_respond": await _can_respond(db, user, trade),
         "trade_id": trade_id,
         "status": trade.get("status"),
         "review_expires_at": trade.get("review_expires_at"),
@@ -666,6 +826,9 @@ async def get_in_draft_pick_trade(league_id: str, trade_id: str, request: Reques
         "post_review_action": trade.get("post_review_action"),
         "proposer_team_id": trade.get("proposer_team_id"),
         "receiver_team_id": trade.get("receiver_team_id"),
+        "awaiting_team_id": trade.get("awaiting_team_id"),
+        "proposer_assets": trade.get("proposer_assets") or [],
+        "receiver_assets": trade.get("receiver_assets") or [],
     }
 
 

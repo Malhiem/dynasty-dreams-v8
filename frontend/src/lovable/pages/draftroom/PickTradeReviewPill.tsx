@@ -9,6 +9,11 @@
  * auto_resolved). Falls back to GET /api/drafts/{lid}/pick-trade/{tid}
  * polling every 10s in case the WS drops.
  *
+ * A trade first waits on the team it was sent to (status
+ * `pending_acceptance`): that team's owner sees Accept / Decline, and
+ * everyone else sees who the trade is waiting on. Accepting opens the
+ * league review window below.
+ *
  * Exposes Approve / Veto buttons that POST to
  * /api/drafts/{league_id}/pick-trade/{trade_id}/vote and updates the
  * countdown in real time off `review_expires_at`.
@@ -22,7 +27,9 @@ import { ArrowLeftRight, Check, X, Clock } from "lucide-react";
 interface PickTrade {
   trade_id: string;
   status: string;
-  review_expires_at: string;
+  review_expires_at: string | null;
+  awaiting_team_id?: string;
+  can_respond?: boolean;
   votes?: { approve?: number; veto?: number; choices?: Record<string, string> };
   post_review_action?: string;
   proposer_team_id?: string;
@@ -40,6 +47,7 @@ export default function PickTradeReviewPill({
   const [trade, setTrade] = useState<PickTrade | null>(null);
   const [now, setNow] = useState<number>(Date.now());
   const [voting, setVoting] = useState(false);
+  const [responding, setResponding] = useState(false);
   const dismissedIds = useRef<Set<string>>(new Set());
 
   // ── 1-second countdown tick ──
@@ -60,19 +68,25 @@ export default function PickTradeReviewPill({
       // Newly proposed — fetch full state.
       api.get(`/drafts/${leagueId}/pick-trade/${trade_id}`)
         .then(({ data }) => {
-          if (data?.status === "pending_draft_review") {
+          if (data?.status === "pending_draft_review" || data?.status === "pending_acceptance") {
             setTrade(data);
           }
         })
         .catch(() => {});
+    } else if (["pick_trade_accepted", "pick_trade_edited"].includes(kind)) {
+      // Terms or stage changed — reload the full state.
+      api.get(`/drafts/${leagueId}/pick-trade/${trade_id}`)
+        .then(({ data }) => setTrade(data))
+        .catch(() => {});
     } else if (kind === "pick_trade_vote" && trade?.trade_id === trade_id) {
       setTrade((prev) => prev ? { ...prev, votes: { ...(prev.votes || {}), ...(votes || {}) } } : prev);
-    } else if (["pick_trade_executed", "pick_trade_vetoed", "pick_trade_auto_resolved"].includes(kind)) {
+    } else if (["pick_trade_executed", "pick_trade_vetoed", "pick_trade_auto_resolved", "pick_trade_declined"].includes(kind)) {
       if (trade?.trade_id === trade_id) {
         dismissedIds.current.add(trade_id);
         toast.info(
           kind === "pick_trade_executed" ? "Pick trade executed"
           : kind === "pick_trade_vetoed" ? "Pick trade vetoed by the league"
+          : kind === "pick_trade_declined" ? "Pick trade declined"
           : "Pick trade auto-resolved",
         );
         setTrade(null);
@@ -86,7 +100,7 @@ export default function PickTradeReviewPill({
     const poll = setInterval(async () => {
       try {
         const { data } = await api.get(`/drafts/${leagueId}/pick-trade/${trade.trade_id}`);
-        if (data?.status !== "pending_draft_review") {
+        if (data?.status !== "pending_draft_review" && data?.status !== "pending_acceptance") {
           dismissedIds.current.add(trade.trade_id);
           setTrade(null);
         } else {
@@ -98,7 +112,7 @@ export default function PickTradeReviewPill({
   }, [trade?.trade_id, leagueId]);
 
   const remainingMs = useMemo(() => {
-    if (!trade) return 0;
+    if (!trade?.review_expires_at) return 0;
     return Math.max(0, new Date(trade.review_expires_at).getTime() - now);
   }, [trade, now]);
 
@@ -136,7 +150,60 @@ export default function PickTradeReviewPill({
     }
   };
 
+  const respond = async (action: "accept" | "decline") => {
+    if (!trade || responding) return;
+    setResponding(true);
+    try {
+      const { data } = await api.post(`/drafts/${leagueId}/pick-trade/${trade.trade_id}/${action}`);
+      if (action === "decline") {
+        dismissedIds.current.add(trade.trade_id);
+        toast.info("Pick trade declined");
+        setTrade(null);
+      } else {
+        toast.success("Pick trade accepted — league review has started");
+        setTrade((prev) => prev ? { ...prev, ...data, can_respond: false } : prev);
+      }
+    } catch (e: any) {
+      toast.error(e?.response?.data?.detail || `Failed to ${action}`);
+    } finally {
+      setResponding(false);
+    }
+  };
+
   if (!trade) return null;
+
+  if (trade.status === "pending_acceptance") {
+    return (
+      <div
+        className="fixed top-20 right-4 z-50 w-80 rounded-xl border-2 border-amber-500/50 bg-amber-950/60 backdrop-blur-md shadow-2xl shadow-amber-500/15"
+        data-testid="pick-trade-awaiting-pill"
+      >
+        <div className="p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <ArrowLeftRight className="h-4 w-4 text-amber-300" />
+            <div className="text-xs font-bold uppercase tracking-wider text-foreground">Pick Trade Offer</div>
+          </div>
+          <div className="text-[11px] text-muted-foreground">
+            {trade.can_respond
+              ? "This trade is waiting on your answer. Accepting sends it to the league for review."
+              : "Waiting for the other team to respond."}
+          </div>
+          {trade.can_respond && (
+            <div className="flex gap-2">
+              <Button size="sm" className="flex-1 h-8 text-xs bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-500/40"
+                onClick={() => respond("accept")} disabled={responding} data-testid="pick-trade-accept-btn">
+                <Check className="h-3 w-3 mr-1" />Accept
+              </Button>
+              <Button size="sm" className="flex-1 h-8 text-xs bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/40"
+                onClick={() => respond("decline")} disabled={responding} data-testid="pick-trade-decline-btn">
+                <X className="h-3 w-3 mr-1" />Decline
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   // Urgency styling once <2 min remain
   const urgent = remainingMs < 120_000;
