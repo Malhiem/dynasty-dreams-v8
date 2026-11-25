@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, StyleSheet, SafeAreaView, RefreshControl, TouchableOpacity } from 'react-native';
 import api from '../lib/api';
+import { useLeague } from '../contexts/LeagueContext';
+import LeagueSwitcher from '../components/LeagueSwitcher';
 import LoadError from '../components/LoadError';
 import { loadFailure, showActionError } from '../lib/errors';
 import { leagueCapEnabled, salaryByPlayer, formatMillions } from '../lib/cap';
@@ -11,6 +13,7 @@ import TeamLogoUploader from '../components/TeamLogoUploader';
 
 export default function RosterScreen({ navigation }) {
   const { user } = useAuth();
+  const { leagueId, league } = useLeague();
   const [team, setTeam] = useState(null);
   const [roster, setRoster] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,12 +27,11 @@ export default function RosterScreen({ navigation }) {
   const fetchRoster = async () => {
     setLoadError(null);
     try {
-      const { data: leagues } = await api.get('/leagues?my_leagues=true');
-      if (leagues.length > 0) {
+      if (leagueId) {
         // "No cap, no salaries": cap figures only exist for leagues with a cap.
-        const cap = leagueCapEnabled(leagues[0]);
+        const cap = leagueCapEnabled(league);
         setCapEnabled(cap);
-        const { data: teams } = await api.get(`/teams?league_id=${leagues[0].id}`);
+        const { data: teams } = await api.get(`/teams?league_id=${leagueId}`);
         const myTeam = teams.find(t => t.owner_id === user?.id);
         if (myTeam) {
           setTeam(myTeam);
@@ -57,7 +59,7 @@ export default function RosterScreen({ navigation }) {
     setLoading(false);
   };
 
-  useEffect(() => { fetchRoster(); }, []);
+  useEffect(() => { setTeam(null); setRoster([]); setCompliance(null); setSalaries({}); fetchRoster(); }, [leagueId]);
 
   const updateRetention = async (next) => {
     if (!team || savingRetention) return;
@@ -75,6 +77,7 @@ export default function RosterScreen({ navigation }) {
 
   return (
     <SafeAreaView style={s.container}>
+      <LeagueSwitcher />
       <View style={s.header}>
         {team ? (
           <TeamLogoUploader

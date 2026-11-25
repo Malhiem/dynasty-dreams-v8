@@ -1,12 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import { useLeague } from '../contexts/LeagueContext';
+import LeagueSwitcher from '../components/LeagueSwitcher';
 import LoadError from '../components/LoadError';
 import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function SalaryCapScreen() {
   const { user } = useAuth();
+  const { leagueId } = useLeague();
   const [overview, setOverview] = useState(null);
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -15,9 +18,8 @@ export default function SalaryCapScreen() {
   const fetchData = async () => {
     setLoadError(null);
     try {
-      const { data: leagues } = await api.get('/leagues?my_leagues=true');
-      if (leagues.length > 0) {
-        const lid = leagues[0].id;
+      if (leagueId) {
+        const lid = leagueId;
         const [o, c] = await Promise.all([api.get(`/salary-cap/${lid}`), api.get(`/contracts?league_id=${lid}`)]);
         setOverview(o.data);
         setContracts(c.data.filter(ct => ct.status === 'active'));
@@ -26,7 +28,7 @@ export default function SalaryCapScreen() {
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { setOverview(null); fetchData(); }, [leagueId]);
   // No cap, no salaries: when the league has no salary cap the server reports
   // salary_cap_enabled=false and sends no figures, so there is nothing to show.
   const capDisabled = overview?.salary_cap_enabled === false;

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import { showActionError, loadFailure } from '../lib/errors';
 import api from '../lib/api';
+import { useLeague } from '../contexts/LeagueContext';
+import LeagueSwitcher from '../components/LeagueSwitcher';
 import LoadError from '../components/LoadError';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -9,7 +11,7 @@ export default function ActivityFeedScreen() {
   const { user } = useAuth();
   const [items, setItems] = useState([]);
   const [chatInput, setChatInput] = useState('');
-  const [leagueId, setLeagueId] = useState(null);
+  const { leagueId } = useLeague();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
 
@@ -23,16 +25,13 @@ export default function ActivityFeedScreen() {
   };
 
   const init = async () => {
-      setLoadError(null);
-      try {
-        const { data } = await api.get('/leagues?my_leagues=true');
-        if (data.length > 0) { setLeagueId(data[0].id); await fetchFeed(data[0].id); }
-      } catch (e) { setLoadError(loadFailure(e, 'the activity feed')); }
-      setLoading(false);
-    };
+    if (leagueId) await fetchFeed(leagueId);
+    else setLoading(false);
+  };
   useEffect(() => {
+    setItems([]);
     init();
-  }, []);
+  }, [leagueId]);
 
   const handleSendChat = async () => {
     if (!chatInput.trim() || !leagueId) return;
@@ -47,7 +46,8 @@ export default function ActivityFeedScreen() {
 
   return (
     <SafeAreaView style={s.container}>
-      <LoadError message={loadError} onRetry={() => (leagueId ? fetchFeed(leagueId) : init())} />
+      <LeagueSwitcher />
+      <LoadError message={loadError} onRetry={init} />
       <View style={s.chatBar}>
         <TextInput style={s.chatInput} placeholder="Post to league..." placeholderTextColor="#52525B" value={chatInput} onChangeText={setChatInput} onSubmitEditing={handleSendChat} />
         <TouchableOpacity style={s.sendBtn} onPress={handleSendChat}><Text style={s.sendText}>Send</Text></TouchableOpacity>

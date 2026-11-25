@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import { useLeague } from '../contexts/LeagueContext';
+import LeagueSwitcher from '../components/LeagueSwitcher';
 import LoadError from '../components/LoadError';
 import { loadFailure } from '../lib/errors';
 import TeamLogo from '../components/TeamLogo';
 
 export default function StandingsScreen({ route }) {
-  const leagueId = route?.params?.leagueId;
+  const league = useLeague();
+  // A league tapped on the Leagues list wins; otherwise follow the active league.
+  const leagueId = route?.params?.leagueId || league.leagueId;
   const [standings, setStandings] = useState([]);
   const [matchups, setMatchups] = useState([]);
   const [teamsById, setTeamsById] = useState({});
@@ -16,9 +20,7 @@ export default function StandingsScreen({ route }) {
 
   const fetchData = async () => {
     setLoadError(null);
-    if (!leagueId) {
-      try { const { data } = await api.get('/leagues?my_leagues=true'); if (data[0]) await fetchForLeague(data[0].id); } catch (e) { setLoadError(loadFailure(e, 'standings')); }
-    } else { await fetchForLeague(leagueId); }
+    if (leagueId) await fetchForLeague(leagueId);
     setLoading(false);
   };
 
@@ -42,6 +44,7 @@ export default function StandingsScreen({ route }) {
 
   return (
     <SafeAreaView style={s.container}>
+      {route?.params?.leagueId ? null : <LeagueSwitcher />}
       <LoadError message={loadError} onRetry={fetchData} />
       <FlatList
         data={standings}

@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, SafeAreaView, RefreshControl, TouchableOpacity } from 'react-native';
 import api from '../lib/api';
+import { useLeague } from '../contexts/LeagueContext';
 import LoadError from '../components/LoadError';
 import { loadFailure } from '../lib/errors';
 
 export default function MatchupScreen({ route }) {
   const initialLeagueId = route?.params?.leagueId;
   const [leagues, setLeagues] = useState([]);
-  const [leagueId, setLeagueId] = useState(initialLeagueId || null);
+  const active = useLeague();
+  const [leagueId, setLeagueId] = useState(initialLeagueId || active.leagueId || null);
   const [data, setData] = useState({ week: null, matchups: [] });
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(null);
@@ -30,7 +32,7 @@ export default function MatchupScreen({ route }) {
         const { data: ls } = await api.get('/leagues?my_leagues=true');
         if (guard.cancelled) return;
         setLeagues(ls || []);
-        const id = leagueId || ls?.[0]?.id;
+        const id = leagueId || active.leagueId || ls?.[0]?.id;
         if (id) {
           setLeagueId(id);
           await load(id);
@@ -48,7 +50,7 @@ export default function MatchupScreen({ route }) {
 
   const onRefresh = async () => { setRefreshing(true); await load(leagueId); setRefreshing(false); };
 
-  const switchLeague = async (id) => { setLeagueId(id); await load(id); };
+  const switchLeague = async (id) => { setLeagueId(id); active.select(id); await load(id); };
 
   return (
     <SafeAreaView style={s.container}>

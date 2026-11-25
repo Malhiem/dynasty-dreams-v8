@@ -73,7 +73,7 @@ describe('screens apply the cap rule', () => {
   const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'src', f), 'utf8');
   test('Roster only loads/shows cap data for cap leagues', () => {
     const src = read('screens/RosterScreen.js');
-    expect(src).toMatch(/leagueCapEnabled\(leagues\[0\]\)/);
+    expect(src).toMatch(/leagueCapEnabled\(league\)/);
     expect(src).toMatch(/if \(cap\) \{/);
     expect(src).toMatch(/capEnabled \? \(\s*<View>\s*<TeamCapCard/);
     expect(src).toMatch(/capEnabled && salaries\[/);

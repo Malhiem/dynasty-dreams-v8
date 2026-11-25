@@ -1,6 +1,7 @@
 import React from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from './src/contexts/AuthContext';
+import { LeagueProvider } from './src/contexts/LeagueContext';
 import AppNavigator, { navigateFromPush } from './src/navigation/AppNavigator';
 import { usePushRegistration } from './src/hooks/usePushRegistration';
 
@@ -20,9 +21,11 @@ export default function App() {
   return (
     <AuthProvider>
       <StatusBar style="light" />
-      <PushBridge>
-        <AppNavigator />
-      </PushBridge>
+      <LeagueProvider>
+        <PushBridge>
+          <AppNavigator />
+        </PushBridge>
+      </LeagueProvider>
     </AuthProvider>
   );
 }
