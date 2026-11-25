@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function SalaryCapScreen() {
@@ -8,8 +10,10 @@ export default function SalaryCapScreen() {
   const [overview, setOverview] = useState(null);
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchData = async () => {
+    setLoadError(null);
     try {
       const { data: leagues } = await api.get('/leagues?my_leagues=true');
       if (leagues.length > 0) {
@@ -18,7 +22,7 @@ export default function SalaryCapScreen() {
         setOverview(o.data);
         setContracts(c.data.filter(ct => ct.status === 'active'));
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'the salary cap')); }
     setLoading(false);
   };
 
@@ -43,6 +47,7 @@ export default function SalaryCapScreen() {
   return (
     <SafeAreaView style={s.container}>
       <ScrollView refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchData} tintColor="#00D2FF" />}>
+        <LoadError message={loadError} onRetry={fetchData} />
         <View style={s.header}><Text style={s.title}>SALARY CAP</Text><Text style={s.capValue}>{cap != null ? `$${(cap / 1000000).toFixed(1)}M` : '—'}</Text></View>
 
         {(overview?.teams || []).map(team => (

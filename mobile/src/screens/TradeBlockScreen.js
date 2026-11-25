@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 
 export default function TradeBlockScreen() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchData = async () => {
-    try { const { data } = await api.get('/trade-block'); setItems(data); } catch (e) { console.error(e); }
+    setLoadError(null);
+    try { const { data } = await api.get('/trade-block'); setItems(data); } catch (e) { setLoadError(loadFailure(e, 'the trade block')); }
     setLoading(false);
   };
 
@@ -15,6 +19,7 @@ export default function TradeBlockScreen() {
 
   return (
     <SafeAreaView style={s.container}>
+      <LoadError message={loadError} onRetry={fetchData} />
       <FlatList
         data={items}
         keyExtractor={item => item._id}
@@ -34,7 +39,7 @@ export default function TradeBlockScreen() {
         )}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchData} tintColor="#00D2FF" />}
         contentContainerStyle={s.list}
-        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loading ? 'Loading...' : 'No items on trade block'}</Text></View>}
+        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loading ? 'Loading...' : loadError ? '' : 'No items on trade block'}</Text></View>}
       />
     </SafeAreaView>
   );

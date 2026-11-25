@@ -21,3 +21,10 @@ export function showActionError(e, title = 'Action failed') {
   console.warn(`[${title}]`, e?.response?.data || e?.message || e);
   Alert.alert(title, errorMessage(e));
 }
+
+// Load-failure helper: log it, and return a message the screen can show with a
+// Retry button, so a failed load never looks like an empty one.
+export function loadFailure(e, what = 'data') {
+  console.warn(`[load ${what}]`, e?.response?.data || e?.message || e);
+  return errorMessage(e, `Could not load ${what}.`);
+}

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 
 export default function PlayersScreen({ navigation }) {
   const [players, setPlayers] = useState([]);
@@ -8,8 +10,10 @@ export default function PlayersScreen({ navigation }) {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchPlayers = async (p = 1, s = search) => {
+    setLoadError(null);
     try {
       const params = new URLSearchParams({ page: p.toString(), limit: '25' });
       if (s) params.append('search', s);
@@ -17,7 +21,7 @@ export default function PlayersScreen({ navigation }) {
       setPlayers(p === 1 ? data.players : [...players, ...data.players]);
       setTotal(data.total);
       setPage(p);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'players')); }
     setLoading(false);
   };
 
@@ -26,6 +30,7 @@ export default function PlayersScreen({ navigation }) {
 
   return (
     <SafeAreaView style={s.container}>
+      <LoadError message={loadError} onRetry={() => fetchPlayers(1)} />
       <View style={s.searchBar}>
         <TextInput style={s.searchInput} placeholder="Search players or teams..." placeholderTextColor="#52525B" value={search} onChangeText={setSearch} />
       </View>

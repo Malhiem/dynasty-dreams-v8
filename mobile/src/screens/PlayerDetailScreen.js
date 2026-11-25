@@ -1,16 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, SafeAreaView } from 'react-native';
 import api from '../lib/api';
+import { loadFailure } from '../lib/errors';
+import LoadError from '../components/LoadError';
 
 export default function PlayerDetailScreen({ route }) {
   const { playerId } = route.params;
   const [player, setPlayer] = useState(null);
+  const [loadError, setLoadError] = useState(null);
 
-  useEffect(() => {
-    api.get(`/players/${playerId}`).then(r => setPlayer(r.data)).catch(console.error);
-  }, [playerId]);
+  const load = () => {
+    setLoadError(null);
+    api.get(`/players/${playerId}`).then(r => setPlayer(r.data)).catch(e => setLoadError(loadFailure(e, 'this player')));
+  };
+  useEffect(() => { load(); }, [playerId]);
 
-  if (!player) return <SafeAreaView style={s.container}><Text style={s.loading}>Loading...</Text></SafeAreaView>;
+  if (!player) {
+    return (
+      <SafeAreaView style={s.container}>
+        {loadError ? <LoadError message={loadError} onRetry={load} /> : <Text style={s.loading}>Loading...</Text>}
+      </SafeAreaView>
+    );
+  }
 
   const isGoalie = player.position === 'G';
   const fpts = isGoalie ? ((player.wins||0)*5 + (player.saves||0)*0.2 - (player.goals_against||0)) : ((player.goals||0)*3 + (player.assists||0)*2 + (player.plus_minus||0));

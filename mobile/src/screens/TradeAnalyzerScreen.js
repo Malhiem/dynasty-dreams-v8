@@ -38,7 +38,7 @@ function PlayerSearchAdd({ sideKey, onAdd }) {
       try {
         const { data } = await api.get(`/players?search=${encodeURIComponent(q)}&limit=8`);
         setOpts(data?.players || []);
-      } catch { setOpts([]); }
+      } catch (e) { console.warn('[player search]', e?.message); setOpts([]); }
       setLoading(false);
     }, 300);
     return () => clearTimeout(t);
@@ -256,7 +256,7 @@ export default function TradeAnalyzerScreen({ route }) {
   const [status, setStatus] = useState(null);
 
   const refreshStatus = useCallback(() => {
-    api.get('/users/me/analyzer-status').then(r => setStatus(r.data)).catch(() => {});
+    api.get('/users/me/analyzer-status').then(r => setStatus(r.data)).catch((e) => console.warn('[analyzer status]', e?.message));
   }, []);
   useEffect(() => { refreshStatus(); }, [refreshStatus]);
 

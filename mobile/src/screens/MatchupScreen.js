@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, ScrollView, StyleSheet, SafeAreaView, RefreshControl, TouchableOpacity } from 'react-native';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 
 export default function MatchupScreen({ route }) {
   const initialLeagueId = route?.params?.leagueId;
@@ -8,32 +10,41 @@ export default function MatchupScreen({ route }) {
   const [leagueId, setLeagueId] = useState(initialLeagueId || null);
   const [data, setData] = useState({ week: null, matchups: [] });
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
   const load = useCallback(async (lid) => {
     if (!lid) return;
+    setLoadError(null);
     try {
       const { data: cw } = await api.get(`/matchups/${lid}/current-week`);
       setData(cw);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'matchups')); }
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  const initRef = React.useRef({ cancelled: false });
+  const init = useCallback(async () => {
+    const guard = initRef.current;
+    setLoadError(null);
+    {
       try {
         const { data: ls } = await api.get('/leagues?my_leagues=true');
-        if (cancelled) return;
+        if (guard.cancelled) return;
         setLeagues(ls || []);
         const id = leagueId || ls?.[0]?.id;
         if (id) {
           setLeagueId(id);
           await load(id);
         }
-      } catch (e) { console.error(e); }
-    })();
-    return () => { cancelled = true; };
+      } catch (e) { setLoadError(loadFailure(e, 'matchups')); }
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    initRef.current.cancelled = false;
+    init();
+    return () => { initRef.current.cancelled = true; };
+  }, [init]);
 
   const onRefresh = async () => { setRefreshing(true); await load(leagueId); setRefreshing(false); };
 
@@ -42,6 +53,7 @@ export default function MatchupScreen({ route }) {
   return (
     <SafeAreaView style={s.container}>
       <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00D2FF" />}>
+        <LoadError message={loadError} onRetry={() => (leagueId ? load(leagueId) : init())} />
         <View style={s.header}>
           <Text style={s.title}>MATCHUPS</Text>
           {data.week && <Text style={s.week}>Week {data.week}</Text>}

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, StyleSheet, SafeAreaView, RefreshControl, TouchableOpacity } from 'react-native';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 import TeamLogoUploader from '../components/TeamLogoUploader';
 
@@ -9,8 +11,10 @@ export default function RosterScreen({ navigation }) {
   const [team, setTeam] = useState(null);
   const [roster, setRoster] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchRoster = async () => {
+    setLoadError(null);
     try {
       const { data: leagues } = await api.get('/leagues?my_leagues=true');
       if (leagues.length > 0) {
@@ -22,7 +26,7 @@ export default function RosterScreen({ navigation }) {
           setRoster(data.players || []);
         }
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'your roster')); }
     setLoading(false);
   };
 
@@ -63,6 +67,7 @@ export default function RosterScreen({ navigation }) {
           <Text style={[s.proBtnText, { color: '#FFB020' }]}>📈 Projections</Text>
         </TouchableOpacity>
       </View>
+      <LoadError message={loadError} onRetry={fetchRoster} />
       <FlatList
         data={roster}
         keyExtractor={item => item.player_id}
@@ -80,7 +85,7 @@ export default function RosterScreen({ navigation }) {
           </View>
         )}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchRoster} tintColor="#00D2FF" />}
-        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loading ? 'Loading...' : 'Empty roster'}</Text></View>}
+        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loading ? 'Loading...' : loadError ? '' : 'Empty roster'}</Text></View>}
         contentContainerStyle={s.list}
       />
     </SafeAreaView>

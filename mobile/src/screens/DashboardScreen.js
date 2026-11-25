@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl, Alert } from 'react-native';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 import { useGlobalSocketEvent } from '../hooks/useSocket';
 
@@ -9,8 +11,10 @@ export default function DashboardScreen({ navigation }) {
   const [leagues, setLeagues] = useState([]);
   const [unread, setUnread] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchData = async () => {
+    setLoadError(null);
     try {
       const [l, n] = await Promise.all([
         api.get('/leagues?my_leagues=true'),
@@ -18,7 +22,7 @@ export default function DashboardScreen({ navigation }) {
       ]);
       setLeagues(l.data);
       setUnread(n.data.count);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'your dashboard')); }
   };
 
   useEffect(() => { fetchData(); }, []);
@@ -43,6 +47,7 @@ export default function DashboardScreen({ navigation }) {
   return (
     <SafeAreaView style={s.container}>
       <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#00D2FF" />}>
+        <LoadError message={loadError} onRetry={fetchData} />
         <View style={s.header}>
           <TouchableOpacity onPress={() => navigation.navigate('Profile')} testID="dashboard-profile-link">
             <Text style={s.greeting}>WELCOME BACK,</Text>

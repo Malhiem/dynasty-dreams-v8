@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
-import { showActionError } from '../lib/errors';
+import { showActionError, loadFailure } from '../lib/errors';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
 import { useDraftSocket } from '../hooks/useSocket';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -13,14 +14,16 @@ export default function DraftRoomScreen({ route }) {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState(null);
 
   const fetchDraft = async () => {
     if (!draftId) return;
+    setLoadError(null);
     try {
       const { data } = await api.get(`/drafts/${draftId}`);
       setDraft(data);
       setChatMessages(data.chat_messages || []);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'the draft')); }
   };
 
   const fetchPlayers = async () => {
@@ -30,7 +33,7 @@ export default function DraftRoomScreen({ route }) {
       if (search) params.append('search', search);
       const { data } = await api.get(`/drafts/${draftId}/eligible-players?${params}`);
       setPlayers(data.players || []);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'the player list')); }
   };
 
   useEffect(() => { fetchDraft(); fetchPlayers(); }, [draftId]);
@@ -65,6 +68,7 @@ export default function DraftRoomScreen({ route }) {
   return (
     <SafeAreaView style={s.container}>
       <ScrollView>
+        <LoadError message={loadError} onRetry={() => { fetchDraft(); fetchPlayers(); }} />
         <View style={s.header}>
           <Text style={s.title}>DRAFT ROOM</Text>
           <View style={s.statusRow}>

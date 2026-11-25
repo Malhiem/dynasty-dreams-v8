@@ -1,14 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
-import { showActionError } from '../lib/errors';
+import { showActionError, loadFailure } from '../lib/errors';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
 
 export default function NotificationsScreen() {
   const [notifs, setNotifs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchNotifs = async () => {
-    try { const { data } = await api.get('/notifications?limit=30'); setNotifs(data); } catch (e) { console.error(e); }
+    setLoadError(null);
+    try { const { data } = await api.get('/notifications?limit=30'); setNotifs(data); } catch (e) { setLoadError(loadFailure(e, 'notifications')); }
     setLoading(false);
   };
 
@@ -32,6 +35,7 @@ export default function NotificationsScreen() {
 
   return (
     <SafeAreaView style={s.container}>
+      <LoadError message={loadError} onRetry={fetchNotifs} />
       {unread > 0 && (
         <TouchableOpacity style={s.markAllBar} onPress={handleMarkAll}>
           <Text style={s.markAllText}>Mark all {unread} as read</Text>
@@ -54,7 +58,7 @@ export default function NotificationsScreen() {
         )}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchNotifs} tintColor="#00D2FF" />}
         contentContainerStyle={s.list}
-        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>No notifications</Text></View>}
+        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loadError ? '' : 'No notifications'}</Text></View>}
       />
     </SafeAreaView>
   );

@@ -29,7 +29,7 @@ function PlayerSearch({ onPick }) {
       try {
         const { data } = await api.get(`/players?search=${encodeURIComponent(q)}&limit=8`);
         setOpts(data?.players || []);
-      } catch { setOpts([]); }
+      } catch (e) { console.warn('[player search]', e?.message); setOpts([]); }
     }, 300);
     return () => clearTimeout(t);
   }, [q]);

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function WaiversScreen() {
@@ -10,9 +12,10 @@ export default function WaiversScreen() {
   const [claims, setClaims] = useState([]);
   const [leagueId, setLeagueId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
-  useEffect(() => {
-    const init = async () => {
+  const init = async () => {
+      setLoadError(null);
       try {
         const { data: leagues } = await api.get('/leagues?my_leagues=true');
         if (leagues.length > 0) {
@@ -27,14 +30,14 @@ export default function WaiversScreen() {
           setBudget(b.data);
           setClaims(c.data.filter(cl => cl.status === 'pending'));
         }
-      } catch (e) { console.error(e); }
+      } catch (e) { setLoadError(loadFailure(e, 'waivers')); }
       setLoading(false);
     };
-    init();
-  }, []);
+  useEffect(() => { init(); }, []);
 
   return (
     <SafeAreaView style={s.container}>
+      <LoadError message={loadError} onRetry={init} />
       <View style={s.budgetBar}>
         <View style={s.budgetItem}><Text style={s.budgetLabel}>FAAB Budget</Text><Text style={s.budgetValue}>${budget.remaining}</Text></View>
         <View style={s.budgetItem}><Text style={s.budgetLabel}>Spent</Text><Text style={s.budgetValueDim}>${budget.spent}</Text></View>

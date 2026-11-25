@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 import TeamLogo from '../components/TeamLogo';
 
 export default function StandingsScreen({ route }) {
@@ -10,10 +12,12 @@ export default function StandingsScreen({ route }) {
   const [teamsById, setTeamsById] = useState({});
   const [week, setWeek] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchData = async () => {
+    setLoadError(null);
     if (!leagueId) {
-      try { const { data } = await api.get('/leagues?my_leagues=true'); if (data[0]) await fetchForLeague(data[0].id); } catch (e) {}
+      try { const { data } = await api.get('/leagues?my_leagues=true'); if (data[0]) await fetchForLeague(data[0].id); } catch (e) { setLoadError(loadFailure(e, 'standings')); }
     } else { await fetchForLeague(leagueId); }
     setLoading(false);
   };
@@ -31,13 +35,14 @@ export default function StandingsScreen({ route }) {
       const map = {};
       (tm.data || []).forEach(t => { map[t.id] = t; });
       setTeamsById(map);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'standings')); }
   };
 
   useEffect(() => { fetchData(); }, [leagueId]);
 
   return (
     <SafeAreaView style={s.container}>
+      <LoadError message={loadError} onRetry={fetchData} />
       <FlatList
         data={standings}
         keyExtractor={item => item.team_id}

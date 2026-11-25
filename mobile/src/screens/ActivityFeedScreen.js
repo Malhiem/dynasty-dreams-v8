@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
-import { showActionError } from '../lib/errors';
+import { showActionError, loadFailure } from '../lib/errors';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function ActivityFeedScreen() {
@@ -10,23 +11,26 @@ export default function ActivityFeedScreen() {
   const [chatInput, setChatInput] = useState('');
   const [leagueId, setLeagueId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchFeed = async (lid) => {
+    setLoadError(null);
     try {
       const { data } = await api.get(`/activity/${lid}?limit=30`);
       setItems(data.items || []);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'the activity feed')); }
     setLoading(false);
   };
 
-  useEffect(() => {
-    const init = async () => {
+  const init = async () => {
+      setLoadError(null);
       try {
         const { data } = await api.get('/leagues?my_leagues=true');
         if (data.length > 0) { setLeagueId(data[0].id); await fetchFeed(data[0].id); }
-      } catch (e) { console.error(e); }
+      } catch (e) { setLoadError(loadFailure(e, 'the activity feed')); }
       setLoading(false);
     };
+  useEffect(() => {
     init();
   }, []);
 
@@ -43,6 +47,7 @@ export default function ActivityFeedScreen() {
 
   return (
     <SafeAreaView style={s.container}>
+      <LoadError message={loadError} onRetry={() => (leagueId ? fetchFeed(leagueId) : init())} />
       <View style={s.chatBar}>
         <TextInput style={s.chatInput} placeholder="Post to league..." placeholderTextColor="#52525B" value={chatInput} onChangeText={setChatInput} onSubmitEditing={handleSendChat} />
         <TouchableOpacity style={s.sendBtn} onPress={handleSendChat}><Text style={s.sendText}>Send</Text></TouchableOpacity>
@@ -62,7 +67,7 @@ export default function ActivityFeedScreen() {
         )}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => leagueId && fetchFeed(leagueId)} tintColor="#00D2FF" />}
         contentContainerStyle={s.list}
-        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loading ? 'Loading...' : 'No activity yet'}</Text></View>}
+        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loading ? 'Loading...' : loadError ? '' : 'No activity yet'}</Text></View>}
       />
     </SafeAreaView>
   );

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
-import { showActionError } from '../lib/errors';
+import { showActionError, loadFailure } from '../lib/errors';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
 import { useDraftSocket } from '../hooks/useSocket';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -12,10 +13,12 @@ export default function AuctionDraftScreen({ route }) {
   const [auctionState, setAuctionState] = useState(null);
   const [players, setPlayers] = useState([]);
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState(null);
   const [bidAmount, setBidAmount] = useState('1');
 
   const fetchAll = async () => {
     if (!draftId) return;
+    setLoadError(null);
     try {
       const [d, a, p] = await Promise.all([
         api.get(`/drafts/${draftId}`),
@@ -25,7 +28,7 @@ export default function AuctionDraftScreen({ route }) {
       setDraft(d.data);
       setAuctionState(a.data);
       setPlayers(p.data.players || []);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'the auction')); }
   };
 
   useEffect(() => { fetchAll(); }, [draftId]);
@@ -48,6 +51,7 @@ export default function AuctionDraftScreen({ route }) {
   return (
     <SafeAreaView style={s.container}>
       <ScrollView>
+        <LoadError message={loadError} onRetry={fetchAll} />
         <View style={s.header}>
           <Text style={s.title}>AUCTION DRAFT</Text>
           <View style={s.statusRow}>
