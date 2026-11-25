@@ -125,3 +125,28 @@ test("no cap means no floor: a floor sent with a disabled cap is dropped",async(
     await info.attach("no-cap-no-floor-eligibility",{body:JSON.stringify(data),contentType:"application/json"});
   }finally{await f.cleanup();}
 });
+
+test("draft room renders the eligible list in a window and grows it on demand",async({page},info)=>{
+  const f=await salaryFixture(page.request);
+  try{
+    await page.addInitScript(id=>localStorage.setItem("dd_active_league_id",id),f.league.id);
+    await page.goto("/draft-room");
+    await page.waitForLoadState("networkidle"); // all eligible-players pages loaded
+    const rows=page.locator('[data-testid^="draft-room-eligible-row-"]').filter({visible:true});
+    await expect(rows.first()).toBeVisible();
+    // Only meaningful with a pool larger than one window.
+    const pool=(await(await page.request.get(`/api/drafts/${f.draft.id}/eligible-players?limit=1&page=1`)).json()).total;
+    test.skip(pool<=100,"pool too small to need a window");
+    // Never more than one window (100 rows) at first, however large the pool is.
+    expect(await rows.count()).toBeLessThanOrEqual(100);
+    const more=page.getByTestId("draft-room-eligible-show-more").filter({visible:true});
+    if(await more.count()){
+      const before=await rows.count();await more.first().click();
+      await expect.poll(()=>rows.count()).toBeGreaterThan(before);
+    }
+    // Search still reaches players beyond the window.
+    await new DraftSalaryPage(page).search("Candidate");
+    await expect(page.getByTestId(`draft-room-eligible-row-${f.candidates[0]._id}`).filter({visible:true})).toBeVisible();
+    await info.attach("windowed-eligible-list",{body:String(await rows.count()),contentType:"text/plain"});
+  }finally{await f.cleanup();}
+});

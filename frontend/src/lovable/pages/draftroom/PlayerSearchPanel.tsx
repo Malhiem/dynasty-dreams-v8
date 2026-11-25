@@ -13,6 +13,7 @@
  * (setQueue, setShortlist, toggleShortlist, toggleQueue, removeFromQueue,
  * setSelectedPlayerId) are forwarded via callback props.
  */
+import { useEffect, useRef, useState } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -82,6 +83,29 @@ export default function PlayerSearchPanel({
   resolveCapHit,
   myTeamCap,
 }) {
+  // Render the eligible list in a growing window instead of every row at once:
+  // the pool is thousands of players and each row is a full card. The window
+  // grows as the user scrolls to the end (or presses "Show more") and resets
+  // whenever a filter changes. Selection, queueing and search are unaffected.
+  const ELIGIBLE_WINDOW = 100;
+  const [visibleCount, setVisibleCount] = useState(ELIGIBLE_WINDOW);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    setVisibleCount(ELIGIBLE_WINDOW);
+  }, [searchQuery, positionFilter, typeFilter, undraftedOnly]);
+  const hasMore = filteredPlayers.length > visibleCount;
+  useEffect(() => {
+    const el = moreRef.current;
+    if (!el || !hasMore || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setVisibleCount((c) => c + ELIGIBLE_WINDOW);
+      }
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasMore, visibleCount]);
+
   return (
     <Tabs defaultValue="eligible" className="w-full">
       <TabsList className="w-full grid grid-cols-3">
@@ -247,7 +271,7 @@ export default function PlayerSearchPanel({
 
         <ScrollArea className="h-[400px]">
           <div className="space-y-1">
-            {filteredPlayers.map((player) => {
+            {filteredPlayers.slice(0, visibleCount).map((player) => {
               const isOnBlock = tradeBlockPlayerIds.has(String(player.id));
               const isQueued = queue.includes(player.id);
               const isShortlisted = shortlist.includes(player.id);
@@ -425,6 +449,18 @@ export default function PlayerSearchPanel({
                 </div>
               );
             })}
+            {hasMore && (
+              <div ref={moreRef} className="py-2 text-center">
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                  data-testid="draft-room-eligible-show-more"
+                  onClick={() => setVisibleCount((c) => c + ELIGIBLE_WINDOW)}
+                >
+                  Show more ({filteredPlayers.length - visibleCount} remaining)
+                </button>
+              </div>
+            )}
           </div>
         </ScrollArea>
       </TabsContent>

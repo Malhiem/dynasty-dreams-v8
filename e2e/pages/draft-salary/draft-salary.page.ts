@@ -4,6 +4,7 @@ import * as actions from "./draft-salary.actions";
 export class DraftSalaryPage {
   constructor(readonly page:Page){}
   async open(id:string){await actions.open(this.page,id);await actions.searchCandidates(this.page);}
+  async search(text:string){await this.page.getByPlaceholder("Search players...",{exact:true}).filter({visible:true}).first().fill(text);}
   async move(name:string,destination:string){await actions.move(this.page,name,destination);}
   async choose(id:string){await actions.choose(this.page,id);}
   overview(){return selectors(this.page).overview();}
