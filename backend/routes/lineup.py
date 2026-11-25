@@ -471,11 +471,10 @@ async def get_team_compliance(team_id: str, request: Request):
 
     compliant = len(reasons) == 0
 
-    from services.salary_policy import obligations
-    retentions_list = await obligations(db, league, team)
-    retention_slots_total = min(3, int((league or {}).get("salary_retention_slots", 3)))
-    retention_slots_used = len(retentions_list)
-    retained_salary_total = sum(float(r.get("amount") or 0) for r in retentions_list)
+    from services.salary_policy import retention_slots
+    slots = await retention_slots(db, league, team)
+    retention_slots_total, retention_slots_used = slots["slots_total"], slots["slots_used"]
+    retained_salary_total = slots["retained_salary_total"]
 
     return {
         "team_id": team_id,

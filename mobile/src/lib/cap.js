@@ -44,6 +44,23 @@ export function capSummary(c) {
   };
 }
 
+// One team's retention slots from a /salary-cap/{league} team row. Null when the
+// server sent no slot data (older API), so the screen simply omits the line.
+export function teamRetention(team) {
+  if (!team || team.retention_slots_total == null) return null;
+  const total = Number(team.retention_slots_total);
+  const used = Number(team.retention_slots_used ?? 0);
+  const retained = Number(team.retained_salary_total ?? 0);
+  return {
+    total,
+    used,
+    remaining: Number(team.retention_slots_remaining ?? Math.max(0, total - used)),
+    retained,
+    label: `Retention slots ${used}/${total}`,
+    retainedLabel: retained > 0 ? `${formatMillions(retained)} retained` : null,
+  };
+}
+
 // Map player_id -> salary from /roster/{id}/detail, or {} for cap-less leagues.
 export function salaryByPlayer(detail, capEnabled) {
   if (!capEnabled) return {};

@@ -5,7 +5,7 @@ import { useLeague } from '../contexts/LeagueContext';
 import LeagueSwitcher from '../components/LeagueSwitcher';
 import LoadError from '../components/LoadError';
 import CapFloorCard from '../components/CapFloorCard';
-import { isCommissioner } from '../lib/cap';
+import { isCommissioner, teamRetention } from '../lib/cap';
 import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -64,7 +64,9 @@ export default function SalaryCapScreen() {
 
         <CapFloorCard watchlist={watchlist} userId={user?.id} showWatchlist={isCommissioner(league, user?.id)} />
 
-        {(overview?.teams || []).map(team => (
+        {(overview?.teams || []).map(team => {
+          const retention = teamRetention(team);
+          return (
           <View key={team.team_id} style={s.teamCard}>
             <View style={s.teamRow}>
               <Text style={s.teamName}>{team.team_name}</Text>
@@ -75,8 +77,15 @@ export default function SalaryCapScreen() {
               <Text style={s.metaText}>Used: ${(team.cap_used || 0).toLocaleString()}</Text>
               <Text style={[s.metaText, s.success]}>Free: ${(team.cap_remaining || 0).toLocaleString()}</Text>
             </View>
+            {retention && (
+              <View style={s.teamMeta} testID={`retention-${team.team_id}`}>
+                <Text style={s.metaText}>{retention.label}</Text>
+                {retention.retainedLabel && <Text style={s.metaText}>{retention.retainedLabel}</Text>}
+              </View>
+            )}
           </View>
-        ))}
+          );
+        })}
 
         <Text style={s.sectionTitle}>ACTIVE CONTRACTS ({contracts.length})</Text>
         {contracts.map(c => (

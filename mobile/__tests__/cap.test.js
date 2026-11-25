@@ -83,3 +83,26 @@ describe('screens apply the cap rule', () => {
     expect(read('screens/TradeBlockScreen.js')).toMatch(/item\.aav != null \?/);
   });
 });
+
+describe('teamRetention', () => {
+  const { teamRetention } = require('../src/lib/cap');
+  test('reads slots and retained salary from a team row', () => {
+    expect(teamRetention({ retention_slots_total: 3, retention_slots_used: 1, retention_slots_remaining: 2, retained_salary_total: 1500000 }))
+      .toMatchObject({ total: 3, used: 1, remaining: 2, label: 'Retention slots 1/3', retainedLabel: '$1.5M retained' });
+  });
+  test('no retained-salary line when nothing is retained', () => {
+    expect(teamRetention({ retention_slots_total: 3, retention_slots_used: 0, retained_salary_total: 0 }).retainedLabel).toBeNull();
+  });
+  test('derives remaining when the server omits it', () => {
+    expect(teamRetention({ retention_slots_total: 2, retention_slots_used: 1 }).remaining).toBe(1);
+  });
+  test('nothing for an older API that sends no slot data', () => {
+    expect(teamRetention({ team_id: 't1' })).toBeNull();
+    expect(teamRetention(null)).toBeNull();
+  });
+  test('the Salary Cap screen renders it for each team', () => {
+    const src = require('fs').readFileSync(require('path').join(__dirname, '../src/screens/SalaryCapScreen.js'), 'utf8');
+    expect(src).toMatch(/teamRetention\(team\)/);
+    expect(src).toMatch(/retention\.label/);
+  });
+});

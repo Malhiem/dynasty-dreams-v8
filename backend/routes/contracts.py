@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from routes.league_guards import require_league_member, verify_team_in_league
 from services.financial_lock import serialize_finances
+from services.salary_policy import retention_slots
 
 router = APIRouter()
 _deps: dict = {}
@@ -246,6 +247,7 @@ async def get_salary_cap_overview(league_id: str, request: Request):
             {"team_id": tid, "league_id": league_id, "player_status": "ufa"}
         )
 
+        slots = await retention_slots(db, league, team)
         team_caps.append({
             "team_id": tid,
             "team_name": team.get("name"),
@@ -256,6 +258,10 @@ async def get_salary_cap_overview(league_id: str, request: Request):
             "active_contracts": contracts,
             "rfa_count": rfa,
             "ufa_count": ufa,
+            "retention_slots_total": slots["slots_total"],
+            "retention_slots_used": slots["slots_used"],
+            "retention_slots_remaining": slots["slots_remaining"],
+            "retained_salary_total": slots["retained_salary_total"],
         })
 
     team_caps.sort(key=lambda t: -t["cap_used"])
