@@ -133,3 +133,8 @@ frontend/node_modules/.cache/default-development/24.pack
 
 # Backend pytest results from the Compose test stack
 /test-results/
+
+# mobile
+/mobile/node_modules/
+/mobile/.bundle-check/
+/mobile/.expo/

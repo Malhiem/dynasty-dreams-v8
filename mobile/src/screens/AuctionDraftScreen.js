@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
+import { showActionError } from '../lib/errors';
 import api from '../lib/api';
 import { useDraftSocket } from '../hooks/useSocket';
 import { useAuth } from '../contexts/AuthContext';
@@ -38,8 +39,8 @@ export default function AuctionDraftScreen({ route }) {
     onDraftPick: fetchAll,
   });
 
-  const handleNominate = async (pid) => { try { await api.post(`/drafts/${draftId}/auction/nominate`, { player_id: pid, opening_bid: 1 }); fetchAll(); } catch (e) { alert(e.response?.data?.detail); } };
-  const handleBid = async () => { try { await api.post(`/drafts/${draftId}/auction/bid`, { amount: parseFloat(bidAmount) }); fetchAll(); } catch (e) { alert(e.response?.data?.detail); } };
+  const handleNominate = async (pid) => { try { await api.post(`/drafts/${draftId}/auction/nominate`, { player_id: pid, opening_bid: 1 }); fetchAll(); } catch (e) { showActionError(e, 'Auction action failed'); } };
+  const handleBid = async () => { try { await api.post(`/drafts/${draftId}/auction/bid`, { amount: parseFloat(bidAmount) }); fetchAll(); } catch (e) { showActionError(e, 'Auction action failed'); } };
 
   const auction = auctionState?.active_auction;
   const budgets = auctionState?.budgets || [];

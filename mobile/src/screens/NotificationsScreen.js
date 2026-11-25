@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
+import { showActionError } from '../lib/errors';
 import api from '../lib/api';
 
 export default function NotificationsScreen() {
@@ -17,14 +18,14 @@ export default function NotificationsScreen() {
     try {
       await api.post(`/notifications/${id}/read`);
       setNotifs(prev => prev.map(n => n._id === id ? { ...n, read: true } : n));
-    } catch (e) { console.error(e); }
+    } catch (e) { showActionError(e, 'Could not mark as read'); }
   };
 
   const handleMarkAll = async () => {
     try {
       await api.post('/notifications/read-all');
       setNotifs(prev => prev.map(n => ({ ...n, read: true })));
-    } catch (e) { console.error(e); }
+    } catch (e) { showActionError(e, 'Could not mark all as read'); }
   };
 
   const unread = notifs.filter(n => !n.read).length;

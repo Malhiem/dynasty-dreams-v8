@@ -1,19 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { io } from 'socket.io-client';
-import { BACKEND_URL } from '../lib/api';
-
-let socketInstance = null;
-
-function getSocket() {
-  if (!socketInstance) {
-    socketInstance = io(BACKEND_URL, {
-      path: '/api/socket.io',
-      transports: ['websocket'],
-      autoConnect: false,
-    });
-  }
-  return socketInstance;
-}
+import { getSocket } from '../lib/socket';
 
 /**
  * Global event listener (no room join). Use for app-wide broadcasts like
@@ -52,16 +38,19 @@ export function useSocket(roomId, handlers = {}, userId = null) {
     if (socket.connected) onConnect();
     else socket.connect();
 
-    const eventNames = Object.keys(handlersRef.current);
-    eventNames.forEach(event => {
-      socket.on(event, (data) => handlersRef.current[event]?.(data));
+    // Keep the exact listener we add so cleanup removes only ours, not listeners
+    // other screens registered for the same event.
+    const listeners = Object.keys(handlersRef.current).map((event) => {
+      const fn = (data) => handlersRef.current[event]?.(data);
+      socket.on(event, fn);
+      return [event, fn];
     });
 
     return () => {
       socket.emit('leave_room', { room_id: roomId });
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
-      eventNames.forEach(event => socket.off(event));
+      listeners.forEach(([event, fn]) => socket.off(event, fn));
     };
   }, [roomId, userId]);
 

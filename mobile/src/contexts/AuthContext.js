@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import api, { setTokens, clearTokens, getAccessToken } from '../lib/api';
+import api, { setTokens, clearTokens, getAccessToken, setAuthLostHandler } from '../lib/api';
+import { resetSocket } from '../lib/socket';
 
 const AuthContext = createContext(null);
 
@@ -22,9 +23,16 @@ export function AuthProvider({ children }) {
 
   useEffect(() => { checkAuth(); }, [checkAuth]);
 
+  // When the session can no longer be refreshed, return to the login screen.
+  useEffect(() => {
+    setAuthLostHandler(() => { resetSocket(); setUser(null); });
+    return () => setAuthLostHandler(null);
+  }, []);
+
   const login = async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password });
     if (data.access_token) await setTokens(data.access_token, data.refresh_token);
+    resetSocket();
     setUser(data);
     return data;
   };
@@ -32,6 +40,7 @@ export function AuthProvider({ children }) {
   const register = async (email, password, name) => {
     const { data } = await api.post('/auth/register', { email, password, name });
     if (data.access_token) await setTokens(data.access_token, data.refresh_token);
+    resetSocket();
     setUser(data);
     return data;
   };
@@ -39,6 +48,7 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     try { await api.post('/auth/logout'); } catch (e) {}
     await clearTokens();
+    resetSocket();
     setUser(null);
   };
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
+import { showActionError } from '../lib/errors';
 import api from '../lib/api';
 import { useDraftSocket } from '../hooks/useSocket';
 import { useAuth } from '../contexts/AuthContext';
@@ -43,12 +44,19 @@ export default function DraftRoomScreen({ route }) {
   });
 
   const handlePick = async (playerId) => {
-    try { await api.post(`/drafts/${draftId}/pick`, { player_id: playerId }); fetchDraft(); fetchPlayers(); } catch (e) { console.error(e); }
+    try {
+      // expected_pick makes a double-tap or a pick made after the clock moved on fail
+      // cleanly instead of drafting twice; the server also enforces whose turn it is.
+      await api.post(`/drafts/${draftId}/pick`, { player_id: playerId, expected_pick: draft?.current_pick ?? undefined });
+    } catch (e) {
+      showActionError(e, 'Could not make that pick');
+    }
+    fetchDraft(); fetchPlayers();
   };
 
   const handleChat = async () => {
     if (!chatInput.trim()) return;
-    try { await api.post(`/drafts/${draftId}/chat`, { text: chatInput.trim() }); setChatInput(''); fetchDraft(); } catch (e) { console.error(e); }
+    try { await api.post(`/drafts/${draftId}/chat`, { text: chatInput.trim() }); setChatInput(''); fetchDraft(); } catch (e) { showActionError(e, 'Message not sent'); }
   };
 
   const picks = draft?.picks || [];

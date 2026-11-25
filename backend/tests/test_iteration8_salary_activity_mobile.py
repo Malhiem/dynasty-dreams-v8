@@ -409,7 +409,12 @@ class TestReactNativeMobileScaffold:
             content = f.read()
 
         # Verify socket functionality
-        assert "socket.io-client" in content, "Missing socket.io-client import"
+        # The socket.io client itself lives in lib/socket.js (it supplies the auth
+        # token on the handshake); the hooks import it from there.
+        with open("/app/mobile/src/lib/socket.js", "r") as f:
+            socket_lib = f.read()
+        assert "socket.io-client" in socket_lib, "Missing socket.io-client import"
+        assert "auth:" in socket_lib, "Socket handshake must send the access token"
         assert "useSocket" in content, "Missing useSocket hook"
         assert "useDraftSocket" in content, "Missing useDraftSocket hook"
         assert "useLeagueSocket" in content, "Missing useLeagueSocket hook"

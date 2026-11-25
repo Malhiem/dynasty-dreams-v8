@@ -11,8 +11,8 @@ npx expo start
 ## Architecture
 - **Framework**: React Native with Expo SDK 52
 - **Navigation**: React Navigation (Bottom Tabs + Native Stack)
-- **State**: React Context + TanStack Query
-- **Styling**: NativeWind (Tailwind for RN)
+- **State**: React Context + component state
+- **Styling**: React Native StyleSheet
 - **API**: Axios with token refresh interceptor
 - **Real-time**: Socket.IO client
 - **Secure Storage**: expo-secure-store for JWT tokens
@@ -81,3 +81,9 @@ MainTabs
 3. Add push notification token registration
 4. Configure app.json for iOS/Android builds
 5. Set up EAS Build for distribution
+
+## Notes (build and config)
+- Entry point is `App.js` through `expo/AppEntry` and React Navigation. There is no expo-router.
+- `assets/` holds placeholder icon, splash and favicon images. Replace them with real artwork before store submission.
+- Push notifications need an EAS project id: run `eas init`, then set `EXPO_PUBLIC_EAS_PROJECT_ID` (see `app.config.js`). Without it push registration is skipped.
+- `npm test` runs the Jest suite; `npm run bundle-check` makes a real Android Metro bundle.

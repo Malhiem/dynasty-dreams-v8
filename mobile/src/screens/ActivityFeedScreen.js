@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
+import { showActionError } from '../lib/errors';
 import api from '../lib/api';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -35,7 +36,7 @@ export default function ActivityFeedScreen() {
       await api.post(`/activity/${leagueId}/chat`, { text: chatInput.trim() });
       setChatInput('');
       await fetchFeed(leagueId);
-    } catch (e) { console.error(e); }
+    } catch (e) { showActionError(e, 'Message not sent'); }
   };
 
   const eventIcons = { chat: '💬', roster_add: '➕', roster_drop: '➖', contract_signed: '📝', trade_proposed: '🔄', week_simulated: '📊' };

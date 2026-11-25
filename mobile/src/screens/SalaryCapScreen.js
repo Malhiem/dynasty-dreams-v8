@@ -23,12 +23,27 @@ export default function SalaryCapScreen() {
   };
 
   useEffect(() => { fetchData(); }, []);
-  const cap = overview?.salary_cap || 82500000;
+  // No cap, no salaries: when the league has no salary cap the server reports
+  // salary_cap_enabled=false and sends no figures, so there is nothing to show.
+  const capDisabled = overview?.salary_cap_enabled === false;
+  const cap = overview?.salary_cap;
+
+  if (capDisabled) {
+    return (
+      <SafeAreaView style={s.container} testID="salary-cap-disabled">
+        <View style={s.disabledWrap}>
+          <View style={s.disabledCard}>
+            <Text style={s.disabledText}>Salary cap has been disabled in league settings</Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={s.container}>
       <ScrollView refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchData} tintColor="#00D2FF" />}>
-        <View style={s.header}><Text style={s.title}>SALARY CAP</Text><Text style={s.capValue}>${(cap / 1000000).toFixed(1)}M</Text></View>
+        <View style={s.header}><Text style={s.title}>SALARY CAP</Text><Text style={s.capValue}>{cap != null ? `$${(cap / 1000000).toFixed(1)}M` : '—'}</Text></View>
 
         {(overview?.teams || []).map(team => (
           <View key={team.team_id} style={s.teamCard}>
@@ -67,6 +82,9 @@ export default function SalaryCapScreen() {
 }
 
 const s = StyleSheet.create({
+  disabledWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  disabledCard: { backgroundColor: '#141414', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 22, paddingVertical: 20 },
+  disabledText: { color: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center' },
   container: { flex: 1, backgroundColor: '#0A0A0A' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20 },
   title: { fontSize: 22, fontWeight: '800', color: '#fff' },
