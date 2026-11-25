@@ -522,7 +522,9 @@ async def get_draft_eligible_players(
             query["_id"] = {"$nin": list(combined)}
 
     skip = (page - 1) * limit
-    players = await _db().players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
+    # `_id` tiebreaker: many players share a points total, and without a unique
+    # sort key skip/limit paging repeats some players and drops others.
+    players = await _db().players.find(query).sort([("points", -1), ("_id", 1)]).skip(skip).limit(limit).to_list(limit)
     total = await _db().players.count_documents(query)
 
     result = []

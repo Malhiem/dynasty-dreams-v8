@@ -3,6 +3,8 @@ import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, SafeAr
 import { showActionError, loadFailure } from '../lib/errors';
 import api from '../lib/api';
 import LoadError from '../components/LoadError';
+import EligiblePlayerList from '../components/EligiblePlayerList';
+import { useEligiblePlayers } from '../hooks/useEligiblePlayers';
 import { useDraftSocket } from '../hooks/useSocket';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -10,7 +12,6 @@ export default function DraftRoomScreen({ route }) {
   const draftId = route?.params?.draftId;
   const { user } = useAuth();
   const [draft, setDraft] = useState(null);
-  const [players, setPlayers] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [search, setSearch] = useState('');
@@ -26,18 +27,11 @@ export default function DraftRoomScreen({ route }) {
     } catch (e) { setLoadError(loadFailure(e, 'the draft')); }
   };
 
-  const fetchPlayers = async () => {
-    if (!draftId) return;
-    try {
-      const params = new URLSearchParams({ limit: '30' });
-      if (search) params.append('search', search);
-      const { data } = await api.get(`/drafts/${draftId}/eligible-players?${params}`);
-      setPlayers(data.players || []);
-    } catch (e) { setLoadError(loadFailure(e, 'the player list')); }
-  };
+  // Paged + searchable; refresh() re-fetches the pages already loaded after a pick.
+  const eligible = useEligiblePlayers(draftId, search);
+  const fetchPlayers = eligible.refresh;
 
-  useEffect(() => { fetchDraft(); fetchPlayers(); }, [draftId]);
-  useEffect(() => { const t = setTimeout(fetchPlayers, 300); return () => clearTimeout(t); }, [search]);
+  useEffect(() => { fetchDraft(); }, [draftId]);
 
   const { connected } = useDraftSocket(draftId, {
     userId: user?.id,
@@ -68,7 +62,7 @@ export default function DraftRoomScreen({ route }) {
   return (
     <SafeAreaView style={s.container}>
       <ScrollView>
-        <LoadError message={loadError} onRetry={() => { fetchDraft(); fetchPlayers(); }} />
+        <LoadError message={loadError} onRetry={fetchDraft} />
         <View style={s.header}>
           <Text style={s.title}>DRAFT ROOM</Text>
           <View style={s.statusRow}>
@@ -93,13 +87,13 @@ export default function DraftRoomScreen({ route }) {
         <View style={s.section}>
           <Text style={s.sectionTitle}>AVAILABLE PLAYERS</Text>
           <TextInput style={s.searchInput} placeholder="Search..." placeholderTextColor="#52525B" value={search} onChangeText={setSearch} />
-          {players.slice(0, 15).map(p => (
+          <EligiblePlayerList list={eligible} renderRow={p => (
             <TouchableOpacity key={p.id} style={s.playerRow} onPress={() => isActive && handlePick(p.id)}>
               <View style={s.posBadge}><Text style={s.posText}>{p.position}</Text></View>
               <View style={s.info}><Text style={s.playerName}>{p.name}</Text><Text style={s.playerMeta}>{p.nhlTeam} · {p.pts}P</Text></View>
               {isActive && <View style={s.pickBtn}><Text style={s.pickBtnText}>Pick</Text></View>}
             </TouchableOpacity>
-          ))}
+          )} />
         </View>
 
         {/* Chat */}
