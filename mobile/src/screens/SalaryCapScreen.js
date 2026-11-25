@@ -4,12 +4,15 @@ import api from '../lib/api';
 import { useLeague } from '../contexts/LeagueContext';
 import LeagueSwitcher from '../components/LeagueSwitcher';
 import LoadError from '../components/LoadError';
+import CapFloorCard from '../components/CapFloorCard';
+import { isCommissioner } from '../lib/cap';
 import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function SalaryCapScreen() {
   const { user } = useAuth();
-  const { leagueId } = useLeague();
+  const { leagueId, league } = useLeague();
+  const [watchlist, setWatchlist] = useState(null);
   const [overview, setOverview] = useState(null);
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -22,13 +25,20 @@ export default function SalaryCapScreen() {
         const lid = leagueId;
         const [o, c] = await Promise.all([api.get(`/salary-cap/${lid}`), api.get(`/contracts?league_id=${lid}`)]);
         setOverview(o.data);
+        // The floor only exists while the league has a cap; a failure here
+        // must not blank the rest of the page.
+        if (o.data?.salary_cap_enabled) {
+          try {
+            setWatchlist((await api.get(`/leagues/${lid}/cap-floor-watchlist`)).data);
+          } catch (e) { setWatchlist(null); setLoadError(loadFailure(e, 'the cap floor')); }
+        } else setWatchlist(null);
         setContracts(c.data.filter(ct => ct.status === 'active'));
       }
     } catch (e) { setLoadError(loadFailure(e, 'the salary cap')); }
     setLoading(false);
   };
 
-  useEffect(() => { setOverview(null); fetchData(); }, [leagueId]);
+  useEffect(() => { setOverview(null); setWatchlist(null); fetchData(); }, [leagueId]);
   // No cap, no salaries: when the league has no salary cap the server reports
   // salary_cap_enabled=false and sends no figures, so there is nothing to show.
   const capDisabled = overview?.salary_cap_enabled === false;
@@ -51,6 +61,8 @@ export default function SalaryCapScreen() {
       <ScrollView refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchData} tintColor="#00D2FF" />}>
         <LoadError message={loadError} onRetry={fetchData} />
         <View style={s.header}><Text style={s.title}>SALARY CAP</Text><Text style={s.capValue}>{cap != null ? `$${(cap / 1000000).toFixed(1)}M` : '—'}</Text></View>
+
+        <CapFloorCard watchlist={watchlist} userId={user?.id} showWatchlist={isCommissioner(league, user?.id)} />
 
         {(overview?.teams || []).map(team => (
           <View key={team.team_id} style={s.teamCard}>

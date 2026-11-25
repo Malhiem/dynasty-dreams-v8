@@ -55,3 +55,33 @@ export function salaryByPlayer(detail, capEnabled) {
   });
   return out;
 }
+
+export const isCommissioner = (league, userId) =>
+  Boolean(userId) && (league?.commissioner_id === userId || (league?.co_commissioners || []).includes(userId));
+
+// Normalise /leagues/{id}/cap-floor-watchlist for the floor card. Null when the
+// league has no floor ("no cap, no floor"). The server already reports no floor
+// for cap-less leagues; this stays defensive.
+export function floorSummary(w, userId) {
+  if (!w || !w.floor_enabled || !(Number(w.floor) > 0)) return null;
+  const floor = Number(w.floor);
+  const mineRow = (w.teams || []).find((t) => t.owner_id === userId);
+  const mine = mineRow
+    ? {
+        teamName: mineRow.team_name,
+        payroll: Number(mineRow.payroll || 0),
+        compliant: Number(mineRow.payroll || 0) >= floor,
+        shortfall: Math.max(0, floor - Number(mineRow.payroll || 0)),
+      }
+    : null;
+  return {
+    floor,
+    yr1: Number(w.floor_year_plus_1 || floor),
+    yr2: Number(w.floor_year_plus_2 || w.floor_year_plus_1 || floor),
+    year: w.year,
+    mine,
+    atRisk: (w.teams || []).filter((t) => t.status !== 'above'),
+    belowCount: w.summary?.below_count ?? 0,
+    watchCount: w.summary?.watchlist_count ?? 0,
+  };
+}
