@@ -39,8 +39,8 @@ def test_waivers_undrafted_only_excludes_drafted():
 
 
 def test_draft_eligible_undrafted_only_shrinks():
-    all_e = _ok(requests.get(f"{BASE}/api/drafts/{DRAFT}/eligible-players"))
-    und_e = _ok(requests.get(f"{BASE}/api/drafts/{DRAFT}/eligible-players", params={"undrafted_only": "true"}))
+    all_e = _ok(requests.get(f"{BASE}/api/drafts/{DRAFT}/eligible-players", headers=test_admin_headers()))
+    und_e = _ok(requests.get(f"{BASE}/api/drafts/{DRAFT}/eligible-players", params={"undrafted_only": "true"}, headers=test_admin_headers()))
     a_list = all_e if isinstance(all_e, list) else all_e.get("players", all_e.get("data", []))
     u_list = und_e if isinstance(und_e, list) else und_e.get("players", und_e.get("data", []))
     print(f"eligible all={len(a_list)} undrafted={len(u_list)}")

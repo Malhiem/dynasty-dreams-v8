@@ -7,6 +7,7 @@ import pytest
 import requests
 import os
 from datetime import datetime
+from http_test_auth import test_admin_headers  # noqa: E402
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
@@ -362,7 +363,7 @@ class TestSidebarMigration:
 
     def test_drafts_endpoint(self):
         """Test drafts endpoint works"""
-        resp = self.session.get(f"{BASE_URL}/api/drafts")
+        resp = self.session.get(f"{BASE_URL}/api/drafts", headers=test_admin_headers())
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
         print("PASS: Drafts endpoint works")

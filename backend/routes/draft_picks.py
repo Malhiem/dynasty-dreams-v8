@@ -19,7 +19,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from routes.draft_access import draft_member
 from pydantic import BaseModel
 
 
@@ -144,7 +145,7 @@ async def set_pick_defer_choice(
     }
 
 
-@router.get("/drafts/{draft_id}/picks/{pick_no}/defer")
+@router.get("/drafts/{draft_id}/picks/{pick_no}/defer", dependencies=[Depends(draft_member(_deps))])
 async def get_pick_defer_choice(draft_id: str, pick_no: int, request: Request):
     """Returns the persisted defer choice + the draft-level options the
     user can choose from. Surfaces both the per-pick state AND the

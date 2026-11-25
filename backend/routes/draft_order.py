@@ -18,7 +18,8 @@ from __future__ import annotations
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from routes.draft_access import league_member
 from pydantic import BaseModel
 
 
@@ -44,7 +45,7 @@ async def _get_user(request: Request):
 DRAFT_ORDER_METHODS = {"nhl_lottery", "lottery_generator", "manual_entry"}
 
 
-@router.get("/leagues/{league_id}/draft-order")
+@router.get("/leagues/{league_id}/draft-order", dependencies=[Depends(league_member(_deps))])
 async def get_league_draft_order(league_id: str, year: Optional[int] = None):
     """Iter 137 + 138 — compute the canonical draft order for a given year.
 

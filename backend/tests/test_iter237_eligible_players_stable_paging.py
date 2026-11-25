@@ -9,8 +9,12 @@ from security_http_fixtures import API_URL, security_db, security_users  # noqa:
 
 def test_pages_do_not_overlap_or_skip(security_db, security_users):
     user = security_users()
+    # Drafts are members-only, so the draft needs a real league the user belongs to.
+    league_id = str(security_db.leagues.insert_one({
+        "name": "i237 paging", "commissioner_id": user["id"], "status": "active",
+    }).inserted_id)
     draft_id = str(security_db.drafts.insert_one({
-        "league_id": "000000000000000000000001", "status": "scheduled", "picks": [], "player_criteria": "all",
+        "league_id": league_id, "status": "scheduled", "picks": [], "player_criteria": "all",
     }).inserted_id)
     try:
         def page(n):
@@ -31,3 +35,4 @@ def test_pages_do_not_overlap_or_skip(security_db, security_users):
         assert ranks == list(range(1, len(seen) + 1)), "ranking has gaps or repeats across pages"
     finally:
         security_db.drafts.delete_one({"_id": ObjectId(draft_id)})
+        security_db.leagues.delete_one({"_id": ObjectId(league_id)})

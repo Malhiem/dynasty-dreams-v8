@@ -145,6 +145,7 @@ async def test_get_locking_draft_ignores_orphan_returns_real():
     # Cleanup
     await db.drafts.delete_one({"_id": orphan.inserted_id})
     await db.drafts.delete_one({"_id": real.inserted_id})
+    await db.leagues.delete_one({"_id": ObjectId(league_id)})
 
 
 # ── Cleanup endpoint ────────────────────────────────────────────
@@ -191,6 +192,7 @@ async def test_cleanup_orphan_drafts_deletes_stubs_only():
 
     # Cleanup
     await db.drafts.delete_one({"_id": real.inserted_id})
+    await db.leagues.delete_one({"_id": ObjectId(league_id)})
     await db.users.delete_one({"_id": ObjectId(admin_id)})
 
 
@@ -202,7 +204,12 @@ async def test_upcoming_drafts_endpoint_filters_orphans():
     db = _db()
     draft_inspection._deps["db"] = db  # type: ignore
 
+    async def _admin(_request):
+        return {"_id": "admin-1", "is_admin": True, "role": "admin"}
+    draft_inspection._deps["get_current_user"] = _admin  # type: ignore
+
     league_id = str(ObjectId())
+    await db.leagues.insert_one({"_id": ObjectId(league_id), "name": "orphans", "commissioner_id": "someone-else"})
     stub = await db.drafts.insert_one({
         "league_id": league_id,
         "status": "scheduled",
@@ -234,7 +241,12 @@ async def test_drafts_list_hides_orphans_by_default_shows_with_flag():
     db = _db()
     draft_inspection._deps["db"] = db  # type: ignore
 
+    async def _admin(_request):
+        return {"_id": "admin-1", "is_admin": True, "role": "admin"}
+    draft_inspection._deps["get_current_user"] = _admin  # type: ignore
+
     league_id = str(ObjectId())
+    await db.leagues.insert_one({"_id": ObjectId(league_id), "name": "orphans", "commissioner_id": "someone-else"})
     stub = await db.drafts.insert_one({
         "league_id": league_id,
         "status": "in_progress",
@@ -247,13 +259,13 @@ async def test_drafts_list_hides_orphans_by_default_shows_with_flag():
         "total_rounds": 20,
     })
 
-    default = await draft_inspection.get_drafts(league_id=league_id)
+    default = await draft_inspection.get_drafts(league_id=league_id, request=object())
     ids_default = {d["_id"] for d in default}
     assert str(real.inserted_id) in ids_default
     assert str(stub.inserted_id) not in ids_default  # orphan hidden
 
     with_orphans = await draft_inspection.get_drafts(
-        league_id=league_id, include_orphans=True,
+        league_id=league_id, include_orphans=True, request=object(),
     )
     ids_all = {d["_id"] for d in with_orphans}
     assert str(real.inserted_id) in ids_all
@@ -262,3 +274,4 @@ async def test_drafts_list_hides_orphans_by_default_shows_with_flag():
     # Cleanup
     await db.drafts.delete_one({"_id": stub.inserted_id})
     await db.drafts.delete_one({"_id": real.inserted_id})
+    await db.leagues.delete_one({"_id": ObjectId(league_id)})

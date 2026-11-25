@@ -21,6 +21,7 @@ import pytest
 import requests
 import os
 from datetime import datetime
+from http_test_auth import test_admin_headers  # noqa: E402
 
 # Get BASE_URL from environment
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
@@ -152,7 +153,7 @@ class TestDraftListing:
 
     def test_get_all_drafts(self, api_client):
         """Test GET /api/drafts returns list of drafts"""
-        response = api_client.get(f"{BASE_URL}/api/drafts")
+        response = api_client.get(f"{BASE_URL}/api/drafts", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -161,7 +162,7 @@ class TestDraftListing:
     def test_get_drafts_by_league(self, api_client, test_league_and_team):
         """Test GET /api/drafts?league_id={id} filters by league"""
         league_id = test_league_and_team["league"]["id"]
-        response = api_client.get(f"{BASE_URL}/api/drafts?league_id={league_id}")
+        response = api_client.get(f"{BASE_URL}/api/drafts?league_id={league_id}", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)
@@ -176,7 +177,7 @@ class TestDraftDetails:
 
     def test_get_draft_not_found(self, api_client):
         """Test GET /api/drafts/{id} with invalid id returns 404"""
-        response = api_client.get(f"{BASE_URL}/api/drafts/000000000000000000000000")
+        response = api_client.get(f"{BASE_URL}/api/drafts/000000000000000000000000", headers=test_admin_headers())
         assert response.status_code == 404
         print("PASS: GET draft with invalid id returns 404")
 
@@ -185,7 +186,7 @@ class TestDraftDetails:
         if not hasattr(pytest, 'test_draft_id'):
             pytest.skip("No draft created in previous test")
 
-        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}")
+        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
 
@@ -206,7 +207,7 @@ class TestDraftBoard:
 
     def test_get_draft_board_not_found(self, api_client):
         """Test GET /api/drafts/{id}/board with invalid id returns 404"""
-        response = api_client.get(f"{BASE_URL}/api/drafts/000000000000000000000000/board")
+        response = api_client.get(f"{BASE_URL}/api/drafts/000000000000000000000000/board", headers=test_admin_headers())
         assert response.status_code == 404
         print("PASS: GET draft board with invalid id returns 404")
 
@@ -215,7 +216,7 @@ class TestDraftBoard:
         if not hasattr(pytest, 'test_draft_id'):
             pytest.skip("No draft created in previous test")
 
-        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/board")
+        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/board", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
 
@@ -248,7 +249,7 @@ class TestEligiblePlayers:
 
     def test_get_eligible_players_not_found(self, api_client):
         """Test GET /api/drafts/{id}/eligible-players with invalid id returns 404"""
-        response = api_client.get(f"{BASE_URL}/api/drafts/000000000000000000000000/eligible-players")
+        response = api_client.get(f"{BASE_URL}/api/drafts/000000000000000000000000/eligible-players", headers=test_admin_headers())
         assert response.status_code == 404
         print("PASS: GET eligible players with invalid id returns 404")
 
@@ -257,7 +258,7 @@ class TestEligiblePlayers:
         if not hasattr(pytest, 'test_draft_id'):
             pytest.skip("No draft created in previous test")
 
-        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/eligible-players")
+        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/eligible-players", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
 
@@ -287,7 +288,7 @@ class TestEligiblePlayers:
         if not hasattr(pytest, 'test_draft_id'):
             pytest.skip("No draft created in previous test")
 
-        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/eligible-players?search=McDavid")
+        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/eligible-players?search=McDavid", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
 
@@ -302,7 +303,7 @@ class TestEligiblePlayers:
         if not hasattr(pytest, 'test_draft_id'):
             pytest.skip("No draft created in previous test")
 
-        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/eligible-players?position=G")
+        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/eligible-players?position=G", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
 
@@ -445,7 +446,7 @@ class TestDraftPick:
         if not hasattr(pytest, 'test_draft_id') or not hasattr(pytest, 'picked_player_id'):
             pytest.skip("No draft or picked player available from previous tests")
 
-        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/eligible-players")
+        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/eligible-players", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
 
@@ -534,7 +535,7 @@ class TestDraftChat:
 
     def test_get_chat_not_found(self, api_client):
         """Test GET /api/drafts/{id}/chat with invalid id returns 404"""
-        response = api_client.get(f"{BASE_URL}/api/drafts/000000000000000000000000/chat")
+        response = api_client.get(f"{BASE_URL}/api/drafts/000000000000000000000000/chat", headers=test_admin_headers())
         assert response.status_code == 404
         print("PASS: Get chat with invalid id returns 404")
 
@@ -543,7 +544,7 @@ class TestDraftChat:
         if not hasattr(pytest, 'test_draft_id'):
             pytest.skip("No draft created in previous test")
 
-        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/chat")
+        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/chat", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
 
@@ -633,7 +634,7 @@ class TestSnakeDraftOrdering:
         if not hasattr(pytest, 'test_draft_id'):
             pytest.skip("No draft created in previous test")
 
-        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/board")
+        response = api_client.get(f"{BASE_URL}/api/drafts/{pytest.test_draft_id}/board", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
 

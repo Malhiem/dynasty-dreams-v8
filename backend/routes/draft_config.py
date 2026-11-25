@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from routes.draft_access import league_member
 from pydantic import BaseModel
 
 
@@ -500,7 +501,7 @@ async def commissioner_auto_protect(
     return {"ok": True, "draft_type": dt, "protected_player_ids": top_ids, "count": len(top_ids), "metric": metric}
 
 
-@router.get("/leagues/{league_id}/expansion-draft-board")
+@router.get("/leagues/{league_id}/expansion-draft-board", dependencies=[Depends(league_member(_deps))])
 async def get_expansion_draft_board(league_id: str):
     """For expansion drafts, return every team's players partitioned
     into `unprotected` (drafted FIRST) and `protected` (shown after).

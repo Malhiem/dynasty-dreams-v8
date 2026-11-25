@@ -886,6 +886,8 @@ async def test_init_budgets_seeds_each_team_with_league_cap():
 async def test_picks_endpoint_still_mounts_after_iter98_rewrite():
     async with isolated_router_app(DRAFTS_FAMILY) as ctx:
         _wire_default_deps()
-        r = await ctx.client.get("/api/drafts/unknown-league/picks")
+        from tests.router_test_utils import make_league
+        league_id = await make_league(ctx)
+        r = await ctx.client.get(f"/api/drafts/{league_id}/picks")
         assert r.status_code == 200
         assert r.json()["picks"] == []

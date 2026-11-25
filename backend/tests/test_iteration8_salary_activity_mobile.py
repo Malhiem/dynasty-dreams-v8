@@ -10,6 +10,7 @@ import pytest
 import requests
 import os
 from datetime import datetime
+from http_test_auth import test_admin_headers  # noqa: E402
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 TEST_LEAGUE_ID = "69e46af167999bfb85c3962a"
@@ -486,7 +487,7 @@ class TestExistingFeatures:
 
     def test_drafts_endpoint(self, auth_session):
         """GET /api/drafts returns drafts"""
-        response = auth_session.get(f"{BASE_URL}/api/drafts")
+        response = auth_session.get(f"{BASE_URL}/api/drafts", headers=test_admin_headers())
         assert response.status_code == 200
         data = response.json()
         assert isinstance(data, list)

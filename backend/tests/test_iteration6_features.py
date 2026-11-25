@@ -7,6 +7,7 @@ Iteration 6 Backend Tests:
 import pytest
 import requests
 import os
+from http_test_auth import test_admin_headers
 
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 
@@ -228,6 +229,16 @@ class TestCommissionerAPIs:
         print("PASS: Process waivers requires authentication")
 
 
+def _first_real_draft():
+    """First draft of a league that exists (drafts are members-only, so orphaned
+    drafts left behind by deleted leagues are no longer reachable)."""
+    for lg in requests.get(f"{BASE_URL}/api/leagues", headers=test_admin_headers()).json():
+        drafts = requests.get(f"{BASE_URL}/api/drafts", params={"league_id": lg["id"]}, headers=test_admin_headers()).json()
+        if drafts:
+            return drafts[0]
+    return None
+
+
 class TestDraftAPIs:
     """Tests for Draft APIs used by DraftRoomPage"""
 
@@ -242,7 +253,7 @@ class TestDraftAPIs:
 
     def test_get_drafts(self):
         """Test getting list of drafts"""
-        response = requests.get(f"{BASE_URL}/api/drafts", cookies=self.cookies)
+        response = requests.get(f"{BASE_URL}/api/drafts", cookies=self.cookies, headers=test_admin_headers())
         assert response.status_code == 200
         drafts = response.json()
         print(f"PASS: Got {len(drafts)} drafts")
@@ -251,12 +262,12 @@ class TestDraftAPIs:
     def test_get_draft_eligible_players(self):
         """Test getting eligible players for a draft"""
         # First get a draft
-        response = requests.get(f"{BASE_URL}/api/drafts", cookies=self.cookies)
-        drafts = response.json()
+        draft = _first_real_draft()
+        drafts = [draft] if draft else []
 
         if drafts:
             draft_id = drafts[0]["_id"]
-            response = requests.get(f"{BASE_URL}/api/drafts/{draft_id}/eligible-players?limit=10", cookies=self.cookies)
+            response = requests.get(f"{BASE_URL}/api/drafts/{draft_id}/eligible-players?limit=10", cookies=self.cookies, headers=test_admin_headers())
             assert response.status_code == 200
             data = response.json()
             assert "players" in data
@@ -266,12 +277,12 @@ class TestDraftAPIs:
 
     def test_get_draft_board(self):
         """Test getting draft board"""
-        response = requests.get(f"{BASE_URL}/api/drafts", cookies=self.cookies)
-        drafts = response.json()
+        draft = _first_real_draft()
+        drafts = [draft] if draft else []
 
         if drafts:
             draft_id = drafts[0]["_id"]
-            response = requests.get(f"{BASE_URL}/api/drafts/{draft_id}/board", cookies=self.cookies)
+            response = requests.get(f"{BASE_URL}/api/drafts/{draft_id}/board", cookies=self.cookies, headers=test_admin_headers())
             assert response.status_code == 200
             data = response.json()
             assert "board" in data

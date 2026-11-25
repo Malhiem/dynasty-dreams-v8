@@ -16,6 +16,8 @@ def session():
     s = requests.Session()
     r = s.post(f"{BASE_URL}/api/auth/login", json=CREDS, timeout=15)
     assert r.status_code == 200, f"Login failed: {r.status_code} {r.text[:200]}"
+    # Secure cookies are not sent over the suite's plain-HTTP origin: use a Bearer token.
+    s.headers["Authorization"] = f"Bearer {r.json()['access_token']}"
     return s
 
 

@@ -31,7 +31,8 @@ from datetime import datetime, timezone
 from statistics import mean
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from routes.draft_access import draft_member, league_member
 
 router = APIRouter()
 _deps: dict = {}
@@ -111,7 +112,7 @@ def _bucket_awards(rows: list[dict], is_final: bool) -> dict:
     }
 
 
-@router.get("/drafts/{draft_id}/leaderboard")
+@router.get("/drafts/{draft_id}/leaderboard", dependencies=[Depends(draft_member(_deps))])
 async def get_draft_leaderboard(draft_id: str, request: Request):
     """Live-or-final draft leaderboard aggregating pick timings +
     auto-picks + queue-hit-rate + intra-league trades.
@@ -222,7 +223,7 @@ async def get_draft_leaderboard(draft_id: str, request: Request):
 
 
 # ─── Iter 232N.28 — Draft Hall of Awards (Trophy Room integration) ────────
-@router.get("/leagues/{league_id}/draft-hall-of-awards")
+@router.get("/leagues/{league_id}/draft-hall-of-awards", dependencies=[Depends(league_member(_deps))])
 async def get_league_draft_hall_of_awards(league_id: str, request: Request):
     """Returns every completed draft for a league with its final
     leaderboard payload — powers the "Draft Hall of Awards" display

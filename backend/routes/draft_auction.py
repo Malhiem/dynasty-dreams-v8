@@ -16,7 +16,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from routes.draft_access import draft_member
 from pydantic import BaseModel, Field
 
 
@@ -283,7 +284,7 @@ async def auction_resolve(draft_id: str, request: Request):
     return result
 
 
-@router.get("/drafts/{draft_id}/auction/state")
+@router.get("/drafts/{draft_id}/auction/state", dependencies=[Depends(draft_member(_deps))])
 async def get_auction_state(draft_id: str):
     """Get current auction state including active auction and budgets."""
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})

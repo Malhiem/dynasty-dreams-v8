@@ -21,7 +21,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from routes.draft_access import draft_member
 
 from draft_engine import DraftChatRequest, UpdateDraftConfigRequest
 
@@ -49,7 +50,7 @@ async def _broadcast(room: str, event: str, payload: dict):
     return await fn(room, event, payload)
 
 
-@router.post("/drafts/{draft_id}/chat")
+@router.post("/drafts/{draft_id}/chat", dependencies=[Depends(draft_member(_deps))])
 async def send_draft_chat(draft_id: str, input: DraftChatRequest, request: Request):
     user = await _get_user(request)
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
@@ -76,7 +77,7 @@ async def send_draft_chat(draft_id: str, input: DraftChatRequest, request: Reque
     return msg
 
 
-@router.get("/drafts/{draft_id}/chat")
+@router.get("/drafts/{draft_id}/chat", dependencies=[Depends(draft_member(_deps))])
 async def get_draft_chat(draft_id: str):
     draft = await _db().drafts.find_one(
         {"_id": ObjectId(draft_id)},

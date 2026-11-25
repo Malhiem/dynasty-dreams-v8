@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from routes.draft_access import league_member
 from pydantic import BaseModel
 
 from trade_waiver_engine import (
@@ -280,11 +281,12 @@ from routes.notification_events import (
 async def propose_in_draft_pick_trade(league_id: str, request: Request):
     db = _db()
     user = await _get_user(request)
+    # League members only: this trade moves picks and players between teams.
+    from routes.league_guards import require_league_member
+    league = await require_league_member(db, user, league_id)
     payload = await request.json()
-
-    league = await db.leagues.find_one({"_id": ObjectId(league_id)})
-    if not league:
-        raise HTTPException(status_code=404, detail="League not found")
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid trade payload")
 
     # Validation — proposer must own a team in this league and the trade
     # must include at least one pick asset on either side. We trust the
@@ -296,9 +298,41 @@ async def propose_in_draft_pick_trade(league_id: str, request: Request):
     receiver_assets = payload.get("receiver_assets") or []
     if not proposer_team_id or not receiver_team_id:
         raise HTTPException(status_code=400, detail="proposer_team_id + receiver_team_id required")
+    if not all(isinstance(a, dict) for a in list(proposer_assets) + list(receiver_assets)):
+        raise HTTPException(status_code=400, detail="Trade assets must be objects")
     has_pick = any(a.get("type") == "pick" for a in proposer_assets + receiver_assets)
     if not has_pick:
         raise HTTPException(status_code=400, detail="At least one pick asset required for in-draft trade")
+
+    # Both teams must be real teams of THIS league, and the caller must act for
+    # the proposing team (owner / co-owner) or be a commissioner / admin.
+    async def _team(team_id):
+        try:
+            return await db.teams.find_one({"_id": ObjectId(str(team_id))})
+        except Exception:
+            return None
+    proposer_team, receiver_team = await _team(proposer_team_id), await _team(receiver_team_id)
+    if not proposer_team or not receiver_team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    if proposer_team.get("league_id") != league_id or receiver_team.get("league_id") != league_id:
+        raise HTTPException(status_code=400, detail="Both teams must belong to this league")
+    if str(proposer_team["_id"]) == str(receiver_team["_id"]):
+        raise HTTPException(status_code=400, detail="A team cannot trade with itself")
+    from routes.league_guards import is_league_manager
+    uid = str(user["_id"])
+    acts_for_proposer = (
+        str(proposer_team.get("owner_id")) == uid
+        or uid in [str(c) for c in proposer_team.get("co_owner_ids") or []]
+        or is_league_manager(user, league)
+    )
+    if not acts_for_proposer:
+        raise HTTPException(status_code=403, detail="Only the proposing team's owner or a commissioner can propose this trade")
+    # Players on offer must actually be on the roster of the team giving them up.
+    for assets, team in ((proposer_assets, proposer_team), (receiver_assets, receiver_team)):
+        roster = {str(p) for p in team.get("roster") or []}
+        for a in assets:
+            if a.get("type") == "player" and str(a.get("player_id")) not in roster:
+                raise HTTPException(status_code=400, detail="A traded player is not on that team's roster")
 
     review_minutes = int(league.get("draft_trade_review_minutes") or 30)
     review_expires_at = datetime.now(timezone.utc) + timedelta(minutes=max(0, review_minutes))
@@ -478,7 +512,7 @@ async def _execute_in_draft_pick_trade(db, trade: dict) -> dict:
     return {"trade_id": str(trade["_id"]), "status": "executed", "executed_at": now}
 
 
-@router.post("/drafts/{league_id}/pick-trade/{trade_id}/vote")
+@router.post("/drafts/{league_id}/pick-trade/{trade_id}/vote", dependencies=[Depends(league_member(_deps))])
 async def vote_in_draft_pick_trade(league_id: str, trade_id: str, request: Request):
     """Cast an approve/veto vote on a pending in-draft pick trade. Body:
     `{choice: "approve"|"veto"}`. Auto-executes / vetoes once the
@@ -589,7 +623,7 @@ async def resolve_pick_trade(league_id: str, trade_id: str, request: Request):
         return {"trade_id": trade_id, "draft_paused": True}
 
 
-@router.get("/drafts/{league_id}/pick-trades/pending")
+@router.get("/drafts/{league_id}/pick-trades/pending", dependencies=[Depends(league_member(_deps))])
 async def list_pending_pick_trades(league_id: str, request: Request):
     """Return any in-flight `pending_draft_review` pick trades for the
     league. Used by the Draft Room on mount so a manager who refreshes
@@ -615,7 +649,7 @@ async def list_pending_pick_trades(league_id: str, request: Request):
     return {"pending": out}
 
 
-@router.get("/drafts/{league_id}/pick-trade/{trade_id}")
+@router.get("/drafts/{league_id}/pick-trade/{trade_id}", dependencies=[Depends(league_member(_deps))])
 async def get_in_draft_pick_trade(league_id: str, trade_id: str, request: Request):
     """Return current state of a single in-draft pick trade for polling
     fallback when the WebSocket connection drops."""
