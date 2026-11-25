@@ -105,7 +105,10 @@ test('E04 trade execution revalidates cap changed after proposal',async({},info)
  await denied(await a.manager2.api.post(`/api/trades/${p._id||p.id}/accept`),info,/cap/i);expect(await financial(l)).toEqual(before);
 });
 test('E05 disabled cap permits otherwise-valid over-limit add',async({},info)=>{
- const l=await salaryLeague(a);await settings(l,{salary_cap_enabled:false});const pid=await freePlayer(l,20000000);await result(await a.manager2.api.post(`/api/roster/${l.teams[1].id}/add`,{data:{player_id:pid}}),info);await assertPayroll(a,l,[80000000,110000000],info);
+ const l=await salaryLeague(a);await settings(l,{salary_cap_enabled:false});const pid=await freePlayer(l,20000000);await result(await a.manager2.api.post(`/api/roster/${l.teams[1].id}/add`,{data:{player_id:pid}}),info);
+ // No cap, no salaries: the add succeeds, and the league overview no longer lists payrolls.
+ const overview=await result(await a.commissioner.api.get(`/api/salary-cap/${l.id}`),info,'salary-overview');
+ expect(overview.salary_cap_enabled).toBe(false);expect(overview.teams).toEqual([]);
 });
 test('E06 concurrent adds cannot jointly exceed cap',async({},info)=>{
  const l=await salaryLeague(a);const ids=l.teams[7].players.slice(1);for(const id of ids)await price(id,6000000);
