@@ -246,17 +246,20 @@ async def create_team(input: TeamCreate, request: Request):
 
 @router.get("/teams", response_model=List[TeamResponse])
 async def get_teams(request: Request, league_id: Optional[str] = None):
-    # SEC-002 — list-teams is a per-league read; require league
-    # membership when scoped to one league, and require any
-    # authenticated user otherwise (used by the user dashboard).
-    if league_id:
-        await _require_league_member(request, league_id)
-    else:
-        await _require_user(request)
+    # SEC-002 — list-teams is a per-league read. Scoped to one league it
+    # requires membership; unscoped it lists only teams in leagues the caller
+    # belongs to (platform admins see all), never other leagues' teams or payroll.
     db = _deps["db"]
     query = {}
     if league_id:
+        await _require_league_member(request, league_id)
         query["league_id"] = league_id
+    else:
+        from routes.draft_access import member_league_ids
+        from routes.league_guards import is_league_manager
+        user = await _require_user(request)
+        if not is_league_manager(user, {}):
+            query["league_id"] = {"$in": await member_league_ids(db, user)}
     teams = await db.teams.find(query).to_list(200)
     from services.salary_policy import payroll
     for team in teams:
