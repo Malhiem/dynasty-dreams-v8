@@ -57,13 +57,18 @@ def test_worker_reads_time_per_pick_field():
 
 def test_worker_honours_clock_window():
     from pathlib import Path
-    src = Path("/app/backend/services/draft_pick_timer_worker.py").read_text()
-    assert "async def _is_within_clock_window" in src
-    assert "clock_starts_at" in src
-    assert "clock_stops_at" in src
-    assert "clock_timezone" in src
+    worker = Path("/app/backend/services/draft_pick_timer_worker.py").read_text()
+    clock = Path("/app/backend/services/draft_clock.py").read_text()
+    # Iter 233 — the window rule moved to services/draft_clock.py so the
+    # auto-pick route applies the same one; the worker still gates on it.
+    assert "async def is_within_clock_window" in clock
+    assert "_is_within_clock_window = is_within_clock_window" in worker
+    assert "await _is_within_clock_window(draft, now)" in worker
+    assert "clock_starts_at" in clock
+    assert "clock_stops_at" in clock
+    assert "clock_timezone" in clock
     # Must support windows that cross midnight (e.g. 21:00–06:00).
-    assert "Window crosses midnight" in src
+    assert "Window crosses midnight" in clock
 
 
 # ─── Functional tests for _is_within_clock_window ──────────────────

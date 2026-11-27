@@ -31,7 +31,7 @@ def one_team_id():
 
 def test_default_limit_backcompat():
     """Regression: default limit=30, response has old shape (league_id, transactions, count)."""
-    r = requests.get(TXN_URL, timeout=30)
+    r = requests.get(TXN_URL, timeout=30, headers=test_admin_headers())
     assert r.status_code == 200, r.text
     data = r.json()
     assert "transactions" in data and "count" in data and "league_id" in data
@@ -42,7 +42,7 @@ def test_default_limit_backcompat():
 
 
 def test_limit_20_returns_at_most_20():
-    r = requests.get(TXN_URL, params={"limit": 20}, timeout=30)
+    r = requests.get(TXN_URL, params={"limit": 20}, timeout=30, headers=test_admin_headers())
     assert r.status_code == 200
     data = r.json()
     assert len(data["transactions"]) <= 20
@@ -52,7 +52,7 @@ def test_limit_20_returns_at_most_20():
 def test_since_filter_applied():
     """since cutoff — all returned events must be >= the cutoff."""
     cutoff_iso = "2026-04-25T00:00:00Z"
-    r = requests.get(TXN_URL, params={"since": cutoff_iso, "limit": 200}, timeout=30)
+    r = requests.get(TXN_URL, params={"since": cutoff_iso, "limit": 200}, timeout=30, headers=test_admin_headers())
     assert r.status_code == 200
     data = r.json()
     from datetime import datetime, timezone
@@ -71,7 +71,7 @@ def test_since_filter_applied():
 
 
 def test_team_id_filter(one_team_id):
-    r = requests.get(TXN_URL, params={"team_id": one_team_id, "limit": 200}, timeout=30)
+    r = requests.get(TXN_URL, params={"team_id": one_team_id, "limit": 200}, timeout=30, headers=test_admin_headers())
     assert r.status_code == 200
     data = r.json()
     # Every returned event must be tagged with that team_id
@@ -86,6 +86,7 @@ def test_combined_filters(one_team_id):
         TXN_URL,
         params={"limit": 200, "since": "2025-01-01T00:00:00Z", "team_id": one_team_id},
         timeout=30,
+        headers=test_admin_headers(),
     )
     assert r.status_code == 200
     data = r.json()

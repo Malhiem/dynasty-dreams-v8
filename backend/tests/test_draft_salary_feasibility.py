@@ -7,6 +7,19 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from services.draft_salary import feasible_completion, load_context, evaluate, entry, team_summary, validate_lineup
 from fastapi import HTTPException
 
+# These tests load every player and write league/team/draft documents directly,
+# so they get their own database instead of the shared suite database. The name
+# must contain "draft" and "disposable"; the guard below also insists on the
+# isolated test stack, so a developer machine's real Mongo is never touched.
+DISPOSABLE_DB = "draft_disposable_salary_tests"
+
+
+def _disposable_db():
+    assert os.environ.get("TEST_SUITE_ISOLATED") == "1", "Dedicated draft disposable database requires the isolated test stack"
+    assert "draft" in DISPOSABLE_DB and "disposable" in DISPOSABLE_DB
+    client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+    return client, client[DISPOSABLE_DB]
+
 @pytest.mark.parametrize("prices,slots,lower,upper,expected", [
     ([4,6,8,10,19],2,14,18,True),
     ([4,6,8,10,19],1,12,16,False),
@@ -26,9 +39,7 @@ def test_distinct_position_assignment():
 
 @pytest.mark.asyncio
 async def test_two_slots_strict_and_informal_and_canonical_summary():
-    url=os.environ["MONGO_URL"]; name=os.environ["DB_NAME"]
-    assert "draft" in name and "disposable" in name, "Dedicated draft disposable database required"
-    client=AsyncIOMotorClient(url); db=client[name]
+    client, db = _disposable_db()
     league_id, team_id, draft_id=ObjectId(),ObjectId(),ObjectId()
     roster_id=ObjectId()
     league={"_id":league_id,"salary_cap_enabled":True,"salary_cap":64_000_000,
@@ -57,8 +68,7 @@ async def test_two_slots_strict_and_informal_and_canonical_summary():
 
 @pytest.mark.asyncio
 async def test_ir_charge_and_position_counts():
-    assert "draft" in os.environ["DB_NAME"] and "disposable" in os.environ["DB_NAME"]
-    client=AsyncIOMotorClient(os.environ["MONGO_URL"]); db=client[os.environ["DB_NAME"]]
+    client, db = _disposable_db()
     lid,tid,pid=ObjectId(),ObjectId(),ObjectId()
     league={"_id":lid,"roster_spots":4,"position_breakdown":{"active":{"RW":4}},"minors_spots":30,
         "ir_slots":1,"ir_salary_charge_pct":0,"salary_cap_enabled":True,"salary_cap":60_000_000}
@@ -82,8 +92,7 @@ async def test_ir_charge_and_position_counts():
 @pytest.mark.asyncio
 async def test_pending_pick_recovery_restores_roster_without_advancing_draft():
     from services.draft_mutation import recover
-    assert "draft" in os.environ["DB_NAME"] and "disposable" in os.environ["DB_NAME"]
-    client = AsyncIOMotorClient(os.environ["MONGO_URL"]); db = client[os.environ["DB_NAME"]]
+    client, db = _disposable_db()
     did, tid = ObjectId(), ObjectId()
     before = {"roster": [], "lineup": {}, "draft_queue": ["queued"]}
     try:

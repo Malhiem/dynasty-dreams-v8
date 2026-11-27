@@ -93,6 +93,9 @@ def seed_disposable_suite(*, reset=False):
                 "division": division, "conference": conference, "roster": pids[i*20:(i+1)*20], "lineup": {}, "salary_used": 20000000,
                 "wins": 0, "losses": 0, "ties": 0, "points_for": 0, "points_against": 0, "live_points": 0,
                 "is_commissioner_team": i == 1, "created_at": now, "_test_seed": False})
+    # The live-style trade/roster tests assume these two seeded leagues run a salary cap.
+    db.leagues.update_many({"_id": {"$in": [ObjectId("69e46af167999bfb85c39628"), ObjectId("69e46af167999bfb85c39629")]}},
+                           {"$set": {"salary_cap_enabled": True, "salary_cap": 82500000}})
     # Explicit five-round draft assets used by trade and pick-ownership tests.
     for league in db.leagues.find({"_suite_baseline": True}):
         lid = str(league["_id"])

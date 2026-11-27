@@ -68,15 +68,21 @@ def test_run_once_accepts_draft_ids_filter():
 
 
 def test_perform_one_auto_pick_has_concurrency_guard():
-    """`perform_one_auto_pick` must condition the picks `$push` on the
-    current_pick value matching N (compare-and-set). Prevents the
-    duplicate-pick race seen in TFHL."""
+    """The picks `$push` must be conditioned on the current_pick value
+    matching N (compare-and-set), raising 409 when it doesn't. Prevents the
+    duplicate-pick race seen in TFHL. The write moved out of
+    `perform_one_auto_pick` into `services/draft_mutation.commit_pick`
+    (which `perform_one_auto_pick` calls), so assert it there, plus that the
+    caller can pin the pick it means to fill via `expected_pick`."""
     from pathlib import Path
-    src = Path("/app/backend/routes/draft_helpers.py").read_text()
-    assert '"current_pick": current_pick, "status": "active"' in src
-    # Must check matched_count == 0 and raise 409.
-    assert "result.matched_count == 0" in src
-    assert "status_code=409" in src
+    helpers = Path("/app/backend/routes/draft_helpers.py").read_text()
+    assert "commit_pick(" in helpers
+    assert "expected_pick: int | None = None" in helpers
+    mutation = Path("/app/backend/services/draft_mutation.py").read_text()
+    assert '"current_pick": pick["overall"], "status": "active"' in mutation
+    # Must check for no match and raise 409.
+    assert "not result.matched_count" in mutation
+    assert "HTTPException(409" in mutation
 
 
 def test_draft_board_matches_picks_by_team_id_fallback():
@@ -188,10 +194,15 @@ async def test_run_once_with_filter_scopes_to_seeded_draft_only():
 
 @pytest.mark.asyncio
 async def test_concurrent_auto_picks_do_not_produce_duplicates():
-    """Two concurrent perform_one_auto_pick invocations on the same
-    draft must NOT both push a pick at `overall=N`. The second one
-    should 409. This is the regression guard for the TFHL duplicate
-    picks at #78, #575, #598."""
+    """Concurrent perform_one_auto_pick invocations aimed at the same pick
+    (`expected_pick=1`) must NOT both push a pick at `overall=N`. Exactly one
+    wins; the rest 409. This is the regression guard for the TFHL duplicate
+    picks at #78, #575, #598.
+
+    Without `expected_pick` a late caller is *allowed* to fill the next
+    pick (whoever is on the clock now), which is why the HTTP route and the
+    timer worker always pass it. The route's authorization and clock rules
+    are covered in test_iter233_auto_pick_authorization.py."""
     from routes.draft_helpers import perform_one_auto_pick
     from fastapi import HTTPException
 
@@ -203,7 +214,7 @@ async def test_concurrent_auto_picks_do_not_produce_duplicates():
         # Fire 5 concurrent auto-picks against current_pick=1.
         # Only ONE should succeed; the other 4 should raise 409.
         results = await asyncio.gather(
-            *[perform_one_auto_pick(draft_id, source="timeout") for _ in range(5)],
+            *[perform_one_auto_pick(draft_id, source="timeout", expected_pick=1) for _ in range(5)],
             return_exceptions=True,
         )
         successes = [r for r in results if not isinstance(r, Exception)]

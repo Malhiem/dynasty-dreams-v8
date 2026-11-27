@@ -16,6 +16,8 @@ Response shape
   "league_id": "...",
   "floor_enabled": bool,
   "floor": int,                       # current-year floor, 0 if disabled
+  "floor_year_plus_1": int,           # next year's floor (falls back to `floor`)
+  "floor_year_plus_2": int,           # year after (falls back to Year+1)
   "warning_threshold": int,           # $ amount within which we flag teams
   "year": int,
   "teams": [
@@ -81,16 +83,24 @@ async def _team_payroll_current_year(db, team_id: str) -> int:
 @router.get("/leagues/{league_id}/cap-floor-watchlist")
 async def get_cap_floor_watchlist(league_id: str, request: Request):
     db = _db()
-    await _get_user(request)
+    user = await _get_user(request)
     try:
         league = await db.leagues.find_one({"_id": ObjectId(league_id)})
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid league_id")
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
+    # Team payrolls are league data: members only.
+    from routes.league_guards import require_league_member
+    await require_league_member(db, user, league_id)
 
-    floor_enabled = bool(league.get("cap_floor_enabled"))
+    # No cap, no floor: a floor only exists while the salary cap is enabled,
+    # whatever stale floor settings the league document still carries.
+    floor_enabled = bool(league.get("salary_cap_enabled")) and bool(league.get("cap_floor_enabled"))
     floor = int(league.get("cap_floor") or 0) if floor_enabled else 0
+    # Year+1 / Year+2 floors fall back to the previous year's floor, as on the web.
+    floor_yr1 = int(league.get("cap_floor_year_plus_1") or floor) if floor_enabled else 0
+    floor_yr2 = int(league.get("cap_floor_year_plus_2") or floor_yr1) if floor_enabled else 0
     threshold = int(
         league.get("salary_cap_floor_warning_threshold") or DEFAULT_WARNING_THRESHOLD
     )
@@ -128,6 +138,8 @@ async def get_cap_floor_watchlist(league_id: str, request: Request):
         "league_id": league_id,
         "floor_enabled": floor_enabled,
         "floor": floor,
+        "floor_year_plus_1": floor_yr1,
+        "floor_year_plus_2": floor_yr2,
         "warning_threshold": threshold,
         "year": year,
         "teams": rows,

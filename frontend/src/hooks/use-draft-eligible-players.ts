@@ -47,35 +47,18 @@ export function useDraftEligiblePlayers(
 
     async function loadAll() {
       const all: ApiPlayer[] = [];
-      let page = 1;
-      let totalPages = 1;
-      try {
-        while (page <= totalPages && page <= MAX_PAGES) {
-          const res = await api.get(
-            `/drafts/${currentDraft!._id}/eligible-players?limit=${PAGE_SIZE}&page=${page}`,
-          );
-          if (cancelled) return;
-          const rows: ApiPlayer[] = (res.data?.players || []) as ApiPlayer[];
-          totalPages = Number(res.data?.pages || 1);
-          if (rows.length === 0) break;
-          all.push(...rows);
-          if (rows.length < PAGE_SIZE) break;
-          page += 1;
-        }
-      } catch {
-        // keep caller's default list
-        return;
-      }
-
-      if (cancelled || all.length === 0) return;
-      const draftedIds = new Set(
-        (currentDraft!.picks || [])
-          .map((p) => p.player_id)
-          .filter(Boolean)
-          .map((v) => String(v)),
-      );
-      setPlayers(
-        all.map((p) => ({
+      // Publish progressively: the first page (top-ranked players) makes the
+      // list usable straight away; the full pool replaces it once loaded.
+      const publish = (rows: ApiPlayer[]) => {
+        // Read the picks at publish time so a late final publish is current.
+        const draftedIds = new Set(
+          (currentDraft!.picks || [])
+            .map((p) => p.player_id)
+            .filter(Boolean)
+            .map((v) => String(v)),
+        );
+        setPlayers(
+        rows.map((p) => ({
           id: String(p.id ?? ""),
           name: String(p.name ?? ""),
           position: String(p.position ?? ""),
@@ -100,6 +83,31 @@ export function useDraftEligiblePlayers(
           status_flags: (p as any).status_flags || null,
         }) as unknown as DraftEligiblePlayer),
       );
+      };
+
+      let page = 1;
+      let totalPages = 1;
+      try {
+        while (page <= totalPages && page <= MAX_PAGES) {
+          const res = await api.get(
+            `/drafts/${currentDraft!._id}/eligible-players?limit=${PAGE_SIZE}&page=${page}`,
+          );
+          if (cancelled) return;
+          const rows: ApiPlayer[] = (res.data?.players || []) as ApiPlayer[];
+          totalPages = Number(res.data?.pages || 1);
+          if (rows.length === 0) break;
+          all.push(...rows);
+          if (page === 1 && rows.length === PAGE_SIZE) publish(all);
+          if (rows.length < PAGE_SIZE) break;
+          page += 1;
+        }
+      } catch {
+        // keep caller's default list
+        return;
+      }
+
+      if (cancelled || all.length === 0) return;
+      publish(all);
     }
 
     loadAll();

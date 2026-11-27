@@ -113,15 +113,40 @@ test("no legal autopick preserves the turn and resumes after Informal mode is se
 });
 
 
-test("floor-only configuration applies its minimum without a salary ceiling",async({page},info)=>{
+test("no cap means no floor: a floor sent with a disabled cap is dropped",async({page},info)=>{
   const f=await salaryFixture(page.request);
   try{
     await f.restrictToMinorEligible();
     const settings=await page.request.put(`/api/leagues/${f.league.id}/admin/cap-settings`,{data:{salary_cap_enabled:false,cap_floor_enabled:true,cap_floor:70_000_000}});
-    expect(settings.ok(),await settings.text()).toBeTruthy();const saved=await settings.json();expect(saved.salary_cap_enabled).toBe(false);expect(saved.cap_floor_enabled).toBe(true);
+    expect(settings.ok(),await settings.text()).toBeTruthy();const saved=await settings.json();expect(saved.salary_cap_enabled).toBe(false);expect(saved.cap_floor_enabled).toBe(false);expect(saved.cap_floor).toBeNull();
     const ids=f.candidates.map(p=>String(p._id));const result=await page.request.post(`/api/drafts/${f.draft.id}/salary-eligibility`,{data:{player_ids:ids}});expect(result.ok()).toBeTruthy();const data=await result.json();
-    expect(ids.map(id=>data.players[id].allowed)).toEqual([false,false,true,true,true,true]);
-    const room=new DraftSalaryPage(page);await room.open(f.league.id);await expect(room.payroll()).toContainText("Cap Disabled");await expect(room.payroll()).toContainText("Floor $70,000,000");
-    await info.attach("floor-only-eligibility",{body:JSON.stringify(data),contentType:"application/json"});
+    expect(ids.map(id=>data.players[id].allowed)).toEqual(ids.map(()=>true));
+    const room=new DraftSalaryPage(page);await room.open(f.league.id);await expect(room.payroll()).toContainText("Cap Disabled");await expect(room.payroll()).not.toContainText("Floor");
+    await info.attach("no-cap-no-floor-eligibility",{body:JSON.stringify(data),contentType:"application/json"});
+  }finally{await f.cleanup();}
+});
+
+test("draft room renders the eligible list in a window and grows it on demand",async({page},info)=>{
+  const f=await salaryFixture(page.request);
+  try{
+    await page.addInitScript(id=>localStorage.setItem("dd_active_league_id",id),f.league.id);
+    await page.goto("/draft-room");
+    await page.waitForLoadState("networkidle"); // all eligible-players pages loaded
+    const rows=page.locator('[data-testid^="draft-room-eligible-row-"]').filter({visible:true});
+    await expect(rows.first()).toBeVisible();
+    // Only meaningful with a pool larger than one window.
+    const pool=(await(await page.request.get(`/api/drafts/${f.draft.id}/eligible-players?limit=1&page=1`)).json()).total;
+    test.skip(pool<=100,"pool too small to need a window");
+    // Never more than one window (100 rows) at first, however large the pool is.
+    expect(await rows.count()).toBeLessThanOrEqual(100);
+    const more=page.getByTestId("draft-room-eligible-show-more").filter({visible:true});
+    if(await more.count()){
+      const before=await rows.count();await more.first().click();
+      await expect.poll(()=>rows.count()).toBeGreaterThan(before);
+    }
+    // Search still reaches players beyond the window.
+    await new DraftSalaryPage(page).search("Candidate");
+    await expect(page.getByTestId(`draft-room-eligible-row-${f.candidates[0]._id}`).filter({visible:true})).toBeVisible();
+    await info.attach("windowed-eligible-list",{body:String(await rows.count()),contentType:"text/plain"});
   }finally{await f.cleanup();}
 });

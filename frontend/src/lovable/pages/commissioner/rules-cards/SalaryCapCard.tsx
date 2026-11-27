@@ -83,10 +83,10 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
         salary_cap_year_plus_1_tentative: yr1Tentative,
         salary_cap_year_plus_2_tentative: yr2Tentative,
         // Floor can be enabled independently of the ceiling.
-        cap_floor_enabled: floorEnabled,
-        cap_floor: floorEnabled ? floor : null,
-        cap_floor_year_plus_1: floorEnabled ? floorYr1 : null,
-        cap_floor_year_plus_2: floorEnabled ? floorYr2 : null,
+        cap_floor_enabled: enabled && floorEnabled,
+        cap_floor: enabled && floorEnabled ? floor : null,
+        cap_floor_year_plus_1: enabled && floorEnabled ? floorYr1 : null,
+        cap_floor_year_plus_2: enabled && floorEnabled ? floorYr2 : null,
         cap_floor_year_plus_1_tentative: floorYr1Tentative,
         cap_floor_year_plus_2_tentative: floorYr2Tentative,
         // Iter 232N.62 — Draft cap view settings
@@ -189,8 +189,8 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
           </div>
         )}
 
-        {/* Minimum payroll can be configured without a ceiling. */}
-        {(
+        {/* No cap, no floor: the minimum payroll only applies with a cap. */}
+        {enabled && (
           <div className="rounded-md border border-border p-4 space-y-3" data-testid="rules-schedule-cap-floor-block">
             <div className="flex items-center gap-3">
               <Switch
@@ -266,7 +266,7 @@ export function SalaryCapCard({ league, reloadLeague }: any) {
           </div>
         )}
         {/* Iter 232N.62 — Draft-room cap view settings */}
-        {(enabled || floorEnabled) && (
+        {enabled && (
           <div className="pt-3 border-t border-border/40 space-y-3">
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
               Draft-room cap view

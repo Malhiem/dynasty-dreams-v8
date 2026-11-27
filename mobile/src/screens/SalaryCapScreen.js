@@ -1,36 +1,72 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import { useLeague } from '../contexts/LeagueContext';
+import LeagueSwitcher from '../components/LeagueSwitcher';
+import LoadError from '../components/LoadError';
+import CapFloorCard from '../components/CapFloorCard';
+import { isCommissioner, teamRetention } from '../lib/cap';
+import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function SalaryCapScreen() {
   const { user } = useAuth();
+  const { leagueId, league } = useLeague();
+  const [watchlist, setWatchlist] = useState(null);
   const [overview, setOverview] = useState(null);
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchData = async () => {
+    setLoadError(null);
     try {
-      const { data: leagues } = await api.get('/leagues?my_leagues=true');
-      if (leagues.length > 0) {
-        const lid = leagues[0].id;
+      if (leagueId) {
+        const lid = leagueId;
         const [o, c] = await Promise.all([api.get(`/salary-cap/${lid}`), api.get(`/contracts?league_id=${lid}`)]);
         setOverview(o.data);
+        // The floor only exists while the league has a cap; a failure here
+        // must not blank the rest of the page.
+        if (o.data?.salary_cap_enabled) {
+          try {
+            setWatchlist((await api.get(`/leagues/${lid}/cap-floor-watchlist`)).data);
+          } catch (e) { setWatchlist(null); setLoadError(loadFailure(e, 'the cap floor')); }
+        } else setWatchlist(null);
         setContracts(c.data.filter(ct => ct.status === 'active'));
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'the salary cap')); }
     setLoading(false);
   };
 
-  useEffect(() => { fetchData(); }, []);
-  const cap = overview?.salary_cap || 82500000;
+  useEffect(() => { setOverview(null); setWatchlist(null); fetchData(); }, [leagueId]);
+  // No cap, no salaries: when the league has no salary cap the server reports
+  // salary_cap_enabled=false and sends no figures, so there is nothing to show.
+  const capDisabled = overview?.salary_cap_enabled === false;
+  const cap = overview?.salary_cap;
+
+  if (capDisabled) {
+    return (
+      <SafeAreaView style={s.container} testID="salary-cap-disabled">
+        <View style={s.disabledWrap}>
+          <View style={s.disabledCard}>
+            <Text style={s.disabledText}>Salary cap has been disabled in league settings</Text>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={s.container}>
       <ScrollView refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchData} tintColor="#00D2FF" />}>
-        <View style={s.header}><Text style={s.title}>SALARY CAP</Text><Text style={s.capValue}>${(cap / 1000000).toFixed(1)}M</Text></View>
+        <LoadError message={loadError} onRetry={fetchData} />
+        <View style={s.header}><Text style={s.title}>SALARY CAP</Text><Text style={s.capValue}>{cap != null ? `$${(cap / 1000000).toFixed(1)}M` : '—'}</Text></View>
 
-        {(overview?.teams || []).map(team => (
+        <CapFloorCard watchlist={watchlist} userId={user?.id} showWatchlist={isCommissioner(league, user?.id)} />
+
+        {(overview?.teams || []).map(team => {
+          const retention = teamRetention(team);
+          return (
           <View key={team.team_id} style={s.teamCard}>
             <View style={s.teamRow}>
               <Text style={s.teamName}>{team.team_name}</Text>
@@ -41,8 +77,15 @@ export default function SalaryCapScreen() {
               <Text style={s.metaText}>Used: ${(team.cap_used || 0).toLocaleString()}</Text>
               <Text style={[s.metaText, s.success]}>Free: ${(team.cap_remaining || 0).toLocaleString()}</Text>
             </View>
+            {retention && (
+              <View style={s.teamMeta} testID={`retention-${team.team_id}`}>
+                <Text style={s.metaText}>{retention.label}</Text>
+                {retention.retainedLabel && <Text style={s.metaText}>{retention.retainedLabel}</Text>}
+              </View>
+            )}
           </View>
-        ))}
+          );
+        })}
 
         <Text style={s.sectionTitle}>ACTIVE CONTRACTS ({contracts.length})</Text>
         {contracts.map(c => (
@@ -67,6 +110,9 @@ export default function SalaryCapScreen() {
 }
 
 const s = StyleSheet.create({
+  disabledWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  disabledCard: { backgroundColor: '#141414', borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', paddingHorizontal: 22, paddingVertical: 20 },
+  disabledText: { color: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center' },
   container: { flex: 1, backgroundColor: '#0A0A0A' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20 },
   title: { fontSize: 22, fontWeight: '800', color: '#fff' },

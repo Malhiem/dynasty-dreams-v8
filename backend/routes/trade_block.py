@@ -213,6 +213,8 @@ async def get_trade_block(
     if owner_id:
         query["owner_id"] = owner_id
     items = await db.trade_block.find(query).sort("created_at", -1).to_list(500)
+    from services.cap_visibility import league_cap_enabled
+    cap_enabled_by_league: dict = {}
 
     # Batch-join contracts so the frontend can surface an AAV column when cap
     # is enabled. One-shot lookup avoids N+1 reads.
@@ -241,7 +243,11 @@ async def get_trade_block(
         item["_id"] = str(item["_id"])
         if item.get("player_id"):
             info = salary_map.get(item["player_id"]) or {}
-            item["aav"] = info.get("aav") or info.get("salary") or info.get("cap_hit")
+            lid = item.get("league_id")
+            if lid not in cap_enabled_by_league:
+                cap_enabled_by_league[lid] = await league_cap_enabled(db, lid)
+            cap_enabled = cap_enabled_by_league[lid]
+            item["aav"] = (info.get("aav") or info.get("salary") or info.get("cap_hit")) if cap_enabled else None
     return items
 
 

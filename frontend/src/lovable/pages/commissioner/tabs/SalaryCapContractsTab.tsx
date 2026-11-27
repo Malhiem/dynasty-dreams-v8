@@ -25,8 +25,8 @@ export default function SalaryCapContractsTab({ activeLeague, reloadLeague }: Sa
   return (
     <div className="space-y-6" data-testid="commissioner-salary-cap-tab">
       <SalaryCapCard league={activeLeague} reloadLeague={reloadLeague} />
-      <SalaryRetentionCard league={activeLeague} reloadLeague={reloadLeague} />
-      <ContractBuyoutsCard league={activeLeague} reloadLeague={reloadLeague} />
+      {activeLeague.salary_cap_enabled && <SalaryRetentionCard league={activeLeague} reloadLeague={reloadLeague} />}
+      {activeLeague.salary_cap_enabled && <ContractBuyoutsCard league={activeLeague} reloadLeague={reloadLeague} />}
     </div>
   );
 }

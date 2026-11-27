@@ -4,6 +4,7 @@ import sys
 from datetime import datetime, timezone
 
 import pytest
+from tests.rostered import rostered_team
 from httpx import AsyncClient
 from motor.motor_asyncio import AsyncIOMotorClient
 
@@ -207,7 +208,7 @@ async def test_nhl_sync_dispatcher_classifies_injury_transitions():
     from services.nhl_sync_dispatcher import apply_player_diff_and_notify
 
     db = _db_sync()
-    team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+    team = await rostered_team(db)
     assert team
     player_id = team["roster"][0]
     original = await db.players.find_one({"_id": __import__("bson").ObjectId(player_id)})
@@ -270,7 +271,7 @@ async def test_nhl_sync_dispatcher_classifies_league_status_transitions():
     from bson import ObjectId
 
     db = _db_sync()
-    team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+    team = await rostered_team(db)
     assert team
     player_id = team["roster"][0]
     original = await db.players.find_one({"_id": ObjectId(player_id)})
@@ -317,7 +318,7 @@ async def test_admin_diff_sync_endpoint():
     async with AsyncClient(base_url=BASE, timeout=20) as client:
         admin_token = await _login(client, os.environ.get("ADMIN_EMAIL", "admin@e2e.dynastydreams.com"), os.environ.get("ADMIN_PASSWORD", "e2e-admin-password"))
         db = _db_sync()
-        team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+        team = await rostered_team(db)
         player_id = team["roster"][0]
         from bson import ObjectId
         original = await db.players.find_one({"_id": ObjectId(player_id)})

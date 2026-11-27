@@ -145,7 +145,7 @@ export function AppSidebar() {
   );
 
   // Iter 232N.9 — Attach pending-claims badge to the Free Agents link.
-  const managementItemsWithBadge = managementItems.map((it) =>
+  const managementItemsWithBadge = managementItems.filter((it) => it.url !== "/salary-cap" || Boolean(league?.salary_cap_enabled)).map((it) =>
     it.title === "Free Agents / Waivers" ? { ...it, badge: pendingWaivers } : it,
   );
 

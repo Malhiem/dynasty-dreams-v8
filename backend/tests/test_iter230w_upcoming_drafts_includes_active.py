@@ -46,7 +46,8 @@ async def _register(client, suffix="iter230w"):
         },
     )
     assert r.status_code == 200, r.text
-    return r.json()["access_token"]
+    body = r.json()
+    return body["access_token"], body.get("id")
 
 
 @pytest.mark.asyncio
@@ -93,7 +94,9 @@ async def test_upcoming_drafts_includes_active_drafts():
 
     try:
         async with AsyncClient(base_url=BASE, timeout=30) as client:
-            token = await _register(client)
+            token, user_id = await _register(client)
+            # Members only: make the freshly registered user the league's commissioner.
+            await db.leagues.update_one({"_id": ObjectId(league_id)}, {"$set": {"commissioner_id": user_id}})
             h = {"Authorization": f"Bearer {token}"}
             r = await client.get(
                 f"/api/leagues/{league_id}/upcoming-drafts?days=30",

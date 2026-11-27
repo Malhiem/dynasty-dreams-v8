@@ -12,6 +12,7 @@ from datetime import datetime, timezone, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from httpx import AsyncClient
+from http_test_auth import test_admin_headers
 
 
 def _backend_url():
@@ -37,6 +38,7 @@ async def _connect_db():
 async def test_draft_stats_aggregates_per_team_and_overall():
     db = await _connect_db()
     league_id = str(ObjectId())
+    await db.leagues.insert_one({"_id": ObjectId(league_id), "name": "iter230aa", "commissioner_id": "someone-else"})
     draft_id = ObjectId()
     started_at = datetime.now(timezone.utc).replace(microsecond=0)
 
@@ -79,7 +81,7 @@ async def test_draft_stats_aggregates_per_team_and_overall():
     })
 
     try:
-        async with AsyncClient(base_url=BASE, timeout=30) as client:
+        async with AsyncClient(base_url=BASE, timeout=30, headers=test_admin_headers()) as client:
             r = await client.get(f"/api/drafts/{draft_id}/stats")
             assert r.status_code == 200, r.text
             s = r.json()
@@ -106,6 +108,7 @@ async def test_draft_stats_aggregates_per_team_and_overall():
             assert s.get("latest_floor_trade") is None
     finally:
         await db.drafts.delete_one({"_id": draft_id})
+        await db.leagues.delete_many({"name": {"$in": ["iter230aa", "iter230aa np"]}})
 
 
 @pytest.mark.asyncio
@@ -114,9 +117,11 @@ async def test_draft_stats_no_picks_returns_null_aggregates():
     null fields rather than 500-ing or omitting keys."""
     db = await _connect_db()
     draft_id = ObjectId()
+    no_picks_league = str(ObjectId())
+    await db.leagues.insert_one({"_id": ObjectId(no_picks_league), "name": "iter230aa np", "commissioner_id": "someone-else"})
     await db.drafts.insert_one({
         "_id": draft_id,
-        "league_id": str(ObjectId()),
+        "league_id": no_picks_league,
         "status": "scheduled",
         "team_abbrs": ["A", "B", "C"],
         "total_rounds": 5,
@@ -124,7 +129,7 @@ async def test_draft_stats_no_picks_returns_null_aggregates():
         "picks": [],
     })
     try:
-        async with AsyncClient(base_url=BASE, timeout=30) as client:
+        async with AsyncClient(base_url=BASE, timeout=30, headers=test_admin_headers()) as client:
             r = await client.get(f"/api/drafts/{draft_id}/stats")
             assert r.status_code == 200, r.text
             s = r.json()
@@ -136,3 +141,4 @@ async def test_draft_stats_no_picks_returns_null_aggregates():
             assert s["floor_trades"] == 0
     finally:
         await db.drafts.delete_one({"_id": draft_id})
+        await db.leagues.delete_many({"name": {"$in": ["iter230aa", "iter230aa np"]}})

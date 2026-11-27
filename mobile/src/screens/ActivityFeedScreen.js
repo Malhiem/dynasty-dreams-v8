@@ -1,33 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
+import { showActionError, loadFailure } from '../lib/errors';
 import api from '../lib/api';
+import { useLeague } from '../contexts/LeagueContext';
+import LeagueSwitcher from '../components/LeagueSwitcher';
+import LoadError from '../components/LoadError';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function ActivityFeedScreen() {
   const { user } = useAuth();
   const [items, setItems] = useState([]);
   const [chatInput, setChatInput] = useState('');
-  const [leagueId, setLeagueId] = useState(null);
+  const { leagueId } = useLeague();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchFeed = async (lid) => {
+    setLoadError(null);
     try {
       const { data } = await api.get(`/activity/${lid}?limit=30`);
       setItems(data.items || []);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'the activity feed')); }
     setLoading(false);
   };
 
+  const init = async () => {
+    if (leagueId) await fetchFeed(leagueId);
+    else setLoading(false);
+  };
   useEffect(() => {
-    const init = async () => {
-      try {
-        const { data } = await api.get('/leagues?my_leagues=true');
-        if (data.length > 0) { setLeagueId(data[0].id); await fetchFeed(data[0].id); }
-      } catch (e) { console.error(e); }
-      setLoading(false);
-    };
+    setItems([]);
     init();
-  }, []);
+  }, [leagueId]);
 
   const handleSendChat = async () => {
     if (!chatInput.trim() || !leagueId) return;
@@ -35,13 +39,15 @@ export default function ActivityFeedScreen() {
       await api.post(`/activity/${leagueId}/chat`, { text: chatInput.trim() });
       setChatInput('');
       await fetchFeed(leagueId);
-    } catch (e) { console.error(e); }
+    } catch (e) { showActionError(e, 'Message not sent'); }
   };
 
   const eventIcons = { chat: '💬', roster_add: '➕', roster_drop: '➖', contract_signed: '📝', trade_proposed: '🔄', week_simulated: '📊' };
 
   return (
     <SafeAreaView style={s.container}>
+      <LeagueSwitcher />
+      <LoadError message={loadError} onRetry={init} />
       <View style={s.chatBar}>
         <TextInput style={s.chatInput} placeholder="Post to league..." placeholderTextColor="#52525B" value={chatInput} onChangeText={setChatInput} onSubmitEditing={handleSendChat} />
         <TouchableOpacity style={s.sendBtn} onPress={handleSendChat}><Text style={s.sendText}>Send</Text></TouchableOpacity>
@@ -61,7 +67,7 @@ export default function ActivityFeedScreen() {
         )}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={() => leagueId && fetchFeed(leagueId)} tintColor="#00D2FF" />}
         contentContainerStyle={s.list}
-        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loading ? 'Loading...' : 'No activity yet'}</Text></View>}
+        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loading ? 'Loading...' : loadError ? '' : 'No activity yet'}</Text></View>}
       />
     </SafeAreaView>
   );

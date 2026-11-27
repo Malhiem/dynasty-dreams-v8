@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from unittest.mock import patch, AsyncMock
 
 import pytest
+from tests.rostered import rostered_team
 from httpx import AsyncClient
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
@@ -134,7 +135,7 @@ async def test_nhl_roster_sync_diff_routes_through_dispatcher():
 
     db = _db_sync()
     # Seed a fixture player that exists today.
-    team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+    team = await rostered_team(db)
     player_id = team["roster"][0]
     player = await db.players.find_one({"_id": ObjectId(player_id)})
     original_nhl_id = player.get("nhl_id")

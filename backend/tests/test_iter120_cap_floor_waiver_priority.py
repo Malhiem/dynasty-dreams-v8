@@ -244,3 +244,29 @@ def test_waiver_manual_priority_accepts_valid_team_ids(admin_token, league_id):
                   headers=_auth(admin_token), json=payload, timeout=10)
     assert r.status_code == 200, r.text
     assert r.json()["waiver"]["manual_priority_order"] == ids
+
+
+# ────────────────── No cap, no floor ──────────────────
+
+def test_floor_sent_with_disabled_cap_is_dropped(admin_token, league_id):
+    r = httpx.put(
+        f"{API}/leagues/{league_id}/admin/cap-settings",
+        headers=_auth(admin_token),
+        json={"salary_cap_enabled": False, "cap_floor_enabled": True, "cap_floor": 70000000},
+        timeout=10,
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["salary_cap_enabled"] is False
+    assert body["cap_floor_enabled"] is False
+    assert body["cap_floor"] is None
+
+
+def test_floor_cannot_be_enabled_while_cap_is_off(admin_token, league_id):
+    httpx.put(f"{API}/leagues/{league_id}/admin/cap-settings", headers=_auth(admin_token),
+              json={"salary_cap_enabled": False}, timeout=10)
+    r = httpx.put(f"{API}/leagues/{league_id}/admin/cap-settings", headers=_auth(admin_token),
+                  json={"cap_floor_enabled": True, "cap_floor": 60000000}, timeout=10)
+    assert r.status_code == 200, r.text
+    assert r.json()["cap_floor_enabled"] is False
+    assert r.json()["cap_floor"] is None

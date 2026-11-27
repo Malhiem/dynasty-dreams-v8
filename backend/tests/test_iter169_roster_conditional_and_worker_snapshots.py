@@ -27,7 +27,6 @@ def _backend_url():
 
 
 BASE = _backend_url()
-LID = "69e46af167999bfb85c39628"
 
 
 async def _tok(client, email, password):
@@ -77,13 +76,26 @@ async def test_auto_snapshot_visible_via_weekly_aggregate_endpoint():
     db = mongo[os.environ["DB_NAME"]]
     old_deps = dict(monitors._deps)
     old_roster_deps = dict(roster._deps)
+    LID = None
     try:
         # The E2E server disables worker loops; exercise this worker step explicitly.
         monitors.setup({"db": db})
         roster.setup({"db": db, "calculate_fantasy_points": calculate_fantasy_points})
+        # Any seeded league that produces tank rows will do; ids differ per environment.
+        LID = None
+        async for lg in db.leagues.find({"_suite_baseline": True}, {"_id": 1}):
+            try:
+                if await monitors._current_tank_rows(str(lg["_id"])):
+                    LID = str(lg["_id"])
+                    break
+            except Exception:
+                continue
+        if LID is None:
+            pytest.skip("no seeded league with tank-monitor rows")
         await db.tank_monitor_weekly.delete_many({"league_id": LID})
-        assert await _take_weekly_tank_snapshots(db) >= 1
+        written = await _take_weekly_tank_snapshots(db)
         snapshot = await db.tank_monitor_weekly.find_one({"league_id": LID, "week": 1})
+        assert snapshot is not None, f"worker wrote {written} snapshots but none for league {LID}"
         assert snapshot["auto_captured"] is True
         # A repeat tick within seven days must not append another snapshot.
         await _take_weekly_tank_snapshots(db)
@@ -101,5 +113,6 @@ async def test_auto_snapshot_visible_via_weekly_aggregate_endpoint():
         roster._deps.update(old_roster_deps)
         monitors._deps.clear()
         monitors._deps.update(old_deps)
-        await db.tank_monitor_weekly.delete_many({"league_id": LID})
+        if LID:
+            await db.tank_monitor_weekly.delete_many({"league_id": LID})
         mongo.close()

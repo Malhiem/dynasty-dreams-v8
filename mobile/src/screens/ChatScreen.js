@@ -4,6 +4,10 @@ import {
   ActivityIndicator, Modal, Alert, RefreshControl, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import api from '../lib/api';
+import { useLeague } from '../contexts/LeagueContext';
+import LeagueSwitcher from '../components/LeagueSwitcher';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 
 const COLORS = {
   bg: '#0a0a0a', card: '#141414', border: 'rgba(255,255,255,0.1)',
@@ -38,22 +42,10 @@ function initialsFor(name) {
 
 export default function ChatScreen({ route, navigation }) {
   const initialLeagueId = route?.params?.leagueId;
-  const [leagueId, setLeagueId] = useState(initialLeagueId || null);
-
-  // Fall back to the user's first league when no leagueId is passed
-  useEffect(() => {
-    if (leagueId) return;
-    (async () => {
-      try {
-        const { data } = await api.get('/leagues?my_leagues=true');
-        if (Array.isArray(data) && data.length) {
-          setLeagueId(data[0].id);
-        }
-      } catch {
-        // ignore
-      }
-    })();
-  }, [leagueId]);
+  const activeLeague = useLeague();
+  // An explicit leagueId (deep link) wins; otherwise follow the active league.
+  const leagueId = initialLeagueId || activeLeague.leagueId;
+  const [loadError, setLoadError] = useState(null);
   const [channels, setChannels] = useState([]);
   const [maxChannels, setMaxChannels] = useState(12);
   const [members, setMembers] = useState([]);
@@ -74,6 +66,7 @@ export default function ChatScreen({ route, navigation }) {
   const loadEverything = useCallback(async () => {
     if (!leagueId) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const [meR, leagueR, chansR, membersR] = await Promise.all([
         api.get('/auth/me'),
@@ -95,7 +88,7 @@ export default function ChatScreen({ route, navigation }) {
         setSelectedId(list[0]._id);
       }
     } catch (e) {
-      console.warn('chat init', e?.response?.data || e?.message);
+      setLoadError(loadFailure(e, 'chat'));
     } finally {
       setLoading(false);
     }
@@ -103,13 +96,16 @@ export default function ChatScreen({ route, navigation }) {
 
   useEffect(() => { loadEverything(); }, [loadEverything]);
 
-  const loadMessages = useCallback(async () => {
+  // `quiet` is for the 10s background poll: a blip there is logged, not shown.
+  const loadMessages = useCallback(async (quiet) => {
     if (!selectedId) { setMessages([]); return; }
     try {
       const { data } = await api.get(`/chat/channels/${selectedId}/messages?limit=200`);
       setMessages(data?.messages || []);
+      if (!quiet) setLoadError(null);
     } catch (e) {
-      console.warn('chat msgs', e?.message);
+      if (quiet) console.warn('[chat poll]', e?.message);
+      else setLoadError(loadFailure(e, 'chat messages'));
     }
   }, [selectedId]);
 
@@ -118,7 +114,7 @@ export default function ChatScreen({ route, navigation }) {
   // Poll active channel every 10s
   useEffect(() => {
     if (!selectedId) return undefined;
-    const id = setInterval(loadMessages, 10000);
+    const id = setInterval(() => loadMessages(true), 10000);
     return () => clearInterval(id);
   }, [selectedId, loadMessages]);
 
@@ -257,6 +253,8 @@ export default function ChatScreen({ route, navigation }) {
 
   return (
     <View style={styles.root}>
+      {initialLeagueId ? null : <LeagueSwitcher />}
+      <LoadError message={loadError} onRetry={() => { loadEverything(); loadMessages(); }} />
       {/* Channel list */}
       <View style={styles.sidebar}>
         <View style={styles.sectionHeader}>

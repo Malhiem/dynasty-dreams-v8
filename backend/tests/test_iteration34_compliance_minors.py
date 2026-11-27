@@ -1,6 +1,7 @@
 """Iteration 34 — Roster compliance tile, minors seed, IR compliance mode endpoints."""
 import os
 import pytest
+from tests.demo_seed import require_demo_seed
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
@@ -88,6 +89,8 @@ class TestMinorsSeed:
             assert e.get("slot") == "MIN", f"Expected slot 'MIN' for minors entry, got {e}"
 
     def test_at_least_some_teams_have_minors(self, admin_session):
+        names = [lg.get("name") for lg in admin_session.get(f"{BASE_URL}/api/leagues", timeout=20).json()]
+        require_demo_seed(names)
         # Seed script placed minors across multiple teams (not necessarily in the target test league;
         # depends on which teams had minors-eligible young players). Scan a broader sample.
         r = admin_session.get(f"{BASE_URL}/api/teams")

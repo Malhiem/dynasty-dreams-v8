@@ -53,8 +53,12 @@ def test_create_draft_uses_new_helpers():
 def test_make_draft_pick_pushes_to_roster():
     src = _src()
     block = src.split("async def make_draft_pick(draft_id: str")[1].split("async def pause_draft")[0]
-    # Pushes the picked player id onto the on-clock team's roster.
-    assert '"$addToSet": {"roster": str(player["_id"])}' in block
+    # Adds the picked player id to the on-clock team's roster. Iter 231 moved that
+    # write into the journaled `services/draft_mutation.commit_pick`, which de-dupes
+    # the roster and writes it in the same step as the pick.
+    assert "await commit_pick(" in block
+    mutation = Path("/app/backend/services/draft_mutation.py").read_text()
+    assert 'roster = list(dict.fromkeys([*before["roster"], pick["player_id"]]))' in mutation
     # Uses the on-clock team_id resolved via team_map (not the user's
     # team_id — important for commissioner picking for other teams).
     assert "on_clock_team_id" in block
@@ -108,7 +112,9 @@ def test_draftroom_posts_pick_to_backend_when_active():
     src = read_source(DRAFT_ROOM)
     # The unified draft handler short-circuits to a real POST when the
     # draft is active and the player id is a real Mongo ObjectId.
-    assert "api.post(`/drafts/${currentDraft._id}/pick`, { player_id: nextPlayer.id })" in src
+    # Iter 233 — the body also carries the roster `destination` and `expected_pick`
+    # (the pick this click was made for, so a stale click can't take the next turn).
+    assert "api.post(`/drafts/${currentDraft._id}/pick`, { player_id: nextPlayer.id, destination, expected_pick: draftConfig.currentPick })" in src
     # Refetches the canonical state after a successful pick.
     assert "api.get(`/drafts/${currentDraft._id}`)" in src
 

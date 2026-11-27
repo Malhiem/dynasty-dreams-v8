@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ const RETENTION_OPTIONS = [
 ];
 
 export default function TradeBlockManager({ team, league, isOwnTeam, reloadKey = 0, onItemsChange }) {
+  const capEnabled = Boolean(league?.salary_cap_enabled);
   const [items, setItems] = useState([]);
   const [picks, setPicks] = useState([]);
   const [pickToAdd, setPickToAdd] = useState("");
@@ -175,7 +177,7 @@ export default function TradeBlockManager({ team, league, isOwnTeam, reloadKey =
                 : `Showing ${team?.name || "team"}'s trade block.`}
             </p>
           </div>
-          {isOwnTeam && (
+          {isOwnTeam && capEnabled && (
             <div className="flex flex-col items-end gap-1.5">
               <span className="text-[10px] uppercase tracking-wider text-muted-foreground">Salary Retention</span>
               <ToggleGroup

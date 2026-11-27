@@ -88,6 +88,20 @@ async def obligations(db, league, team=None, now=None, include_history=False):
     return list(dedup.values())
 
 
+async def retention_slots(db, league, team, now=None):
+    """A team's salary-retention slot usage: the league allows up to three,
+    each active retention obligation uses one. Shared by the roster
+    compliance check and the league cap overview so they cannot disagree."""
+    rows = await obligations(db, league, team, now=now)
+    total = min(3, int((league or {}).get("salary_retention_slots", 3)))
+    return {
+        "slots_total": total,
+        "slots_used": len(rows),
+        "slots_remaining": max(0, total - len(rows)),
+        "retained_salary_total": sum(float(r.get("amount") or 0) for r in rows),
+    }
+
+
 def player_base_price(player, league, config=None):
     from routes.roster import _synthesize_player_salary
     explicit = [(player.get("contract") or {}).get("aav"), (player.get("contract") or {}).get("salary"), player.get("salary"), player.get("cap_hit")]

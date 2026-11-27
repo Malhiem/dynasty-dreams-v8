@@ -144,6 +144,8 @@ def _is_pick_asset(asset: dict) -> bool:
 async def _hydrate_side(db, league_id: str, scoring_cfg: dict, calc_fn, assets: list) -> list:
     if not assets:
         return assets
+    from services.cap_visibility import league_cap_enabled
+    cap_enabled = await league_cap_enabled(db, league_id)
     out = []
     for raw in assets:
         asset = dict(raw) if not isinstance(raw, dict) else raw
@@ -164,9 +166,14 @@ async def _hydrate_side(db, league_id: str, scoring_cfg: dict, calc_fn, assets: 
         asset["nhl_team"] = player.get("team") or asset.get("nhl_team", "")
         asset["age"] = _compute_age(player)
 
-        cap_hit = await _resolve_cap_hit(db, league_id, pid, player, scoring_cfg)
-        asset["salary"] = cap_hit
-        asset["cap_hit"] = cap_hit
+        if cap_enabled:
+            cap_hit = await _resolve_cap_hit(db, league_id, pid, player, scoring_cfg)
+            asset["salary"] = cap_hit
+            asset["cap_hit"] = cap_hit
+        else:
+            # No cap, no salaries: drop any salary figures stored on the asset.
+            asset.pop("salary", None)
+            asset.pop("cap_hit", None)
 
         asset["goals"] = player.get("goals", 0) or 0
         asset["assists"] = player.get("assists", 0) or 0

@@ -7,6 +7,7 @@ import { MinorEligibleBadge } from "@/lovable/components/MinorEligibleBadge";
 import { toast } from "sonner";
 import api from "@/lib/api";
 import { useActiveLeague } from "@/hooks/use-active-league";
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -234,6 +235,7 @@ const PlayerRoster = ({
   // helpers (mock-data generation, etc.) continue to read the default.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { league: activeLeagueFromHook } = useActiveLeague();
+  const capEnabled = useLeagueCapEnabled();
   const LEAGUE_ROSTER_SLOTS = useMemo(
     () => buildLeagueRosterSlots((activeLeagueFromHook as any)?.position_breakdown?.active),
     [(activeLeagueFromHook as any)?.position_breakdown],
@@ -872,7 +874,7 @@ const PlayerRoster = ({
     return counts;
   }, [players]);
 
-  const effectiveFilter = isPastWeek && viewFilter === "season" ? "7d" : viewFilter;
+  const effectiveFilter = isPastWeek && viewFilter === "season" ? "7d" : (!capEnabled && viewFilter === "cap-hit" ? "season" : viewFilter);
 
   const getPlayerPoints = (player: Player): number => {
     if (effectiveFilter === "fantasy-points" || effectiveFilter === "matchup-schedule" || effectiveFilter === "full-schedule") {
@@ -975,7 +977,7 @@ const PlayerRoster = ({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="season">Season Stats</SelectItem>
-                <SelectItem value="cap-hit">Cap Hit</SelectItem>
+                {capEnabled && <SelectItem value="cap-hit">Cap Hit</SelectItem>}
                 <SelectItem value="1d">Last 1 Day</SelectItem>
                 <SelectItem value="7d">Last 7 Days</SelectItem>
                 <SelectItem value="14d">Last 14 Days</SelectItem>

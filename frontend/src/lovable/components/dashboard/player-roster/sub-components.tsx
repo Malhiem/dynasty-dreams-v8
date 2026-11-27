@@ -25,6 +25,7 @@
  *     cycles work because component references aren't dereferenced
  *     at module init time.
  */
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { TrendingUp, TrendingDown, Minus, ArrowUpDown, ChevronLeft, ChevronRight, MinusCircle, MoveVertical, AlertTriangle, Megaphone, Shield } from "lucide-react";
 import { NewsSignalIcon } from "@/lovable/components/NewsSignalIcon";
@@ -145,7 +146,8 @@ export const StatsTable = ({
   const displayCategories = visibleCategories ?? rosterStatCategories;
   const statCols = displayCategories.length;
   // Columns: POS, Player, Age, Cap [+ FPTS, FP/G when showFpts] + statCols + OWN%? + Actions
-  const colSpan = 4 + (showFpts ? 2 : 0) + statCols + (showOwnership ? 1 : 0) + 1;
+  const capEnabled = useLeagueCapEnabled();
+  const colSpan = (capEnabled ? 4 : 3) + (showFpts ? 2 : 0) + statCols + (showOwnership ? 1 : 0) + 1;
   const fptsColIndex = showFpts ? 4 : 4 + statCols;
   const fpgOf = (p: Player) => {
     const gp = p.gamesPlayed || 0;
@@ -159,7 +161,7 @@ export const StatsTable = ({
             <th className="text-center text-xs font-medium text-muted-foreground p-2 w-[56px]">POS</th>
             <th className="text-left text-xs font-medium text-muted-foreground p-3 w-[220px]">Player</th>
             <th className="text-center text-xs font-medium text-muted-foreground p-2 w-[40px]">Age</th>
-            <th className="text-right text-xs font-medium text-muted-foreground p-2 w-[64px]">Cap</th>
+            {capEnabled && <th className="text-right text-xs font-medium text-muted-foreground p-2 w-[64px]">Cap</th>}
             {showFpts && <th className="text-right text-xs font-medium text-muted-foreground p-2 w-[52px]" data-testid="roster-col-fpts">FPTS</th>}
             {showFpts && (
               <th className="text-right text-xs font-medium text-muted-foreground p-2 w-[52px]" data-testid="roster-col-fpg">
@@ -1124,6 +1126,7 @@ export const PlayerRow = ({
   showPositionEligibility?: boolean;
   warnings?: any[];
 } & HighlightProps) => {
+  const capEnabled = useLeagueCapEnabled();
   const canEdit = isOwnTeam || commissionerMode;
   const otherSections = sectionOrder.filter(s => s !== player.rosterSection);
   const highlighted = isPositionHighlighted(player, highlightedPositions, highlightedPlayerId);
@@ -1183,7 +1186,7 @@ export const PlayerRow = ({
         </div>
       </td>
       <td className="p-2 text-center text-xs text-muted-foreground">{player.age}</td>
-      <td className="p-2 text-right text-xs font-semibold text-accent">{formatSalary(player.contract.salary)}</td>
+      {capEnabled && <td className="p-2 text-right text-xs font-semibold text-accent">{formatSalary(player.contract.salary)}</td>}
       {children}
       <td className="p-2 text-center">
         <div className="flex items-center justify-center gap-0.5">

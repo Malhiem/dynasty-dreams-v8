@@ -207,10 +207,10 @@ async def test_list_pending_pick_trades_endpoint_returns_in_flight_review():
     pending_draft_review pick trade(s) so the Draft Room can hydrate the
     floating review pill on mount/refresh."""
     from routes import trades as trades_routes
-    from router_test_utils import isolated_router_app
+    from router_test_utils import isolated_router_app, make_league
 
     async with isolated_router_app(trades_routes) as ctx:
-        lid = "test_iter194c_hydrate_league"
+        lid = await make_league(ctx)
         pending = await ctx.db.trades.insert_one({
             "league_id": lid,
             "proposer_team_id": "p1",

@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import { useLeague } from '../contexts/LeagueContext';
+import LeagueSwitcher from '../components/LeagueSwitcher';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function WaiversScreen() {
@@ -8,16 +12,15 @@ export default function WaiversScreen() {
   const [players, setPlayers] = useState([]);
   const [budget, setBudget] = useState({ total_budget: 100, spent: 0, remaining: 100 });
   const [claims, setClaims] = useState([]);
-  const [leagueId, setLeagueId] = useState(null);
+  const { leagueId } = useLeague();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
-  useEffect(() => {
-    const init = async () => {
+  const init = async () => {
+      setLoadError(null);
       try {
-        const { data: leagues } = await api.get('/leagues?my_leagues=true');
-        if (leagues.length > 0) {
-          const lid = leagues[0].id;
-          setLeagueId(lid);
+        if (leagueId) {
+          const lid = leagueId;
           const [p, b, c] = await Promise.all([
             api.get(`/waivers/available?limit=20`),
             api.get(`/waivers/budget?league_id=${lid}`),
@@ -27,14 +30,15 @@ export default function WaiversScreen() {
           setBudget(b.data);
           setClaims(c.data.filter(cl => cl.status === 'pending'));
         }
-      } catch (e) { console.error(e); }
+      } catch (e) { setLoadError(loadFailure(e, 'waivers')); }
       setLoading(false);
     };
-    init();
-  }, []);
+  useEffect(() => { init(); }, [leagueId]);
 
   return (
     <SafeAreaView style={s.container}>
+      <LeagueSwitcher />
+      <LoadError message={loadError} onRetry={init} />
       <View style={s.budgetBar}>
         <View style={s.budgetItem}><Text style={s.budgetLabel}>FAAB Budget</Text><Text style={s.budgetValue}>${budget.remaining}</Text></View>
         <View style={s.budgetItem}><Text style={s.budgetLabel}>Spent</Text><Text style={s.budgetValueDim}>${budget.spent}</Text></View>

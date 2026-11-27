@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
+import { showActionError, loadFailure } from '../lib/errors';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import EligiblePlayerList from '../components/EligiblePlayerList';
+import { useEligiblePlayers } from '../hooks/useEligiblePlayers';
 import { useDraftSocket } from '../hooks/useSocket';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -8,32 +12,26 @@ export default function DraftRoomScreen({ route }) {
   const draftId = route?.params?.draftId;
   const { user } = useAuth();
   const [draft, setDraft] = useState(null);
-  const [players, setPlayers] = useState([]);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState(null);
 
   const fetchDraft = async () => {
     if (!draftId) return;
+    setLoadError(null);
     try {
       const { data } = await api.get(`/drafts/${draftId}`);
       setDraft(data);
       setChatMessages(data.chat_messages || []);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'the draft')); }
   };
 
-  const fetchPlayers = async () => {
-    if (!draftId) return;
-    try {
-      const params = new URLSearchParams({ limit: '30' });
-      if (search) params.append('search', search);
-      const { data } = await api.get(`/drafts/${draftId}/eligible-players?${params}`);
-      setPlayers(data.players || []);
-    } catch (e) { console.error(e); }
-  };
+  // Paged + searchable; refresh() re-fetches the pages already loaded after a pick.
+  const eligible = useEligiblePlayers(draftId, search);
+  const fetchPlayers = eligible.refresh;
 
-  useEffect(() => { fetchDraft(); fetchPlayers(); }, [draftId]);
-  useEffect(() => { const t = setTimeout(fetchPlayers, 300); return () => clearTimeout(t); }, [search]);
+  useEffect(() => { fetchDraft(); }, [draftId]);
 
   const { connected } = useDraftSocket(draftId, {
     userId: user?.id,
@@ -43,12 +41,19 @@ export default function DraftRoomScreen({ route }) {
   });
 
   const handlePick = async (playerId) => {
-    try { await api.post(`/drafts/${draftId}/pick`, { player_id: playerId }); fetchDraft(); fetchPlayers(); } catch (e) { console.error(e); }
+    try {
+      // expected_pick makes a double-tap or a pick made after the clock moved on fail
+      // cleanly instead of drafting twice; the server also enforces whose turn it is.
+      await api.post(`/drafts/${draftId}/pick`, { player_id: playerId, expected_pick: draft?.current_pick ?? undefined });
+    } catch (e) {
+      showActionError(e, 'Could not make that pick');
+    }
+    fetchDraft(); fetchPlayers();
   };
 
   const handleChat = async () => {
     if (!chatInput.trim()) return;
-    try { await api.post(`/drafts/${draftId}/chat`, { text: chatInput.trim() }); setChatInput(''); fetchDraft(); } catch (e) { console.error(e); }
+    try { await api.post(`/drafts/${draftId}/chat`, { text: chatInput.trim() }); setChatInput(''); fetchDraft(); } catch (e) { showActionError(e, 'Message not sent'); }
   };
 
   const picks = draft?.picks || [];
@@ -57,6 +62,7 @@ export default function DraftRoomScreen({ route }) {
   return (
     <SafeAreaView style={s.container}>
       <ScrollView>
+        <LoadError message={loadError} onRetry={fetchDraft} />
         <View style={s.header}>
           <Text style={s.title}>DRAFT ROOM</Text>
           <View style={s.statusRow}>
@@ -81,13 +87,13 @@ export default function DraftRoomScreen({ route }) {
         <View style={s.section}>
           <Text style={s.sectionTitle}>AVAILABLE PLAYERS</Text>
           <TextInput style={s.searchInput} placeholder="Search..." placeholderTextColor="#52525B" value={search} onChangeText={setSearch} />
-          {players.slice(0, 15).map(p => (
+          <EligiblePlayerList list={eligible} renderRow={p => (
             <TouchableOpacity key={p.id} style={s.playerRow} onPress={() => isActive && handlePick(p.id)}>
               <View style={s.posBadge}><Text style={s.posText}>{p.position}</Text></View>
               <View style={s.info}><Text style={s.playerName}>{p.name}</Text><Text style={s.playerMeta}>{p.nhlTeam} · {p.pts}P</Text></View>
               {isActive && <View style={s.pickBtn}><Text style={s.pickBtnText}>Pick</Text></View>}
             </TouchableOpacity>
-          ))}
+          )} />
         </View>
 
         {/* Chat */}

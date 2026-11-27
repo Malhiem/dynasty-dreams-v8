@@ -38,6 +38,15 @@ def event_loop():
     loop.close()
 
 
+@pytest.fixture(autouse=True)
+def _cap_enabled(monkeypatch):
+    """These leagues are synthetic ids; hydration only emits salary figures for
+    cap-enabled leagues ("no cap, no salaries"), so treat them as capped."""
+    async def _yes(db, league_id):
+        return True
+    monkeypatch.setattr("services.cap_visibility.league_cap_enabled", _yes)
+
+
 @pytest.fixture()
 async def db():
     client = AsyncIOMotorClient(os.environ.get("MONGO_URL"))

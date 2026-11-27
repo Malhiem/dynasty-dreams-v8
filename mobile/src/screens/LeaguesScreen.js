@@ -1,18 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, SafeAreaView, RefreshControl } from 'react-native';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import { loadFailure } from '../lib/errors';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function LeaguesScreen({ route, navigation }) {
   const { user } = useAuth();
   const [leagues, setLeagues] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   const fetchLeagues = async () => {
+    setLoadError(null);
     try {
       const { data } = await api.get('/leagues');
       setLeagues(data);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'your leagues')); }
     setLoading(false);
   };
 
@@ -20,6 +24,7 @@ export default function LeaguesScreen({ route, navigation }) {
 
   return (
     <SafeAreaView style={s.container}>
+      <LoadError message={loadError} onRetry={fetchLeagues} />
       <FlatList
         data={leagues}
         keyExtractor={item => item.id}
@@ -41,7 +46,7 @@ export default function LeaguesScreen({ route, navigation }) {
         refreshControl={<RefreshControl refreshing={loading} onRefresh={fetchLeagues} tintColor="#00D2FF" />}
         contentContainerStyle={s.list}
         ListHeaderComponent={<Text style={s.header}>ALL LEAGUES</Text>}
-        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>No leagues</Text></View>}
+        ListEmptyComponent={<View style={s.empty}><Text style={s.emptyText}>{loadError ? '' : 'No leagues'}</Text></View>}
       />
     </SafeAreaView>
   );

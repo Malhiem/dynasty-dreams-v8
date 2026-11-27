@@ -11,12 +11,12 @@ DRAFT_INSPECTION = REPO / "backend/routes/draft_inspection.py"
 SERVER = REPO / "backend/server.py"
 
 INSPECTION_ROUTES = [
-    '@router.get("/drafts")',
-    '@router.get("/drafts/{draft_id}")',
-    '@router.get("/drafts/{draft_id}/board")',
-    '@router.get("/drafts/{draft_id}/stats")',
-    '@router.get("/drafts/{draft_id}/edit-preview")',
-    '@router.get("/leagues/{league_id}/upcoming-drafts")',
+    '@router.get("/drafts"',
+    '@router.get("/drafts/{draft_id}"',
+    '@router.get("/drafts/{draft_id}/board"',
+    '@router.get("/drafts/{draft_id}/stats"',
+    '@router.get("/drafts/{draft_id}/edit-preview"',
+    '@router.get("/leagues/{league_id}/upcoming-drafts"',
 ]
 
 

@@ -38,6 +38,17 @@ class IsolatedCtx:
     activity_calls: list = field(default_factory=list)
 
 
+async def make_league(ctx, **extra) -> str:
+    """Insert a league commissioned by the stub user and return its id.
+
+    Draft/league routes are members-only, so tests that hit them need a real
+    league the stub user belongs to.
+    """
+    doc = {"name": "router-test league", "commissioner_id": ctx.user["_id"], "status": "active"}
+    doc.update(extra)
+    return str((await ctx.db.leagues.insert_one(doc)).inserted_id)
+
+
 @asynccontextmanager
 async def isolated_router_app(router_module, *, user: dict | None = None):
     """Mount `router_module.router` on an ephemeral FastAPI app pointed at a

@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
+import { showActionError, loadFailure } from '../lib/errors';
 import api from '../lib/api';
+import LoadError from '../components/LoadError';
+import EligiblePlayerList from '../components/EligiblePlayerList';
+import { useEligiblePlayers } from '../hooks/useEligiblePlayers';
 import { useDraftSocket } from '../hooks/useSocket';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -9,37 +13,39 @@ export default function AuctionDraftScreen({ route }) {
   const { user } = useAuth();
   const [draft, setDraft] = useState(null);
   const [auctionState, setAuctionState] = useState(null);
-  const [players, setPlayers] = useState([]);
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState(null);
   const [bidAmount, setBidAmount] = useState('1');
 
   const fetchAll = async () => {
     if (!draftId) return;
+    setLoadError(null);
     try {
-      const [d, a, p] = await Promise.all([
+      const [d, a] = await Promise.all([
         api.get(`/drafts/${draftId}`),
         api.get(`/drafts/${draftId}/auction/state`),
-        api.get(`/drafts/${draftId}/eligible-players?limit=20${search ? `&search=${search}` : ''}`),
       ]);
       setDraft(d.data);
       setAuctionState(a.data);
-      setPlayers(p.data.players || []);
-    } catch (e) { console.error(e); }
+    } catch (e) { setLoadError(loadFailure(e, 'the auction')); }
   };
 
+  // The player list is paged (and searched) separately; only the draft and
+  // auction state are polled, so polling no longer resets the list.
+  const eligible = useEligiblePlayers(draftId, search);
+
   useEffect(() => { fetchAll(); }, [draftId]);
-  useEffect(() => { const t = setTimeout(fetchAll, 300); return () => clearTimeout(t); }, [search]);
   useEffect(() => { if (!draftId) return; const i = setInterval(fetchAll, 3000); return () => clearInterval(i); }, [draftId]);
 
   const { connected } = useDraftSocket(draftId, {
     userId: user?.id,
     onAuctionBid: fetchAll,
-    onAuctionResolved: fetchAll,
-    onDraftPick: fetchAll,
+    onAuctionResolved: () => { fetchAll(); eligible.refresh(); },
+    onDraftPick: () => { fetchAll(); eligible.refresh(); },
   });
 
-  const handleNominate = async (pid) => { try { await api.post(`/drafts/${draftId}/auction/nominate`, { player_id: pid, opening_bid: 1 }); fetchAll(); } catch (e) { alert(e.response?.data?.detail); } };
-  const handleBid = async () => { try { await api.post(`/drafts/${draftId}/auction/bid`, { amount: parseFloat(bidAmount) }); fetchAll(); } catch (e) { alert(e.response?.data?.detail); } };
+  const handleNominate = async (pid) => { try { await api.post(`/drafts/${draftId}/auction/nominate`, { player_id: pid, opening_bid: 1 }); fetchAll(); eligible.refresh(); } catch (e) { showActionError(e, 'Auction action failed'); } };
+  const handleBid = async () => { try { await api.post(`/drafts/${draftId}/auction/bid`, { amount: parseFloat(bidAmount) }); fetchAll(); } catch (e) { showActionError(e, 'Auction action failed'); } };
 
   const auction = auctionState?.active_auction;
   const budgets = auctionState?.budgets || [];
@@ -47,6 +53,7 @@ export default function AuctionDraftScreen({ route }) {
   return (
     <SafeAreaView style={s.container}>
       <ScrollView>
+        <LoadError message={loadError} onRetry={fetchAll} />
         <View style={s.header}>
           <Text style={s.title}>AUCTION DRAFT</Text>
           <View style={s.statusRow}>
@@ -90,13 +97,13 @@ export default function AuctionDraftScreen({ route }) {
         {/* Players */}
         <View style={s.section}><Text style={s.sectionTitle}>NOMINATE PLAYER</Text>
           <TextInput style={s.searchInput} placeholder="Search..." placeholderTextColor="#52525B" value={search} onChangeText={setSearch} />
-          {players.slice(0, 10).map(p => (
+          <EligiblePlayerList list={eligible} renderRow={p => (
             <TouchableOpacity key={p.id} style={s.playerRow} onPress={() => !auction && handleNominate(p.id)}>
               <Text style={s.playerPos}>{p.position}</Text>
               <View style={s.info}><Text style={s.playerName}>{p.name}</Text><Text style={s.playerMeta}>{p.nhlTeam} · {p.pts}P</Text></View>
               {!auction && <Text style={s.nominateText}>Nominate</Text>}
             </TouchableOpacity>
-          ))}
+          )} />
         </View>
       </ScrollView>
     </SafeAreaView>

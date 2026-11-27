@@ -2,6 +2,7 @@
 // Iter 232L (refactor) — TradeCard extracted from Transactions.tsx.
 // Renders a pending/accepted/processed trade with the FPts↔Categories
 // column set driven by `viewMode`. Voting controls only render on pending.
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { statusConfig, DEFERRED_PILL } from "./statusConfig";
 import { selectCategoriesForAssets, computeAssetTotals, formatCategoryTotal, fmtCapHit } from "./types";
 
 export function TradeCard({ trade, viewMode }) {
+  const capEnabled = useLeagueCapEnabled();
   // Fall back to pending badge for unknown backend statuses.
   const status = statusConfig[trade.status] || statusConfig.pending;
   const StatusIcon = status.icon;
@@ -34,7 +36,7 @@ export function TradeCard({ trade, viewMode }) {
             <TableHead className="text-xs whitespace-nowrap">Player</TableHead>
             <TableHead className="text-xs whitespace-nowrap">Pos</TableHead>
             <TableHead className="text-xs whitespace-nowrap">Age</TableHead>
-            <TableHead className="text-xs whitespace-nowrap">Cap Hit</TableHead>
+            {capEnabled && <TableHead className="text-xs whitespace-nowrap">Cap Hit</TableHead>}
             {viewMode === "fpts" ? (
               <>
                 <TableHead className="text-xs whitespace-nowrap">GP</TableHead>
@@ -66,7 +68,7 @@ export function TradeCard({ trade, viewMode }) {
               <TableCell className="text-sm">
                 {asset.type === "player" ? asset.age || "—" : "—"}
               </TableCell>
-              <TableCell className="text-sm whitespace-nowrap">{asset.capHit}</TableCell>
+              {capEnabled && <TableCell className="text-sm whitespace-nowrap">{asset.capHit}</TableCell>}
               {viewMode === "fpts" ? (
                 <>
                   <TableCell className="text-sm">
@@ -103,7 +105,7 @@ export function TradeCard({ trade, viewMode }) {
               </TableCell>
               <TableCell className="text-sm">—</TableCell>
               <TableCell className="text-sm">—</TableCell>
-              <TableCell className="text-sm whitespace-nowrap">{fmtCapHit(totals.capHit)}</TableCell>
+              {capEnabled && <TableCell className="text-sm whitespace-nowrap">{fmtCapHit(totals.capHit)}</TableCell>}
               {viewMode === "fpts" ? (
                 <>
                   <TableCell className="text-sm">{totals.gp}</TableCell>

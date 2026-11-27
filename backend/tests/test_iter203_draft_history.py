@@ -33,6 +33,10 @@ def _db():
     return AsyncIOMotorClient(os.environ["MONGO_URL"])[os.environ["DB_NAME"]]
 
 
+async def _stub_admin(_request):
+    return {"_id": "admin-1", "is_admin": True, "role": "admin"}
+
+
 @pytest.mark.asyncio
 async def test_get_drafts_filters_by_league_and_surfaces_status():
     """`GET /api/drafts?league_id=...` returns every draft for the
@@ -46,12 +50,14 @@ async def test_get_drafts_filters_by_league_and_surfaces_status():
     drafts_setup({
         "db": _db(),
         "logger": None,
-        "get_current_user": None,
+        "get_current_user": _stub_admin,
         "broadcast_to_room": None,
         "create_notification": None,
     })
 
-    lid = f"test_iter203_history_{ObjectId()}"
+    # Drafts are members-only: a real league and a signed-in (admin) caller.
+    lid = str(ObjectId())
+    await _db().leagues.insert_one({"_id": ObjectId(lid), "name": "iter203 history", "commissioner_id": "someone-else"})
     # Seed 3 drafts: 2 completed, 1 active.
     base = {
         "league_id": lid,
@@ -66,7 +72,7 @@ async def test_get_drafts_filters_by_league_and_surfaces_status():
     d2 = await _db().drafts.insert_one({**base, "status": "completed", "created_at": "2026-02-01T00:00:00Z"})
     d3 = await _db().drafts.insert_one({**base, "status": "active", "created_at": "2026-02-15T00:00:00Z"})
 
-    rows = await get_drafts(league_id=lid)
+    rows = await get_drafts(league_id=lid, request=object())
     try:
         assert isinstance(rows, list)
         assert len(rows) == 3
@@ -80,6 +86,7 @@ async def test_get_drafts_filters_by_league_and_surfaces_status():
         assert str(rows[0]["_id"]) == str(d3.inserted_id)
     finally:
         await _db().drafts.delete_many({"league_id": lid})
+        await _db().leagues.delete_one({"_id": ObjectId(lid)})
 
 
 @pytest.mark.asyncio

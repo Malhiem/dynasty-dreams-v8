@@ -4,6 +4,7 @@ import pytest
 import requests
 from pathlib import Path
 from dotenv import dotenv_values
+from http_test_auth import test_admin_headers
 
 _env = dotenv_values(Path(__file__).resolve().parents[2] / "frontend" / ".env")
 BASE = (os.environ.get("REACT_APP_BACKEND_URL") or _env.get("REACT_APP_BACKEND_URL")).rstrip("/")
@@ -38,7 +39,7 @@ def league_team_counts():
 # ── Draft picks endpoint ──────────────────────────────────────────────
 class TestDraftPicks:
     def test_ice_kings_2026_picks(self):
-        r = requests.get(f"{API}/drafts/{ICE_KINGS_LID}/picks", params={"year": 2026})
+        r = requests.get(f"{API}/drafts/{ICE_KINGS_LID}/picks", params={"year": 2026}, headers=test_admin_headers())
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["league_id"] == ICE_KINGS_LID
@@ -65,19 +66,18 @@ class TestDraftPicks:
         for name, count in expected.items():
             lid = league_team_counts.get(name)
             assert lid, f"League {name} not found"
-            r = requests.get(f"{API}/drafts/{lid}/picks", params={"year": 2026})
+            r = requests.get(f"{API}/drafts/{lid}/picks", params={"year": 2026}, headers=test_admin_headers())
             assert r.status_code == 200, f"{name}: {r.text}"
             picks = r.json()["picks"]
             assert len(picks) == count, f"{name} expected {count}, got {len(picks)}"
 
     def test_team_abbrs_real(self):
-        r = requests.get(f"{API}/drafts/{ICE_KINGS_LID}/picks", params={"year": 2026})
+        r = requests.get(f"{API}/drafts/{ICE_KINGS_LID}/picks", params={"year": 2026}, headers=test_admin_headers())
         names = {p["original_team_name"] for p in r.json()["picks"]}
         # Old mock names should NOT be present
         for old in ("Arctic Wolves", "Blizzards", "Frostbite Falcons"):
             assert old not in names, f"Mock team name '{old}' leaked"
         # At least some real ones should appear
-        from tests.http_test_auth import test_admin_headers
         actual = requests.get(f"{API}/teams", params={"league_id": ICE_KINGS_LID}, headers=test_admin_headers()).json()
         assert names == {team["name"] for team in actual}
 

@@ -11,6 +11,7 @@ import os
 import time
 import uuid
 import pytest
+from tests.demo_seed import require_demo_seed
 import requests
 from pymongo import MongoClient
 
@@ -73,6 +74,7 @@ class TestSeededLeagues:
         assert r.status_code == 200, r.text
         leagues = r.json()
         assert isinstance(leagues, list)
+        require_demo_seed(lg.get("name") for lg in leagues)
         # There should be at least the 5 demo leagues
         assert len(leagues) >= 5, f"Expected >=5 leagues, got {len(leagues)}"
 

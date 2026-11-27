@@ -44,6 +44,32 @@ The initial test logs in with the test-only admin account configured in `docker-
 
 For browser debugging, the app is published only on `127.0.0.1:3000` while the stack is running.
 
+## Backend pytest suite
+
+`backend/tests/` talks to a real MongoDB and a running API, and its fixtures can delete data. Run it only against this disposable stack, never against a shared or preview environment. `backend-tests` is a Compose profile: it adds `api-proxy` (nginx without the SPA build, answering to the hostname `web`) and the `pytest` service.
+
+```sh
+P=dynasty-dreams-backend-tests
+C="docker compose -p $P -f docker-compose.e2e.yml --profile backend-tests"  # or podman-compose
+
+$C down --volumes --remove-orphans          # optional: start from an empty database
+$C up --detach --build mongo backend api-proxy
+
+$C run --rm pytest                          # whole suite
+$C run --rm pytest tests/test_iter230L_security_fixes.py tests/test_iter230m_p3_hardening.py
+$C run --rm pytest tests/test_iter233_auto_pick_authorization.py   # any pytest arguments
+
+$C down --volumes --remove-orphans
+```
+
+- The `pytest` service runs `e2e/backend-tests.sh`. It refuses to start unless `MONGO_URL` is `mongodb://mongo:27017`, `DB_NAME` is `dynasty_dreams_e2e`, `REACT_APP_BACKEND_URL` is `http://web` and `TEST_SUITE_ISOLATED=1`, matching `tests/isolated_seed.py`.
+- The repo is mounted read-only and copied to `/app` inside the container, because the suite hard-codes `/app/backend`, `/app/frontend/src` and `/app/mobile/src`. The script also writes the gitignored `/app/frontend/.env` and `/app/backend/.env` that some tests read. Nothing is written to your working tree except `test-results/junit.xml`.
+- Tests run serially. They share one database and sweep it between modules, so do not add `-n` parallelism.
+- Do not run `api-proxy` and `web` together; both claim the hostname `web`.
+- `E2E_MODE=true` is set for both the API and the test process. It makes payment endpoints return 503 and lets `import server` work without the private `emergentintegrations` package.
+- `test_draft_salary_feasibility.py` writes to its own `draft_disposable_salary_tests` database on the same Mongo (it insists on a name containing "draft" and "disposable").
+- `BACKEND_TESTS_API_ONLY=1` makes tests that need the React app (e.g. `test_frontend_loads`) skip; the Playwright suite covers those.
+
 ## League Setup / Rotisserie acceptance coverage
 
 `tests/league-scoring.spec.ts` exercises all five League Setup scoring buttons,

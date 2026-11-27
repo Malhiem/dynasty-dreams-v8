@@ -16,7 +16,8 @@ routers; see `server.py`.
 from __future__ import annotations
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from routes.league_guards import is_league_manager
 from pydantic import BaseModel, Field
 
 
@@ -87,10 +88,17 @@ async def update_team_draft_queue(team_id: str, payload: DraftQueueRequest, requ
 
 @router.get("/teams/{team_id}/draft-queue")
 async def get_team_draft_queue(team_id: str, request: Request):
-    await _get_user(request)
+    user = await _get_user(request)
     team = await _db().teams.find_one({"_id": ObjectId(team_id)})
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
+    # The queue is a manager's private auto-pick strategy: owner, co-owner,
+    # commissioner or admin only (not other managers, not outsiders).
+    league = await _db().leagues.find_one({"_id": ObjectId(team["league_id"])}) or {}
+    uid = str(user["_id"])
+    is_owner = str(team.get("owner_id")) == uid or uid in [str(c) for c in team.get("co_owner_ids") or []]
+    if not (is_owner or is_league_manager(user, league)):
+        raise HTTPException(status_code=403, detail="Only the team's owner or league commissioner can view the draft queue")
     return {"team_id": team_id, "draft_queue": list(team.get("draft_queue") or [])}
 
 

@@ -319,7 +319,8 @@ const SalaryCap = () => {
   // league.cap_floor_year_plus_1, league.cap_floor_year_plus_2. Anything
   // beyond Year+2 falls back to the most recent floor (admins can extend
   // by saving new values on the Salary Cap & Contracts tab).
-  const floorEnabled = !!(league as any)?.cap_floor_enabled;
+  const capEnabled = (league as any)?.salary_cap_enabled !== false;
+  const floorEnabled = !!(league as any)?.salary_cap_enabled && !!(league as any)?.cap_floor_enabled;
   const floorCurrent = Number((league as any)?.cap_floor || 0);
   const floorYr1 = Number((league as any)?.cap_floor_year_plus_1 || floorCurrent);
   const floorYr2 = Number((league as any)?.cap_floor_year_plus_2 || floorYr1);
@@ -443,7 +444,19 @@ const SalaryCap = () => {
 
   return (
     <AppLayout>
-        <div className="container py-8 space-y-6">
+      <div className="relative" data-testid="salary-cap-page">
+        {!capEnabled && (
+          <div className="absolute inset-0 z-20 flex items-start justify-center pt-40 px-4" data-testid="salary-cap-disabled-overlay">
+            <div role="status" className="rounded-lg border border-border bg-card px-6 py-5 text-center shadow-2xl max-w-md">
+              <p className="text-base font-semibold">Salary cap has been disabled in league settings</p>
+            </div>
+          </div>
+        )}
+        <div
+          className={`container py-8 space-y-6${!capEnabled ? " pointer-events-none select-none opacity-30 grayscale blur-[5px]" : ""}`}
+          aria-hidden={!capEnabled || undefined}
+          {...(!capEnabled ? { inert: "" as any } : {})}
+        >
           <LeagueContextBanner title="Salary Cap" kpiLabel="Teams on roster" kpiValue={leagueTeamsCount} primaryHref="/commissioner" primaryLabel="Manage in Commissioner" />
         <div>
           <h1 className="text-2xl font-bold">Salary Cap Management</h1>
@@ -452,7 +465,7 @@ const SalaryCap = () => {
 
         {/* Cap Overview Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="bg-card border-border" data-testid="cap-overview-card-limit">
+          {capEnabled && <Card className="bg-card border-border" data-testid="cap-overview-card-limit">
             <CardContent className="p-6">
               <div className="flex items-center gap-3 mb-3">
                 <div className="h-10 w-10 rounded-lg bg-primary/20 flex items-center justify-center">
@@ -464,7 +477,7 @@ const SalaryCap = () => {
                 </div>
               </div>
             </CardContent>
-          </Card>
+          </Card>}
 
           <Card className="bg-card border-border" data-testid="cap-overview-card-hit">
             <CardContent className="p-6">
@@ -480,7 +493,7 @@ const SalaryCap = () => {
             </CardContent>
           </Card>
 
-          <Card className="bg-card border-border" data-testid="cap-overview-card-space">
+          {capEnabled && <Card className="bg-card border-border" data-testid="cap-overview-card-space">
             <CardContent className="p-6">
               <div className="flex items-center gap-3 mb-3">
                 <div className="h-10 w-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: "rgba(52, 199, 89, 0.18)" }}>
@@ -492,7 +505,7 @@ const SalaryCap = () => {
                 </div>
               </div>
             </CardContent>
-          </Card>
+          </Card>}
 
           {/* ── Dead Cap tile + drop-down ledger (Iter 113) ────────── */}
           <Card className="bg-card border-border md:col-span-1" data-testid="cap-overview-card-dead">
@@ -658,7 +671,7 @@ const SalaryCap = () => {
         )}
 
         {/* Iter 122 — Cap Floor Watchlist (commissioner-only) */}
-        <CapFloorWatchlistCard leagueId={league?.id} isCommissioner={isCommissioner} />
+        {floorEnabled && <CapFloorWatchlistCard leagueId={league?.id} isCommissioner={isCommissioner} />}
 
         {/* Salary Cap Chart — pie or by-year bar */}
         <Card className="bg-card border-border">
@@ -1087,6 +1100,7 @@ const SalaryCap = () => {
             </CardContent>
           </Card>
         )}
+        </div>
       </div>
       {/* Iter 232N.41 — Player-card drilldown modal */}
       {cardPlayer && (

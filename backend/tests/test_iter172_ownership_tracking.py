@@ -400,6 +400,8 @@ class TestFrontendCompilation:
 
     def test_frontend_loads(self, api_client):
         """Frontend should load without errors."""
+        if os.environ.get("BACKEND_TESTS_API_ONLY") == "1":
+            pytest.skip("API-only test stack serves no SPA; the Playwright E2E stack covers the real app")
         response = requests.get(f"{BASE_URL}/")
         assert response.status_code == 200, f"Frontend should load: {response.status_code}"
 

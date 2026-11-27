@@ -15,6 +15,7 @@
  *   POST /api/trades/{id}/respond          – { action: "accept" | "reject", reason? }
  *   POST /api/trades/{id}/cancel           – proposer cancels
  */
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -42,6 +43,7 @@ const STATUS_META: Record<string, { label: string; tone: string }> = {
 };
 
 function AssetList({ title, assets, testId }: { title: string; assets: any[]; testId: string }) {
+  const capEnabled = useLeagueCapEnabled();
   return (
     <div className="space-y-2" data-testid={testId}>
       <p className="text-xs uppercase tracking-wider text-[#A1A1AA] font-semibold">{title}</p>
@@ -61,7 +63,7 @@ function AssetList({ title, assets, testId }: { title: string; assets: any[]; te
                     ? `${a.pick_year || ""} ${a.pick_round ? `R${a.pick_round}` : ""} pick`.trim()
                     : a.asset_type || "Asset")}
               </span>
-              {a.salary != null && (
+              {capEnabled && a.salary != null && (
                 <span className="text-xs text-[#A1A1AA] shrink-0">${(Number(a.salary) / 1_000_000).toFixed(1)}M</span>
               )}
             </li>

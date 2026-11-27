@@ -80,7 +80,7 @@ async def test_get_trade_block_joins_player_aav_for_cap_enabled_leagues():
     frontend Trade Block list view can render a Salary/AAV column without N+1.
     """
     async with isolated_router_app(trade_block_routes) as ctx:
-        league_id = await seed_league(ctx.db)
+        league_id = await seed_league(ctx.db, salary_cap_enabled=True)
         team_id = await seed_team(ctx.db, league_id=league_id)
         player_id = await seed_player(ctx.db, aav=4_500_000)
         # Add via API to exercise the create path.

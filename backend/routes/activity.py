@@ -11,8 +11,10 @@ would force a sprawling import refactor for no architectural gain.
 """
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+
+from routes.draft_access import league_member
 
 router = APIRouter()
 _deps: dict = {}
@@ -22,7 +24,7 @@ def setup(deps: dict) -> None:
     _deps.update(deps)
 
 
-@router.get("/activity/{league_id}")
+@router.get("/activity/{league_id}", dependencies=[Depends(league_member(_deps))])
 async def get_activity_feed(
     league_id: str,
     event_type: Optional[str] = None,
@@ -57,7 +59,7 @@ async def get_activity_feed(
     }
 
 
-@router.get("/leagues/{league_id}/transactions")
+@router.get("/leagues/{league_id}/transactions", dependencies=[Depends(league_member(_deps))])
 async def get_league_transactions(
     league_id: str,
     limit: int = 30,
@@ -141,7 +143,8 @@ async def get_league_transactions(
         else:
             query["$or"] = pos_clauses
 
-    cursor = db.activity_feed.find(query).sort("created_at", -1).limit(max(1, min(limit, 500)))
+    limit = max(1, min(limit, 500))  # cap per request; the league page asks for 200
+    cursor = db.activity_feed.find(query).sort("created_at", -1).limit(limit)
     items = await cursor.to_list(limit)
     out = []
     for it in items:
@@ -200,7 +203,7 @@ def _summarize_assets(assets: list[dict]) -> list[str]:
     return out
 
 
-@router.get("/leagues/{league_id}/trade-history")
+@router.get("/leagues/{league_id}/trade-history", dependencies=[Depends(league_member(_deps))])
 async def get_league_trade_history(
     league_id: str,
     status: Optional[str] = "executed",
@@ -284,7 +287,7 @@ class _LeagueChatBody(BaseModel):
     text: str
 
 
-@router.post("/activity/{league_id}/chat")
+@router.post("/activity/{league_id}/chat", dependencies=[Depends(league_member(_deps))])
 async def post_league_chat(league_id: str, input: _LeagueChatBody, request: Request):
     """Legacy activity-feed chat — appends a 'chat' event to the league
     activity feed. Distinct from /chat/* channels; preserved for the

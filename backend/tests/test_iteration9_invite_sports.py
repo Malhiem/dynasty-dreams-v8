@@ -387,7 +387,7 @@ class TestExistingFeatures:
 
     def test_get_drafts(self):
         """GET /api/drafts still works"""
-        response = requests.get(f"{BASE_URL}/api/drafts")
+        response = requests.get(f"{BASE_URL}/api/drafts", headers=test_admin_headers())
         assert response.status_code == 200
         print("PASS: GET /api/drafts works")
 

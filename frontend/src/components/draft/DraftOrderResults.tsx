@@ -3,6 +3,7 @@
 // Owns the Iter 138 draft-order-status banner and the Iter 138/139 read-only
 // "Draft Order Results" tab (formerly wired to commissioner-side config; the
 // config now lives in League Admin → Draft, this surface is display-only).
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -76,6 +77,7 @@ export function DraftOrderStatus({ draftOrder, year }: any) {
 }
 
 export function DraftOrderResultsTab({ leagueId, draftOrder, teams }: any) {
+  const capEnabled = useLeagueCapEnabled();
   const orderOK = !!draftOrder?.is_set;
   const method = draftOrder?.method || "manual_entry";
   const meta = METHOD_META[method] || METHOD_META.manual_entry;
@@ -242,7 +244,7 @@ export function DraftOrderResultsTab({ leagueId, draftOrder, teams }: any) {
                             <span>
                               {p.name} <span className="text-muted-foreground">({p.position})</span>
                             </span>
-                            {p.salary != null && (
+                            {capEnabled && p.salary != null && (
                               <span className="font-mono text-muted-foreground">
                                 ${(Number(p.salary) / 1_000_000).toFixed(2)}M
                               </span>
@@ -268,7 +270,7 @@ export function DraftOrderResultsTab({ leagueId, draftOrder, teams }: any) {
                             <span>
                               {p.name} <span>({p.position})</span>
                             </span>
-                            {p.salary != null && (
+                            {capEnabled && p.salary != null && (
                               <span className="font-mono">${(Number(p.salary) / 1_000_000).toFixed(2)}M</span>
                             )}
                           </li>

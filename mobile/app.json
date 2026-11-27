@@ -11,7 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#0b1020"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.dynastydreams.app",
@@ -30,15 +32,9 @@
       "bundler": "metro"
     },
     "plugins": [
-      "expo-router",
       "expo-secure-store"
     ],
     "scheme": "dynastydreams",
-    "jsEngine": "jsc",
-    "extra": {
-      "eas": {
-        "projectId": "00000000-0000-0000-0000-000000000000"
-      }
-    }
+    "jsEngine": "jsc"
   }
 }

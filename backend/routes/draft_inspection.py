@@ -21,7 +21,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from bson import ObjectId
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from routes.draft_access import draft_member, league_member, member_league_ids
+from routes.league_guards import is_league_manager, require_league_member
 
 from draft_engine import build_draft_board, get_team_for_pick
 
@@ -44,9 +46,14 @@ async def get_drafts(
     include_orphans: bool = False,
     request: Request = None,
 ):
+    # Drafts are league-private: sign in, and only list leagues the caller belongs to.
+    user = await _deps["get_current_user"](request)
     query: dict = {}
     if league_id:
+        await require_league_member(_db(), user, league_id)
         query["league_id"] = league_id
+    elif not is_league_manager(user, {}):
+        query["league_id"] = {"$in": await member_league_ids(_db(), user)}
     # Iter 228d — hide soft-deleted drafts by default
     if not include_archived:
         query["status"] = {"$ne": "archived"}
@@ -64,7 +71,7 @@ async def get_drafts(
 
 
 
-@router.get("/drafts/{draft_id}/edit-preview")
+@router.get("/drafts/{draft_id}/edit-preview", dependencies=[Depends(draft_member(_deps))])
 async def edit_draft_preview(
     draft_id: str, total_rounds: int = 0, request: Request = None
 ):
@@ -112,7 +119,7 @@ async def edit_draft_preview(
     }
 
 
-@router.get("/leagues/{league_id}/upcoming-drafts")
+@router.get("/leagues/{league_id}/upcoming-drafts", dependencies=[Depends(league_member(_deps))])
 async def get_upcoming_drafts(
     league_id: str,
     days: int = 30,
@@ -191,7 +198,7 @@ async def get_upcoming_drafts(
     }
 
 
-@router.get("/drafts/{draft_id}")
+@router.get("/drafts/{draft_id}", dependencies=[Depends(draft_member(_deps))])
 async def get_draft(draft_id: str):
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
@@ -199,7 +206,7 @@ async def get_draft(draft_id: str):
     draft["_id"] = str(draft["_id"])
     return draft
 
-@router.get("/drafts/{draft_id}/board")
+@router.get("/drafts/{draft_id}/board", dependencies=[Depends(draft_member(_deps))])
 async def get_draft_board(draft_id: str):
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
     if not draft:
@@ -231,7 +238,7 @@ async def get_draft_board(draft_id: str):
     }
 
 
-@router.get("/drafts/{draft_id}/stats")
+@router.get("/drafts/{draft_id}/stats", dependencies=[Depends(draft_member(_deps))])
 async def get_draft_stats(draft_id: str):
     """Iter 230aa — Compact stats summary for the Draft Live tile.
 
@@ -408,7 +415,7 @@ async def get_draft_stats(draft_id: str):
 # ─── Iter 231t — GET /drafts/{draft_id}/eligible-players ──────────────
 
 
-@router.get("/drafts/{draft_id}/eligible-players")
+@router.get("/drafts/{draft_id}/eligible-players", dependencies=[Depends(draft_member(_deps))])
 async def get_draft_eligible_players(
     draft_id: str,
     search: Optional[str] = None,
@@ -522,7 +529,9 @@ async def get_draft_eligible_players(
             query["_id"] = {"$nin": list(combined)}
 
     skip = (page - 1) * limit
-    players = await _db().players.find(query).sort("points", -1).skip(skip).limit(limit).to_list(limit)
+    # `_id` tiebreaker: many players share a points total, and without a unique
+    # sort key skip/limit paging repeats some players and drops others.
+    players = await _db().players.find(query).sort([("points", -1), ("_id", 1)]).skip(skip).limit(limit).to_list(limit)
     total = await _db().players.count_documents(query)
 
     result = []
@@ -588,7 +597,7 @@ async def get_draft_eligible_players(
 # ─── Iter 231v — Endpoints relocated from drafts.py ────────────────────
 
 
-@router.get("/drafts/{league_id}/picks")
+@router.get("/drafts/{league_id}/picks", dependencies=[Depends(league_member(_deps))])
 async def get_draft_picks(
     league_id: str,
     year: Optional[int] = None,
@@ -658,7 +667,7 @@ async def get_draft_picks(
 # either (a) a drafted player or (b) any pick used in or scheduled for
 # this draft. Powers the "Related Trades" section on the Draft History
 # page so managers can audit how a draft was shaped by trades.
-@router.get("/drafts/{draft_id}/related-trades")
+@router.get("/drafts/{draft_id}/related-trades", dependencies=[Depends(draft_member(_deps))])
 async def get_draft_related_trades(draft_id: str):
     db = _db()
     if not ObjectId.is_valid(draft_id):
@@ -759,7 +768,7 @@ async def get_draft_related_trades(draft_id: str):
 #   3. Award gold/silver/bronze medals to the top-3 producers PER
 #      position group (C, W combining LW/RW, D, G), ranked by total
 #      career fantasy points against the league's scoring config.
-@router.get("/drafts/{draft_id}/player-stats")
+@router.get("/drafts/{draft_id}/player-stats", dependencies=[Depends(draft_member(_deps))])
 async def get_draft_player_stats(draft_id: str):
     db = _db()
     if not ObjectId.is_valid(draft_id):

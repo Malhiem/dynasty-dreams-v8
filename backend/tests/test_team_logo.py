@@ -95,8 +95,10 @@ async def test_logo_rejects_oversize():
             headers={"Authorization": f"Bearer {token}"},
             files=files,
         )
-        assert r.status_code == 413
-        assert "too large" in r.text.lower() or "413" in r.text
+        # The route deliberately answers 400 for every upload validation failure
+        # (type, empty, size); test_teams_router.py pins the same status.
+        assert r.status_code == 400
+        assert "too large" in r.text.lower()
 
 
 @pytest.mark.asyncio

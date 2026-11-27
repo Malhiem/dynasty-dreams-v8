@@ -416,8 +416,9 @@ async def _take_weekly_tank_snapshots(db) -> int:
     snapshots_written = 0
     now = datetime.now(timezone.utc)
     week_ago = now - timedelta(days=7)
-    leagues = await db.leagues.find({}).to_list(500)
-    for league in leagues:
+    # Walk every league: a fixed-size to_list() cap would silently skip
+    # snapshots for leagues past it as the platform grows.
+    async for league in db.leagues.find({}):
         lid = str(league["_id"])
         # Find latest snapshot week for this league
         latest = await db.tank_monitor_weekly.find_one(

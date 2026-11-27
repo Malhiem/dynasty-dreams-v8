@@ -230,7 +230,7 @@ class TestAwardsRouter:
 class TestDraftsRouter:
     def test_get_draft_picks(self, chris_league_team):
         league_id, _ = chris_league_team
-        r = requests.get(f"{API}/drafts/{league_id}/picks", timeout=30)
+        r = requests.get(f"{API}/drafts/{league_id}/picks", timeout=30, headers=test_admin_headers())
         assert r.status_code == 200, r.text
         data = r.json()
         # Can be a list or dict — only assert it is a valid JSON payload

@@ -1,0 +1,159 @@
+# Disposable test stack for Dynasty Dreams. Nothing here may point at shared or
+# production data: Mongo is private to this Compose project and is never
+# published to the host.
+#
+# Two ways to use it (see e2e/README.md):
+#
+#   Playwright UI E2E   ./e2e/run.sh          -> mongo + backend + web (real SPA) + e2e
+#   Backend pytest      see "Backend pytest suite" in e2e/README.md
+#                       -> mongo + backend + api-proxy (nginx only) + pytest
+#
+# `api-proxy` and `web` both answer to the hostname `web` inside the network, so
+# run one or the other, never both at once. The backend suite only needs /api,
+# so api-proxy skips the multi-minute SPA build.
+
+x-api-build: &api-build
+  context: .
+  dockerfile: backend/Dockerfile
+  args:
+    # Drops the private `emergentintegrations` package and disables workers and
+    # payments. Must never be used outside this stack.
+    E2E_MODE: 'true'
+
+x-e2e-credentials: &e2e-credentials
+  ADMIN_EMAIL: admin@e2e.dynastydreams.com
+  ADMIN_PASSWORD: e2e-admin-password
+  JWT_SECRET: e2e-only-jwt-secret
+
+services:
+  mongo:
+    image: docker.io/library/mongo:7.0
+    environment:
+      MONGO_INITDB_DATABASE: dynasty_dreams_e2e
+    healthcheck:
+      test:
+      - CMD
+      - mongosh
+      - --quiet
+      - --eval
+      - 'db.runCommand({ ping: 1 }).ok'
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+    - mongo-e2e-data:/data/db
+
+  backend:
+    image: dynasty-dreams-api:e2e
+    build: *api-build
+    depends_on:
+    - mongo
+    environment:
+      <<: *e2e-credentials
+      COOKIE_SAMESITE: lax
+      COOKIE_SECURE: 'false'
+      DB_NAME: dynasty_dreams_e2e
+      E2E_MODE: 'true'
+      FRONTEND_URL: http://web
+      MONGO_URL: mongodb://mongo:27017
+      SOCKET_CORS_ORIGINS: http://web,http://localhost:3000
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Real SPA behind nginx, for Playwright. Published on loopback only.
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        REACT_APP_BACKEND_URL: ''
+    depends_on:
+    - backend
+    ports:
+    - 127.0.0.1:3000:80
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -q -O - http://localhost/health >/dev/null
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  e2e:
+    build:
+      context: .
+      dockerfile: e2e/Dockerfile
+    depends_on:
+    - web
+    - backend
+    environment:
+      E2E_ADMIN_EMAIL: admin@e2e.dynastydreams.com
+      E2E_ADMIN_PASSWORD: e2e-admin-password
+      E2E_BASE_URL: http://web
+      H2H_ISOLATED: '1'
+      DRAFT_TEST_ISOLATED: '1'
+      PLAYWRIGHT_JSON_OUTPUT_FILE: /work/results.json
+
+  # API-only stand-in for `web`, used by the backend pytest suite.
+  api-proxy:
+    profiles:
+    - backend-tests
+    image: docker.io/library/nginx:1.27-alpine
+    depends_on:
+    - backend
+    networks:
+      default:
+        aliases:
+        - web
+    volumes:
+    - ./e2e/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - wget -q -O - http://localhost/health >/dev/null
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Backend pytest suite. Runs from a private copy of the repo (see
+  # e2e/backend-tests.sh), so nothing is written into your working tree.
+  pytest:
+    profiles:
+    - backend-tests
+    image: dynasty-dreams-api:e2e
+    depends_on:
+    - mongo
+    - backend
+    - api-proxy
+    working_dir: /repo
+    entrypoint:
+    - sh
+    - /repo/e2e/backend-tests.sh
+    environment:
+      <<: *e2e-credentials
+      DB_NAME: dynasty_dreams_e2e
+      # Tests that `import server` in-process load routes/payments.py, which only
+      # skips the private `emergentintegrations` import when E2E_MODE is set.
+      E2E_MODE: 'true'
+      MONGO_URL: mongodb://mongo:27017
+      # `api-proxy` serves /api only (no React build), so SPA tests skip themselves.
+      BACKEND_TESTS_API_ONLY: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      REACT_APP_BACKEND_URL: http://web
+      SECURITY_TEST_ISOLATED: '1'
+      TEST_OWNER_EMAIL: test-owner@e2e.dynastydreams.com
+      TEST_OWNER_PASSWORD: e2e-owner-password
+      TEST_SUITE_ISOLATED: '1'
+    volumes:
+    - .:/repo:ro
+    - ./test-results:/results
+
+volumes:
+  mongo-e2e-data: null

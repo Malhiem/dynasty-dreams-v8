@@ -8,6 +8,7 @@ Expected: standings returns goals = 2 for that team (NOT 200).
 """
 import os
 import pytest
+from tests.rostered import rostered_team_sync
 import pymongo
 from bson import ObjectId
 
@@ -34,8 +35,9 @@ def league_id(db):
 
 @pytest.fixture(scope="module")
 def team_and_player(db, league_id):
-    team = db.teams.find_one({"league_id": league_id})
-    assert team and team.get("roster"), "Need a team with roster"
+    team = rostered_team_sync(db, league_id)
+    if not team:
+        pytest.skip("No team with a real rostered player in the fresh-totals league")
     pid = team["roster"][0]
     return str(team["_id"]), pid
 

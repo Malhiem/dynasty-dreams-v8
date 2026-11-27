@@ -13,7 +13,25 @@ Both raise HTTPException on failure.
 from bson import ObjectId
 from fastapi import HTTPException
 
-__all__ = ["require_league_member", "verify_team_in_league"]
+__all__ = ["is_league_manager", "require_league_member", "verify_team_in_league"]
+
+
+def is_league_manager(user: dict, league: dict) -> bool:
+    """True for a platform admin, the league commissioner or a co-commissioner.
+
+    Pure (no DB access) so routes that already hold the league document, such
+    as the draft auto-pick endpoint, can reuse the exact rule
+    `require_league_member` applies instead of re-deriving it.
+    """
+    if user.get("is_admin") or user.get("role") == "admin" or "admin" in (user.get("roles") or []):
+        return True
+    uid_str = str(user["_id"])
+    # Handle mixed ObjectId / str types
+    comm_id = league.get("commissioner_id")
+    if comm_id is not None and str(comm_id) == uid_str:
+        return True
+    co_comms = (league.get("co_commissioners") or []) + (league.get("admin_ids") or [])
+    return any(str(c) == uid_str for c in co_comms)
 
 
 async def require_league_member(db, user: dict, league_id: str) -> dict:
@@ -39,16 +57,8 @@ async def require_league_member(db, user: dict, league_id: str) -> dict:
     uid = user["_id"]
     uid_str = str(uid)
 
-    # Platform admins always pass
-    if user.get("is_admin") or user.get("role") == "admin" or "admin" in (user.get("roles") or []):
-        return league
-
-    # Commissioner / co-commissioner (handle mixed ObjectId / str types)
-    comm_id = league.get("commissioner_id")
-    if comm_id is not None and str(comm_id) == uid_str:
-        return league
-    co_comms = (league.get("co_commissioners") or []) + (league.get("admin_ids") or [])
-    if any(str(c) == uid_str for c in co_comms):
+    # Platform admins, the commissioner and co-commissioners always pass
+    if is_league_manager(user, league):
         return league
 
     # Team owner inside this league (check both ObjectId and str owner_id)

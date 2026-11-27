@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from routes.league_guards import require_league_member, verify_team_in_league
 from services.financial_lock import serialize_finances
+from services.salary_policy import retention_slots
 
 router = APIRouter()
 _deps: dict = {}
@@ -147,7 +148,10 @@ async def get_contracts(
 ):
     db = _deps["db"]
     user = await _deps["get_current_user"](request)
-    await require_league_member(db, user, league_id)
+    league = await require_league_member(db, user, league_id)
+    # No cap, no salaries: contract salaries are not listed for cap-less leagues.
+    if league is not None and not league.get("salary_cap_enabled"):
+        return []
     query: dict = {"league_id": league_id}
     if team_id:
         query["team_id"] = team_id
@@ -218,6 +222,11 @@ async def get_salary_cap_overview(league_id: str, request: Request):
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
 
+    # No cap, no salaries: a league without a salary cap has no cap to report,
+    # and per-team payroll figures must not be shown.
+    if not league.get("salary_cap_enabled"):
+        return {"salary_cap_enabled": False, "salary_cap": None, "teams": []}
+
     # Default to the historical NHL hard cap ($88M) when the league hasn't
     # explicitly configured one. Avoids ZeroDivisionError on cap_pct.
     cap = league.get("salary_cap") if league.get("salary_cap") is not None else 88_000_000
@@ -238,20 +247,25 @@ async def get_salary_cap_overview(league_id: str, request: Request):
             {"team_id": tid, "league_id": league_id, "player_status": "ufa"}
         )
 
+        slots = await retention_slots(db, league, team)
         team_caps.append({
             "team_id": tid,
-            "team_name": team["name"],
-            "owner_name": team["owner_name"],
+            "team_name": team.get("name"),
+            "owner_name": team.get("owner_name"),
             "cap_used": round(used, 2),
             "cap_remaining": round(cap - used, 2),
             "cap_pct": round((used / cap) * 100, 1) if cap > 0 else 0,
             "active_contracts": contracts,
             "rfa_count": rfa,
             "ufa_count": ufa,
+            "retention_slots_total": slots["slots_total"],
+            "retention_slots_used": slots["slots_used"],
+            "retention_slots_remaining": slots["slots_remaining"],
+            "retained_salary_total": slots["retained_salary_total"],
         })
 
     team_caps.sort(key=lambda t: -t["cap_used"])
-    return {"salary_cap": cap, "teams": team_caps}
+    return {"salary_cap_enabled": True, "salary_cap": cap, "teams": team_caps}
 
 
 @router.get("/salary-cap/{league_id}/expiring")

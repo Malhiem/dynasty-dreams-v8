@@ -1,4 +1,5 @@
 // @ts-nocheck
+import { useLeagueCapEnabled } from "@/hooks/use-league-cap-enabled";
 import { useState } from "react";
 import {
   Dialog,
@@ -90,6 +91,7 @@ export const PlayerTradeModal = ({
   initialPlayer,
   allPlayers,
 }: PlayerTradeModalProps) => {
+  const capEnabled = useLeagueCapEnabled();
   const [selectedTeam, setSelectedTeam] = useState<string>("");
   const [tradeAssets, setTradeAssets] = useState<TradeAsset[]>([
     { player: initialPlayer, retainedPercentage: 0 },
@@ -230,10 +232,10 @@ export const PlayerTradeModal = ({
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <span>{asset.player.position}</span>
                         <span>•</span>
-                        <span className="text-accent">
+{capEnabled && <>                        <span className="text-accent">
                           {formatSalary(asset.player.contract.salary)}
                         </span>
-                        <span>•</span>
+                        <span>•</span></>}
                         <span>{asset.player.contract.yearsRemaining}yr</span>
                       </div>
                     </div>
@@ -249,8 +251,8 @@ export const PlayerTradeModal = ({
                     )}
                   </div>
 
-                  {/* Salary Retention Slider */}
-                  <div className="space-y-2 pt-2 border-t border-border/50">
+                  {/* Salary Retention Slider (cap leagues only) */}
+                  {capEnabled && <div className="space-y-2 pt-2 border-t border-border/50">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">
                         Salary Retention
@@ -278,7 +280,7 @@ export const PlayerTradeModal = ({
                       Max 50% retention. You keep cap hit for duration of
                       contract.
                     </p>
-                  </div>
+                  </div>}
                 </div>
               ))}
             </div>

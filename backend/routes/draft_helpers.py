@@ -249,7 +249,8 @@ from services.draft_salary import load_context, evaluate, entry, warning, after_
 from services.draft_mutation import commit_pick, recover
 
 @serialize_finances(_db)
-async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", preference: str | None = None) -> dict:
+async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", preference: str | None = None,
+                                expected_pick: int | None = None) -> dict:
     """Iter 221 — Shared core for auto-picking the team currently on the clock.
     Returns the recorded pick document. Raises HTTPException on bad state.
     `source` is stamped into the pick doc / broadcast for audit (timeout,
@@ -264,6 +265,15 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
     Iter 232x — Honors traded picks: checks `draft_picks` collection
     for current_team_id override before falling back to the standard
     draft order.
+
+    Iter 233 — `expected_pick` is the pick number the caller intends to
+    fill. If the draft has already moved past it (another browser, the
+    timer worker or a commissioner got there first) this raises 409
+    instead of silently auto-picking the NEXT team's turn. The commit
+    below is also compare-and-set on the same number, so a pick landing
+    between this read and the write still conflicts rather than
+    duplicating. Callers that omit it keep the old "whoever is on the
+    clock now" behaviour.
     """
     await recover(_db(), draft_id)
     draft = await _db().drafts.find_one({"_id": ObjectId(draft_id)})
@@ -271,6 +281,8 @@ async def perform_one_auto_pick(draft_id: str, *, source: str = "timeout", prefe
         raise HTTPException(status_code=404, detail="Draft not found")
     if draft["status"] != "active":
         raise HTTPException(status_code=400, detail="Draft is not active")
+    if expected_pick is not None and draft.get("current_pick") != expected_pick:
+        raise HTTPException(status_code=409, detail="Pick already advanced")
 
     # Determine on-clock team, honoring traded picks
     on_clock = get_team_for_pick(draft["team_abbrs"], draft["current_pick"], draft["snake_draft"], draft.get("bonus_picks"))
