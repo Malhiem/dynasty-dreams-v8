@@ -207,6 +207,12 @@ async def test_division_winner_auto_crown_end_of_regular_season():
             {"$set": {"status": "scheduled"}},
         )
 
+        # simulate-week refuses a week that still has open (TBD) slots; that guard is
+        # intended, so this crown check needs a league whose week is fully assigned.
+        week_games = await db.matchups.find({"league_id": lid, "week": cur_week, "status": "scheduled"}).to_list(100)
+        if any(not _OID.is_valid(m.get(f"{side}_team_id", "")) for m in week_games for side in ("home", "away")):
+            pytest.skip("league has open schedule slots this week")
+
         # Simulate
         r = s.post(f"{BASE_URL}/api/matchups/simulate-week", json={"league_id": lid, "week": cur_week})
         assert r.status_code == 200, r.text

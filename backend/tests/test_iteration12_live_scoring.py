@@ -9,6 +9,7 @@ Covers:
   - DB sanity: 86 teams total, 1038 players unchanged
   - Malformed IDs return HTTP 400 via _safe_object_id
 """
+from tests.demo_seed import require_demo_seed
 from tests.live_snapshot_fixture import live_snapshot_inputs
 import os
 import time
@@ -45,6 +46,7 @@ def leagues(client):
     data = r.json()
     lst = data if isinstance(data, list) else data.get("leagues", [])
     by_name = {lg["name"]: lg for lg in lst}
+    require_demo_seed(by_name)
     return by_name
 
 

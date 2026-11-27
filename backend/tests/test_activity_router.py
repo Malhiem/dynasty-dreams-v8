@@ -9,13 +9,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from routes import activity as activity_routes  # noqa: E402
 
-from tests.router_test_utils import isolated_router_app  # noqa: E402
+from tests.router_test_utils import isolated_router_app, make_league  # noqa: E402
 
 
 @pytest.mark.asyncio
 async def test_activity_feed_empty_returns_pagination_skeleton():
     async with isolated_router_app(activity_routes) as ctx:
-        r = await ctx.client.get("/api/activity/some_league_id")
+        lid = await make_league(ctx)  # routes are league-member reads
+        r = await ctx.client.get(f"/api/activity/{lid}")
         assert r.status_code == 200
         body = r.json()
         assert body == {"items": [], "total": 0, "page": 1, "pages": 0}
@@ -24,16 +25,17 @@ async def test_activity_feed_empty_returns_pagination_skeleton():
 @pytest.mark.asyncio
 async def test_activity_feed_returns_items_sorted_desc():
     async with isolated_router_app(activity_routes) as ctx:
+        lid = await make_league(ctx)  # routes are league-member reads
         now = datetime.now(timezone.utc)
         await ctx.db.activity_feed.insert_many([
-            {"league_id": "L1", "event_type": "roster_add", "message": "older",
+            {"league_id": lid, "event_type": "roster_add", "message": "older",
              "created_at": now - timedelta(hours=2)},
-            {"league_id": "L1", "event_type": "trade_executed", "message": "newer",
+            {"league_id": lid, "event_type": "trade_executed", "message": "newer",
              "created_at": now},
             {"league_id": "L2", "event_type": "roster_add", "message": "other league",
              "created_at": now},
         ])
-        r = await ctx.client.get("/api/activity/L1")
+        r = await ctx.client.get(f"/api/activity/{lid}")
         body = r.json()
         assert body["total"] == 2
         assert body["items"][0]["message"] == "newer"
@@ -46,16 +48,17 @@ async def test_activity_feed_event_type_filter_supports_csv():
     single + multi values must work.
     """
     async with isolated_router_app(activity_routes) as ctx:
+        lid = await make_league(ctx)  # routes are league-member reads
         now = datetime.now(timezone.utc)
         await ctx.db.activity_feed.insert_many([
-            {"league_id": "L1", "event_type": "roster_add", "created_at": now},
-            {"league_id": "L1", "event_type": "roster_drop", "created_at": now},
-            {"league_id": "L1", "event_type": "trade_executed", "created_at": now},
+            {"league_id": lid, "event_type": "roster_add", "created_at": now},
+            {"league_id": lid, "event_type": "roster_drop", "created_at": now},
+            {"league_id": lid, "event_type": "trade_executed", "created_at": now},
         ])
-        single = (await ctx.client.get("/api/activity/L1?event_type=trade_executed")).json()
+        single = (await ctx.client.get(f"/api/activity/{lid}?event_type=trade_executed")).json()
         assert single["total"] == 1
 
-        multi = (await ctx.client.get("/api/activity/L1?event_type=roster_add,roster_drop")).json()
+        multi = (await ctx.client.get(f"/api/activity/{lid}?event_type=roster_add,roster_drop")).json()
         assert multi["total"] == 2
 
 
@@ -66,9 +69,10 @@ async def test_transactions_normalizes_metadata_into_top_level_keys():
     Transactions page contract.
     """
     async with isolated_router_app(activity_routes) as ctx:
+        lid = await make_league(ctx)  # routes are league-member reads
         now = datetime.now(timezone.utc)
         await ctx.db.activity_feed.insert_one({
-            "league_id": "L1",
+            "league_id": lid,
             "event_type": "waiver_won",
             "message": "Team A wins McDavid",
             "created_at": now,
@@ -81,7 +85,7 @@ async def test_transactions_normalizes_metadata_into_top_level_keys():
                 "competing_claims": [{"team": "B", "bid": 40}],
             },
         })
-        r = await ctx.client.get("/api/leagues/L1/transactions")
+        r = await ctx.client.get(f"/api/leagues/{lid}/transactions")
         body = r.json()
         assert body["count"] == 1
         row = body["transactions"][0]
@@ -95,13 +99,14 @@ async def test_transactions_normalizes_metadata_into_top_level_keys():
 @pytest.mark.asyncio
 async def test_transactions_since_filter_drops_older_rows():
     async with isolated_router_app(activity_routes) as ctx:
+        lid = await make_league(ctx)  # routes are league-member reads
         old = datetime(2026, 1, 1, tzinfo=timezone.utc)
         recent = datetime(2026, 5, 1, tzinfo=timezone.utc)
         await ctx.db.activity_feed.insert_many([
-            {"league_id": "L1", "event_type": "roster_add", "message": "old", "created_at": old},
-            {"league_id": "L1", "event_type": "roster_add", "message": "recent", "created_at": recent},
+            {"league_id": lid, "event_type": "roster_add", "message": "old", "created_at": old},
+            {"league_id": lid, "event_type": "roster_add", "message": "recent", "created_at": recent},
         ])
-        r = await ctx.client.get("/api/leagues/L1/transactions?since=2026-04-01")
+        r = await ctx.client.get(f"/api/leagues/{lid}/transactions?since=2026-04-01")
         body = r.json()
         assert body["count"] == 1
         assert body["transactions"][0]["description"] == "recent"
@@ -110,14 +115,15 @@ async def test_transactions_since_filter_drops_older_rows():
 @pytest.mark.asyncio
 async def test_transactions_team_id_filter_uses_metadata():
     async with isolated_router_app(activity_routes) as ctx:
+        lid = await make_league(ctx)  # routes are league-member reads
         now = datetime.now(timezone.utc)
         await ctx.db.activity_feed.insert_many([
-            {"league_id": "L1", "event_type": "roster_drop", "created_at": now,
+            {"league_id": lid, "event_type": "roster_drop", "created_at": now,
              "metadata": {"team_id": "team_a", "player_name": "P1"}},
-            {"league_id": "L1", "event_type": "roster_drop", "created_at": now,
+            {"league_id": lid, "event_type": "roster_drop", "created_at": now,
              "metadata": {"team_id": "team_b", "player_name": "P2"}},
         ])
-        r = await ctx.client.get("/api/leagues/L1/transactions?team_id=team_a")
+        r = await ctx.client.get(f"/api/leagues/{lid}/transactions?team_id=team_a")
         body = r.json()
         assert body["count"] == 1
         assert body["transactions"][0]["player_name"] == "P1"
@@ -130,11 +136,12 @@ async def test_transactions_excludes_non_player_events():
     the Transactions page.
     """
     async with isolated_router_app(activity_routes) as ctx:
+        lid = await make_league(ctx)  # routes are league-member reads
         now = datetime.now(timezone.utc)
         await ctx.db.activity_feed.insert_many([
-            {"league_id": "L1", "event_type": "roster_add", "created_at": now},
-            {"league_id": "L1", "event_type": "contract_signed", "created_at": now},
-            {"league_id": "L1", "event_type": "league_created", "created_at": now},
+            {"league_id": lid, "event_type": "roster_add", "created_at": now},
+            {"league_id": lid, "event_type": "contract_signed", "created_at": now},
+            {"league_id": lid, "event_type": "league_created", "created_at": now},
         ])
-        r = await ctx.client.get("/api/leagues/L1/transactions")
+        r = await ctx.client.get(f"/api/leagues/{lid}/transactions")
         assert r.json()["count"] == 1

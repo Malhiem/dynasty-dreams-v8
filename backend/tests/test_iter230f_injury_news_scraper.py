@@ -11,6 +11,7 @@ from unittest.mock import patch
 from email.utils import format_datetime
 
 import pytest
+from tests.rostered import rostered_team
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 
@@ -87,7 +88,7 @@ async def test_scraper_dispatches_injury_signal_end_to_end():
 
     db = _db_sync()
     # Pick any rostered player so the dispatcher has real recipients.
-    team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+    team = await rostered_team(db)
     player_id = team["roster"][0]
     player = await db.players.find_one({"_id": ObjectId(player_id)})
     original_status = player.get("injury_status")
@@ -155,7 +156,7 @@ async def test_scraper_skips_stale_headlines():
     from services import injury_news_scraper as scraper
 
     db = _db_sync()
-    team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+    team = await rostered_team(db)
     player_id = team["roster"][0]
     player = await db.players.find_one({"_id": ObjectId(player_id)})
     player_name = player["name"]
@@ -188,7 +189,7 @@ async def test_scraper_recovery_headline_fires_player_recovered():
     from services import injury_news_scraper as scraper
 
     db = _db_sync()
-    team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+    team = await rostered_team(db)
     player_id = team["roster"][0]
     player = await db.players.find_one({"_id": ObjectId(player_id)})
     player_name = player["name"]

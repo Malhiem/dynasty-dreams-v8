@@ -88,10 +88,11 @@ class TestLeagueTransactions:
                       "player_id", "player_name", "bid_amount", "created_at"):
                 assert k in tx, f"missing key {k}"
 
-    def test_transactions_limit_capped_at_100(self, admin_session, ice_kings_id):
-        r = admin_session.get(f"{API}/leagues/{ice_kings_id}/transactions?limit=500")
+    def test_transactions_limit_is_capped(self, admin_session, ice_kings_id):
+        # The cap is 500 (the league page requests 200), so an oversized limit is clamped to it.
+        r = admin_session.get(f"{API}/leagues/{ice_kings_id}/transactions?limit=5000")
         assert r.status_code == 200
-        assert len(r.json()["transactions"]) <= 100
+        assert len(r.json()["transactions"]) <= 500
 
     def test_transactions_custom_limit(self, admin_session, ice_kings_id):
         r = admin_session.get(f"{API}/leagues/{ice_kings_id}/transactions?limit=5")
@@ -349,11 +350,11 @@ class TestWaiverWonProcessing:
 
 # ─── 404 / negative ────────────────────────────────────────
 class TestNegative:
-    def test_transactions_unknown_league_returns_empty(self, admin_session):
-        # current implementation queries activity_feed by league_id — unknown ID returns empty list, 200
+    def test_transactions_unknown_league_is_not_found(self, admin_session):
+        # Transactions are a league-member read, so a league that does not exist is a 404
+        # rather than an empty feed.
         r = admin_session.get(f"{API}/leagues/000000000000000000000000/transactions")
-        assert r.status_code == 200
-        assert r.json()["count"] == 0
+        assert r.status_code == 404
 
     def test_pending_trades_unknown_league_empty(self, admin_session):
         r = admin_session.get(f"{API}/leagues/000000000000000000000000/pending-trades")

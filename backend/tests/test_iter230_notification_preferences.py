@@ -3,6 +3,7 @@ import os
 import sys
 
 import pytest
+from tests.rostered import rostered_team
 from httpx import AsyncClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -160,7 +161,7 @@ async def test_admin_player_status_change_fans_out():
         from motor.motor_asyncio import AsyncIOMotorClient
         c = AsyncIOMotorClient(os.environ["MONGO_URL"])
         db = c[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
-        team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+        team = await rostered_team(db)
         assert team, "no rostered team to test against"
         player_id = team["roster"][0]
 
@@ -193,7 +194,7 @@ async def test_admin_player_status_change_requires_admin():
         from motor.motor_asyncio import AsyncIOMotorClient
         c = AsyncIOMotorClient(os.environ["MONGO_URL"])
         db = c[os.environ.get("DB_NAME", os.environ["DB_NAME"])]
-        team = await db.teams.find_one({"roster": {"$exists": True, "$ne": []}})
+        team = await rostered_team(db)
         assert team
         player_id = team["roster"][0]
         r = await client.post(
